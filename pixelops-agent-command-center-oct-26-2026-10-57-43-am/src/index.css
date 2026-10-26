@@ -1,0 +1,80 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-pixel: 'Silkscreen', monospace;
+    --font-sans: 'Plus Jakarta Sans', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+
+    /* Dynamic User-Customizable RGB / HSL Theme Engine Variables */
+    --theme-primary-rgb: 74, 222, 128;
+    --theme-primary-hex: #4ade80;
+    --theme-glow-color: rgba(74, 222, 128, 0.55);
+    --theme-glow-soft: rgba(74, 222, 128, 0.25);
+    --theme-border-color: rgba(74, 222, 128, 0.55);
+    --theme-hue-rotate: 0deg;
+    --theme-room-filter: hue-rotate(0deg) saturate(1.1) brightness(1) drop-shadow(0 0 10px rgba(74, 222, 128, 0.35));
+  }
+
+  body {
+    font-family: var(--font-sans);
+    background-color: #0a0a0c;
+    color: #f1f5f9;
+    overflow-x: hidden;
+  }
+}
+
+.font-pixel {
+  font-family: var(--font-pixel);
+  letter-spacing: 0.02em;
+}
+
+.font-mono-tabular {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.pixelated {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+/* Dynamic Theme Utility Classes bound to --theme-primary-rgb and --theme-glow-color */
+.theme-text-primary {
+  color: rgb(var(--theme-primary-rgb));
+}
+
+.theme-border-primary {
+  border-color: var(--theme-border-color);
+}
+
+.theme-glow-text {
+  color: rgb(var(--theme-primary-rgb));
+  text-shadow:
+    0 2px 0 #000,
+    0 -1px 0 #000,
+    1px 0 0 #000,
+    -1px 0 0 #000,
+    0 0 8px var(--theme-glow-color);
+}
+
+.theme-glow-box {
+  border-color: var(--theme-border-color);
+  box-shadow: 0 0 14px var(--theme-glow-soft);
+}
+
+.theme-room-canvas-filter {
+  filter: var(--theme-room-filter);
+  will-change: filter;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

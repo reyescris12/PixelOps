@@ -634,6 +634,7 @@ const CommandCenterContent: React.FC = () => {
     setIsRoutingCamera(true);
     setTimeout(() => setIsRoutingCamera(false), 2400);
 
+    setDialogueText(`[DIRECTIVE INGESTED] Dispatching ${routedDisplayName} to ${getRoomMetadata(targetRoom)?.shortBadge || String(targetRoom).toUpperCase()} (${assignment.taskTag})...`);
     setIsExecuting(true);
     setIsGameActive(true);
     setIsGameClosing(false);
@@ -2186,6 +2187,7 @@ const CommandCenterContent: React.FC = () => {
         onSelectOption={(clarifiedPrompt) => {
           const att = taskBriefState.attachment;
           setTaskBriefState({ isOpen: false, brief: null, rawPrompt: '', attachment: null });
+          setDialogueText(`[COMMAND APPROVED] Directive confirmed: "${clarifiedPrompt.slice(0, 36)}...". Operative deploying.`);
           handleExecuteDirective(clarifiedPrompt, att, true);
         }}
         onCancel={() => {
@@ -2214,6 +2216,7 @@ const CommandCenterContent: React.FC = () => {
                 taskBriefState.brief.options[0]?.clarifiedPrompt || taskBriefState.rawPrompt;
               const att = taskBriefState.attachment;
               setTaskBriefState({ isOpen: false, brief: null, rawPrompt: '', attachment: null });
+              setDialogueText(`[COMMAND APPROVED] Directive unblocked: "${defaultClarified.slice(0, 36)}...". Operative deploying.`);
               handleExecuteDirective(defaultClarified, att, true);
             }
           },

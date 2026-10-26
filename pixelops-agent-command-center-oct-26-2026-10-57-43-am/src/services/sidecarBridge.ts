@@ -20,9 +20,21 @@ export async function checkSidecarHealth(sidecarBaseUrl = SIDECAR_DEFAULT_URL) {
     return isSidecarOnline;
   }
 
+  // Fast check: on HTTPS or mobile/remote hosting (like Netlify), local 127.0.0.1 sidecar is unreachable
+  if (typeof window !== 'undefined' && window.location) {
+    if (
+      window.location.protocol === 'https:' ||
+      (window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1')
+    ) {
+      isSidecarOnline = false;
+      lastCheckTime = now;
+      return false;
+    }
+  }
+
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 1200);
+    const timeout = setTimeout(() => controller.abort(), 300);
 
     const res = await fetch(`${sidecarBaseUrl}/api/health`, {
       method: 'GET',

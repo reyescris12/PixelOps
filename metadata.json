@@ -1,0 +1,6 @@
+{
+  "name": "PixelOps Agent Command Center",
+  "description": "Retro pixel-art Mobile Agent Command Center PWA powered by Gemini with swappable theme engines, animated overworld sprites, and multi-tool agent execution.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

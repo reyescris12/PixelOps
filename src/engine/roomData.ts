@@ -1,0 +1,563 @@
+export type RoomId =
+  | 'comms_tower'
+  | 'war_room'
+  | 'server_vault'
+  | 'armory'
+  | 'briefing_lounge'
+  | 'library'
+  | 'archive_basement'
+  | (string & {});
+
+export const ROOM_ORDER: RoomId[] = [
+  'comms_tower',
+  'war_room',
+  'server_vault',
+  'armory',
+  'briefing_lounge',
+  'library',
+  'archive_basement',
+];
+
+export type StationPose = 'desk' | 'laptop' | 'stand' | 'work' | 'walk' | 'walking';
+export type SpriteAnimationState = 'idle' | 'walking' | 'executing' | 'working';
+
+export interface WorkstationDef {
+  id: string;
+  label: string;
+  xPct: number; // Center X in room (0..100)
+  yPct: number; // Top Y in room (0..100)
+  corridorXPct: number; // Floor corridor waypoint X directly in front of station
+  corridorYPct: number; // Floor corridor walkway Y (0..100)
+  pose: StationPose;
+  facing: 'left' | 'right';
+  taskTag: string;
+}
+
+export interface WaypointNode {
+  xPct: number;
+  yPct: number;
+  room: RoomId;
+  label?: string;
+}
+
+export const ROOM_CORRIDOR_WAYPOINTS: Record<
+  RoomId,
+  Array<{ id: string; label: string; xPct: number; yPct: number }>
+> = {
+  comms_tower: [
+    { id: 'wp_comms_west', label: 'Dish Array Console Floor', xPct: 37.0, yPct: 75.0 },
+    { id: 'wp_comms_mid', label: 'Transceiver South Walkway', xPct: 45.0, yPct: 83.0 },
+    { id: 'wp_comms_center', label: 'Radar Deck Floor', xPct: 54.0, yPct: 84.0 },
+    { id: 'wp_comms_east', label: 'East Airlock Threshold', xPct: 68.0, yPct: 73.0 },
+  ],
+  war_room: [
+    { id: 'wp_war_west', label: 'Recon Walkway', xPct: 36.0, yPct: 77.0 },
+    { id: 'wp_war_center', label: 'Command Floor', xPct: 48.0, yPct: 84.0 },
+    { id: 'wp_war_east', label: 'Mainframe Floor', xPct: 64.0, yPct: 77.0 },
+    { id: 'wp_war_door', label: 'Blast Door Threshold', xPct: 48.0, yPct: 64.0 },
+  ],
+  server_vault: [
+    { id: 'wp_vault_door', label: 'Vault Airlock Floor', xPct: 52.0, yPct: 63.0 },
+    { id: 'wp_vault_west', label: 'Breaker Aisle', xPct: 38.0, yPct: 77.0 },
+    { id: 'wp_vault_center', label: 'Core Catwalk Floor', xPct: 50.0, yPct: 83.0 },
+    { id: 'wp_vault_east', label: 'Blade Aisle', xPct: 62.0, yPct: 77.0 },
+  ],
+  armory: [
+    { id: 'wp_arm_west', label: 'Ballistic Locker Floor', xPct: 37.0, yPct: 76.0 },
+    { id: 'wp_arm_locker', label: 'Gear Staging Grating', xPct: 43.0, yPct: 68.0 },
+    { id: 'wp_arm_bench', label: 'Armory Center Grating', xPct: 50.0, yPct: 82.0 },
+    { id: 'wp_arm_drone', label: 'Surveillance Floor', xPct: 62.0, yPct: 77.0 },
+  ],
+  briefing_lounge: [
+    { id: 'wp_lng_west', label: 'Radio Desk Floor', xPct: 36.0, yPct: 76.0 },
+    { id: 'wp_lng_center', label: 'Briefing Floorboard', xPct: 48.0, yPct: 85.0 },
+    { id: 'wp_lng_east', label: 'Espresso Bar Floor', xPct: 64.0, yPct: 77.0 },
+    { id: 'wp_lng_door', label: 'Vault Door Threshold', xPct: 42.0, yPct: 66.0 },
+  ],
+  library: [
+    { id: 'wp_lib_door', label: 'Archive Entry', xPct: 48.0, yPct: 84.0 },
+    { id: 'wp_lib_west', label: 'West Lectern Walkway', xPct: 37.0, yPct: 76.0 },
+    { id: 'wp_lib_center', label: 'Reading Floor', xPct: 50.0, yPct: 80.0 },
+    { id: 'wp_lib_east', label: 'East Stacks Walkway', xPct: 63.0, yPct: 76.0 },
+  ],
+  archive_basement: [
+    { id: 'wp_base_entry', label: 'Sub-Level Hatch', xPct: 35.0, yPct: 74.0 },
+    { id: 'wp_base_west', label: 'Workbench Floor', xPct: 38.0, yPct: 78.0 },
+    { id: 'wp_base_center', label: 'Vault Floor Stones', xPct: 48.0, yPct: 81.0 },
+    { id: 'wp_base_east', label: 'Cold Storage Floor', xPct: 61.0, yPct: 78.0 },
+  ],
+};
+
+export const ROOM_STATIONS: Record<RoomId, WorkstationDef[]> = {
+  comms_tower: [
+    {
+      id: 'comms_dish_console',
+      label: 'Dish Array Console',
+      xPct: 38.5,
+      yPct: 79.0,
+      corridorXPct: 38.5,
+      corridorYPct: 79.0,
+      pose: 'desk',
+      facing: 'left',
+      taskTag: 'UPLINKING',
+    },
+    {
+      id: 'comms_cipher_rig',
+      label: 'Signal Transceiver',
+      xPct: 48.0,
+      yPct: 83.5,
+      corridorXPct: 48.0,
+      corridorYPct: 83.5,
+      pose: 'laptop',
+      facing: 'right',
+      taskTag: 'DISPATCHING',
+    },
+    {
+      id: 'comms_radar_scope',
+      label: 'Blast Door Relay',
+      xPct: 66.0,
+      yPct: 74.5,
+      corridorXPct: 66.0,
+      corridorYPct: 74.5,
+      pose: 'work',
+      facing: 'right',
+      taskTag: 'SWEEPING',
+    },
+  ],
+  war_room: [
+    {
+      id: 'war_left_desk',
+      label: 'Recon Monitors',
+      xPct: 37.0,
+      yPct: 78.5,
+      corridorXPct: 37.0,
+      corridorYPct: 78.5,
+      pose: 'desk',
+      facing: 'left',
+      taskTag: 'TRIANGULATING',
+    },
+    {
+      id: 'war_center_desk',
+      label: 'Tactical Holo-Table',
+      xPct: 50.0,
+      yPct: 83.5,
+      corridorXPct: 50.0,
+      corridorYPct: 83.5,
+      pose: 'work',
+      facing: 'left',
+      taskTag: 'EXECUTING',
+    },
+    {
+      id: 'war_right_desk',
+      label: 'Mainframe Terminal',
+      xPct: 63.5,
+      yPct: 77.0,
+      corridorXPct: 63.5,
+      corridorYPct: 77.0,
+      pose: 'laptop',
+      facing: 'right',
+      taskTag: 'DISPATCHING',
+    },
+  ],
+  server_vault: [
+    {
+      id: 'vault_laptop',
+      label: 'Rack Terminal',
+      xPct: 39.5,
+      yPct: 67.5,
+      corridorXPct: 39.5,
+      corridorYPct: 67.5,
+      pose: 'laptop',
+      facing: 'left',
+      taskTag: 'COMPILING',
+    },
+    {
+      id: 'vault_core_rack',
+      label: 'Cryo Core Column',
+      xPct: 50.0,
+      yPct: 81.5,
+      corridorXPct: 50.0,
+      corridorYPct: 81.5,
+      pose: 'work',
+      facing: 'right',
+      taskTag: 'HACKING',
+    },
+    {
+      id: 'vault_breakers',
+      label: 'Power Relays',
+      xPct: 38.5,
+      yPct: 78.5,
+      corridorXPct: 38.5,
+      corridorYPct: 78.5,
+      pose: 'stand',
+      facing: 'left',
+      taskTag: 'MONITORING',
+    },
+  ],
+  armory: [
+    {
+      id: 'armory_gear_rack',
+      label: 'Ballistic Rack',
+      xPct: 37.5,
+      yPct: 78.5,
+      corridorXPct: 37.5,
+      corridorYPct: 78.5,
+      pose: 'stand',
+      facing: 'left',
+      taskTag: 'GEAR CHECK',
+    },
+    {
+      id: 'armory_workbench',
+      label: 'Vault Blast Door',
+      xPct: 44.0,
+      yPct: 66.0,
+      corridorXPct: 44.0,
+      corridorYPct: 66.0,
+      pose: 'work',
+      facing: 'left',
+      taskTag: 'CALIBRATING',
+    },
+    {
+      id: 'armory_drone_bay',
+      label: 'Calibration Rig',
+      xPct: 61.0,
+      yPct: 80.0,
+      corridorXPct: 61.0,
+      corridorYPct: 80.0,
+      pose: 'laptop',
+      facing: 'right',
+      taskTag: 'SURVEILLANCE',
+    },
+  ],
+  briefing_lounge: [
+    {
+      id: 'lounge_coffee_bar',
+      label: 'Espresso Station',
+      xPct: 63.5,
+      yPct: 78.0,
+      corridorXPct: 63.5,
+      corridorYPct: 78.0,
+      pose: 'stand',
+      facing: 'right',
+      taskTag: 'COFFEE BREAK',
+    },
+    {
+      id: 'lounge_holo_table',
+      label: 'Comms & Map Desk',
+      xPct: 36.5,
+      yPct: 77.0,
+      corridorXPct: 36.5,
+      corridorYPct: 77.0,
+      pose: 'desk',
+      facing: 'left',
+      taskTag: 'SCHEDULING',
+    },
+    {
+      id: 'lounge_sofa',
+      label: 'Chesterfield Sofa',
+      xPct: 48.0,
+      yPct: 85.0,
+      corridorXPct: 48.0,
+      corridorYPct: 85.0,
+      pose: 'stand',
+      facing: 'left',
+      taskTag: 'RESTING',
+    },
+  ],
+  library: [
+    {
+      id: 'lib_front_desk',
+      label: 'Check-in Desk',
+      xPct: 50.0,
+      yPct: 81.5,
+      corridorXPct: 50.0,
+      corridorYPct: 81.5,
+      pose: 'desk',
+      facing: 'left',
+      taskTag: 'INDEXING',
+    },
+    {
+      id: 'lib_card_catalog',
+      label: 'West Microfilm Lectern',
+      xPct: 37.0,
+      yPct: 77.5,
+      corridorXPct: 37.0,
+      corridorYPct: 77.5,
+      pose: 'laptop',
+      facing: 'left',
+      taskTag: 'CATALOGING',
+    },
+    {
+      id: 'lib_deep_stacks',
+      label: 'Deep Stacks Shelves',
+      xPct: 64.0,
+      yPct: 76.5,
+      corridorXPct: 64.0,
+      corridorYPct: 76.5,
+      pose: 'stand',
+      facing: 'right',
+      taskTag: 'DECRYPTING',
+    },
+  ],
+  archive_basement: [
+    {
+      id: 'basement_microfiche',
+      label: 'Microfiche Workbench',
+      xPct: 38.0,
+      yPct: 78.0,
+      corridorXPct: 38.0,
+      corridorYPct: 78.0,
+      pose: 'desk',
+      facing: 'left',
+      taskTag: 'COLD ARCHIVE',
+    },
+    {
+      id: 'basement_omega_safe',
+      label: 'Omega Vault Door',
+      xPct: 46.0,
+      yPct: 65.0,
+      corridorXPct: 46.0,
+      corridorYPct: 65.0,
+      pose: 'work',
+      facing: 'left',
+      taskTag: 'UNSEALING',
+    },
+    {
+      id: 'basement_pneumatic',
+      label: 'Cold Storage Crates',
+      xPct: 59.0,
+      yPct: 80.0,
+      corridorXPct: 59.0,
+      corridorYPct: 80.0,
+      pose: 'stand',
+      facing: 'right',
+      taskTag: 'ROUTING',
+    },
+  ],
+};
+
+export interface RoomMetadataDef {
+  id: RoomId;
+  spyTitle: string;
+  monsterTitle: string;
+  vikingTitle: string;
+  shortBadge: string;
+  sectorCode: string;
+  wingLabel: 'UPPER DECK' | 'LOWER DECK';
+  gridCol: number; // 0..3
+  gridRow: number; // 0..1
+  neighbors: RoomId[];
+  defaultAgentIndex: number;
+  idleTag: string;
+  activeTag: string;
+  defaultBriefing: string;
+  cleanBackdropUrl: string;
+  backdropFilter: string;
+  objectPosition?: string;
+  doorX: number;
+  doorY: number;
+}
+
+export const ROOM_METADATA: Record<RoomId, RoomMetadataDef> = {
+  comms_tower: {
+    id: 'comms_tower',
+    spyTitle: 'Spy Safehouse · Comms Tower [W-01]',
+    monsterTitle: 'Monster Lab · Radio Tower [W-01]',
+    vikingTitle: 'Viking Longhall · Signal Beacon [W-01]',
+    shortBadge: 'COMMS TOWER',
+    sectorCode: 'SEC-A1',
+    wingLabel: 'UPPER DECK',
+    gridCol: 0,
+    gridRow: 0,
+    neighbors: ['war_room', 'briefing_lounge'],
+    defaultAgentIndex: 1,
+    idleTag: 'SIGNAL WATCH',
+    activeTag: 'DISPATCHING',
+    defaultBriefing:
+      'Comms Tower dish array locked onto orbital relay. Shortwave and Slack frequencies clear.',
+    cleanBackdropUrl: '/assets/rooms/comms_tower_clean.png',
+    backdropFilter: 'none',
+    objectPosition: 'center center',
+    doorX: 68.0,
+    doorY: 73.0,
+  },
+  war_room: {
+    id: 'war_room',
+    spyTitle: 'Spy Safehouse · War Room [C-01]',
+    monsterTitle: 'Monster Lab · Command Deck [C-01]',
+    vikingTitle: 'Viking Longhall · War Table [C-01]',
+    shortBadge: 'WAR ROOM',
+    sectorCode: 'SEC-B1',
+    wingLabel: 'UPPER DECK',
+    gridCol: 1,
+    gridRow: 0,
+    neighbors: ['comms_tower', 'server_vault', 'library'],
+    defaultAgentIndex: 0,
+    idleTag: 'IDLE',
+    activeTag: 'EXECUTING',
+    defaultBriefing:
+      'Target acquired. Scanning web nodes for flight data... [2/3] Parsing JSON.',
+    cleanBackdropUrl: '/assets/rooms/war_room_clean.png',
+    backdropFilter: 'none',
+    objectPosition: 'center center',
+    doorX: 48.0,
+    doorY: 64.0,
+  },
+  server_vault: {
+    id: 'server_vault',
+    spyTitle: 'Spy Safehouse · Server Vault [E-01]',
+    monsterTitle: 'Monster Lab · Mainframe Vault [E-01]',
+    vikingTitle: 'Viking Longhall · Rune Vault [E-01]',
+    shortBadge: 'SERVER VAULT',
+    sectorCode: 'SEC-C1',
+    wingLabel: 'UPPER DECK',
+    gridCol: 2,
+    gridRow: 0,
+    neighbors: ['war_room', 'armory', 'archive_basement'],
+    defaultAgentIndex: 0,
+    idleTag: 'MONITORING',
+    activeTag: 'COMPILING',
+    defaultBriefing:
+      'Cryo server vault online. Blade racks responding with sub-millisecond response latency.',
+    cleanBackdropUrl: '/assets/rooms/server_vault_clean.png',
+    backdropFilter: 'none',
+    objectPosition: 'center center',
+    doorX: 52.0,
+    doorY: 63.0,
+  },
+  armory: {
+    id: 'armory',
+    spyTitle: 'Spy Safehouse · Tactical Armory [W-02]',
+    monsterTitle: 'Monster Lab · Containment Vault [W-02]',
+    vikingTitle: 'Viking Longhall · Shield Armory [W-02]',
+    shortBadge: 'ARMORY',
+    sectorCode: 'SEC-D1',
+    wingLabel: 'UPPER DECK',
+    gridCol: 3,
+    gridRow: 0,
+    neighbors: ['server_vault', 'archive_basement'],
+    defaultAgentIndex: 1,
+    idleTag: 'GEAR CHECK',
+    activeTag: 'CALIBRATING',
+    defaultBriefing:
+      'Tactical Armory online. Ballistic vests, field drones, and bypass rigs calibrated.',
+    cleanBackdropUrl: '/assets/rooms/armory_clean.png',
+    backdropFilter: 'none',
+    objectPosition: 'center center',
+    doorX: 43.0,
+    doorY: 67.0,
+  },
+  briefing_lounge: {
+    id: 'briefing_lounge',
+    spyTitle: 'Spy Safehouse · Briefing Lounge [W-02]',
+    monsterTitle: 'Monster Lab · Trainer Lounge [W-02]',
+    vikingTitle: 'Viking Longhall · Mead Hearth [W-02]',
+    shortBadge: 'LOUNGE',
+    sectorCode: 'SEC-A2',
+    wingLabel: 'LOWER DECK',
+    gridCol: 0,
+    gridRow: 1,
+    neighbors: ['comms_tower', 'library'],
+    defaultAgentIndex: 0,
+    idleTag: 'COFFEE BREAK',
+    activeTag: 'SCHEDULING',
+    defaultBriefing:
+      'Briefing Lounge quiet. Espresso machine steaming; operatives reviewing calendar schedules.',
+    cleanBackdropUrl: '/assets/rooms/briefing_lounge_clean.png',
+    backdropFilter: 'none',
+    objectPosition: 'center center',
+    doorX: 42.0,
+    doorY: 66.0,
+  },
+  library: {
+    id: 'library',
+    spyTitle: 'Spy Safehouse · Intel Library [C-02]',
+    monsterTitle: 'Monster Lab · Archive Library [C-02]',
+    vikingTitle: 'Viking Longhall · Saga Library [C-02]',
+    shortBadge: 'LIBRARY',
+    sectorCode: 'SEC-B2',
+    wingLabel: 'LOWER DECK',
+    gridCol: 1,
+    gridRow: 1,
+    neighbors: ['briefing_lounge', 'war_room', 'archive_basement'],
+    defaultAgentIndex: 2,
+    idleTag: 'IDLE',
+    activeTag: 'DECRYPTING',
+    defaultBriefing:
+      'Front desk duty. All systems nominal. Monitoring library archives.',
+    cleanBackdropUrl: '/assets/rooms/library_clean.png',
+    backdropFilter: 'none',
+    objectPosition: 'center center',
+    doorX: 48.0,
+    doorY: 84.0,
+  },
+  archive_basement: {
+    id: 'archive_basement',
+    spyTitle: 'Spy Safehouse · Archive Basement [E-03]',
+    monsterTitle: 'Monster Lab · Deep Laboratory [E-03]',
+    vikingTitle: 'Viking Longhall · Runic Crypt [E-03]',
+    shortBadge: 'BASEMENT',
+    sectorCode: 'SEC-C2',
+    wingLabel: 'LOWER DECK',
+    gridCol: 2,
+    gridRow: 1,
+    neighbors: ['library', 'server_vault', 'armory'],
+    defaultAgentIndex: 2,
+    idleTag: 'COLD STORAGE',
+    activeTag: 'UNSEALING',
+    defaultBriefing:
+      'Sub-level Archive Basement sealed at Omega clearance. Microfiche & cold dossiers verified.',
+    cleanBackdropUrl: '/assets/rooms/archive_basement_clean.png',
+    backdropFilter: 'none',
+    objectPosition: 'center center',
+    doorX: 46.0,
+    doorY: 64.0,
+  },
+};
+
+export interface ObstacleBox {
+  id: string;
+  label: string;
+  xMin: number;
+  xMax: number;
+  yMin: number;
+  yMax: number;
+  isCentralStructure?: boolean;
+}
+
+export const ROOM_OBSTACLES: Record<RoomId, ObstacleBox[]> = {
+  comms_tower: [
+    { id: 'obs_comms_west_desk', label: 'Dish Array Console', xMin: 24.0, xMax: 35.5, yMin: 66.0, yMax: 78.0 },
+    { id: 'obs_comms_transceiver', label: 'Central Signal Transceiver & Terminal', xMin: 43.0, xMax: 57.0, yMin: 67.0, yMax: 79.0, isCentralStructure: true },
+  ],
+  war_room: [
+    { id: 'obs_war_holo_table', label: 'Central Holo-Globe Command Table', xMin: 43.0, xMax: 57.0, yMin: 70.0, yMax: 79.5, isCentralStructure: true },
+    { id: 'obs_war_west_desk', label: 'West Recon Desk', xMin: 24.0, xMax: 33.5, yMin: 68.0, yMax: 79.0 },
+    { id: 'obs_war_east_rack', label: 'East Mainframe Rack', xMin: 66.5, xMax: 76.0, yMin: 68.0, yMax: 79.0 },
+  ],
+  server_vault: [
+    { id: 'obs_vault_cryo_core', label: 'Central Cryo Core Column & Server Racks', xMin: 44.0, xMax: 56.0, yMin: 67.0, yMax: 77.0, isCentralStructure: true },
+    { id: 'obs_vault_west_breakers', label: 'West Power Relays', xMin: 24.0, xMax: 35.5, yMin: 66.0, yMax: 78.0 },
+    { id: 'obs_vault_east_blades', label: 'East Server Blades', xMin: 64.0, xMax: 76.0, yMin: 66.0, yMax: 78.0 },
+  ],
+  armory: [
+    { id: 'obs_arm_central_rack', label: 'Central Weapon Console & Inspection Bench', xMin: 43.0, xMax: 57.0, yMin: 69.0, yMax: 78.5, isCentralStructure: true },
+    { id: 'obs_arm_west_lockers', label: 'West Ballistic Lockers', xMin: 24.0, xMax: 34.5, yMin: 68.0, yMax: 80.0 },
+    { id: 'obs_arm_east_rig', label: 'East Calibration Rig & Crates', xMin: 64.0, xMax: 76.0, yMin: 70.0, yMax: 81.0 },
+  ],
+  briefing_lounge: [
+    { id: 'obs_lng_sofa', label: 'Central Chesterfield Sofa & Coffee Table', xMin: 42.0, xMax: 58.0, yMin: 71.0, yMax: 81.5, isCentralStructure: true },
+    { id: 'obs_lng_west_desk', label: 'West Comms & Map Desk', xMin: 24.0, xMax: 33.5, yMin: 68.0, yMax: 79.0 },
+    { id: 'obs_lng_east_bar', label: 'East Espresso Bar', xMin: 66.0, xMax: 76.0, yMin: 68.0, yMax: 79.0 },
+  ],
+  library: [
+    { id: 'obs_lib_archivist_desk', label: 'Central Archivist Desk & Reading Table', xMin: 43.0, xMax: 57.0, yMin: 68.0, yMax: 77.5, isCentralStructure: true },
+    { id: 'obs_lib_west_stacks', label: 'West Book Stacks', xMin: 24.0, xMax: 35.0, yMin: 65.0, yMax: 77.0 },
+    { id: 'obs_lib_east_stacks', label: 'East Book Stacks', xMin: 65.5, xMax: 76.0, yMin: 65.0, yMax: 77.0 },
+  ],
+  archive_basement: [
+    { id: 'obs_base_central_generator', label: 'Central Power Generator & Sub-Level Core', xMin: 43.0, xMax: 57.0, yMin: 68.0, yMax: 77.5, isCentralStructure: true },
+    { id: 'obs_base_west_bench', label: 'Microfiche Workbench', xMin: 24.0, xMax: 35.0, yMin: 68.0, yMax: 79.0 },
+    { id: 'obs_base_east_crates', label: 'Cold Storage Crates', xMin: 62.0, xMax: 76.0, yMin: 70.0, yMax: 82.0 },
+  ],
+};

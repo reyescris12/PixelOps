@@ -116,4 +116,36 @@ class BackgroundWorkerEngine {
   }
 }
 
+/**
+ * Parses raw LLM text for structured action tags:
+ * [AGENT_ACTION: <tool_name>]
+ * { ...params }
+ * [/AGENT_ACTION]
+ */
+export function parseAgentActionBlock(responseText: string): { toolName: string; toolArgs: Record<string, any> } | null {
+  if (!responseText) return null;
+  const actionMatch = responseText.match(/\[AGENT_ACTION:\s*(.*?)\]([\s\S]*?)\[\/AGENT_ACTION\]/i);
+  if (actionMatch) {
+    const toolName = actionMatch[1].trim();
+    let toolArgs: Record<string, any> = {};
+    try {
+      toolArgs = JSON.parse(actionMatch[2].trim());
+    } catch {
+      toolArgs = { input: actionMatch[2].trim() };
+    }
+    return { toolName, toolArgs };
+  }
+  return null;
+}
+
+/**
+ * Invokes a local tool service via dynamic handler dispatch
+ */
+export async function executeAgentTool(toolName: string, toolArgs: Record<string, any>) {
+  if (typeof window !== 'undefined' && (window as any).__executeToolHandler) {
+    return await (window as any).__executeToolHandler(toolName, toolArgs);
+  }
+  return { status: 'executed', toolName, toolArgs };
+}
+
 export const backgroundWorkerEngine = new BackgroundWorkerEngine();

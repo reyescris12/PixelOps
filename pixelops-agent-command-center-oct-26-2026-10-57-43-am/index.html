@@ -19341,6 +19341,70 @@ async function pingGeminiConnection(themeId = 'green') {
         };
     }
 }
+async function parseAndExecuteAgentActionTags(rawText, params) {
+    if (!rawText) return null;
+    const actionMatch = rawText.match(/\[AGENT_ACTION:\s*([a-zA-Z0-9_\-]+)\]([\s\S]*?)\[\/AGENT_ACTION\]/i);
+    if (!actionMatch) return null;
+    const toolName = actionMatch[1].trim();
+    const rawArgs = actionMatch[2].trim();
+    let toolArgs = {};
+    try {
+        toolArgs = JSON.parse(rawArgs);
+    } catch  {
+        toolArgs = {
+            query: rawArgs,
+            input: rawArgs,
+            code: rawArgs
+        };
+    }
+    const primaryDest = resolveToolWorkflowDestination(toolName);
+    params.onFunctionCallTriggered?.({
+        toolName,
+        args: toolArgs,
+        targetRoom: primaryDest.targetRoom,
+        targetStationId: primaryDest.targetStationId,
+        taskTag: primaryDest.taskTag
+    });
+    const handlerOut = await executeFunctionCallHandler({
+        id: `action-tag-${Date.now()}`,
+        name: toolName,
+        args: toolArgs
+    });
+    const cleanDialogue = rawText.replace(/\[AGENT_ACTION:[\s\S]*?\[\/AGENT_ACTION\]/gi, '').replace(/\[AGENT_STATUS:\s*(COMPLETE|WORKING)\]/gi, '').trim();
+    const finalDialogue = cleanDialogue ? `${cleanDialogue}\n\n[ACTION EXECUTED] ${toolName}: ${handlerOut.executedToolMeta.resultSummary}` : `[ACTION EXECUTED: ${toolName.toUpperCase()}]\nTelemetry: ${handlerOut.executedToolMeta.resultSummary}`;
+    return {
+        id: `card-${Date.now()}`,
+        prompt: params.prompt || `Direct Action Execution`,
+        dialogue: finalDialogue,
+        cardTitle: `${toolName.replace(/_/g, ' ').toUpperCase()} EXECUTED`,
+        actionCategory: 'Live Telemetry',
+        steps: [
+            {
+                label: 'Action Tag Detected',
+                detail: `Parsed [AGENT_ACTION: ${toolName}]`,
+                status: 'completed'
+            },
+            {
+                label: 'Tool Dispatched',
+                detail: handlerOut.executedToolMeta.resultSummary || 'Executed client-side',
+                status: 'verified'
+            },
+            {
+                label: 'Ledger Synced',
+                detail: 'Recorded to local mission ledger',
+                status: 'completed'
+            }
+        ],
+        toolCalls: [
+            handlerOut.executedToolMeta
+        ],
+        tokenEstimate: Math.max(64, Math.round(rawText.length / 4)),
+        agentName: params.activeAgentName,
+        themeId: params.themeId,
+        timestamp: new Date().toISOString(),
+        hasAttachment: Boolean(params.attachment)
+    };
+}
 async function executeAgentDirective(params) {
     return withGeminiErrorBoundary(async ()=>{
         const upperPrompt = (params.prompt || '').trim().toUpperCase();
@@ -19399,11 +19463,25 @@ async function executeAgentDirective(params) {
         const declaredToolNames = activeDeclarations.map((d)=>d.name).join(', ');
         const memoryContextStr = Array.isArray(params.agentMemoryLog) && params.agentMemoryLog.length > 0 ? `\n\nYour Individual Memory Log (Recent tasks completed):\n` + params.agentMemoryLog.slice(0, 5).map((m)=>`- [${m.timestamp}] Directive: "${m.prompt}" -> Summary: ${m.summary}`).join('\n') : '';
         const personaInstruction = THEME_PERSONA_INSTRUCTIONS[params.themeId] || THEME_PERSONA_INSTRUCTIONS.spy;
-        const structuredPersona = `You are an autonomous AI agent operating inside the PixelOps safehouse. Your identity is ${params.activeAgentName} and your specialized role is ${params.activeAgentRole}.
+        const structuredPersona = `You are an autonomous tactical agent in PixelOps. Your identity is ${params.activeAgentName} and your specialized role is ${params.activeAgentRole}.
 You have direct access to local execution tools: ${declaredToolNames || 'local execution engine'}.
 Think step-by-step, execute tasks logically, call tools whenever you need live data or local operations, and return structured results.`;
+        const actionProtocolDirective = `CRITICAL OPERATIONAL DIRECTIVE:
+You are an autonomous tactical operative in PixelOps. You do NOT just generate conversational text—you execute tasks.
+When given an operational task, you MUST either invoke the appropriate function call OR format your operational action using a strict execution tag before any conversational commentary, like this:
+
+[AGENT_ACTION: <tool_name>]
+{
+  "param1": "value"
+}
+[/AGENT_ACTION]
+
+Available tools: ${declaredToolNames || 'weather_lookup, live_web_search, code_sandbox_eval, fs_storage_manager, memory_vector_lookup'}.
+If no tool is required, conclude your operational status using:
+[AGENT_STATUS: COMPLETE] or [AGENT_STATUS: WORKING]`;
         const systemInstruction = [
             structuredPersona,
+            actionProtocolDirective,
             personaInstruction,
             params.agentSystemPrompt,
             memoryContextStr,
@@ -19547,6 +19625,10 @@ Think step-by-step, execute tasks logically, call tools whenever you need live d
                             }
                         }
                         const reply = choice?.content || 'Directive processed.';
+                        const actionCard = await parseAndExecuteAgentActionTags(reply, params);
+                        if (actionCard) {
+                            return actionCard;
+                        }
                         return {
                             id: `card-${Date.now()}`,
                             prompt: params.prompt,
@@ -19617,6 +19699,10 @@ Think step-by-step, execute tasks logically, call tools whenever you need live d
                     if (res && res.ok) {
                         const data = await res.json();
                         const textContent = (data.content || []).filter((c)=>c.type === 'text').map((c)=>c.text).join('\n');
+                        const actionCard = await parseAndExecuteAgentActionTags(textContent, params);
+                        if (actionCard) {
+                            return actionCard;
+                        }
                         return {
                             id: `card-${Date.now()}`,
                             prompt: params.prompt,
@@ -19684,6 +19770,10 @@ Think step-by-step, execute tasks logically, call tools whenever you need live d
                     if (res && res.ok) {
                         const data = await res.json();
                         const reply = data.message?.content || 'Directive processed.';
+                        const actionCard = await parseAndExecuteAgentActionTags(reply, params);
+                        if (actionCard) {
+                            return actionCard;
+                        }
                         return {
                             id: `card-${Date.now()}`,
                             prompt: params.prompt,
@@ -19913,6 +20003,10 @@ Think step-by-step, execute tasks logically, call tools whenever you need live d
                 };
             }
             const textContent = parts.map((p)=>p.text || '').join('\n').trim();
+            const actionCard = await parseAndExecuteAgentActionTags(textContent, params);
+            if (actionCard) {
+                return actionCard;
+            }
             let parsedDirect = null;
             try {
                 parsedDirect = JSON.parse(textContent);
@@ -20229,6 +20323,7 @@ exports.withGeminiErrorBoundary = withGeminiErrorBoundary;
 exports.generateLocalHeuristicCard = generateLocalHeuristicCard;
 exports.checkServerStatus = checkServerStatus;
 exports.pingGeminiConnection = pingGeminiConnection;
+exports.parseAndExecuteAgentActionTags = parseAndExecuteAgentActionTags;
 exports.executeAgentDirective = executeAgentDirective;
 exports.executeRoundtableMeeting = executeRoundtableMeeting;
 exports.GEMINI_TOOL_DECLARATIONS = GEMINI_TOOL_DECLARATIONS;
@@ -22304,8 +22399,40 @@ class BackgroundWorkerEngine {
         this.isRunning = false;
     }
 }
+function parseAgentActionBlock(responseText) {
+    if (!responseText) return null;
+    const actionMatch = responseText.match(/\[AGENT_ACTION:\s*(.*?)\]([\s\S]*?)\[\/AGENT_ACTION\]/i);
+    if (actionMatch) {
+        const toolName = actionMatch[1].trim();
+        let toolArgs = {};
+        try {
+            toolArgs = JSON.parse(actionMatch[2].trim());
+        } catch  {
+            toolArgs = {
+                input: actionMatch[2].trim()
+            };
+        }
+        return {
+            toolName,
+            toolArgs
+        };
+    }
+    return null;
+}
+async function executeAgentTool(toolName, toolArgs) {
+    if (typeof window !== 'undefined' && window.__executeToolHandler) {
+        return await window.__executeToolHandler(toolName, toolArgs);
+    }
+    return {
+        status: 'executed',
+        toolName,
+        toolArgs
+    };
+}
 const backgroundWorkerEngine = new BackgroundWorkerEngine();
 
+exports.executeAgentTool = executeAgentTool;
+exports.parseAgentActionBlock = parseAgentActionBlock;
 exports.backgroundWorkerEngine = backgroundWorkerEngine;
 });
 window.__bootApp();

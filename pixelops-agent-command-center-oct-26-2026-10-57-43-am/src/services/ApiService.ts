@@ -2489,6 +2489,84 @@ export async function pingGeminiConnection(
  *   (`executeFunctionCallHandler`), and routes live `functionResponse` data to Turn 2 with structured schema.
  * - If no API key is set or offline/rate-limited, seamlessly runs via `generateLocalHeuristicCard`.
  */
+/**
+ * Parses structured [AGENT_ACTION: tool_name] ... [/AGENT_ACTION] blocks from LLM responses
+ * and executes the tool client-side, returning an AgentExecutionCard if an action was found.
+ */
+export async function parseAndExecuteAgentActionTags(
+  rawText: string,
+  params: {
+    prompt: string;
+    themeId: ThemeId;
+    activeAgentName: string;
+    activeAgentRole: string;
+    attachment?: any;
+    onFunctionCallTriggered?: (info: {
+      toolName: string;
+      args: Record<string, any>;
+      targetRoom: RoomId;
+      targetStationId: string;
+      taskTag: string;
+    }) => void;
+  }
+): Promise<AgentExecutionCard | null> {
+  if (!rawText) return null;
+  const actionMatch = rawText.match(/\[AGENT_ACTION:\s*([a-zA-Z0-9_\-]+)\]([\s\S]*?)\[\/AGENT_ACTION\]/i);
+  if (!actionMatch) return null;
+
+  const toolName = actionMatch[1].trim();
+  const rawArgs = actionMatch[2].trim();
+  let toolArgs: Record<string, any> = {};
+  try {
+    toolArgs = JSON.parse(rawArgs);
+  } catch {
+    toolArgs = { query: rawArgs, input: rawArgs, code: rawArgs };
+  }
+
+  const primaryDest = resolveToolWorkflowDestination(toolName);
+  params.onFunctionCallTriggered?.({
+    toolName,
+    args: toolArgs,
+    targetRoom: primaryDest.targetRoom,
+    targetStationId: primaryDest.targetStationId,
+    taskTag: primaryDest.taskTag,
+  });
+
+  const handlerOut = await executeFunctionCallHandler({
+    id: `action-tag-${Date.now()}`,
+    name: toolName,
+    args: toolArgs,
+  });
+
+  const cleanDialogue = rawText
+    .replace(/\[AGENT_ACTION:[\s\S]*?\[\/AGENT_ACTION\]/gi, '')
+    .replace(/\[AGENT_STATUS:\s*(COMPLETE|WORKING)\]/gi, '')
+    .trim();
+
+  const finalDialogue = cleanDialogue
+    ? `${cleanDialogue}\n\n[ACTION EXECUTED] ${toolName}: ${handlerOut.executedToolMeta.resultSummary}`
+    : `[ACTION EXECUTED: ${toolName.toUpperCase()}]\nTelemetry: ${handlerOut.executedToolMeta.resultSummary}`;
+
+  return {
+    id: `card-${Date.now()}`,
+    prompt: params.prompt || `Direct Action Execution`,
+    dialogue: finalDialogue,
+    cardTitle: `${toolName.replace(/_/g, ' ').toUpperCase()} EXECUTED`,
+    actionCategory: 'Live Telemetry',
+    steps: [
+      { label: 'Action Tag Detected', detail: `Parsed [AGENT_ACTION: ${toolName}]`, status: 'completed' },
+      { label: 'Tool Dispatched', detail: handlerOut.executedToolMeta.resultSummary || 'Executed client-side', status: 'verified' },
+      { label: 'Ledger Synced', detail: 'Recorded to local mission ledger', status: 'completed' },
+    ],
+    toolCalls: [handlerOut.executedToolMeta],
+    tokenEstimate: Math.max(64, Math.round(rawText.length / 4)),
+    agentName: params.activeAgentName,
+    themeId: params.themeId,
+    timestamp: new Date().toISOString(),
+    hasAttachment: Boolean(params.attachment),
+  };
+}
+
 export async function executeAgentDirective(params: {
   prompt: string;
   themeId: ThemeId;
@@ -2585,13 +2663,28 @@ export async function executeAgentDirective(params: {
       const personaInstruction =
         THEME_PERSONA_INSTRUCTIONS[params.themeId] || THEME_PERSONA_INSTRUCTIONS.spy;
 
-      // Structured System Persona Injection
-      const structuredPersona = `You are an autonomous AI agent operating inside the PixelOps safehouse. Your identity is ${params.activeAgentName} and your specialized role is ${params.activeAgentRole}.
+      // Structured System Persona & Action Protocol Injection
+      const structuredPersona = `You are an autonomous tactical agent in PixelOps. Your identity is ${params.activeAgentName} and your specialized role is ${params.activeAgentRole}.
 You have direct access to local execution tools: ${declaredToolNames || 'local execution engine'}.
 Think step-by-step, execute tasks logically, call tools whenever you need live data or local operations, and return structured results.`;
 
+      const actionProtocolDirective = `CRITICAL OPERATIONAL DIRECTIVE:
+You are an autonomous tactical operative in PixelOps. You do NOT just generate conversational text—you execute tasks.
+When given an operational task, you MUST either invoke the appropriate function call OR format your operational action using a strict execution tag before any conversational commentary, like this:
+
+[AGENT_ACTION: <tool_name>]
+{
+  "param1": "value"
+}
+[/AGENT_ACTION]
+
+Available tools: ${declaredToolNames || 'weather_lookup, live_web_search, code_sandbox_eval, fs_storage_manager, memory_vector_lookup'}.
+If no tool is required, conclude your operational status using:
+[AGENT_STATUS: COMPLETE] or [AGENT_STATUS: WORKING]`;
+
       const systemInstruction = [
         structuredPersona,
+        actionProtocolDirective,
         personaInstruction,
         params.agentSystemPrompt,
         memoryContextStr,
@@ -2735,6 +2828,10 @@ Think step-by-step, execute tasks logically, call tools whenever you need live d
               }
 
               const reply = choice?.content || 'Directive processed.';
+              const actionCard = await parseAndExecuteAgentActionTags(reply, params);
+              if (actionCard) {
+                return actionCard;
+              }
               return {
                 id: `card-${Date.now()}`,
                 prompt: params.prompt,
@@ -2797,6 +2894,10 @@ Think step-by-step, execute tasks logically, call tools whenever you need live d
                 .filter((c: any) => c.type === 'text')
                 .map((c: any) => c.text)
                 .join('\n');
+              const actionCard = await parseAndExecuteAgentActionTags(textContent, params);
+              if (actionCard) {
+                return actionCard;
+              }
               return {
                 id: `card-${Date.now()}`,
                 prompt: params.prompt,
@@ -2849,6 +2950,10 @@ Think step-by-step, execute tasks logically, call tools whenever you need live d
             if (res && res.ok) {
               const data = await res.json();
               const reply = data.message?.content || 'Directive processed.';
+              const actionCard = await parseAndExecuteAgentActionTags(reply, params);
+              if (actionCard) {
+                return actionCard;
+              }
               return {
                 id: `card-${Date.now()}`,
                 prompt: params.prompt,
@@ -3072,8 +3177,12 @@ Think step-by-step, execute tasks logically, call tools whenever you need live d
           };
         }
 
-        // Direct Turn without Function Calling
+        // Direct Turn without Function Calling: First check for structured [AGENT_ACTION: tool_name] tag
         const textContent = parts.map((p: any) => p.text || '').join('\n').trim();
+        const actionCard = await parseAndExecuteAgentActionTags(textContent, params);
+        if (actionCard) {
+          return actionCard;
+        }
         let parsedDirect: any = null;
         try {
           parsedDirect = JSON.parse(textContent);

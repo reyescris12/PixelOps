@@ -2826,7 +2826,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
     >
       {/* Top 16-Bit Tactical Sector Bezel Strip (Integrated above the canvas, never floating over room art) */}
       <div
-        className="bg-[#0c0f16] border-b px-2.5 py-1.5 flex flex-wrap items-center justify-between gap-2 font-mono-tabular"
+        className="bg-[#0c0f16] border-b px-2.5 py-1.5 flex flex-nowrap items-center justify-between gap-2 font-mono-tabular shrink-0 overflow-x-auto no-scrollbar w-full"
         style={{ borderColor: 'var(--theme-border-color)' }}
       >
         {/* Left: Radar, 7-Room Zoom, and Active Sector Title */}
@@ -2942,7 +2942,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
-        className="relative w-full aspect-[16/9] bg-[#080a0f] overflow-hidden mx-auto cursor-grab active:cursor-grabbing"
+        className="relative w-full aspect-[16/9] max-h-[50dvh] sm:max-h-none bg-[#080a0f] overflow-hidden mx-auto cursor-grab active:cursor-grabbing touch-pan-y"
         style={{
           boxShadow: 'inset 0 0 28px var(--theme-glow-soft)',
         }}

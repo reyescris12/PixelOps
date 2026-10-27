@@ -339,7 +339,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <div className="p-2.5 rounded-lg bg-[#12151f] border border-slate-800/90 flex flex-col gap-1">
             <div className="flex items-center justify-between text-xs font-mono-tabular">
               <span className="text-slate-200 font-semibold">
-                {ROOM_METADATA[currentRoom].shortBadge}: {activeProfile.title}
+                {ROOM_METADATA[currentRoom]?.shortBadge || String(currentRoom).toUpperCase()}: {activeProfile.title}
               </span>
               <span className="text-[10px] text-emerald-400">
                 {activeProfile.waveformLabel}
@@ -393,7 +393,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   }`}
                   title={prof.description}
                 >
-                  🔊 {ROOM_METADATA[rId].shortBadge} ({prof.shortTag})
+                  🔊 {ROOM_METADATA[rId]?.shortBadge || String(rId).toUpperCase()} ({prof.shortTag})
                 </button>
               );
             })}

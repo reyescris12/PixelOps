@@ -87,9 +87,9 @@ class BackgroundWorkerEngine {
     this.isRunning = true;
 
     // Register Service Worker for offline PWA & background sync support
-    if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+    if (typeof window !== 'undefined' && 'serviceWorker' in navigator && window.location.protocol.startsWith('http')) {
       navigator.serviceWorker
-        .register('/sw.js')
+        .register('./sw.js')
         .then((reg) => {
           console.log('PixelOps ServiceWorker registered with scope:', reg.scope);
         })

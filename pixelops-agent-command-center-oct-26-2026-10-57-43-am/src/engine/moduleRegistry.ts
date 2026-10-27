@@ -12,6 +12,71 @@ export interface SkillModuleDef {
 
 export const AVAILABLE_SKILLS: SkillModuleDef[] = [
   {
+    id: 'web_search_plugin',
+    name: 'Web Search & Extraction',
+    shortCode: 'WEB_SEARCH',
+    category: 'research',
+    description:
+      'Enables live web queries, Wikipedia searches, and real-time documentation extraction.',
+    systemPromptModifier:
+      'OPERATIONAL CAPABILITY ACTIVE: [WEB_SEARCH]. Retrieve live factual knowledge and documentation nodes.',
+    providedTools: ['live_web_search'],
+    recommendedRoom: 'library',
+    iconName: 'Search',
+  },
+  {
+    id: 'code_sandbox_plugin',
+    name: 'Code Sandbox & JS Evaluator',
+    shortCode: 'CODE_SANDBOX',
+    category: 'code',
+    description:
+      'Allows local code drafting, testing, mathematical computation, and data processing in an isolated sandbox.',
+    systemPromptModifier:
+      'OPERATIONAL CAPABILITY ACTIVE: [CODE_SANDBOX]. Evaluate code expressions, format payloads, and test logic safely.',
+    providedTools: ['code_sandbox_eval'],
+    recommendedRoom: 'server_vault',
+    iconName: 'Cpu',
+  },
+  {
+    id: 'fs_storage_plugin',
+    name: 'File System & Storage Manager',
+    shortCode: 'FS_STORAGE',
+    category: 'data',
+    description:
+      'Handles reading, writing, and exporting markdown logs, JSON configs, and workspace files directly to IndexedDB or user downloads.',
+    systemPromptModifier:
+      'OPERATIONAL CAPABILITY ACTIVE: [FS_STORAGE]. Manage local file assets, save reports, and export markdown deliverables.',
+    providedTools: ['fs_storage_manager'],
+    recommendedRoom: 'archive_basement',
+    iconName: 'Database',
+  },
+  {
+    id: 'api_gateway_plugin',
+    name: 'API & Fetch Gateway',
+    shortCode: 'API_GATEWAY',
+    category: 'system',
+    description:
+      'A generalized client supporting BYOK execution for custom REST endpoints and webhooks.',
+    systemPromptModifier:
+      'OPERATIONAL CAPABILITY ACTIVE: [API_GATEWAY]. Dispatch direct client-side HTTP requests and webhooks with custom headers.',
+    providedTools: ['api_fetch_gateway'],
+    recommendedRoom: 'comms_tower',
+    iconName: 'Radar',
+  },
+  {
+    id: 'memory_lookup_plugin',
+    name: 'Memory & Vector Lookup',
+    shortCode: 'MEMORY_LOOKUP',
+    category: 'security',
+    description:
+      'Queries local historical logs, Dexie/IndexedDB immutable records, and saved agent notes.',
+    systemPromptModifier:
+      'OPERATIONAL CAPABILITY ACTIVE: [MEMORY_LOOKUP]. Cross-reference past operations and recall historical agent reflections.',
+    providedTools: ['memory_vector_lookup'],
+    recommendedRoom: 'server_vault',
+    iconName: 'Key',
+  },
+  {
     id: 'github_scraper',
     name: 'GitHub Repo Scraper',
     shortCode: 'GITHUB_SCRAPER',
@@ -109,24 +174,27 @@ const STATION_BINDINGS_STORAGE_KEY = 'pixelops_station_skill_bindings_v1';
 
 // Default initial bindings bridging rooms to capabilities
 const DEFAULT_ROOM_BINDINGS: Record<string, string[]> = {
-  comms_tower: ['browser_crawler'],
-  war_room: ['code_refactor'],
-  server_vault: ['terminal_shell'],
-  armory: ['terminal_shell'],
-  briefing_lounge: [],
-  library: ['deep_research'],
-  archive_basement: ['db_forensics'],
-  cyber_lab: ['github_scraper', 'code_refactor'],
-  quantum_vault: ['crypto_vault'],
-  stealth_hangar: ['browser_crawler'],
+  comms_tower: ['api_gateway_plugin', 'web_search_plugin'],
+  war_room: ['code_sandbox_plugin', 'api_gateway_plugin'],
+  server_vault: ['code_sandbox_plugin', 'memory_lookup_plugin'],
+  armory: ['code_sandbox_plugin'],
+  briefing_lounge: ['memory_lookup_plugin'],
+  library: ['web_search_plugin'],
+  archive_basement: ['fs_storage_plugin', 'memory_lookup_plugin'],
+  cyber_lab: ['code_sandbox_plugin', 'github_scraper'],
+  quantum_vault: ['memory_lookup_plugin', 'crypto_vault'],
+  stealth_hangar: ['api_gateway_plugin'],
 };
 
 const DEFAULT_STATION_BINDINGS: Record<string, string> = {
-  comms_cipher_rig: 'browser_crawler',
-  war_left_desk: 'code_refactor',
-  vault_laptop: 'terminal_shell',
-  lib_card_catalog: 'deep_research',
-  cyber_bench: 'code_refactor',
+  comms_cipher_rig: 'api_gateway_plugin',
+  war_left_desk: 'code_sandbox_plugin',
+  vault_laptop: 'memory_lookup_plugin',
+  vault_core_rack: 'code_sandbox_plugin',
+  lib_front_desk: 'web_search_plugin',
+  lib_card_catalog: 'web_search_plugin',
+  basement_omega_safe: 'fs_storage_plugin',
+  cyber_bench: 'code_sandbox_plugin',
   cyber_neural_pod: 'github_scraper',
 };
 

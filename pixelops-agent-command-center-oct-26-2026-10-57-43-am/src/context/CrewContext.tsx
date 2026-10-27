@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { useTheme } from './ThemeContext';
 import type { RoomId } from '../components/SpriteCanvas';
 
@@ -355,7 +355,7 @@ export const FUNCTIONAL_ROLE_PROFILES: Record<FunctionalCapabilityId, Functional
     defaultSpecialty: 'Full-Stack Architecture, TypeScript, Code Auditing & System Debugging',
     defaultSystemPrompt:
       'You are a premier autonomous Senior Software Engineer operating under the covert identity of a Code-Ops Specialist. Write clean, production-grade, battle-tested code. Audit codebases, debug runtime anomalies, structure resilient architectures, and provide exact, executable solutions with zero fluff.',
-    recommendedTools: ['github_create_issue', 'live_web_search', 'vault_query_intel'],
+    recommendedTools: ['code_sandbox_eval', 'fs_storage_manager', 'live_web_search'],
     description: 'Expert coding, software architecture, technical debugging, and repository operations.',
     iconTag: '⚡ CODE',
     accentHex: '#38bdf8',
@@ -369,7 +369,7 @@ export const FUNCTIONAL_ROLE_PROFILES: Record<FunctionalCapabilityId, Functional
     defaultSpecialty: 'Live Web Recon, Source Corroboration, Multi-Node Information Retrieval',
     defaultSystemPrompt:
       'You are an expert autonomous Research Analyst operating as a Deep Intel Recon Operative. Synthesize technical topics, investigate market/technology landscapes, gather up-to-the-minute facts from live web search, and produce grounded, citation-backed analytical briefs with structured breakdowns.',
-    recommendedTools: ['live_web_search', 'vault_query_intel', 'slack_post_dispatch'],
+    recommendedTools: ['live_web_search', 'memory_vector_lookup', 'api_fetch_gateway'],
     description: 'Deep investigative research, literature surveys, intelligence synthesis, and fact verification.',
     iconTag: '🔍 RESEARCH',
     accentHex: '#a3e635',
@@ -383,7 +383,7 @@ export const FUNCTIONAL_ROLE_PROFILES: Record<FunctionalCapabilityId, Functional
     defaultSpecialty: 'Operational Documentation, Executive Summaries, Product Specs & Debriefs',
     defaultSystemPrompt:
       'You are a high-caliber Technical Writer and Communications Strategist embedded as a Signals Communications Lead. Formulate sharp, articulate prose, technical specifications, READMEs, changelogs, operational post-mortems, and persuasive executive summaries with military precision and clarity.',
-    recommendedTools: ['slack_post_dispatch', 'vault_query_intel', 'calendar_schedule_event'],
+    recommendedTools: ['fs_storage_manager', 'memory_vector_lookup', 'live_web_search'],
     description: 'Clear documentation, product specs, release notes, and structured executive communication.',
     iconTag: '📝 WRITER',
     accentHex: '#fb923c',
@@ -397,7 +397,7 @@ export const FUNCTIONAL_ROLE_PROFILES: Record<FunctionalCapabilityId, Functional
     defaultSpecialty: 'Statistical Telemetry, Trend Forecasting, Metric Verification & Insights',
     defaultSystemPrompt:
       'You are a veteran Data Analyst and Quantitative Strategist masked as a Cyber-Metrics Analyst. Inspect datasets, analyze performance telemetry, detect anomalies, model time-series patterns, and translate complex numbers into actionable strategic recommendations.',
-    recommendedTools: ['weather_lookup', 'live_web_search', 'vault_query_intel'],
+    recommendedTools: ['code_sandbox_eval', 'api_fetch_gateway', 'live_web_search'],
     description: 'Data analysis, metric crunching, anomaly detection, telemetry visualization, and reporting.',
     iconTag: '📊 DATA',
     accentHex: '#f59e0b',
@@ -411,7 +411,7 @@ export const FUNCTIONAL_ROLE_PROFILES: Record<FunctionalCapabilityId, Functional
     defaultSpecialty: 'Cross-Functional Task Orchestration, Schedule Dispatch & Workflow Management',
     defaultSystemPrompt:
       'You are an elite Autonomous Executive Assistant operating as a Command Operations Chief. Coordinate high-priority workflows, organize schedules and operational calendars, synthesize multi-domain requests, and execute directives swiftly with impeccable reliability.',
-    recommendedTools: ['calendar_schedule_event', 'slack_post_dispatch', 'live_web_search', 'weather_lookup', 'vault_query_intel'],
+    recommendedTools: ['live_web_search', 'code_sandbox_eval', 'fs_storage_manager', 'api_fetch_gateway', 'memory_vector_lookup'],
     description: 'Versatile multi-domain task assistance, scheduling, project coordination, and workflow management.',
     iconTag: '🧭 GENERAL',
     accentHex: '#e59838',
@@ -538,11 +538,10 @@ const VALID_ROOM_IDS = new Set<RoomId>([
 
 const DEFAULT_TOOLS = [
   'live_web_search',
-  'weather_lookup',
-  'calendar_schedule_event',
-  'slack_post_dispatch',
-  'github_create_issue',
-  'vault_query_intel',
+  'code_sandbox_eval',
+  'fs_storage_manager',
+  'api_fetch_gateway',
+  'memory_vector_lookup',
 ];
 
 interface StoredAgentCustomization {
@@ -613,105 +612,112 @@ export const CrewProvider: React.FC<{ children: React.ReactNode }> = ({ children
     saveRecruitedAgents(recruitedAgents);
   }, [recruitedAgents]);
 
-  const themeBaseAgents: CrewAgentState[] = theme.agents.map((profile, idx) => {
-    const saved = customMap[profile.id] || {};
-    const defaultVariant = DEFAULT_VARIANTS_BY_INDEX[idx] || 'trenchcoat';
-    const validVariant: SpriteVariant =
-      saved.spriteVariant && SPRITE_VARIANTS[saved.spriteVariant]
-        ? saved.spriteVariant
-        : defaultVariant;
+  const themeBaseAgents: CrewAgentState[] = useMemo(() => {
+    return theme.agents.map((profile, idx) => {
+      const saved = customMap[profile.id] || {};
+      const defaultVariant = DEFAULT_VARIANTS_BY_INDEX[idx] || 'trenchcoat';
+      const validVariant: SpriteVariant =
+        saved.spriteVariant && SPRITE_VARIANTS[saved.spriteVariant]
+          ? saved.spriteVariant
+          : defaultVariant;
 
-    const functionalRole: FunctionalCapabilityId =
-      saved.functionalRole && FUNCTIONAL_ROLE_PROFILES[saved.functionalRole]
-        ? saved.functionalRole
-        : DEFAULT_FUNCTIONAL_ROLES_BY_INDEX[idx] || 'general_assistant';
+      const functionalRole: FunctionalCapabilityId =
+        saved.functionalRole && FUNCTIONAL_ROLE_PROFILES[saved.functionalRole]
+          ? saved.functionalRole
+          : DEFAULT_FUNCTIONAL_ROLES_BY_INDEX[idx] || 'general_assistant';
 
-    const funcProfile = FUNCTIONAL_ROLE_PROFILES[functionalRole];
+      const funcProfile = FUNCTIONAL_ROLE_PROFILES[functionalRole];
 
-    const customName =
-      typeof saved.customName === 'string' && saved.customName.trim().length > 0
-        ? saved.customName.trim()
-        : profile.name;
+      const customName =
+        typeof saved.customName === 'string' && saved.customName.trim().length > 0
+          ? saved.customName.trim()
+          : profile.name;
 
-    const role =
-      typeof saved.role === 'string' && saved.role.trim().length > 0
-        ? saved.role.trim()
-        : funcProfile ? funcProfile.thematicRoleTitle : profile.role;
+      const role =
+        typeof saved.role === 'string' && saved.role.trim().length > 0
+          ? saved.role.trim()
+          : funcProfile ? funcProfile.thematicRoleTitle : profile.role;
 
-    const specialty =
-      typeof saved.specialty === 'string' && saved.specialty.trim().length > 0
-        ? saved.specialty.trim()
-        : funcProfile ? funcProfile.defaultSpecialty : profile.specialty;
+      const specialty =
+        typeof saved.specialty === 'string' && saved.specialty.trim().length > 0
+          ? saved.specialty.trim()
+          : funcProfile ? funcProfile.defaultSpecialty : profile.specialty;
 
-    const defaultSysPrompt = funcProfile
-      ? funcProfile.defaultSystemPrompt
-      : `You are an autonomous tactical AI operative named ${customName}, serving in the role of ${role}. Specialty: ${specialty}. Bio: ${profile.bio}. Execute all directives with high precision, citing real tool data, technical telemetry, and in-character confidence.`;
+      const defaultSysPrompt = funcProfile
+        ? funcProfile.defaultSystemPrompt
+        : `You are an autonomous tactical AI operative named ${customName}, serving in the role of ${role}. Specialty: ${specialty}. Bio: ${profile.bio}. Execute all directives with high precision, citing real tool data, technical telemetry, and in-character confidence.`;
 
-    const systemPrompt =
-      typeof saved.systemPrompt === 'string' && saved.systemPrompt.trim().length > 0
-        ? saved.systemPrompt.trim()
-        : defaultSysPrompt;
+      const systemPrompt =
+        typeof saved.systemPrompt === 'string' && saved.systemPrompt.trim().length > 0
+          ? saved.systemPrompt.trim()
+          : defaultSysPrompt;
 
-    const assignedTools = Array.isArray(saved.assignedTools)
-      ? saved.assignedTools
-      : funcProfile
-      ? funcProfile.recommendedTools
-      : DEFAULT_TOOLS;
+      const assignedTools = Array.isArray(saved.assignedTools)
+        ? saved.assignedTools
+        : funcProfile
+        ? funcProfile.recommendedTools
+        : DEFAULT_TOOLS;
 
-    const memoryLog = Array.isArray(saved.memoryLog) ? saved.memoryLog : [];
+      const memoryLog = Array.isArray(saved.memoryLog) ? saved.memoryLog : [];
 
-    const currentRoom: RoomId =
-      saved.currentRoom && VALID_ROOM_IDS.has(saved.currentRoom)
-        ? saved.currentRoom
-        : DEFAULT_ROOMS_BY_INDEX[idx] || 'war_room';
+      const currentRoom: RoomId =
+        saved.currentRoom && VALID_ROOM_IDS.has(saved.currentRoom)
+          ? saved.currentRoom
+          : DEFAULT_ROOMS_BY_INDEX[idx] || 'war_room';
 
-    const preferredStationId =
-      saved.preferredStationId || DEFAULT_STATIONS_BY_INDEX[idx] || 'war_center_desk';
+      const preferredStationId =
+        saved.preferredStationId || DEFAULT_STATIONS_BY_INDEX[idx] || 'war_center_desk';
 
-    return {
-      id: profile.id,
-      agentIndex: idx,
-      defaultName: profile.name,
-      customName,
-      role,
-      functionalRole,
-      specialty,
-      systemPrompt,
-      assignedTools,
-      memoryLog,
-      spriteVariant: validVariant,
-      currentRoom,
-      preferredStationId,
-      isRecruited: false,
-    };
-  });
+      return {
+        id: profile.id,
+        agentIndex: idx,
+        defaultName: profile.name,
+        customName,
+        role,
+        functionalRole,
+        specialty,
+        systemPrompt,
+        assignedTools,
+        memoryLog,
+        spriteVariant: validVariant,
+        currentRoom,
+        preferredStationId,
+        isRecruited: false,
+      };
+    });
+  }, [theme.agents, customMap]);
 
-  const recruitedConverted: CrewAgentState[] = recruitedAgents.map((rec, idx) => {
-    const fRole: FunctionalCapabilityId =
-      rec.functionalRole && FUNCTIONAL_ROLE_PROFILES[rec.functionalRole]
-        ? rec.functionalRole
-        : 'general_assistant';
-    const fProfile = FUNCTIONAL_ROLE_PROFILES[fRole];
+  const recruitedConverted: CrewAgentState[] = useMemo(() => {
+    return recruitedAgents.map((rec, idx) => {
+      const fRole: FunctionalCapabilityId =
+        rec.functionalRole && FUNCTIONAL_ROLE_PROFILES[rec.functionalRole]
+          ? rec.functionalRole
+          : 'general_assistant';
+      const fProfile = FUNCTIONAL_ROLE_PROFILES[fRole];
 
-    return {
-      id: rec.id,
-      agentIndex: theme.agents.length + idx,
-      defaultName: rec.customName,
-      customName: rec.customName,
-      role: rec.role || (fProfile ? fProfile.thematicRoleTitle : 'Tactical AI Operative'),
-      functionalRole: fRole,
-      specialty: rec.specialty || (fProfile ? fProfile.defaultSpecialty : 'Cross-Functional Task Orchestration'),
-      systemPrompt: rec.systemPrompt || (fProfile ? fProfile.defaultSystemPrompt : ''),
-      assignedTools: rec.assignedTools || (fProfile ? fProfile.recommendedTools : DEFAULT_TOOLS),
-      memoryLog: rec.memoryLog || [],
-      spriteVariant: rec.spriteVariant || 'trenchcoat',
-      currentRoom: rec.currentRoom || 'war_room',
-      preferredStationId: rec.preferredStationId || 'war_center_desk',
-      isRecruited: true,
-    };
-  });
+      return {
+        id: rec.id,
+        agentIndex: theme.agents.length + idx,
+        defaultName: rec.customName,
+        customName: rec.customName,
+        role: rec.role || (fProfile ? fProfile.thematicRoleTitle : 'Tactical AI Operative'),
+        functionalRole: fRole,
+        specialty: rec.specialty || (fProfile ? fProfile.defaultSpecialty : 'Cross-Functional Task Orchestration'),
+        systemPrompt: rec.systemPrompt || (fProfile ? fProfile.defaultSystemPrompt : ''),
+        assignedTools: rec.assignedTools || (fProfile ? fProfile.recommendedTools : DEFAULT_TOOLS),
+        memoryLog: rec.memoryLog || [],
+        spriteVariant: rec.spriteVariant || 'trenchcoat',
+        currentRoom: rec.currentRoom || 'war_room',
+        preferredStationId: rec.preferredStationId || 'war_center_desk',
+        isRecruited: true,
+      };
+    });
+  }, [recruitedAgents, theme.agents.length]);
 
-  const crewAgents: CrewAgentState[] = [...themeBaseAgents, ...recruitedConverted];
+  const crewAgents: CrewAgentState[] = useMemo(
+    () => [...themeBaseAgents, ...recruitedConverted],
+    [themeBaseAgents, recruitedConverted]
+  );
 
   const getCrewAgent = useCallback(
     (id: string) => crewAgents.find((a) => a.id === id),

@@ -18,37 +18,16 @@ export interface WebhookConfig {
 const STORAGE_OUTBOX_KEY = 'pixelops_notification_outbox_v1';
 const STORAGE_WEBHOOK_KEY = 'pixelops_webhook_config_v1';
 
-export const DEFAULT_OUTBOX_NOTIFICATIONS: OutboxNotification[] = [
-  {
-    id: 'outbox-1',
-    title: 'Human-In-The-Loop Approval Required',
-    body: 'Agent Nyx is blocked trying to create GitHub issue "Mainframe Firewall Patch". Tap to approve dispatch.',
-    timestamp: new Date(Date.now() - 1000 * 60 * 15).toISOString(),
-    type: 'human_approval_required',
-    agentName: 'Agent Nyx',
-    read: false,
-    webhookSent: true,
-  },
-  {
-    id: 'outbox-2',
-    title: 'Night Shift Routine Completed',
-    body: 'Autonomous web threat scan finished successfully. 0 perimeter anomalies detected.',
-    timestamp: new Date(Date.now() - 1000 * 60 * 60).toISOString(),
-    type: 'routine_complete',
-    agentName: 'Agent Cipher',
-    read: true,
-    webhookSent: true,
-  },
-];
+export const DEFAULT_OUTBOX_NOTIFICATIONS: OutboxNotification[] = [];
 
 export function loadOutboxNotifications(): OutboxNotification[] {
   try {
     const raw = localStorage.getItem(STORAGE_OUTBOX_KEY);
-    if (!raw) return DEFAULT_OUTBOX_NOTIFICATIONS;
+    if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : DEFAULT_OUTBOX_NOTIFICATIONS;
+    return Array.isArray(parsed) ? parsed : [];
   } catch {
-    return DEFAULT_OUTBOX_NOTIFICATIONS;
+    return [];
   }
 }
 

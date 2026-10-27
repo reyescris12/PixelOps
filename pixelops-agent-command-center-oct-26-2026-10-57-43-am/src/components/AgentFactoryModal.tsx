@@ -367,7 +367,7 @@ export const AgentFactoryModal: React.FC<AgentFactoryModalProps> = ({
             >
               {ROOM_ORDER.map((roomId) => (
                 <option key={roomId} value={roomId}>
-                  {ROOM_METADATA[roomId].shortBadge} — {ROOM_METADATA[roomId].sectorCode}
+                  {ROOM_METADATA[roomId]?.shortBadge || roomId} — {ROOM_METADATA[roomId]?.sectorCode || roomId}
                 </option>
               ))}
             </select>

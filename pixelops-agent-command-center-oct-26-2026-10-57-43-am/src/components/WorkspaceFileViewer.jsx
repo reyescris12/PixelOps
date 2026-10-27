@@ -293,13 +293,21 @@ export const WorkspaceFileViewer = ({
 
   return (
     <AnimatePresence>
-      <div className="fixed inset-0 z-[120] flex items-center justify-center p-2 sm:p-4 bg-black/80 backdrop-blur-sm">
+      <div
+        className="fixed inset-0 z-[120] flex items-center justify-center p-1 sm:p-4 bg-black/80 backdrop-blur-sm"
+        style={{
+          paddingTop: 'max(8px, env(safe-area-inset-top, 0px))',
+          paddingBottom: 'max(8px, env(safe-area-inset-bottom, 0px))',
+          paddingLeft: 'max(8px, env(safe-area-inset-left, 0px))',
+          paddingRight: 'max(8px, env(safe-area-inset-right, 0px))',
+        }}
+      >
         <motion.div
           initial={{ opacity: 0, scale: 0.95, y: 15 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95, y: 15 }}
           transition={{ duration: 0.2 }}
-          className="relative w-full max-w-6xl h-[92vh] max-h-[880px] flex flex-col bg-[#0a0c0e] border-2 rounded-lg shadow-2xl overflow-hidden font-mono text-xs sm:text-sm text-[#e2e8f0]"
+          className="relative w-full max-w-6xl h-[94dvh] sm:h-[92vh] max-h-[880px] flex flex-col bg-[#0a0c0e] border-2 rounded-lg shadow-2xl overflow-hidden font-mono text-xs sm:text-sm text-[#e2e8f0]"
           style={{ borderColor: themeColors.accent }}
         >
           <div

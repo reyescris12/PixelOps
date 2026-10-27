@@ -1616,17 +1616,25 @@ const CommandCenterContent: React.FC = () => {
   );
 
   return (
-    <div className="min-h-screen bg-[#0c0e14] text-[#f3ead8] p-2 sm:p-4 flex items-center justify-center">
+    <div
+      className="w-full h-full min-h-screen min-h-[100dvh] bg-[#0c0e14] text-[#f3ead8] p-0 sm:p-2 md:p-4 flex items-center justify-center overflow-hidden box-border"
+      style={{
+        paddingTop: 'env(safe-area-inset-top, 0px)',
+        paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+        paddingLeft: 'env(safe-area-inset-left, 0px)',
+        paddingRight: 'env(safe-area-inset-right, 0px)',
+      }}
+    >
       {/* Outer Retro Console Frame */}
       <div
-        className="w-full max-w-6xl rounded-2xl bg-[#11131c] border-[3px] overflow-hidden flex flex-col justify-between min-h-[92vh]"
+        className="w-full h-full sm:h-auto max-w-6xl rounded-none sm:rounded-2xl bg-[#11131c] border-0 sm:border-[3px] overflow-hidden flex flex-col justify-between min-h-0 sm:min-h-[92vh] max-h-full sm:max-h-[96dvh] shadow-2xl command-center-layout"
         style={{
           borderColor: 'var(--theme-border-color)',
           boxShadow: '0 0 50px rgba(0,0,0,0.9), 0 0 24px var(--theme-glow-soft)',
         }}
       >
         {/* Top Console Telemetry Bar: [⚙] SAFEHOUSE v1.0 | v1.0 | [🔋 100%] ▮🛜 */}
-        <header className="bg-[#232634] border-b-2 border-[#161822] px-3 sm:px-5 py-2 flex items-center justify-between gap-4 select-none">
+        <header className="bg-[#232634] border-b-2 border-[#161822] px-2.5 sm:px-5 py-1.5 sm:py-2 flex items-center justify-between gap-2 sm:gap-4 select-none shrink-0 overflow-x-auto no-scrollbar">
           {/* Left Zone: [⚙] SAFEHOUSE v1.0 + [🗺️ RADAR] Minimap Toggle */}
           <div className="flex items-center gap-2.5 shrink-0">
             <button
@@ -1820,7 +1828,7 @@ const CommandCenterContent: React.FC = () => {
         </header>
 
         {/* Center Dark CRT Console Canvas */}
-        <main className="flex-1 bg-[#0e1017] flex flex-col justify-between pb-5">
+        <main className="flex-1 bg-[#0e1017] flex flex-col justify-between pb-3 sm:pb-5 min-h-0 overflow-y-auto overflow-x-hidden">
           {/* Scrollable 7-Sector Overworld Diorama + Minimap Radar + Modular GameOverlay */}
           <SpriteCanvas
             currentRoom={currentRoom}
@@ -2021,10 +2029,10 @@ const CommandCenterContent: React.FC = () => {
         </main>
 
         {/* Bottom Console Navigation Footer: [🏠 HQ] [🕵️ Crew] [🔌 Plugins] [🎨 Themes] */}
-        <footer className="bg-[#1b1e29] border-t-2 border-[#282c3d] px-2 py-2 flex items-center justify-center">
+        <footer className="bg-[#1b1e29] border-t-2 border-[#282c3d] px-2 py-1.5 sm:py-2 flex items-center justify-center shrink-0 overflow-x-auto no-scrollbar">
           <nav
             aria-label="Console Navigation"
-            className="inline-flex flex-wrap items-center justify-center bg-[#232736] border border-[#363b4e] divide-x divide-[#363b4e]"
+            className="inline-flex flex-nowrap items-center justify-center bg-[#232736] border border-[#363b4e] divide-x divide-[#363b4e] overflow-x-auto no-scrollbar"
           >
             <button
               type="button"

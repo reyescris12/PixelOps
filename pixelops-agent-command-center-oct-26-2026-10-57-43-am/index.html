@@ -33,12 +33,47 @@
     --theme-room-filter: hue-rotate(0deg) saturate(1.1) brightness(1) drop-shadow(0 0 10px rgba(74, 222, 128, 0.35));
   }
 
+  *, *::before, *::after {
+    box-sizing: border-box;
+  }
+
+  html, body, #root {
+    width: 100%;
+    height: 100%;
+    height: 100vh;
+    height: 100dvh;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    background-color: #0c0e14;
+    box-sizing: border-box;
+    -webkit-text-size-adjust: 100%;
+  }
+
   body {
     font-family: var(--font-sans);
     background-color: #0a0a0c;
     color: #f1f5f9;
-    overflow-x: hidden;
   }
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.command-center-layout {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  height: 100dvh;
+  box-sizing: border-box;
+  overflow: hidden;
+}
 
 .font-pixel {
   font-family: var(--font-pixel);
@@ -2229,15 +2264,21 @@ const CommandCenterContent = ()=>{
             }), React.createElement("span", null, isCurrent ? 'ACTIVE]' : 'SELECT]')));
         })))));
     return React.createElement("div", {
-        "className": "min-h-[780px] bg-[#0c0e14] text-[#f3ead8] p-2 sm:p-4 flex items-center justify-center"
+        "className": "w-full h-full min-h-[780px] min-h-[100dvh] bg-[#0c0e14] text-[#f3ead8] p-0 sm:p-2 md:p-4 flex items-center justify-center overflow-hidden box-border",
+        "style": {
+            paddingTop: 'env(safe-area-inset-top, 0px)',
+            paddingBottom: 'env(safe-area-inset-bottom, 0px)',
+            paddingLeft: 'env(safe-area-inset-left, 0px)',
+            paddingRight: 'env(safe-area-inset-right, 0px)'
+        }
     }, React.createElement("div", {
-        "className": "w-full max-w-6xl rounded-2xl bg-[#11131c] border-[3px] overflow-hidden flex flex-col justify-between min-h-[740px]",
+        "className": "w-full h-full sm:h-auto max-w-6xl rounded-none sm:rounded-2xl bg-[#11131c] border-0 sm:border-[3px] overflow-hidden flex flex-col justify-between min-h-0 sm:min-h-[740px] max-h-full sm:max-h-[96dvh] shadow-2xl command-center-layout",
         "style": {
             borderColor: 'var(--theme-border-color)',
             boxShadow: '0 0 50px rgba(0,0,0,0.9), 0 0 24px var(--theme-glow-soft)'
         }
     }, React.createElement("header", {
-        "className": "bg-[#232634] border-b-2 border-[#161822] px-3 sm:px-5 py-2 flex items-center justify-between gap-4 select-none"
+        "className": "bg-[#232634] border-b-2 border-[#161822] px-2.5 sm:px-5 py-1.5 sm:py-2 flex items-center justify-between gap-2 sm:gap-4 select-none shrink-0 overflow-x-auto no-scrollbar"
     }, React.createElement("div", {
         "className": "flex items-center gap-2.5 shrink-0"
     }, React.createElement("button", {
@@ -2408,7 +2449,7 @@ const CommandCenterContent = ()=>{
         "height": "2",
         "fill": "#4ade80"
     }))))), React.createElement("main", {
-        "className": "flex-1 bg-[#0e1017] flex flex-col justify-between pb-5"
+        "className": "flex-1 bg-[#0e1017] flex flex-col justify-between pb-3 sm:pb-5 min-h-0 overflow-y-auto overflow-x-hidden"
     }, React.createElement(SpriteCanvas, {
         "currentRoom": currentRoom,
         "onChangeRoom": handleRoomChange,
@@ -2540,10 +2581,10 @@ const CommandCenterContent = ()=>{
         "onBackToTerminal": ()=>setHqSubView('terminal'),
         "onRefreshLedger": refreshCommandLedger
     })), activeTab === 'crew' && renderCrewConsolePanel(), activeTab === 'plugins' && renderPluginsConsolePanel(), activeTab === 'themes' && renderThemesConsolePanel())), React.createElement("footer", {
-        "className": "bg-[#1b1e29] border-t-2 border-[#282c3d] px-2 py-2 flex items-center justify-center"
+        "className": "bg-[#1b1e29] border-t-2 border-[#282c3d] px-2 py-1.5 sm:py-2 flex items-center justify-center shrink-0 overflow-x-auto no-scrollbar"
     }, React.createElement("nav", {
         "aria-label": "Console Navigation",
-        "className": "inline-flex flex-wrap items-center justify-center bg-[#232736] border border-[#363b4e] divide-x divide-[#363b4e]"
+        "className": "inline-flex flex-nowrap items-center justify-center bg-[#232736] border border-[#363b4e] divide-x divide-[#363b4e] overflow-x-auto no-scrollbar"
     }, React.createElement("button", {
         "type": "button",
         "onClick": ()=>{
@@ -5029,12 +5070,18 @@ const PluginAuthModal = ({ isOpen, onClose, plugin, onAuthorized, onRevoked })=>
         }
     };
     return React.createElement("div", {
-        "className": "fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150",
+        "className": "fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-3 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150 overflow-y-auto",
+        "style": {
+            paddingTop: 'max(10px, env(safe-area-inset-top, 0px))',
+            paddingBottom: 'max(10px, env(safe-area-inset-bottom, 0px))',
+            paddingLeft: 'max(10px, env(safe-area-inset-left, 0px))',
+            paddingRight: 'max(10px, env(safe-area-inset-right, 0px))'
+        },
         "onClick": (e)=>{
             if (e.target === e.currentTarget) onClose();
         }
     }, React.createElement("div", {
-        "className": "w-full max-w-lg bg-[#100e0b] border shadow-2xl rounded-sm overflow-hidden flex flex-col font-mono-tabular text-sm text-[#e8dcc4]",
+        "className": "w-full max-w-lg max-h-[90dvh] overflow-y-auto bg-[#100e0b] border shadow-2xl rounded-sm flex flex-col font-mono-tabular text-sm text-[#e8dcc4]",
         "style": {
             borderColor: 'var(--theme-border-color, #e59838)',
             boxShadow: '0 0 30px rgba(0,0,0,0.8), 0 0 15px var(--theme-glow-soft, rgba(229,152,56,0.25))'
@@ -6248,9 +6295,15 @@ const SettingsModal = ({ isOpen, onClose, preferences, onUpdatePreferences, serv
         onClose();
     };
     return React.createElement("div", {
-        "className": "fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4 overflow-y-auto"
+        "className": "fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-2 sm:p-4 overflow-y-auto",
+        "style": {
+            paddingTop: 'max(12px, env(safe-area-inset-top, 0px))',
+            paddingBottom: 'max(12px, env(safe-area-inset-bottom, 0px))',
+            paddingLeft: 'max(12px, env(safe-area-inset-left, 0px))',
+            paddingRight: 'max(12px, env(safe-area-inset-right, 0px))'
+        }
     }, React.createElement("div", {
-        "className": "w-full max-w-lg rounded-2xl bg-[#11141c] border p-5 sm:p-6 shadow-2xl flex flex-col gap-4 max-h-[90vh] overflow-y-auto",
+        "className": "w-full max-w-lg rounded-2xl bg-[#11141c] border p-4 sm:p-6 shadow-2xl flex flex-col gap-4 max-h-[90dvh] overflow-y-auto",
         "style": {
             borderColor: 'var(--theme-border-color)',
             boxShadow: '0 0 28px var(--theme-glow-soft)'
@@ -11222,7 +11275,13 @@ const WorkspaceFileViewer = ({ isOpen, onClose, initialFilePath })=>{
     ]);
     if (!isOpen) return null;
     return React.createElement(AnimatePresence, null, React.createElement("div", {
-        "className": "fixed inset-0 z-[120] flex items-center justify-center p-2 sm:p-4 bg-black/80 backdrop-blur-sm"
+        "className": "fixed inset-0 z-[120] flex items-center justify-center p-1 sm:p-4 bg-black/80 backdrop-blur-sm",
+        "style": {
+            paddingTop: 'max(8px, env(safe-area-inset-top, 0px))',
+            paddingBottom: 'max(8px, env(safe-area-inset-bottom, 0px))',
+            paddingLeft: 'max(8px, env(safe-area-inset-left, 0px))',
+            paddingRight: 'max(8px, env(safe-area-inset-right, 0px))'
+        }
     }, React.createElement("motion.div", {
         "initial": {
             opacity: 0,
@@ -11242,7 +11301,7 @@ const WorkspaceFileViewer = ({ isOpen, onClose, initialFilePath })=>{
         "transition": {
             duration: 0.2
         },
-        "className": "relative w-full max-w-6xl h-[92vh] max-h-[880px] flex flex-col bg-[#0a0c0e] border-2 rounded-lg shadow-2xl overflow-hidden font-mono text-xs sm:text-sm text-[#e2e8f0]",
+        "className": "relative w-full max-w-6xl h-[94dvh] sm:h-[92vh] max-h-[880px] flex flex-col bg-[#0a0c0e] border-2 rounded-lg shadow-2xl overflow-hidden font-mono text-xs sm:text-sm text-[#e2e8f0]",
         "style": {
             borderColor: themeColors.accent
         }

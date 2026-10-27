@@ -185,13 +185,19 @@ export const PluginAuthModal = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150"
+      className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-3 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150 overflow-y-auto"
+      style={{
+        paddingTop: 'max(10px, env(safe-area-inset-top, 0px))',
+        paddingBottom: 'max(10px, env(safe-area-inset-bottom, 0px))',
+        paddingLeft: 'max(10px, env(safe-area-inset-left, 0px))',
+        paddingRight: 'max(10px, env(safe-area-inset-right, 0px))',
+      }}
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
       <div
-        className="w-full max-w-lg bg-[#100e0b] border shadow-2xl rounded-sm overflow-hidden flex flex-col font-mono-tabular text-sm text-[#e8dcc4]"
+        className="w-full max-w-lg max-h-[90dvh] overflow-y-auto bg-[#100e0b] border shadow-2xl rounded-sm flex flex-col font-mono-tabular text-sm text-[#e8dcc4]"
         style={{
           borderColor: 'var(--theme-border-color, #e59838)',
           boxShadow: '0 0 30px rgba(0,0,0,0.8), 0 0 15px var(--theme-glow-soft, rgba(229,152,56,0.25))',

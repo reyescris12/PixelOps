@@ -22153,6 +22153,7 @@ exports.resetTelemetryLedger = resetTelemetryLedger;
 });
 
 window.__registerModule("services/WorkerService", function(__require, exports, module) {
+const __imp_0 = __require("./SafetyService"); const { auditStorageHealth } = __imp_0;
 const BROADCAST_CHANNEL_NAME = 'pixelops_background_sync_v1';
 const STORAGE_QUEUE_KEY = 'pixelops_background_queue_v1';
 class BackgroundWorkerEngine {
@@ -22228,12 +22229,12 @@ class BackgroundWorkerEngine {
             });
         }
         if (typeof window !== 'undefined') {
-            import('./SafetyService').then(({ auditStorageHealth })=>{
+            try {
                 auditStorageHealth().catch(()=>{});
                 setInterval(()=>{
                     auditStorageHealth().catch(()=>{});
                 }, 5 * 60 * 1000);
-            }).catch(()=>{});
+            } catch  {}
         }
     }
     stopBackgroundLoop() {

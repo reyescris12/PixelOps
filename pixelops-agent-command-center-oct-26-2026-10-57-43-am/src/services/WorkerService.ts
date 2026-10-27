@@ -4,6 +4,8 @@
  * via BroadcastChannel / Web Workers independently of the main UI thread.
  */
 
+import { auditStorageHealth } from './SafetyService';
+
 export interface BackgroundQueueTask {
   id: string;
   prompt: string;
@@ -100,14 +102,12 @@ class BackgroundWorkerEngine {
 
     // Periodic Storage Health Audit & Auto-Pruning
     if (typeof window !== 'undefined') {
-      import('./SafetyService')
-        .then(({ auditStorageHealth }) => {
+      try {
+        auditStorageHealth().catch(() => {});
+        setInterval(() => {
           auditStorageHealth().catch(() => {});
-          setInterval(() => {
-            auditStorageHealth().catch(() => {});
-          }, 5 * 60 * 1000);
-        })
-        .catch(() => {});
+        }, 5 * 60 * 1000);
+      } catch {}
     }
   }
 

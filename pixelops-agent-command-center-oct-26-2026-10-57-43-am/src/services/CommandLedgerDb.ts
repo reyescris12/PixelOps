@@ -50,9 +50,24 @@ function computeImmutableHash(
   return `0x${hex1}${hex2}`;
 }
 
+/**
+ * Workspace File Record Schema stored in Dexie.js IndexedDB.
+ * Holds agent-generated markdown reports, logs, and workspace task files.
+ */
+export interface WorkspaceFileDbEntry {
+  id?: number;
+  path: string;
+  category: string;
+  format: string;
+  content: string;
+  sizeBytes: number;
+  updatedAt: string;
+}
+
 class PixelOpsLedgerDatabase extends Dexie {
   command_ledger!: Table<CommandLedgerEntry, number>;
   agent_memories!: Table<AgentMemoryDbEntry, number>;
+  workspace_files!: Table<WorkspaceFileDbEntry, number>;
 
   constructor() {
     super('PixelOpsImmutableLedgerDB');
@@ -62,6 +77,15 @@ class PixelOpsLedgerDatabase extends Dexie {
         '++id, timestamp, involved_agent, tool_used, success_boost_achieved, ledger_hash',
       agent_memories:
         '++id, agentId, timestamp, prompt',
+    });
+
+    this.version(3).stores({
+      command_ledger:
+        '++id, timestamp, involved_agent, tool_used, success_boost_achieved, ledger_hash',
+      agent_memories:
+        '++id, agentId, timestamp, prompt',
+      workspace_files:
+        '++id, &path, category, format, updatedAt',
     });
 
     // Enforce append-only immutability on the command_ledger table
@@ -80,6 +104,7 @@ class PixelOpsLedgerDatabase extends Dexie {
 }
 
 export const ledgerDb = new PixelOpsLedgerDatabase();
+if (typeof globalThis !== 'undefined') (globalThis as any).__ledgerDb = ledgerDb;
 
 const INITIAL_SEED_COMMANDS: Array<
   Omit<CommandLedgerEntry, 'id' | 'ledger_hash'>
@@ -87,6 +112,7 @@ const INITIAL_SEED_COMMANDS: Array<
 
 const inMemoryLedger: CommandLedgerEntry[] = [];
 const inMemoryAgentMemories: AgentMemoryDbEntry[] = [];
+const inMemoryWorkspaceFiles: WorkspaceFileDbEntry[] = [];
 
 /**
  * Appends a new immutable command record to the Dexie/IndexedDB ledger.

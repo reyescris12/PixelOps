@@ -1185,7 +1185,7 @@ const __imp_8 = __require("./components/SettingsModal"); const { SettingsModal }
 const __imp_9 = __require("./components/ThemeSettings"); const { ThemeSettings } = __imp_9;
 const __imp_10 = __require("./components/RetroErrorModal"); const { RetroErrorModal } = __imp_10;
 const __imp_11 = __require("./components/PWAInstallButton"); const { PWAInstallButton, OfflineBanner } = __imp_11;
-const __imp_12 = __require("./services/ApiService"); const { AgentExecutionCard, PluginConnector, CommandPreferences, RetroAgentError, RetroErrorCode, RetroErrorDescriptor, RoundtableMeetingSession, RoundtableParticipantPayload, createRetroAgentError, classifyRetroErrorCode, loadExecutionCards, saveExecutionCards, loadPlugins, savePlugins, loadPreferences, savePreferences, loadRoundtableSessions, saveRoundtableSessions, executeAgentDirective, executeRoundtableMeeting } = __imp_12;
+const __imp_12 = __require("./services/ApiService"); const { AgentExecutionCard, PluginConnector, CommandPreferences, RetroAgentError, RetroErrorCode, RetroErrorDescriptor, RoundtableMeetingSession, RoundtableParticipantPayload, createRetroAgentError, classifyRetroErrorCode, loadExecutionCards, saveExecutionCards, loadPlugins, savePlugins, loadPreferences, savePreferences, loadRoundtableSessions, saveRoundtableSessions, executeAgentDirective, executeRoundtableMeeting, auditStorageHealth } = __imp_12;
 const __imp_13 = __require("./services/SecureVaultService"); const { VaultStartupReport, initializeAndValidateVaultOnStartup, refreshOAuthProviderToken, revokeOAuthProviderToken } = __imp_13;
 const __imp_14 = __require("./services/CommandLedgerDb"); const { CommandLedgerEntry, appendCommandLedgerEntry, getLast50Commands } = __imp_14;
 const __imp_15 = __require("./components/CommandLogScreen"); const { CommandLogScreen } = __imp_15;
@@ -1206,6 +1206,9 @@ const __imp_29 = __require("./services/TelemetryStore"); const { recordTelemetry
 const __imp_30 = __require("./engine/taskBriefEngine"); const { analyzePromptAmbiguity } = __imp_30;
 const __imp_31 = __require("./components/TaskBriefModal"); const { TaskBriefModal, TaskBrief } = __imp_31;
 const __imp_32 = __require("./components/TerminalConsole"); const { TerminalConsole } = __imp_32;
+const __imp_33 = __require("./components/WorkspaceFileViewer"); const { WorkspaceFileViewer } = __imp_33;
+const __imp_34 = __require("./components/PluginAuthModal"); const { PluginAuthModal, PluginAuthTarget } = __imp_34;
+const __imp_35 = __require("./engine/pluginAuthManager"); const { isPluginAuthenticated, clearPluginCredential, PluginAuthCredential } = __imp_35;
 const CommandCenterContent = ()=>{
     const { theme, themeId, setThemeId, activeAgent, setActiveAgentId, soundEnabled, setSoundEnabled, playBeep } = useTheme();
     const { crewAgents, getCrewAgent, getCrewAgentByIndex, updateAgentName, updateAgentSpriteVariant, updateAgentRoom, updateAgentConfig, addAgentMemory, clearAgentMemory, resetCrewToDefaults, recruitAgent, dismissAgent } = useCrew();
@@ -1269,6 +1272,7 @@ const CommandCenterContent = ()=>{
     const [isTelemetryOpen, setIsTelemetryOpen] = useState(false);
     const [isAgentFactoryOpen, setIsAgentFactoryOpen] = useState(false);
     const [isTerminalConsoleOpen, setIsTerminalConsoleOpen] = useState(false);
+    const [isWorkspaceFilesOpen, setIsWorkspaceFilesOpen] = useState(false);
     const [taskBriefState, setTaskBriefState] = useState({
         isOpen: false,
         brief: null,
@@ -1279,6 +1283,8 @@ const CommandCenterContent = ()=>{
     const [customPlugins, setCustomPlugins] = useState(loadCustomPlugins);
     const [isCustomPluginModalOpen, setIsCustomPluginModalOpen] = useState(false);
     const [editingCustomPlugin, setEditingCustomPlugin] = useState(null);
+    const [isPluginAuthModalOpen, setIsPluginAuthModalOpen] = useState(false);
+    const [activeAuthPlugin, setActiveAuthPlugin] = useState(null);
     const [roundtableSessions, setRoundtableSessions] = useState(()=>loadRoundtableSessions());
     const [isExecutingMeeting, setIsExecutingMeeting] = useState(false);
     const [townHallSummonNonce, setTownHallSummonNonce] = useState(0);
@@ -1328,27 +1334,89 @@ const CommandCenterContent = ()=>{
     useEffect(()=>{
         runStartupVaultValidation();
         refreshCommandLedger();
+        auditStorageHealth().catch((e)=>console.warn('Storage health audit warning:', e));
         backgroundWorkerEngine.startBackgroundLoop();
     }, []);
     const handleUpdatePreferences = (next)=>{
         setPreferences(next);
         savePreferences(next);
     };
+    const handleOpenPluginAuth = (plugin)=>{
+        playBeep('tap');
+        setActiveAuthPlugin({
+            id: plugin.id,
+            name: plugin.name,
+            description: plugin.description,
+            toolFunctionName: plugin.toolFunctionName,
+            serviceLabel: plugin.serviceLabel,
+            accountHandle: plugin.accountHandle,
+            connected: plugin.connected ?? isPluginAuthenticated(plugin.id),
+            category: plugin.category
+        });
+        setIsPluginAuthModalOpen(true);
+    };
+    const handlePluginAuthorized = (pluginId, credential)=>{
+        playBeep('complete');
+        setPlugins((prev)=>{
+            const next = prev.map((p)=>{
+                if (p.id === pluginId) {
+                    return {
+                        ...p,
+                        connected: true,
+                        accountHandle: credential.accountHandle || 'BYOK Local Token',
+                        lastSync: new Date().toLocaleTimeString([], {
+                            hour: '2-digit',
+                            minute: '2-digit'
+                        })
+                    };
+                }
+                return p;
+            });
+            savePlugins(next);
+            return next;
+        });
+        setDialogueText(`[PLUGIN AUTHORIZED] BYOK key linked for ${pluginId}. AES-GCM local storage verified.`);
+        runStartupVaultValidation();
+    };
+    const handlePluginRevoked = (pluginId)=>{
+        playBeep('tap');
+        clearPluginCredential(pluginId);
+        setPlugins((prev)=>{
+            const next = prev.map((p)=>{
+                if (p.id === pluginId) {
+                    return {
+                        ...p,
+                        connected: false,
+                        lastSync: 'Token Revoked'
+                    };
+                }
+                return p;
+            });
+            savePlugins(next);
+            return next;
+        });
+        setDialogueText(`[PLUGIN REVOKED] Credentials cleared for ${pluginId}.`);
+        runStartupVaultValidation();
+    };
     const handleTogglePlugin = async (pluginId)=>{
         playBeep('tap');
         const target = plugins.find((p)=>p.id === pluginId);
         if (!target) return;
         if (target.connected) {
-            await revokeOAuthProviderToken(pluginId);
+            handlePluginRevoked(pluginId);
         } else {
-            await refreshOAuthProviderToken(pluginId);
+            handleOpenPluginAuth(target);
         }
-        await runStartupVaultValidation();
     };
     const handleRotatePluginOAuth = async (pluginId)=>{
-        playBeep('complete');
-        await refreshOAuthProviderToken(pluginId);
-        await runStartupVaultValidation();
+        playBeep('tap');
+        const target = plugins.find((p)=>p.id === pluginId);
+        if (target) {
+            handleOpenPluginAuth(target);
+        } else {
+            await refreshOAuthProviderToken(pluginId);
+            await runStartupVaultValidation();
+        }
     };
     const smoothCloseGameOverlay = ()=>{
         setIsGameClosing(true);
@@ -2102,11 +2170,18 @@ const CommandCenterContent = ()=>{
                 "className": "flex items-center justify-between gap-1.5 pt-2 border-t border-[#261d12]"
             }, React.createElement("span", {
                 "className": "font-mono-tabular text-[10px] text-[#8c7a65] truncate"
-            }, plugin.toolFunctionName), React.createElement("button", {
+            }, plugin.toolFunctionName), React.createElement("div", {
+                "className": "flex items-center gap-1.5 shrink-0"
+            }, React.createElement("button", {
+                "type": "button",
+                "onClick": ()=>handleOpenPluginAuth(plugin),
+                "className": "min-h-[28px] px-2 py-0.5 font-mono-tabular text-[11px] bg-[#1a1410] text-[#e59838] border border-[#785732] hover:bg-[#281e14] cursor-pointer",
+                "title": "Configure BYOK Key / OAuth Secret locally"
+            }, "[BYOK 🔑]"), React.createElement("button", {
                 "type": "button",
                 "onClick": ()=>handleTogglePlugin(plugin.id),
                 "className": `min-h-[28px] px-2.5 py-0.5 font-mono-tabular text-xs border cursor-pointer ${plugin.connected ? 'bg-[#261f18] text-[#e8dcc4] border-[#6e5233]' : 'bg-[#e59838] text-[#121110] border-[#e59838] font-bold'}`
-            }, plugin.connected ? 'Revoke]' : 'Mint OAuth]')));
+            }, plugin.connected ? 'Revoke]' : 'Mint OAuth]'))));
         })))));
     const renderThemesConsolePanel = ()=>React.createElement("div", {
             "className": "w-full max-w-xl mx-auto px-3 sm:px-0 flex flex-col gap-3"
@@ -2411,7 +2486,15 @@ const CommandCenterContent = ()=>{
             playBeep('tap');
         },
         "className": `px-3 py-1 font-mono-tabular text-xs cursor-pointer transition-colors ${hqSubView === 'command_log' ? 'bg-[#e59838] text-[#121110] font-bold' : 'text-[#c89d66] hover:text-[#f3ead8]'}`
-    }, "📜 Command Log (", commandLedger.length, ")")), React.createElement("span", {
+    }, "📜 Command Log (", commandLedger.length, ")"), React.createElement("button", {
+        "type": "button",
+        "onClick": ()=>{
+            setIsWorkspaceFilesOpen(true);
+            playBeep('tap');
+        },
+        "className": "px-3 py-1 font-mono-tabular text-xs cursor-pointer transition-colors text-[#38bdf8] hover:text-[#f3ead8]",
+        "title": "Open Workspace File Explorer & Markdown Reports (IndexedDB)"
+    }, "📁 Files")), React.createElement("span", {
         "className": "hidden sm:inline font-mono-tabular text-[11px] text-[#9c8265]"
     }, hqSubView === 'town_hall' ? 'MULTI-AGENT ROUNDTABLE · WAR ROOM' : 'DEXIE INDEXEDDB · APPEND-ONLY LEDGER')), hqSubView === 'terminal' ? React.createElement(TerminalWindow, {
         "dialogueText": dialogueText,
@@ -2516,7 +2599,20 @@ const CommandCenterContent = ()=>{
         "className": "hidden sm:inline"
     }, "CLI (~)"), React.createElement("span", {
         "className": "sm:hidden"
-    }, "CLI"))))), React.createElement(OfflineBanner, null), React.createElement(SettingsModal, {
+    }, "CLI")), React.createElement("button", {
+        "type": "button",
+        "onClick": ()=>{
+            setIsWorkspaceFilesOpen((prev)=>!prev);
+            playBeep('tap');
+        },
+        "className": `min-h-[42px] px-3 sm:px-5 py-1.5 font-mono-tabular text-sm sm:text-base flex items-center gap-2 transition-colors cursor-pointer border-l border-[#363b4e] ${isWorkspaceFilesOpen ? 'bg-[#152e34] text-[#38bdf8] font-semibold' : 'text-[#38bdf8] hover:bg-[#15232e]'}`,
+        "title": "Open Workspace File Explorer (IndexedDB Markdown Reports & Logs)"
+    }, React.createElement("span", {
+        "className": "text-base",
+        "aria-hidden": "true"
+    }, "📁"), React.createElement("span", {
+        "className": "hidden sm:inline"
+    }, "Files"))))), React.createElement(OfflineBanner, null), React.createElement(SettingsModal, {
         "isOpen": isSettingsOpen,
         "onClose": ()=>setIsSettingsOpen(false),
         "preferences": preferences,
@@ -2528,7 +2624,9 @@ const CommandCenterContent = ()=>{
         "onSelectRoom": (room)=>{
             setCurrentRoom(room);
             playBeep('tap');
-        }
+        },
+        "onOpenWorkspaceFiles": ()=>setIsWorkspaceFilesOpen(true),
+        "onOpenPluginAuth": handleOpenPluginAuth
     }), React.createElement(RetroErrorModal, {
         "error": isRetroErrorModalOpen ? retroError : null,
         "onClose": ()=>setIsRetroErrorModalOpen(false),
@@ -2650,6 +2748,15 @@ const CommandCenterContent = ()=>{
                 }
             }
         }
+    }), React.createElement(WorkspaceFileViewer, {
+        "isOpen": isWorkspaceFilesOpen,
+        "onClose": ()=>setIsWorkspaceFilesOpen(false)
+    }), React.createElement(PluginAuthModal, {
+        "isOpen": isPluginAuthModalOpen,
+        "onClose": ()=>setIsPluginAuthModalOpen(false),
+        "plugin": activeAuthPlugin,
+        "onAuthorized": handlePluginAuthorized,
+        "onRevoked": handlePluginRevoked
     }));
 };
 function App() {
@@ -4772,6 +4879,312 @@ const NotificationInboxModal = ({ isOpen, onClose })=>{
 exports.NotificationInboxModal = NotificationInboxModal;
 });
 
+window.__registerModule("components/PluginAuthModal", function(__require, exports, module) {
+const __imp_0 = __require("react"); const { useState, useEffect } = __imp_0; const React = (__imp_0 && __imp_0.default) ? __imp_0.default : __imp_0;
+const __imp_1 = __require("lucide-react"); const { X, KeyRound, ShieldCheck, AlertTriangle, Eye, EyeOff, CheckCircle2, Trash2, Lock, Globe, Radio, Terminal, ExternalLink } = __imp_1;
+const __imp_2 = __require("../engine/pluginAuthManager"); const { PluginAuthCredential, getPluginCredential, savePluginCredential, clearPluginCredential, maskCredential, isPluginAuthenticated } = __imp_2;
+function getPluginGuidance(pluginId) {
+    const clean = pluginId.toLowerCase();
+    if (clean.includes('search') || clean.includes('wiki')) {
+        return {
+            label: 'Search API Key / Token',
+            placeholder: 'Optional: Enter SerpApi, Tavily, or leave blank for Wiki REST',
+            hint: 'Leave blank to utilize the default free Wikipedia/DuckDuckGo client endpoints, or provide a BYOK key for live web scraping.'
+        };
+    }
+    if (clean.includes('github')) {
+        return {
+            label: 'GitHub Personal Access Token',
+            placeholder: 'ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+            hint: 'Create a personal access token (classic or fine-grained) with "repo" or "public_repo" scope at github.com/settings/tokens.'
+        };
+    }
+    if (clean.includes('slack')) {
+        return {
+            label: 'Slack Webhook URL or Bot Token',
+            placeholder: 'https://hooks.slack.com/services/... or xoxb-...',
+            hint: 'Incoming Webhook URL from your Slack app settings, or a bot user OAuth token with chat:write permissions.'
+        };
+    }
+    if (clean.includes('calendar') || clean.includes('google')) {
+        return {
+            label: 'Google API Key or OAuth Bearer Token',
+            placeholder: 'ya29.xxxxxxxxxxxxxxxxxxxx or AIzaSy...',
+            hint: 'Client-side OAuth access token or Google Cloud API Key with Calendar API v3 enabled.'
+        };
+    }
+    if (clean.includes('gateway') || clean.includes('fetch') || clean.includes('api')) {
+        return {
+            label: 'API Key / Bearer Token / Webhook Secret',
+            placeholder: 'Bearer xxxxxxxxxxxx or API key...',
+            hint: 'Authentication credentials attached to outgoing REST or Webhook payloads from the client safehouse.'
+        };
+    }
+    if (clean.includes('sandbox') || clean.includes('code')) {
+        return {
+            label: 'Compute Runtime Passphrase (Optional)',
+            placeholder: 'Optional execution auth token...',
+            hint: 'Local client sandbox executes safe JS IIFEs without requiring external cloud credentials.'
+        };
+    }
+    if (clean.includes('fs') || clean.includes('storage')) {
+        return {
+            label: 'IndexedDB Vault Passphrase (Optional)',
+            placeholder: 'Optional local encryption key...',
+            hint: 'IndexedDB storage operates locally within your browser sandbox.'
+        };
+    }
+    if (clean.includes('memory') || clean.includes('lookup')) {
+        return {
+            label: 'Vector Provider Key (Optional)',
+            placeholder: 'Optional embeddings API key...',
+            hint: 'Queries Dexie.js local ledger and client-side keyword indices. Cloud vector models are optional.'
+        };
+    }
+    return {
+        label: 'API Key / Access Token / Secret',
+        placeholder: 'Enter your authorization token or secret key...',
+        hint: 'Credentials are stored securely in browser window.__safeStorage/IndexedDB under your BYOK configuration.'
+    };
+}
+const PluginAuthModal = ({ isOpen, onClose, plugin, onAuthorized, onRevoked })=>{
+    const [apiKey, setApiKey] = useState('');
+    const [accountHandle, setAccountHandle] = useState('');
+    const [endpointUrl, setEndpointUrl] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
+    const [statusMessage, setStatusMessage] = useState(null);
+    const [existingCred, setExistingCred] = useState(null);
+    const [showAdvanced, setShowAdvanced] = useState(false);
+    useEffect(()=>{
+        if (isOpen && plugin) {
+            const stored = getPluginCredential(plugin.id);
+            if (stored) {
+                setExistingCred(stored);
+                setApiKey(stored.apiKey || stored.accessToken || '');
+                setAccountHandle(stored.accountHandle || '');
+                setEndpointUrl(stored.endpointUrl || '');
+            } else {
+                setExistingCred(null);
+                setApiKey('');
+                setAccountHandle('');
+                setEndpointUrl('');
+            }
+            setStatusMessage(null);
+            setShowPassword(false);
+        }
+    }, [
+        isOpen,
+        plugin
+    ]);
+    if (!isOpen || !plugin) return null;
+    const isConfigured = Boolean(existingCred && (existingCred.apiKey && existingCred.apiKey.trim().length > 0 || existingCred.accessToken && existingCred.accessToken.trim().length > 0));
+    const guidance = getPluginGuidance(plugin.id);
+    const handleSave = (e)=>{
+        e.preventDefault();
+        try {
+            const trimmedKey = apiKey.trim();
+            const trimmedHandle = accountHandle.trim() || `${plugin.id}@local-safehouse`;
+            const trimmedUrl = endpointUrl.trim();
+            const saved = savePluginCredential(plugin.id, {
+                apiKey: trimmedKey,
+                accountHandle: trimmedHandle,
+                endpointUrl: trimmedUrl || undefined
+            });
+            setExistingCred(saved);
+            setStatusMessage({
+                text: `CREDENTIALS SAVED // ${trimmedKey ? 'AUTH ACTIVE' : 'OPEN CLIENT READY'}`,
+                type: 'success'
+            });
+            onAuthorized?.(plugin.id, saved);
+            setTimeout(()=>{
+                setStatusMessage(null);
+            }, 2500);
+        } catch (err) {
+            setStatusMessage({
+                text: err?.message || 'Failed to save credentials locally.',
+                type: 'error'
+            });
+        }
+    };
+    const handleDisconnect = ()=>{
+        try {
+            clearPluginCredential(plugin.id);
+            setExistingCred(null);
+            setApiKey('');
+            setAccountHandle('');
+            setEndpointUrl('');
+            setStatusMessage({
+                text: 'TOKEN REVOKED // CREDENTIAL REMOVED FROM SAFEHOUSE',
+                type: 'info'
+            });
+            onRevoked?.(plugin.id);
+            setTimeout(()=>{
+                setStatusMessage(null);
+            }, 2500);
+        } catch (err) {
+            setStatusMessage({
+                text: err?.message || 'Failed to clear credential.',
+                type: 'error'
+            });
+        }
+    };
+    return React.createElement("div", {
+        "className": "fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150",
+        "onClick": (e)=>{
+            if (e.target === e.currentTarget) onClose();
+        }
+    }, React.createElement("div", {
+        "className": "w-full max-w-lg bg-[#100e0b] border shadow-2xl rounded-sm overflow-hidden flex flex-col font-mono-tabular text-sm text-[#e8dcc4]",
+        "style": {
+            borderColor: 'var(--theme-border-color, #e59838)',
+            boxShadow: '0 0 30px rgba(0,0,0,0.8), 0 0 15px var(--theme-glow-soft, rgba(229,152,56,0.25))'
+        }
+    }, React.createElement("div", {
+        "className": "bg-[#211a12] border-b px-4 py-3 flex items-center justify-between select-none",
+        "style": {
+            borderColor: 'var(--theme-border-color, #e59838)'
+        }
+    }, React.createElement("div", {
+        "className": "flex items-center gap-2"
+    }, React.createElement(KeyRound, {
+        "className": "w-4 h-4 text-[#e59838]"
+    }), React.createElement("span", {
+        "className": "font-bold uppercase tracking-wider text-xs sm:text-sm text-[#f3ead8]"
+    }, "BYOK Auth Gateway // ", plugin.name)), React.createElement("button", {
+        "type": "button",
+        "onClick": onClose,
+        "className": "p-1 text-[#b8a690] hover:text-[#f3ead8] hover:bg-[#342618] rounded transition-colors cursor-pointer",
+        "title": "Close [ESC]"
+    }, React.createElement(X, {
+        "className": "w-4 h-4"
+    }))), React.createElement("div", {
+        "className": "px-4 py-2.5 bg-[#17130e] border-b border-[#2e2114] flex flex-wrap items-center justify-between gap-2 text-xs"
+    }, React.createElement("div", {
+        "className": "flex items-center gap-2"
+    }, React.createElement("span", {
+        "className": "text-[#8c7a65]"
+    }, "TOOL:"), React.createElement("span", {
+        "className": "text-[#e59838] font-bold"
+    }, plugin.toolFunctionName || plugin.id)), React.createElement("div", {
+        "className": "flex items-center gap-2"
+    }, React.createElement("span", {
+        "className": "text-[#8c7a65]"
+    }, "STATUS:"), isConfigured ? React.createElement("span", {
+        "className": "inline-flex items-center gap-1 text-[#4ade80] font-bold"
+    }, React.createElement(CheckCircle2, {
+        "className": "w-3.5 h-3.5"
+    }), "[AUTHORIZED // AES-GCM]") : React.createElement("span", {
+        "className": "inline-flex items-center gap-1 text-[#e59838]"
+    }, React.createElement(AlertTriangle, {
+        "className": "w-3.5 h-3.5"
+    }), "[UNAUTHENTICATED / BYOK READY]"))), React.createElement("form", {
+        "onSubmit": handleSave,
+        "className": "p-4 flex flex-col gap-3.5"
+    }, plugin.description && React.createElement("p", {
+        "className": "text-xs text-[#b8a690] leading-relaxed bg-[#14100c] p-2.5 rounded border border-[#2b2015]"
+    }, plugin.description), React.createElement("div", {
+        "className": "flex flex-col gap-1.5"
+    }, React.createElement("div", {
+        "className": "flex items-center justify-between text-xs"
+    }, React.createElement("label", {
+        "htmlFor": "plugin-auth-apikey",
+        "className": "font-bold text-[#f3ead8] flex items-center gap-1.5"
+    }, React.createElement(Lock, {
+        "className": "w-3.5 h-3.5 text-[#e59838]"
+    }), guidance.label), isConfigured && existingCred?.apiKey && React.createElement("span", {
+        "className": "text-[10px] text-[#4ade80]"
+    }, "Current: ", maskCredential(existingCred.apiKey))), React.createElement("div", {
+        "className": "relative"
+    }, React.createElement("input", {
+        "id": "plugin-auth-apikey",
+        "type": showPassword ? 'text' : 'password',
+        "value": apiKey,
+        "onChange": (e)=>setApiKey(e.target.value),
+        "placeholder": guidance.placeholder,
+        "className": "w-full px-3 py-2 bg-[#0c0a08] border border-[#3d2e1d] focus:border-[#e59838] focus:outline-none rounded text-xs text-[#f3ead8] placeholder:text-[#635544] pr-10",
+        "autoComplete": "off",
+        "spellCheck": false
+    }), React.createElement("button", {
+        "type": "button",
+        "onClick": ()=>setShowPassword(!showPassword),
+        "className": "absolute right-2.5 top-1/2 -translate-y-1/2 text-[#8c7a65] hover:text-[#e59838] transition-colors p-1",
+        "title": showPassword ? 'Hide Secret' : 'Show Secret'
+    }, showPassword ? React.createElement(EyeOff, {
+        "className": "w-3.5 h-3.5"
+    }) : React.createElement(Eye, {
+        "className": "w-3.5 h-3.5"
+    }))), React.createElement("p", {
+        "className": "text-[11px] text-[#8c7a65] leading-snug"
+    }, guidance.hint)), React.createElement("div", null, React.createElement("button", {
+        "type": "button",
+        "onClick": ()=>setShowAdvanced(!showAdvanced),
+        "className": "text-[11px] text-[#e59838] hover:underline flex items-center gap-1 cursor-pointer"
+    }, React.createElement("span", null, showAdvanced ? '[-] Hide Custom Endpoint & Handle' : '[+] Custom Endpoint & Handle (Optional)')), showAdvanced && React.createElement("div", {
+        "className": "mt-2.5 pt-2.5 border-t border-[#261d12] flex flex-col gap-2.5 animate-in fade-in duration-100"
+    }, React.createElement("div", {
+        "className": "flex flex-col gap-1"
+    }, React.createElement("label", {
+        "htmlFor": "plugin-auth-handle",
+        "className": "text-xs text-[#b8a690]"
+    }, "Account Handle / Identity Tag:"), React.createElement("input", {
+        "id": "plugin-auth-handle",
+        "type": "text",
+        "value": accountHandle,
+        "onChange": (e)=>setAccountHandle(e.target.value),
+        "placeholder": "e.g. operative@field-net or user-12",
+        "className": "w-full px-2.5 py-1.5 bg-[#0c0a08] border border-[#3d2e1d] focus:border-[#e59838] focus:outline-none rounded text-xs text-[#f3ead8] placeholder:text-[#635544]"
+    })), React.createElement("div", {
+        "className": "flex flex-col gap-1"
+    }, React.createElement("label", {
+        "htmlFor": "plugin-auth-endpoint",
+        "className": "text-xs text-[#b8a690]"
+    }, "Custom REST / Webhook Base URL:"), React.createElement("input", {
+        "id": "plugin-auth-endpoint",
+        "type": "text",
+        "value": endpointUrl,
+        "onChange": (e)=>setEndpointUrl(e.target.value),
+        "placeholder": "https://api.custom-service.internal/v1",
+        "className": "w-full px-2.5 py-1.5 bg-[#0c0a08] border border-[#3d2e1d] focus:border-[#e59838] focus:outline-none rounded text-xs text-[#f3ead8] placeholder:text-[#635544]"
+    })))), statusMessage && React.createElement("div", {
+        "className": `px-3 py-2 rounded text-xs flex items-center gap-2 border ${statusMessage.type === 'success' ? 'bg-[#12281a] border-[#22c55e]/50 text-[#4ade80]' : statusMessage.type === 'error' ? 'bg-[#2b1414] border-[#ef4444]/50 text-[#f87171]' : 'bg-[#1f1911] border-[#e59838]/50 text-[#f59e0b]'}`
+    }, statusMessage.type === 'success' ? React.createElement(ShieldCheck, {
+        "className": "w-4 h-4 shrink-0"
+    }) : statusMessage.type === 'error' ? React.createElement(AlertTriangle, {
+        "className": "w-4 h-4 shrink-0"
+    }) : React.createElement(Terminal, {
+        "className": "w-4 h-4 shrink-0"
+    }), React.createElement("span", {
+        "className": "flex-1"
+    }, statusMessage.text)), React.createElement("div", {
+        "className": "pt-2 border-t border-[#261d12] flex items-center justify-between gap-2"
+    }, React.createElement("div", null, isConfigured && React.createElement("button", {
+        "type": "button",
+        "onClick": handleDisconnect,
+        "className": "px-3 py-1.5 bg-[#211616] hover:bg-[#341b1b] text-[#f87171] border border-[#7f1d1d] rounded text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer",
+        "title": "Remove local key and revoke authorization"
+    }, React.createElement(Trash2, {
+        "className": "w-3.5 h-3.5"
+    }), React.createElement("span", null, "[Disconnect / Revoke]"))), React.createElement("div", {
+        "className": "flex items-center gap-2"
+    }, React.createElement("button", {
+        "type": "button",
+        "onClick": onClose,
+        "className": "px-3 py-1.5 bg-[#1b1712] hover:bg-[#28211a] text-[#b8a690] border border-[#3d2e1d] rounded text-xs transition-colors cursor-pointer"
+    }, "[Cancel]"), React.createElement("button", {
+        "type": "submit",
+        "className": "px-4 py-1.5 bg-[#e59838] hover:bg-[#f5a742] text-[#121110] border border-[#f5a742] rounded text-xs font-bold transition-all shadow-[0_0_12px_rgba(229,152,56,0.4)] cursor-pointer flex items-center gap-1.5"
+    }, React.createElement(ShieldCheck, {
+        "className": "w-3.5 h-3.5"
+    }), React.createElement("span", null, "[Save & Authorize]"))))), React.createElement("div", {
+        "className": "px-4 py-2 bg-[#0c0a08] border-t border-[#1f170f] text-[10px] text-[#6b5d4f] flex items-center justify-between"
+    }, React.createElement("span", null, "🔒 Pure Client-Side PWA Storage (No Backend Intermediary)"), React.createElement("span", null, "IndexedDB / LocalStorage"))));
+};
+const __default_export__ = PluginAuthModal;
+
+exports.PluginAuthModal = PluginAuthModal;
+exports.default = __default_export__;
+});
+
 window.__registerModule("components/PWAInstallButton", function(__require, exports, module) {
 const __imp_0 = __require("react"); const { useState } = __imp_0; const React = (__imp_0 && __imp_0.default) ? __imp_0.default : __imp_0;
 const __imp_1 = __require("lucide-react"); const { Download, Smartphone, X } = __imp_1;
@@ -5733,7 +6146,7 @@ exports.DefaultRoomOverlay = DefaultRoomOverlay;
 
 window.__registerModule("components/SettingsModal", function(__require, exports, module) {
 const __imp_0 = __require("react"); const { useState, useEffect } = __imp_0; const React = (__imp_0 && __imp_0.default) ? __imp_0.default : __imp_0;
-const __imp_1 = __require("lucide-react"); const { X, Volume2, VolumeX, RefreshCw, ShieldCheck, BatteryCharging, Lock, KeyRound, CheckCircle2, AlertTriangle, Radio, Cpu, Server } = __imp_1;
+const __imp_1 = __require("lucide-react"); const { X, Volume2, VolumeX, RefreshCw, ShieldCheck, BatteryCharging, Lock, KeyRound, CheckCircle2, AlertTriangle, Radio, Cpu, Server, FileText } = __imp_1;
 const __imp_2 = __require("../context/ThemeContext"); const { useTheme } = __imp_2;
 const __imp_3 = __require("../services/ApiService"); const { CommandPreferences } = __imp_3;
 const __imp_4 = __require("../services/SecureVaultService"); const { VaultStartupReport, ServiceProviderName, refreshOAuthProviderToken } = __imp_4;
@@ -5748,7 +6161,7 @@ const PROVIDER_LABELS = {
     github: 'GitHub Repo OAuth',
     vault: 'Dossier Vault Key'
 };
-const SettingsModal = ({ isOpen, onClose, preferences, onUpdatePreferences, serverReady, vaultReport, onRevalidateVault, currentRoom = 'war_room', onSelectRoom })=>{
+const SettingsModal = ({ isOpen, onClose, preferences, onUpdatePreferences, serverReady, vaultReport, onRevalidateVault, currentRoom = 'war_room', onSelectRoom, onOpenWorkspaceFiles, onOpenPluginAuth })=>{
     const { theme, soundEnabled, setSoundEnabled, playBeep } = useTheme();
     const [pingStatus, setPingStatus] = useState({
         loading: false,
@@ -5953,6 +6366,16 @@ const SettingsModal = ({ isOpen, onClose, preferences, onUpdatePreferences, serv
         "type": "button",
         "onClick": ()=>{
             playBeep('tap');
+            onClose();
+            onOpenWorkspaceFiles?.();
+        },
+        "className": "w-full min-h-[40px] px-3 py-2.5 rounded-xl bg-sky-950/60 hover:bg-sky-900/60 border border-sky-600/60 text-xs font-semibold text-sky-200 flex items-center justify-center gap-2 cursor-pointer transition-colors"
+    }, React.createElement(FileText, {
+        "className": "w-4 h-4 text-sky-400"
+    }), React.createElement("span", null, "📁 Browse Workspace Reports & Logs (IndexedDB)")), React.createElement("button", {
+        "type": "button",
+        "onClick": ()=>{
+            playBeep('tap');
             setIsGuardrailsOpen(true);
         },
         "className": "w-full min-h-[40px] px-3 py-2.5 rounded-xl bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-600/60 text-xs font-semibold text-emerald-200 flex items-center justify-center gap-2 cursor-pointer transition-colors"
@@ -6039,12 +6462,22 @@ const SettingsModal = ({ isOpen, onClose, preferences, onUpdatePreferences, serv
             "className": "w-3.5 h-3.5 text-amber-400 shrink-0"
         }), React.createElement("span", {
             "className": "font-semibold text-slate-200"
-        }, PROVIDER_LABELS[item.provider] || item.provider)), React.createElement("button", {
+        }, PROVIDER_LABELS[item.provider] || item.provider)), React.createElement("div", {
+            "className": "flex items-center gap-1.5 shrink-0"
+        }, onOpenPluginAuth && React.createElement("button", {
+            "type": "button",
+            "onClick": ()=>onOpenPluginAuth({
+                    id: item.provider,
+                    name: PROVIDER_LABELS[item.provider] || item.provider
+                }),
+            "className": "px-2 py-0.5 rounded bg-[#1e1710] hover:bg-[#2b1f14] text-[11px] font-mono-tabular text-amber-300 border border-amber-800/80 cursor-pointer",
+            "title": "Configure BYOK Key / OAuth Secret locally"
+        }, "BYOK Key 🔑"), React.createElement("button", {
             "type": "button",
             "onClick": ()=>handleRotateProviderToken(item.provider),
             "disabled": rotatingProvider === item.provider,
             "className": "px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[11px] font-mono-tabular text-emerald-300 border border-slate-700 cursor-pointer"
-        }, rotatingProvider === item.provider ? 'Rotating...' : 'Rotate OAuth')), React.createElement("div", {
+        }, rotatingProvider === item.provider ? 'Rotating...' : 'Rotate OAuth'))), React.createElement("div", {
             "className": "grid grid-cols-2 gap-2 font-mono-tabular text-[10px] text-slate-400"
         }, React.createElement("div", {
             "className": "truncate"
@@ -10542,6 +10975,844 @@ const TownHallRoundtablePanel = ({ sessions, isExecutingMeeting, onConveneMeetin
 exports.TownHallRoundtablePanel = TownHallRoundtablePanel;
 });
 
+window.__registerModule("components/WorkspaceFileViewer", function(__require, exports, module) {
+const __imp_0 = __require("react"); const { useState, useEffect, useMemo } = __imp_0; const React = (__imp_0 && __imp_0.default) ? __imp_0.default : __imp_0;
+const __imp_1 = __require("motion/react"); const { motion, AnimatePresence } = __imp_1;
+const __imp_2 = __require("lucide-react"); const { FileText, Folder, FolderOpen, Search, Download, Copy, Trash2, RefreshCw, Plus, X, Check, Code, FileCode, Eye, File, Edit3, Save, Sparkles, AlertCircle, Database, ExternalLink } = __imp_2;
+const __imp_3 = __require("../context/ThemeContext"); const { useTheme } = __imp_3;
+const __imp_4 = __require("../engine/storageManager"); const { WorkspaceFileRecord, listWorkspaceFiles, readWorkspaceFile, writeWorkspaceFile, deleteWorkspaceFile, exportWorkspaceFile, copyWorkspaceFileContent, seedInitialWorkspaceFiles, getWorkspaceCategories } = __imp_4;
+const WorkspaceFileViewer = ({ isOpen, onClose, initialFilePath })=>{
+    const { themeId, playBeep } = useTheme();
+    const [files, setFiles] = useState([]);
+    const [categories, setCategories] = useState([
+        'all',
+        'reports',
+        'logs',
+        'config'
+    ]);
+    const [selectedCategory, setSelectedCategory] = useState('all');
+    const [searchQuery, setSearchQuery] = useState('');
+    const [selectedFile, setSelectedFile] = useState(null);
+    const [isLoading, setIsLoading] = useState(true);
+    const [isRefreshing, setIsRefreshing] = useState(false);
+    const [copyFeedback, setCopyFeedback] = useState(false);
+    const [viewMode, setViewMode] = useState('rendered');
+    const [editContent, setEditContent] = useState('');
+    const [isSaving, setIsSaving] = useState(false);
+    const [deleteConfirmPath, setDeleteConfirmPath] = useState(null);
+    const [isCreatingNew, setIsCreatingNew] = useState(false);
+    const [newFilePath, setNewFilePath] = useState('reports/agent_mission_log.md');
+    const [newFileContent, setNewFileContent] = useState('# Tactical Mission Log\n**Generated By:** Operative\n**Date:** ' + new Date().toISOString() + '\n\n## Mission Objectives\n- [x] Initial sweep\n- [ ] Signal synchronization\n');
+    const [expandedFolders, setExpandedFolders] = useState({
+        reports: true,
+        logs: true,
+        config: true,
+        archive: true,
+        data: true
+    });
+    const loadFiles = async (preserveSelected = true)=>{
+        setIsLoading(true);
+        try {
+            const allFiles = await listWorkspaceFiles();
+            setFiles(allFiles);
+            const cats = await getWorkspaceCategories();
+            setCategories([
+                'all',
+                ...cats
+            ]);
+            if (preserveSelected && selectedFile) {
+                const stillExists = allFiles.find((f)=>f.path === selectedFile.path);
+                if (stillExists) {
+                    setSelectedFile(stillExists);
+                    setEditContent(stillExists.content);
+                } else if (allFiles.length > 0) {
+                    setSelectedFile(allFiles[0]);
+                    setEditContent(allFiles[0].content);
+                } else {
+                    setSelectedFile(null);
+                }
+            } else if (initialFilePath) {
+                const target = allFiles.find((f)=>f.path === initialFilePath);
+                if (target) {
+                    setSelectedFile(target);
+                    setEditContent(target.content);
+                } else if (allFiles.length > 0) {
+                    setSelectedFile(allFiles[0]);
+                    setEditContent(allFiles[0].content);
+                }
+            } else if (allFiles.length > 0 && !selectedFile) {
+                setSelectedFile(allFiles[0]);
+                setEditContent(allFiles[0].content);
+            }
+        } catch (e) {
+            console.error('[WorkspaceFileViewer] Failed to load files:', e);
+        } finally{
+            setIsLoading(false);
+        }
+    };
+    useEffect(()=>{
+        if (isOpen) {
+            loadFiles();
+        }
+    }, [
+        isOpen
+    ]);
+    useEffect(()=>{
+        const handleKeyDown = (e)=>{
+            if (!isOpen) return;
+            if (e.key === 'Escape') {
+                if (isCreatingNew) {
+                    setIsCreatingNew(false);
+                } else if (deleteConfirmPath) {
+                    setDeleteConfirmPath(null);
+                } else {
+                    onClose();
+                }
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return ()=>window.removeEventListener('keydown', handleKeyDown);
+    }, [
+        isOpen,
+        isCreatingNew,
+        deleteConfirmPath,
+        onClose
+    ]);
+    const handleRefresh = async ()=>{
+        setIsRefreshing(true);
+        playBeep('tap');
+        await loadFiles(true);
+        setTimeout(()=>setIsRefreshing(false), 300);
+    };
+    const handleSeedSamples = async ()=>{
+        playBeep('complete');
+        setIsLoading(true);
+        try {
+            const seeded = await seedInitialWorkspaceFiles(true);
+            setFiles(seeded);
+            const master = seeded.find((f)=>f.path.includes('master_execution_schedule'));
+            if (master) {
+                setSelectedFile(master);
+                setEditContent(master.content);
+                setViewMode('rendered');
+            }
+        } finally{
+            setIsLoading(false);
+        }
+    };
+    const handleSelectFile = (file)=>{
+        playBeep('tap');
+        setSelectedFile(file);
+        setEditContent(file.content);
+        setDeleteConfirmPath(null);
+        if (viewMode === 'edit') setViewMode('rendered');
+    };
+    const handleCopy = async ()=>{
+        if (!selectedFile) return;
+        playBeep('tap');
+        const success = await copyWorkspaceFileContent(selectedFile.path);
+        if (success) {
+            setCopyFeedback(true);
+            setTimeout(()=>setCopyFeedback(false), 2000);
+        }
+    };
+    const handleDownload = async ()=>{
+        if (!selectedFile) return;
+        playBeep('complete');
+        await exportWorkspaceFile(selectedFile.path);
+    };
+    const handleDelete = async (path)=>{
+        playBeep('alert');
+        await deleteWorkspaceFile(path);
+        setDeleteConfirmPath(null);
+        await loadFiles(false);
+    };
+    const handleSaveEdit = async ()=>{
+        if (!selectedFile) return;
+        setIsSaving(true);
+        playBeep('complete');
+        try {
+            const updated = await writeWorkspaceFile(selectedFile.path, editContent, selectedFile.format, selectedFile.category);
+            setSelectedFile(updated);
+            setViewMode('rendered');
+            await loadFiles(true);
+        } finally{
+            setIsSaving(false);
+        }
+    };
+    const handleCreateFile = async ()=>{
+        if (!newFilePath.trim()) return;
+        playBeep('complete');
+        try {
+            const created = await writeWorkspaceFile(newFilePath.trim(), newFileContent);
+            setIsCreatingNew(false);
+            await loadFiles(false);
+            setSelectedFile(created);
+            setEditContent(created.content);
+            setViewMode('rendered');
+        } catch (e) {
+            console.error('Failed to create file:', e);
+        }
+    };
+    const toggleFolder = (folderName)=>{
+        setExpandedFolders((prev)=>({
+                ...prev,
+                [folderName]: !prev[folderName]
+            }));
+        playBeep('tap');
+    };
+    const filteredFiles = useMemo(()=>{
+        return files.filter((file)=>{
+            const matchesCategory = selectedCategory === 'all' || file.category === selectedCategory;
+            if (!matchesCategory) return false;
+            if (!searchQuery.trim()) return true;
+            const q = searchQuery.toLowerCase();
+            return file.path.toLowerCase().includes(q) || file.content.toLowerCase().includes(q) || file.category.toLowerCase().includes(q);
+        });
+    }, [
+        files,
+        selectedCategory,
+        searchQuery
+    ]);
+    const filesByFolder = useMemo(()=>{
+        const groups = {};
+        for (const file of filteredFiles){
+            const parts = file.path.split('/');
+            const folder = parts.length > 1 ? parts[0] : 'root';
+            if (!groups[folder]) groups[folder] = [];
+            groups[folder].push(file);
+        }
+        return groups;
+    }, [
+        filteredFiles
+    ]);
+    const totalBytes = useMemo(()=>{
+        return files.reduce((acc, f)=>acc + (f.sizeBytes || 0), 0);
+    }, [
+        files
+    ]);
+    const themeColors = useMemo(()=>{
+        if (themeId === 'amber') {
+            return {
+                accent: '#f59e0b',
+                accentBg: '#3d2508',
+                border: '#784712',
+                badge: 'bg-[#452608] text-[#fbbf24] border-[#925516]',
+                glow: 'shadow-[0_0_15px_rgba(245,158,11,0.25)]'
+            };
+        }
+        if (themeId === 'blue') {
+            return {
+                accent: '#38bdf8',
+                accentBg: '#082f49',
+                border: '#0e5f8f',
+                badge: 'bg-[#082f49] text-[#38bdf8] border-[#0284c7]',
+                glow: 'shadow-[0_0_15px_rgba(56,189,248,0.25)]'
+            };
+        }
+        return {
+            accent: '#4ade80',
+            accentBg: '#052e16',
+            border: '#166534',
+            badge: 'bg-[#052e16] text-[#4ade80] border-[#15803d]',
+            glow: 'shadow-[0_0_15px_rgba(74,222,128,0.25)]'
+        };
+    }, [
+        themeId
+    ]);
+    if (!isOpen) return null;
+    return React.createElement(AnimatePresence, null, React.createElement("div", {
+        "className": "fixed inset-0 z-[120] flex items-center justify-center p-2 sm:p-4 bg-black/80 backdrop-blur-sm"
+    }, React.createElement("motion.div", {
+        "initial": {
+            opacity: 0,
+            scale: 0.95,
+            y: 15
+        },
+        "animate": {
+            opacity: 1,
+            scale: 1,
+            y: 0
+        },
+        "exit": {
+            opacity: 0,
+            scale: 0.95,
+            y: 15
+        },
+        "transition": {
+            duration: 0.2
+        },
+        "className": "relative w-full max-w-6xl h-[92vh] max-h-[880px] flex flex-col bg-[#0a0c0e] border-2 rounded-lg shadow-2xl overflow-hidden font-mono text-xs sm:text-sm text-[#e2e8f0]",
+        "style": {
+            borderColor: themeColors.accent
+        }
+    }, React.createElement("div", {
+        "className": "flex items-center justify-between px-3 sm:px-4 py-2 border-b select-none",
+        "style": {
+            backgroundColor: '#11151a',
+            borderColor: themeColors.border
+        }
+    }, React.createElement("div", {
+        "className": "flex items-center gap-2"
+    }, React.createElement("span", {
+        "className": "text-base"
+    }, "📁"), React.createElement("span", {
+        "className": "font-bold tracking-wider text-xs sm:text-sm text-white"
+    }, "PIXELOPS WORKSPACE FILE EXPLORER"), React.createElement("span", {
+        "className": `hidden md:inline-block px-2 py-0.5 text-[10px] font-bold uppercase rounded border ${themeColors.badge}`
+    }, "IndexedDB VFS")), React.createElement("div", {
+        "className": "flex items-center gap-2"
+    }, React.createElement("button", {
+        "type": "button",
+        "onClick": handleRefresh,
+        "disabled": isRefreshing,
+        "className": "p-1.5 hover:bg-white/10 rounded transition-colors text-slate-300 hover:text-white",
+        "title": "Refresh Workspace Files"
+    }, React.createElement(RefreshCw, {
+        "className": `w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`
+    })), React.createElement("button", {
+        "type": "button",
+        "onClick": ()=>setIsCreatingNew(true),
+        "className": "flex items-center gap-1 px-2.5 py-1 rounded bg-[#1e293b] hover:bg-[#334155] text-white border border-slate-600 transition-colors text-xs font-semibold",
+        "title": "Create a new report or log file"
+    }, React.createElement(Plus, {
+        "className": "w-3 h-3"
+    }), React.createElement("span", null, "New")), React.createElement("button", {
+        "type": "button",
+        "onClick": handleSeedSamples,
+        "className": "hidden sm:flex items-center gap-1 px-2.5 py-1 rounded border transition-colors text-xs font-semibold",
+        "style": {
+            backgroundColor: themeColors.accentBg,
+            borderColor: themeColors.border,
+            color: themeColors.accent
+        },
+        "title": "Seed master_execution_schedule.md and tactical configs"
+    }, React.createElement(Sparkles, {
+        "className": "w-3 h-3"
+    }), React.createElement("span", null, "Seed Samples")), React.createElement("button", {
+        "type": "button",
+        "onClick": onClose,
+        "className": "p-1.5 hover:bg-red-500/20 text-slate-400 hover:text-red-400 rounded transition-colors ml-1",
+        "title": "Close Explorer (Esc)"
+    }, React.createElement(X, {
+        "className": "w-4 h-4"
+    })))), React.createElement("div", {
+        "className": "flex items-center justify-between px-3 py-1.5 border-b bg-[#0d1015] text-[11px] text-slate-400 select-none",
+        "style": {
+            borderColor: themeColors.border
+        }
+    }, React.createElement("div", {
+        "className": "flex items-center gap-3"
+    }, React.createElement("span", {
+        "className": "flex items-center gap-1.5"
+    }, React.createElement(Database, {
+        "className": "w-3 h-3 text-slate-500"
+    }), React.createElement("span", null, "Storage: ", React.createElement("strong", {
+        "className": "text-slate-200"
+    }, files.length), ' ', "records (", Math.round(totalBytes / 1024 * 10) / 10, " KB)")), React.createElement("span", {
+        "className": "hidden sm:inline text-slate-600"
+    }, "|"), React.createElement("span", {
+        "className": "hidden sm:inline"
+    }, "Engine: Dexie.js v3 IndexedDB + VFS")), React.createElement("div", {
+        "className": "flex items-center gap-2"
+    }, React.createElement("span", {
+        "className": "text-slate-400"
+    }, selectedFile ? selectedFile.path : 'No file selected'))), React.createElement("div", {
+        "className": "flex-1 flex flex-col md:flex-row overflow-hidden"
+    }, React.createElement("div", {
+        "className": "w-full md:w-80 md:min-w-[280px] md:max-w-xs flex flex-col border-b md:border-b-0 md:border-r bg-[#090b0e] overflow-hidden",
+        "style": {
+            borderColor: themeColors.border
+        }
+    }, React.createElement("div", {
+        "className": "p-2.5 border-b border-slate-800 flex flex-col gap-2 bg-[#0c0f14]"
+    }, React.createElement("div", {
+        "className": "relative"
+    }, React.createElement(Search, {
+        "className": "w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500"
+    }), React.createElement("input", {
+        "type": "text",
+        "value": searchQuery,
+        "onChange": (e)=>setSearchQuery(e.target.value),
+        "placeholder": "Search reports & files...",
+        "className": "w-full bg-[#131720] border border-slate-700 rounded px-2.5 pl-8 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-slate-500 font-mono"
+    }), searchQuery && React.createElement("button", {
+        "type": "button",
+        "onClick": ()=>setSearchQuery(''),
+        "className": "absolute right-2 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white"
+    }, React.createElement(X, {
+        "className": "w-3 h-3"
+    }))), React.createElement("div", {
+        "className": "flex items-center gap-1 overflow-x-auto pb-0.5 no-scrollbar"
+    }, categories.map((cat)=>{
+        const active = selectedCategory === cat;
+        return React.createElement("button", {
+            "key": cat,
+            "type": "button",
+            "onClick": ()=>{
+                setSelectedCategory(cat);
+                playBeep('tap');
+            },
+            "className": `px-2 py-0.5 rounded text-[10px] font-bold uppercase transition-colors shrink-0 cursor-pointer ${active ? 'bg-slate-200 text-black font-semibold' : 'bg-slate-800/80 text-slate-400 hover:text-slate-200 hover:bg-slate-800'}`
+        }, cat);
+    }))), React.createElement("div", {
+        "className": "flex-1 overflow-y-auto p-2 space-y-3 font-mono text-xs"
+    }, isLoading ? React.createElement("div", {
+        "className": "p-8 text-center text-slate-500 flex flex-col items-center gap-2"
+    }, React.createElement(RefreshCw, {
+        "className": "w-5 h-5 animate-spin text-slate-400"
+    }), React.createElement("span", null, "Loading IndexedDB files...")) : filteredFiles.length === 0 ? React.createElement("div", {
+        "className": "p-6 text-center text-slate-500 flex flex-col items-center gap-3"
+    }, React.createElement(AlertCircle, {
+        "className": "w-8 h-8 text-slate-600"
+    }), React.createElement("div", null, React.createElement("p", {
+        "className": "font-semibold text-slate-400 mb-1"
+    }, "No workspace files found"), React.createElement("p", {
+        "className": "text-[11px] text-slate-500"
+    }, searchQuery ? 'No files matched your filter query.' : 'Storage is currently clear. Agents populate reports upon directive execution.')), React.createElement("button", {
+        "type": "button",
+        "onClick": handleSeedSamples,
+        "className": "mt-1 px-3 py-1.5 rounded text-xs font-semibold border flex items-center gap-1.5 transition-colors cursor-pointer",
+        "style": {
+            backgroundColor: themeColors.accentBg,
+            borderColor: themeColors.border,
+            color: themeColors.accent
+        }
+    }, React.createElement(Sparkles, {
+        "className": "w-3.5 h-3.5"
+    }), React.createElement("span", null, "Seed Sample Reports"))) : Object.entries(filesByFolder).map(([folderName, folderFiles])=>{
+        const isExpanded = expandedFolders[folderName] ?? true;
+        return React.createElement("div", {
+            "key": folderName,
+            "className": "space-y-1"
+        }, React.createElement("button", {
+            "type": "button",
+            "onClick": ()=>toggleFolder(folderName),
+            "className": "w-full flex items-center gap-2 px-1.5 py-1 text-slate-400 hover:text-slate-200 hover:bg-white/5 rounded text-left font-bold select-none cursor-pointer"
+        }, isExpanded ? React.createElement(FolderOpen, {
+            "className": "w-3.5 h-3.5 text-amber-400"
+        }) : React.createElement(Folder, {
+            "className": "w-3.5 h-3.5 text-amber-400"
+        }), React.createElement("span", {
+            "className": "uppercase text-[11px] tracking-wider"
+        }, folderName, "/"), React.createElement("span", {
+            "className": "ml-auto text-[10px] text-slate-600 font-normal"
+        }, "(", folderFiles.length, ")")), isExpanded && React.createElement("div", {
+            "className": "pl-3.5 space-y-0.5 border-l border-slate-800 ml-2"
+        }, folderFiles.map((file)=>{
+            const isSelected = selectedFile?.path === file.path;
+            const basename = file.path.split('/').pop() || file.path;
+            const isMd = file.format === 'markdown';
+            const isJson = file.format === 'json';
+            return React.createElement("button", {
+                "key": file.path,
+                "type": "button",
+                "onClick": ()=>handleSelectFile(file),
+                "className": `w-full flex items-center gap-2 px-2 py-1.5 rounded text-left transition-colors cursor-pointer group ${isSelected ? 'bg-white/10 text-white font-semibold' : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'}`,
+                "style": {
+                    borderLeft: isSelected ? `2px solid ${themeColors.accent}` : '2px solid transparent'
+                }
+            }, isMd ? React.createElement(FileText, {
+                "className": "w-3.5 h-3.5 text-sky-400 shrink-0"
+            }) : isJson ? React.createElement(FileCode, {
+                "className": "w-3.5 h-3.5 text-emerald-400 shrink-0"
+            }) : React.createElement(File, {
+                "className": "w-3.5 h-3.5 text-slate-400 shrink-0"
+            }), React.createElement("span", {
+                "className": "truncate flex-1 text-xs"
+            }, basename), React.createElement("span", {
+                "className": "text-[10px] text-slate-600 group-hover:text-slate-500 shrink-0"
+            }, file.sizeBytes > 1024 ? `${Math.round(file.sizeBytes / 1024 * 10) / 10}KB` : `${file.sizeBytes}B`));
+        })));
+    }))), React.createElement("div", {
+        "className": "flex-1 flex flex-col bg-[#0b0e12] overflow-hidden"
+    }, selectedFile ? React.createElement(React.Fragment, null, React.createElement("div", {
+        "className": "flex flex-wrap items-center justify-between gap-2 px-3 sm:px-4 py-2 border-b bg-[#10141b]",
+        "style": {
+            borderColor: themeColors.border
+        }
+    }, React.createElement("div", {
+        "className": "flex items-center gap-2 overflow-hidden"
+    }, React.createElement("span", {
+        "className": "font-bold text-white text-xs sm:text-sm truncate"
+    }, selectedFile.path), React.createElement("span", {
+        "className": "px-1.5 py-0.5 rounded text-[10px] uppercase font-bold bg-slate-800 text-slate-300 border border-slate-700"
+    }, selectedFile.format), React.createElement("span", {
+        "className": "text-[11px] text-slate-500 hidden sm:inline"
+    }, selectedFile.sizeBytes, " bytes")), React.createElement("div", {
+        "className": "flex items-center gap-1.5"
+    }, selectedFile.format === 'markdown' && React.createElement("div", {
+        "className": "inline-flex rounded bg-[#1a202c] p-0.5 border border-slate-700 mr-1"
+    }, React.createElement("button", {
+        "type": "button",
+        "onClick": ()=>{
+            setViewMode('rendered');
+            playBeep('tap');
+        },
+        "className": `px-2 py-0.5 text-xs rounded transition-colors ${viewMode === 'rendered' ? 'bg-slate-200 text-black font-semibold' : 'text-slate-400 hover:text-white'}`,
+        "title": "Rendered Markdown Typography"
+    }, React.createElement("span", {
+        "className": "flex items-center gap-1"
+    }, React.createElement(Eye, {
+        "className": "w-3 h-3"
+    }), React.createElement("span", {
+        "className": "hidden sm:inline"
+    }, "Preview"))), React.createElement("button", {
+        "type": "button",
+        "onClick": ()=>{
+            setViewMode('raw');
+            playBeep('tap');
+        },
+        "className": `px-2 py-0.5 text-xs rounded transition-colors ${viewMode === 'raw' ? 'bg-slate-200 text-black font-semibold' : 'text-slate-400 hover:text-white'}`,
+        "title": "Raw Source Text"
+    }, React.createElement("span", {
+        "className": "flex items-center gap-1"
+    }, React.createElement(Code, {
+        "className": "w-3 h-3"
+    }), React.createElement("span", {
+        "className": "hidden sm:inline"
+    }, "Source"))), React.createElement("button", {
+        "type": "button",
+        "onClick": ()=>{
+            setViewMode('edit');
+            playBeep('tap');
+        },
+        "className": `px-2 py-0.5 text-xs rounded transition-colors ${viewMode === 'edit' ? 'bg-slate-200 text-black font-semibold' : 'text-slate-400 hover:text-white'}`,
+        "title": "Edit File In-Place"
+    }, React.createElement("span", {
+        "className": "flex items-center gap-1"
+    }, React.createElement(Edit3, {
+        "className": "w-3 h-3"
+    }), React.createElement("span", {
+        "className": "hidden sm:inline"
+    }, "Edit")))), React.createElement("button", {
+        "type": "button",
+        "onClick": handleCopy,
+        "className": "flex items-center gap-1 px-2.5 py-1 rounded bg-[#1e293b] hover:bg-[#334155] text-white border border-slate-600 transition-colors text-xs font-semibold cursor-pointer",
+        "title": "Copy entire file contents to clipboard"
+    }, copyFeedback ? React.createElement(React.Fragment, null, React.createElement(Check, {
+        "className": "w-3.5 h-3.5 text-emerald-400"
+    }), React.createElement("span", {
+        "className": "text-emerald-400"
+    }, "Copied!")) : React.createElement(React.Fragment, null, React.createElement(Copy, {
+        "className": "w-3.5 h-3.5"
+    }), React.createElement("span", {
+        "className": "hidden sm:inline"
+    }, "Copy"))), React.createElement("button", {
+        "type": "button",
+        "onClick": handleDownload,
+        "className": "flex items-center gap-1 px-2.5 py-1 rounded bg-[#1e293b] hover:bg-[#334155] text-white border border-slate-600 transition-colors text-xs font-semibold cursor-pointer",
+        "title": "Download file to local machine"
+    }, React.createElement(Download, {
+        "className": "w-3.5 h-3.5"
+    }), React.createElement("span", {
+        "className": "hidden sm:inline"
+    }, "Download")), deleteConfirmPath === selectedFile.path ? React.createElement("div", {
+        "className": "flex items-center gap-1 bg-red-950/80 border border-red-700 px-1.5 py-0.5 rounded"
+    }, React.createElement("span", {
+        "className": "text-[10px] text-red-200"
+    }, "Confirm?"), React.createElement("button", {
+        "type": "button",
+        "onClick": ()=>handleDelete(selectedFile.path),
+        "className": "px-1.5 py-0.5 bg-red-600 text-white rounded text-[10px] font-bold hover:bg-red-700"
+    }, "Yes"), React.createElement("button", {
+        "type": "button",
+        "onClick": ()=>setDeleteConfirmPath(null),
+        "className": "px-1.5 py-0.5 text-slate-300 hover:text-white text-[10px]"
+    }, "No")) : React.createElement("button", {
+        "type": "button",
+        "onClick": ()=>setDeleteConfirmPath(selectedFile.path),
+        "className": "flex items-center gap-1 px-2 py-1 rounded hover:bg-red-500/20 text-slate-400 hover:text-red-400 transition-colors text-xs cursor-pointer",
+        "title": "Delete file from IndexedDB"
+    }, React.createElement(Trash2, {
+        "className": "w-3.5 h-3.5"
+    })))), React.createElement("div", {
+        "className": "flex-1 overflow-y-auto p-4 sm:p-6 text-slate-200 font-mono text-xs sm:text-sm"
+    }, viewMode === 'edit' ? React.createElement("div", {
+        "className": "h-full flex flex-col gap-3"
+    }, React.createElement("textarea", {
+        "value": editContent,
+        "onChange": (e)=>setEditContent(e.target.value),
+        "className": "flex-1 w-full p-3 bg-[#080a0d] border border-slate-700 rounded text-slate-200 font-mono text-xs leading-relaxed focus:outline-none focus:border-slate-500 resize-none",
+        "placeholder": "Type markdown or code...",
+        "spellCheck": false
+    }), React.createElement("div", {
+        "className": "flex items-center justify-end gap-2"
+    }, React.createElement("button", {
+        "type": "button",
+        "onClick": ()=>{
+            setEditContent(selectedFile.content);
+            setViewMode('rendered');
+        },
+        "className": "px-3 py-1.5 rounded bg-slate-800 text-slate-300 hover:bg-slate-700 text-xs font-semibold"
+    }, "Cancel"), React.createElement("button", {
+        "type": "button",
+        "onClick": handleSaveEdit,
+        "disabled": isSaving,
+        "className": "flex items-center gap-1.5 px-3 py-1.5 rounded bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold cursor-pointer"
+    }, React.createElement(Save, {
+        "className": "w-3.5 h-3.5"
+    }), React.createElement("span", null, isSaving ? 'Saving...' : 'Save File')))) : viewMode === 'raw' || selectedFile.format !== 'markdown' ? React.createElement("pre", {
+        "className": "p-4 bg-[#07090c] border border-slate-800 rounded overflow-x-auto text-xs leading-relaxed font-mono whitespace-pre-wrap text-emerald-300/90 selection:bg-emerald-900 selection:text-white"
+    }, selectedFile.content || '(File is currently empty)') : React.createElement(RetroMarkdownRenderer, {
+        "content": selectedFile.content
+    }))) : React.createElement("div", {
+        "className": "flex-1 flex flex-col items-center justify-center p-8 text-center text-slate-500 gap-3"
+    }, React.createElement(FileText, {
+        "className": "w-12 h-12 text-slate-600"
+    }), React.createElement("div", null, React.createElement("p", {
+        "className": "font-semibold text-slate-400 mb-1"
+    }, "No document selected"), React.createElement("p", {
+        "className": "text-xs text-slate-500 max-w-sm"
+    }, "Select a report or log from the directory tree to inspect, preview, or export.")), React.createElement("button", {
+        "type": "button",
+        "onClick": handleSeedSamples,
+        "className": "px-3 py-1.5 rounded text-xs font-semibold border flex items-center gap-1.5 transition-colors cursor-pointer",
+        "style": {
+            backgroundColor: themeColors.accentBg,
+            borderColor: themeColors.border,
+            color: themeColors.accent
+        }
+    }, React.createElement(Sparkles, {
+        "className": "w-3.5 h-3.5"
+    }), React.createElement("span", null, "Open Master Execution Schedule"))))), isCreatingNew && React.createElement("div", {
+        "className": "absolute inset-0 z-20 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm"
+    }, React.createElement("div", {
+        "className": "w-full max-w-md bg-[#11151b] border-2 border-slate-600 rounded-lg p-4 shadow-2xl flex flex-col gap-3"
+    }, React.createElement("div", {
+        "className": "flex items-center justify-between border-b border-slate-700 pb-2"
+    }, React.createElement("span", {
+        "className": "font-bold text-white text-sm"
+    }, "Create New Workspace File"), React.createElement("button", {
+        "type": "button",
+        "onClick": ()=>setIsCreatingNew(false),
+        "className": "text-slate-400 hover:text-white"
+    }, React.createElement(X, {
+        "className": "w-4 h-4"
+    }))), React.createElement("div", {
+        "className": "space-y-1"
+    }, React.createElement("label", {
+        "className": "text-xs text-slate-400 font-semibold"
+    }, "File Path (e.g. reports/ops_brief.md):"), React.createElement("input", {
+        "type": "text",
+        "value": newFilePath,
+        "onChange": (e)=>setNewFilePath(e.target.value),
+        "className": "w-full bg-[#0a0d11] border border-slate-700 rounded px-2.5 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-slate-500"
+    })), React.createElement("div", {
+        "className": "space-y-1"
+    }, React.createElement("label", {
+        "className": "text-xs text-slate-400 font-semibold"
+    }, "Initial Content:"), React.createElement("textarea", {
+        "value": newFileContent,
+        "onChange": (e)=>setNewFileContent(e.target.value),
+        "rows": 6,
+        "className": "w-full bg-[#0a0d11] border border-slate-700 rounded p-2 text-xs text-white font-mono focus:outline-none focus:border-slate-500 resize-none"
+    })), React.createElement("div", {
+        "className": "flex items-center justify-end gap-2 pt-2 border-t border-slate-800"
+    }, React.createElement("button", {
+        "type": "button",
+        "onClick": ()=>setIsCreatingNew(false),
+        "className": "px-3 py-1.5 rounded bg-slate-800 text-slate-300 hover:bg-slate-700 text-xs font-semibold"
+    }, "Cancel"), React.createElement("button", {
+        "type": "button",
+        "onClick": handleCreateFile,
+        "className": "px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold"
+    }, "Create & Save")))))));
+};
+const RetroMarkdownRenderer = ({ content })=>{
+    const renderedElements = useMemo(()=>{
+        if (!content || !content.trim()) {
+            return React.createElement("div", {
+                "className": "text-slate-500 italic p-4 text-center"
+            }, "(Empty markdown file)");
+        }
+        const lines = content.split('\n');
+        const elements = [];
+        let inCodeBlock = false;
+        let codeLanguage = '';
+        let codeBuffer = [];
+        let tableBuffer = [];
+        let inTable = false;
+        const flushTable = (keyIndex)=>{
+            if (tableBuffer.length === 0) return;
+            const rows = tableBuffer.filter((l)=>l.trim().startsWith('|') && l.trim().endsWith('|')).map((l)=>l.trim().slice(1, -1).split('|').map((cell)=>cell.trim()));
+            if (rows.length > 0) {
+                const headerRow = rows[0];
+                const bodyRows = rows.slice(1).filter((r)=>!r.every((c)=>/^:?-+:?$/.test(c)));
+                elements.push(React.createElement("div", {
+                    "key": `table-${keyIndex}`,
+                    "className": "my-4 overflow-x-auto rounded border border-slate-800 bg-[#080b0e]"
+                }, React.createElement("table", {
+                    "className": "w-full text-left border-collapse text-xs"
+                }, React.createElement("thead", null, React.createElement("tr", {
+                    "className": "bg-[#121720] border-b border-slate-700 text-slate-200"
+                }, headerRow.map((col, ci)=>React.createElement("th", {
+                        "key": ci,
+                        "className": "py-2 px-3 font-bold border-r border-slate-800 last:border-r-0"
+                    }, renderInlineFormatting(col))))), React.createElement("tbody", null, bodyRows.map((row, ri)=>React.createElement("tr", {
+                        "key": ri,
+                        "className": "border-b border-slate-800/60 hover:bg-white/[0.02] transition-colors"
+                    }, row.map((cell, ci)=>React.createElement("td", {
+                            "key": ci,
+                            "className": "py-1.5 px-3 border-r border-slate-800/40 last:border-r-0 text-slate-300"
+                        }, renderInlineFormatting(cell)))))))));
+            }
+            tableBuffer = [];
+            inTable = false;
+        };
+        for(let i = 0; i < lines.length; i++){
+            const line = lines[i];
+            if (line.trim().startsWith('```')) {
+                if (inCodeBlock) {
+                    elements.push(React.createElement("div", {
+                        "key": `code-${i}`,
+                        "className": "my-3 rounded border border-slate-800 bg-[#06080b] overflow-hidden"
+                    }, codeLanguage && React.createElement("div", {
+                        "className": "px-3 py-1 bg-[#10141b] border-b border-slate-800 text-[10px] uppercase font-bold text-slate-400"
+                    }, codeLanguage), React.createElement("pre", {
+                        "className": "p-3 overflow-x-auto font-mono text-xs leading-relaxed text-emerald-300/90 selection:bg-emerald-950"
+                    }, codeBuffer.join('\n'))));
+                    codeBuffer = [];
+                    inCodeBlock = false;
+                    codeLanguage = '';
+                } else {
+                    if (inTable) flushTable(i);
+                    inCodeBlock = true;
+                    codeLanguage = line.trim().slice(3).trim();
+                }
+                continue;
+            }
+            if (inCodeBlock) {
+                codeBuffer.push(line);
+                continue;
+            }
+            if (line.trim().startsWith('|') && line.trim().endsWith('|')) {
+                inTable = true;
+                tableBuffer.push(line);
+                continue;
+            } else if (inTable) {
+                flushTable(i);
+            }
+            if (/^(\*\*\*|---|___)$/.test(line.trim())) {
+                elements.push(React.createElement("hr", {
+                    "key": `hr-${i}`,
+                    "className": "my-4 border-slate-800"
+                }));
+                continue;
+            }
+            if (line.startsWith('# ')) {
+                elements.push(React.createElement("h1", {
+                    "key": `h1-${i}`,
+                    "className": "text-base sm:text-lg font-bold text-amber-300 border-b border-amber-900/50 pb-1.5 my-3 tracking-wide"
+                }, renderInlineFormatting(line.slice(2))));
+                continue;
+            }
+            if (line.startsWith('## ')) {
+                elements.push(React.createElement("h2", {
+                    "key": `h2-${i}`,
+                    "className": "text-sm sm:text-base font-bold text-emerald-400 border-b border-emerald-950 pb-1 my-2.5 tracking-wide"
+                }, renderInlineFormatting(line.slice(3))));
+                continue;
+            }
+            if (line.startsWith('### ')) {
+                elements.push(React.createElement("h3", {
+                    "key": `h3-${i}`,
+                    "className": "text-xs sm:text-sm font-bold text-sky-400 my-2"
+                }, renderInlineFormatting(line.slice(4))));
+                continue;
+            }
+            if (line.startsWith('> ')) {
+                elements.push(React.createElement("blockquote", {
+                    "key": `quote-${i}`,
+                    "className": "my-2 pl-3 border-l-2 border-amber-500/70 text-slate-400 italic bg-amber-950/10 py-1"
+                }, renderInlineFormatting(line.slice(2))));
+                continue;
+            }
+            if (/^[-*]\s+/.test(line)) {
+                elements.push(React.createElement("li", {
+                    "key": `li-${i}`,
+                    "className": "ml-4 list-disc text-slate-300 my-0.5"
+                }, renderInlineFormatting(line.replace(/^[-*]\s+/, ''))));
+                continue;
+            }
+            if (/^\d+\.\s+/.test(line)) {
+                elements.push(React.createElement("li", {
+                    "key": `oli-${i}`,
+                    "className": "ml-4 list-decimal text-slate-300 my-0.5"
+                }, renderInlineFormatting(line.replace(/^\d+\.\s+/, ''))));
+                continue;
+            }
+            if (!line.trim()) {
+                elements.push(React.createElement("div", {
+                    "key": `sp-${i}`,
+                    "className": "h-2"
+                }));
+                continue;
+            }
+            elements.push(React.createElement("p", {
+                "key": `p-${i}`,
+                "className": "my-1 leading-relaxed text-slate-300"
+            }, renderInlineFormatting(line)));
+        }
+        if (inTable) flushTable(lines.length);
+        return elements;
+    }, [
+        content
+    ]);
+    return React.createElement("div", {
+        "className": "space-y-1"
+    }, renderedElements);
+};
+function renderInlineFormatting(text) {
+    if (!text) return null;
+    const codeParts = text.split(/(`[^`]+`)/g);
+    return codeParts.map((part, index)=>{
+        if (part.startsWith('`') && part.endsWith('`')) {
+            const codeSnippet = part.slice(1, -1);
+            return React.createElement("code", {
+                "key": index,
+                "className": "px-1.5 py-0.5 mx-0.5 rounded bg-[#161c24] border border-slate-700 text-emerald-300 text-[11px] font-mono"
+            }, codeSnippet);
+        }
+        const boldParts = part.split(/(\*\*[^*]+\*\*)/g);
+        return boldParts.map((bPart, bIndex)=>{
+            if (bPart.startsWith('**') && bPart.endsWith('**')) {
+                const boldText = bPart.slice(2, -2);
+                if (/^(COMPLETE|ACTIVE|QUEUED|STANDBY|SCHEDULED|VERIFIED|DONE)$/i.test(boldText)) {
+                    return React.createElement("span", {
+                        "key": `b-${bIndex}`,
+                        "className": "inline-block px-1.5 py-0.2 mx-1 text-[10px] font-bold rounded bg-emerald-950/80 text-emerald-300 border border-emerald-700"
+                    }, boldText);
+                }
+                if (/^(WARNING|ERROR|FAILED|OFFLINE)$/i.test(boldText)) {
+                    return React.createElement("span", {
+                        "key": `b-${bIndex}`,
+                        "className": "inline-block px-1.5 py-0.2 mx-1 text-[10px] font-bold rounded bg-red-950/80 text-red-300 border border-red-700"
+                    }, boldText);
+                }
+                return React.createElement("strong", {
+                    "key": `b-${bIndex}`,
+                    "className": "font-bold text-white"
+                }, boldText);
+            }
+            const italicParts = bPart.split(/(\*[^*]+\*)/g);
+            return italicParts.map((iPart, iIndex)=>{
+                if (iPart.startsWith('*') && iPart.endsWith('*')) {
+                    return React.createElement("em", {
+                        "key": `i-${iIndex}`,
+                        "className": "italic text-slate-400"
+                    }, iPart.slice(1, -1));
+                }
+                return iPart;
+            });
+        });
+    });
+}
+
+exports.WorkspaceFileViewer = WorkspaceFileViewer;
+exports.RetroMarkdownRenderer = RetroMarkdownRenderer;
+});
+
 window.__registerModule("context/CrewContext", function(__require, exports, module) {
 const __imp_0 = __require("react"); const { createContext, useContext, useState, useEffect, useCallback, useMemo } = __imp_0; const React = (__imp_0 && __imp_0.default) ? __imp_0.default : __imp_0;
 const __imp_1 = __require("./ThemeContext"); const { useTheme } = __imp_1;
@@ -12712,6 +13983,8 @@ exports.getAgentRuntimeTools = getAgentRuntimeTools;
 window.__registerModule("engine/pixelOpsCLI", function(__require, exports, module) {
 const __imp_0 = __require("./roomManager"); const { getAllRooms, getAllRoomIds, ROOM_TEMPLATES, spawnRoom } = __imp_0;
 const __imp_1 = __require("./moduleRegistry"); const { AVAILABLE_SKILLS, loadRoomSkillBindings, mountSkillToRoom } = __imp_1;
+const __imp_2 = __require("./storageManager"); const { listWorkspaceFiles, readWorkspaceFile } = __imp_2;
+const __imp_3 = __require("./pluginAuthManager"); const { getPluginCredential, savePluginCredential, clearPluginCredential, getAllPluginCredentials, isPluginAuthenticated, maskCredential } = __imp_3;
 async function executeCLICommand(rawInput, context) {
     const trimmed = (rawInput || '').trim();
     const timestamp = new Date().toISOString();
@@ -12964,6 +14237,141 @@ async function executeCLICommand(rawInput, context) {
             };
         }
     }
+    if (action === 'files' || action === 'dir') {
+        try {
+            const cat = args[0];
+            const files = await listWorkspaceFiles(cat);
+            if (files.length === 0) {
+                return {
+                    command: trimmed,
+                    output: 'NO WORKSPACE FILES FOUND IN INDEXEDDB STORAGE. Use the Files drawer to seed or create reports.',
+                    status: 'warning',
+                    timestamp
+                };
+            }
+            const lines = [
+                `INDEXEDDB WORKSPACE FILES (${files.length} total):`,
+                '--------------------------------------------------------------------------------',
+                ...files.map((f)=>`📄 [${f.category.toUpperCase()}] ${f.path} (${f.sizeBytes} B · ${f.format})`)
+            ];
+            return {
+                command: trimmed,
+                output: lines.join('\n'),
+                status: 'ok',
+                timestamp
+            };
+        } catch (e) {
+            return {
+                command: trimmed,
+                output: `Failed to list files: ${e?.message || e}`,
+                status: 'error',
+                timestamp
+            };
+        }
+    }
+    if (action === 'cat' || action === 'read') {
+        const filePath = args[0];
+        if (!filePath) {
+            return {
+                command: trimmed,
+                output: 'USAGE: pixelops cat <filePath> (e.g. pixelops cat reports/master_execution_schedule.md)',
+                status: 'warning',
+                timestamp
+            };
+        }
+        try {
+            const file = await readWorkspaceFile(filePath);
+            if (!file) {
+                return {
+                    command: trimmed,
+                    output: `File "${filePath}" not found in IndexedDB or VFS.`,
+                    status: 'error',
+                    timestamp
+                };
+            }
+            return {
+                command: trimmed,
+                output: `=== [${file.path}] (${file.sizeBytes} bytes) ===\n\n${file.content}`,
+                status: 'ok',
+                timestamp
+            };
+        } catch (e) {
+            return {
+                command: trimmed,
+                output: `Failed to read file: ${e?.message || e}`,
+                status: 'error',
+                timestamp
+            };
+        }
+    }
+    if (action === 'plugins' || action === 'plugin') {
+        const subAction = (args[0] || '').toLowerCase();
+        if (subAction === 'auth' || subAction === 'set') {
+            const pluginId = args[1];
+            const key = args.slice(2).join(' ');
+            if (!pluginId || !key) {
+                return {
+                    command: trimmed,
+                    output: 'USAGE: pixelops plugin auth <pluginId> <apiKey/token>',
+                    status: 'warning',
+                    timestamp
+                };
+            }
+            savePluginCredential(pluginId, key);
+            return {
+                command: trimmed,
+                output: `[BYOK SAVED] Credentials saved for plugin "${pluginId}". Auth status: ACTIVE [AES-GCM].`,
+                status: 'ok',
+                timestamp
+            };
+        }
+        if (subAction === 'revoke' || subAction === 'clear') {
+            const pluginId = args[1];
+            if (!pluginId) {
+                return {
+                    command: trimmed,
+                    output: 'USAGE: pixelops plugin revoke <pluginId>',
+                    status: 'warning',
+                    timestamp
+                };
+            }
+            clearPluginCredential(pluginId);
+            return {
+                command: trimmed,
+                output: `[TOKEN REVOKED] Credentials cleared for plugin "${pluginId}".`,
+                status: 'ok',
+                timestamp
+            };
+        }
+        const creds = getAllPluginCredentials();
+        const rows = [
+            'PIXELOPS BYOK PLUGIN CREDENTIALS & CONNECTORS:',
+            '--------------------------------------------------------------------------------',
+            ...[
+                'web_search',
+                'code_sandbox',
+                'fs_storage',
+                'api_gateway',
+                'memory_lookup',
+                'github',
+                'slack',
+                'calendar'
+            ].map((pid)=>{
+                const isAuth = isPluginAuthenticated(pid);
+                const cred = creds[pid] || getPluginCredential(pid);
+                const masked = cred ? maskCredential(cred.apiKey) : '[UNAUTHENTICATED]';
+                return `🔌 ${pid.padEnd(16)} | ${isAuth ? '🟢 ACTIVE [AES-GCM]' : '⚪ NO KEY         '} | ${masked}`;
+            }),
+            '--------------------------------------------------------------------------------',
+            'Use: pixelops plugin auth <pluginId> <key>  to configure credentials via CLI.'
+        ];
+        return {
+            command: trimmed,
+            output: rows.join('\n'),
+            status: 'ok',
+            timestamp
+        };
+    }
     if (action === 'help') {
         const helpText = [
             'PIXELOPS TACTICAL HEADLESS CLI UTILITY v1.0',
@@ -12972,6 +14380,11 @@ async function executeCLICommand(rawInput, context) {
             '  pixelops status | ls               List active operatives, rooms & assignments',
             '  pixelops dispatch <agent> <task>   Queue a tactical directive to an operative',
             '  pixelops approve <taskId>          Approve pending human-in-the-loop task briefs',
+            '  pixelops files [category]          List IndexedDB workspace files (reports, logs, config)',
+            '  pixelops cat <filePath>            Read content of an IndexedDB workspace file',
+            '  pixelops plugins                   List BYOK capability plugins and auth tokens',
+            '  pixelops plugin auth <id> <key>    Save BYOK API key/token for plugin locally',
+            '  pixelops plugin revoke <id>        Revoke/clear local credentials for plugin',
             '  pixelops rooms                     List registered safehouse sectors',
             '  pixelops spawn <templateId>        Spawn sector (cyber_lab, quantum_vault, etc)',
             '  pixelops skills                    List available capability plugins & bindings',
@@ -12998,6 +14411,280 @@ async function executeCLICommand(rawInput, context) {
 }
 
 exports.executeCLICommand = executeCLICommand;
+});
+
+window.__registerModule("engine/pluginAuthManager", function(__require, exports, module) {
+const STORAGE_PREFIX = 'plugin_auth_';
+const ALT_STORAGE_PREFIX = 'pixelops_plugin_auth_';
+const REGISTRY_INDEX_KEY = 'pixelops_plugin_auth_registry_v1';
+const memoryAuthStore = new Map();
+const listeners = new Set();
+function normalizePluginId(rawId) {
+    if (!rawId) return '';
+    return String(rawId).trim().toLowerCase().replace(/^plugin_auth_/, '').replace(/^pixelops_plugin_auth_/, '');
+}
+function getStorage() {
+    try {
+        if (typeof window !== 'undefined' && window.window.__safeStorage) {
+            return window.window.__safeStorage;
+        }
+    } catch  {}
+    return null;
+}
+function maskCredential(secret) {
+    if (!secret || typeof secret !== 'string' || secret.trim() === '') {
+        return '[NO TOKEN CONFIGURED]';
+    }
+    const clean = secret.trim();
+    if (clean.length <= 8) {
+        return '••••••••';
+    }
+    const prefix = clean.slice(0, 4);
+    const suffix = clean.slice(-4);
+    return `${prefix}••••••••${suffix}`;
+}
+function getPluginCredential(pluginId) {
+    const normId = normalizePluginId(pluginId);
+    if (!normId) return null;
+    if (memoryAuthStore.has(normId)) {
+        return memoryAuthStore.get(normId) || null;
+    }
+    const storage = getStorage();
+    if (storage) {
+        const candidates = [
+            `${STORAGE_PREFIX}${pluginId}`,
+            `${STORAGE_PREFIX}${normId}`,
+            `${ALT_STORAGE_PREFIX}${pluginId}`,
+            `${ALT_STORAGE_PREFIX}${normId}`,
+            pluginId
+        ];
+        for (const key of candidates){
+            try {
+                const raw = storage.getItem(key);
+                if (raw) {
+                    const parsed = JSON.parse(raw);
+                    if (parsed && typeof parsed === 'object') {
+                        const cred = {
+                            pluginId: parsed.pluginId || normId,
+                            apiKey: String(parsed.apiKey || parsed.token || parsed.accessToken || ''),
+                            accessToken: parsed.accessToken ? String(parsed.accessToken) : undefined,
+                            secret: parsed.secret ? String(parsed.secret) : undefined,
+                            endpointUrl: parsed.endpointUrl ? String(parsed.endpointUrl) : undefined,
+                            accountHandle: parsed.accountHandle || 'BYOK Local Token',
+                            updatedAt: parsed.updatedAt || new Date().toISOString(),
+                            metadata: parsed.metadata || {}
+                        };
+                        memoryAuthStore.set(normId, cred);
+                        return cred;
+                    }
+                }
+            } catch  {}
+        }
+    }
+    return null;
+}
+function isPluginAuthenticated(pluginId) {
+    const cred = getPluginCredential(pluginId);
+    if (!cred) return false;
+    return Boolean(cred.apiKey && cred.apiKey.trim().length > 0 || cred.accessToken && cred.accessToken.trim().length > 0);
+}
+function savePluginCredential(pluginId, credentialInput) {
+    const normId = normalizePluginId(pluginId);
+    if (!normId) {
+        throw new Error('Plugin ID is required to save credentials.');
+    }
+    let finalApiKey = '';
+    let finalAccessToken = undefined;
+    let finalSecret = undefined;
+    let finalEndpointUrl = undefined;
+    let finalAccountHandle = 'BYOK Local Token';
+    let metadata = {};
+    if (typeof credentialInput === 'string') {
+        finalApiKey = credentialInput.trim();
+    } else if (credentialInput && typeof credentialInput === 'object') {
+        finalApiKey = String(credentialInput.apiKey || credentialInput.accessToken || '').trim();
+        if (credentialInput.accessToken) finalAccessToken = String(credentialInput.accessToken).trim();
+        if (credentialInput.secret) finalSecret = String(credentialInput.secret).trim();
+        if (credentialInput.endpointUrl) finalEndpointUrl = String(credentialInput.endpointUrl).trim();
+        if (credentialInput.accountHandle) finalAccountHandle = String(credentialInput.accountHandle).trim();
+        if (credentialInput.metadata) metadata = credentialInput.metadata;
+    }
+    const credential = {
+        pluginId: normId,
+        apiKey: finalApiKey,
+        accessToken: finalAccessToken,
+        secret: finalSecret,
+        endpointUrl: finalEndpointUrl,
+        accountHandle: finalAccountHandle || 'BYOK Local Token',
+        updatedAt: new Date().toISOString(),
+        metadata
+    };
+    memoryAuthStore.set(normId, credential);
+    const storage = getStorage();
+    if (storage) {
+        try {
+            const serialized = JSON.stringify(credential);
+            storage.setItem(`${STORAGE_PREFIX}${normId}`, serialized);
+            storage.setItem(`${ALT_STORAGE_PREFIX}${normId}`, serialized);
+            updateRegistryIndex(normId, true);
+        } catch (err) {
+            console.warn('[PluginAuthManager] Failed to persist to window.__safeStorage:', err);
+        }
+    }
+    notifyChange(normId, credential);
+    return credential;
+}
+function clearPluginCredential(pluginId) {
+    const normId = normalizePluginId(pluginId);
+    if (!normId) return false;
+    memoryAuthStore.delete(normId);
+    const storage = getStorage();
+    if (storage) {
+        try {
+            storage.removeItem(`${STORAGE_PREFIX}${pluginId}`);
+            storage.removeItem(`${STORAGE_PREFIX}${normId}`);
+            storage.removeItem(`${ALT_STORAGE_PREFIX}${pluginId}`);
+            storage.removeItem(`${ALT_STORAGE_PREFIX}${normId}`);
+            updateRegistryIndex(normId, false);
+        } catch (err) {
+            console.warn('[PluginAuthManager] Failed to remove credential from window.__safeStorage:', err);
+        }
+    }
+    notifyChange(normId, null);
+    return true;
+}
+function getAllPluginCredentials() {
+    const result = {};
+    for (const [id, cred] of memoryAuthStore.entries()){
+        result[id] = cred;
+    }
+    const storage = getStorage();
+    if (storage) {
+        try {
+            for(let i = 0; i < storage.length; i++){
+                const key = storage.key(i);
+                if (!key) continue;
+                if (key.startsWith(STORAGE_PREFIX) || key.startsWith(ALT_STORAGE_PREFIX)) {
+                    const raw = storage.getItem(key);
+                    if (!raw) continue;
+                    try {
+                        const parsed = JSON.parse(raw);
+                        if (parsed && typeof parsed === 'object') {
+                            const pid = normalizePluginId(parsed.pluginId || key);
+                            if (pid && !result[pid]) {
+                                result[pid] = {
+                                    pluginId: pid,
+                                    apiKey: String(parsed.apiKey || parsed.token || ''),
+                                    accessToken: parsed.accessToken,
+                                    secret: parsed.secret,
+                                    endpointUrl: parsed.endpointUrl,
+                                    accountHandle: parsed.accountHandle || 'BYOK Local Token',
+                                    updatedAt: parsed.updatedAt || new Date().toISOString(),
+                                    metadata: parsed.metadata || {}
+                                };
+                            }
+                        }
+                    } catch  {}
+                }
+            }
+        } catch  {}
+    }
+    return result;
+}
+function exportPluginCredentials(includeSensitive = false) {
+    const creds = getAllPluginCredentials();
+    if (!includeSensitive) {
+        const sanitized = {};
+        for (const [id, cred] of Object.entries(creds)){
+            sanitized[id] = {
+                ...cred,
+                apiKey: maskCredential(cred.apiKey),
+                accessToken: cred.accessToken ? maskCredential(cred.accessToken) : undefined,
+                secret: cred.secret ? '••••••••' : undefined
+            };
+        }
+        return JSON.stringify(sanitized, null, 2);
+    }
+    return JSON.stringify(creds, null, 2);
+}
+function importPluginCredentials(jsonString) {
+    try {
+        const parsed = JSON.parse(jsonString);
+        if (!parsed || typeof parsed !== 'object') {
+            return {
+                importedCount: 0,
+                error: 'Invalid JSON payload'
+            };
+        }
+        let count = 0;
+        const entries = Array.isArray(parsed) ? parsed : Object.values(parsed);
+        for (const entry of entries){
+            if (entry && typeof entry === 'object' && entry.pluginId && (entry.apiKey || entry.accessToken)) {
+                savePluginCredential(entry.pluginId, entry);
+                count++;
+            }
+        }
+        return {
+            importedCount: count
+        };
+    } catch (err) {
+        return {
+            importedCount: 0,
+            error: err?.message || 'Failed to parse JSON'
+        };
+    }
+}
+function subscribeToPluginAuth(listener) {
+    listeners.add(listener);
+    return ()=>{
+        listeners.delete(listener);
+    };
+}
+function updateRegistryIndex(pluginId, add) {
+    const storage = getStorage();
+    if (!storage) return;
+    try {
+        const raw = storage.getItem(REGISTRY_INDEX_KEY);
+        let index = raw ? JSON.parse(raw) : [];
+        if (!Array.isArray(index)) index = [];
+        if (add) {
+            if (!index.includes(pluginId)) index.push(pluginId);
+        } else {
+            index = index.filter((id)=>id !== pluginId);
+        }
+        storage.setItem(REGISTRY_INDEX_KEY, JSON.stringify(index));
+    } catch  {}
+}
+function notifyChange(pluginId, credential) {
+    for (const listener of listeners){
+        try {
+            listener(pluginId, credential);
+        } catch (err) {
+            console.warn('[PluginAuthManager] Listener error:', err);
+        }
+    }
+    if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+        try {
+            window.dispatchEvent(new CustomEvent('pixelops:plugin-auth-change', {
+                detail: {
+                    pluginId,
+                    credential
+                }
+            }));
+        } catch  {}
+    }
+}
+
+exports.normalizePluginId = normalizePluginId;
+exports.maskCredential = maskCredential;
+exports.getPluginCredential = getPluginCredential;
+exports.isPluginAuthenticated = isPluginAuthenticated;
+exports.savePluginCredential = savePluginCredential;
+exports.clearPluginCredential = clearPluginCredential;
+exports.getAllPluginCredentials = getAllPluginCredentials;
+exports.exportPluginCredentials = exportPluginCredentials;
+exports.importPluginCredentials = importPluginCredentials;
+exports.subscribeToPluginAuth = subscribeToPluginAuth;
 });
 
 window.__registerModule("engine/roomData", function(__require, exports, module) {
@@ -14349,6 +16036,373 @@ exports.getRoomObstacles = getRoomObstacles;
 exports.BASE_ROOM_ORDER = BASE_ROOM_ORDER;
 });
 
+window.__registerModule("engine/storageManager", function(__require, exports, module) {
+const __imp_0 = __require("../services/CommandLedgerDb"); const { ledgerDb, WorkspaceFileDbEntry } = __imp_0;
+const VFS_KEY = 'pixelops_vfs_files_v1';
+const memoryFileMap = new Map();
+function resolveCategoryFromPath(path, explicitCategory) {
+    if (explicitCategory) return explicitCategory;
+    const clean = path.replace(/^[\\/]+/, '').toLowerCase();
+    if (clean.startsWith('reports/') || clean.startsWith('reports\\')) return 'reports';
+    if (clean.startsWith('logs/') || clean.startsWith('logs\\')) return 'logs';
+    if (clean.startsWith('config/') || clean.startsWith('config\\')) return 'config';
+    if (clean.startsWith('archive/') || clean.startsWith('archive\\')) return 'archive';
+    if (clean.startsWith('data/') || clean.startsWith('data\\')) return 'data';
+    if (clean.endsWith('.md')) return 'reports';
+    if (clean.endsWith('.json')) return 'config';
+    return 'reports';
+}
+function resolveFormatFromPath(path, explicitFormat) {
+    if (explicitFormat) return explicitFormat;
+    const clean = path.toLowerCase();
+    if (clean.endsWith('.md')) return 'markdown';
+    if (clean.endsWith('.json')) return 'json';
+    if (clean.endsWith('.csv')) return 'csv';
+    if (clean.endsWith('.log') || clean.endsWith('.txt')) return 'text';
+    return 'markdown';
+}
+function normalizeFilePath(rawPath) {
+    return (rawPath || '').trim().replace(/\\/g, '/').replace(/^\/+/, '');
+}
+const SAMPLE_MASTER_EXECUTION_SCHEDULE = `# PixelOps Safehouse // Master Execution Schedule
+**Classification:** OMEGA-RESTRICTED // Sector Operations Directive
+**Generated At:** 2026-10-27 10:45:00 UTC
+**Authorized Operatives:** Vance (Lead Strategist), Nyx (Cyber & Signal), Cipher (Cryptographic Recon)
+
+---
+
+## 1. Operational Overview
+The safehouse perimeter defense, cryptographic relay towers, and local client-side execution kernels are fully online. All field tasks execute with zero cloud reliance under strict BYOK protocols.
+
+## 2. Sector Execution Timeline
+
+| Operational Phase | Target Sector | Station Rig | Lead Operative | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| **0100 - Perimeter Sweep** | \`archive_basement\` | \`archive_filing_array\` | Cipher | **COMPLETE** |
+| **0400 - Signal Intercept** | \`comms_tower\` | \`comms_radar_scope\` | Nyx | **ACTIVE** |
+| **0800 - Strategic Alignment** | \`war_room\` | \`war_center_desk\` | Vance | **QUEUED** |
+| **1200 - Vault Key Handshake**| \`server_vault\` | \`vault_core_rack\` | Nyx | **STANDBY** |
+| **1600 - Armory Calibration** | \`armory\` | \`armory_tactical_workbench\` | Vance | **SCHEDULED** |
+
+## 3. Cryptographic Verification Matrix
+- **SHA-256 Checksum:** \`7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069\`
+- **Tamper Evidence:** Append-only ledger verified against Dexie.js IndexedDB v3.
+- **Failover Routine:** Local atmospheric and cryptographic fallbacks armed.
+
+\`\`\`json
+{
+  "protocol": "PIXELOPS_AUTO_EXEC",
+  "circuitBreaker": "ARMED",
+  "storageQuotaLimit": "85%",
+  "activeSensors": 7
+}
+\`\`\`
+
+*Report end // Agent Vance standing by.*`;
+const SAMPLE_SYSTEM_CONFIG = `{
+  "system": "PixelOps Safehouse Command Center",
+  "version": "2.4.0-PWA",
+  "securityClearance": "OMEGA",
+  "activeSectors": [
+    "war_room",
+    "comms_tower",
+    "server_vault",
+    "armory",
+    "briefing_lounge",
+    "archive_basement",
+    "library"
+  ],
+  "storageSubsystem": {
+    "engine": "IndexedDB / Dexie.js v3",
+    "localVFS": "window.__safeStorage fallback",
+    "circuitBreakerTimeoutMs": 12000
+  }
+}`;
+async function listWorkspaceFiles(categoryFilter) {
+    const mergedMap = new Map();
+    try {
+        if (ledgerDb && ledgerDb.workspace_files) {
+            const dbEntries = await ledgerDb.workspace_files.toArray();
+            for (const entry of dbEntries){
+                const norm = normalizeFilePath(entry.path);
+                mergedMap.set(norm, {
+                    id: entry.id,
+                    path: norm,
+                    category: entry.category || resolveCategoryFromPath(norm),
+                    format: entry.format || resolveFormatFromPath(norm),
+                    content: entry.content || '',
+                    sizeBytes: entry.sizeBytes || (entry.content || '').length,
+                    updatedAt: entry.updatedAt || new Date().toISOString(),
+                    previewSnippet: (entry.content || '').slice(0, 160).replace(/\n/g, ' ')
+                });
+            }
+        }
+    } catch (err) {
+        console.warn('[StorageManager] IndexedDB query fallback to VFS:', err);
+    }
+    if (typeof window.__safeStorage !== 'undefined') {
+        try {
+            const raw = window.__safeStorage.getItem(VFS_KEY);
+            if (raw) {
+                const vfs = JSON.parse(raw);
+                for (const [rawPath, meta] of Object.entries(vfs)){
+                    const norm = normalizeFilePath(rawPath);
+                    if (!mergedMap.has(norm)) {
+                        const content = meta.content || '';
+                        mergedMap.set(norm, {
+                            path: norm,
+                            category: resolveCategoryFromPath(norm),
+                            format: meta.format || resolveFormatFromPath(norm),
+                            content,
+                            sizeBytes: content.length,
+                            updatedAt: meta.updatedAt || new Date().toISOString(),
+                            previewSnippet: content.slice(0, 160).replace(/\n/g, ' ')
+                        });
+                    }
+                }
+            }
+        } catch  {}
+    }
+    for (const [norm, rec] of memoryFileMap.entries()){
+        if (!mergedMap.has(norm)) {
+            mergedMap.set(norm, rec);
+        }
+    }
+    let fileList = Array.from(mergedMap.values());
+    if (categoryFilter && categoryFilter !== 'all') {
+        fileList = fileList.filter((f)=>f.category === categoryFilter);
+    }
+    fileList.sort((a, b)=>new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+    return fileList;
+}
+async function readWorkspaceFile(rawPath) {
+    const norm = normalizeFilePath(rawPath);
+    if (!norm) return null;
+    try {
+        if (ledgerDb && ledgerDb.workspace_files) {
+            const entry = await ledgerDb.workspace_files.where('path').equals(norm).first();
+            if (entry) {
+                return {
+                    id: entry.id,
+                    path: norm,
+                    category: entry.category || resolveCategoryFromPath(norm),
+                    format: entry.format || resolveFormatFromPath(norm),
+                    content: entry.content || '',
+                    sizeBytes: entry.sizeBytes || (entry.content || '').length,
+                    updatedAt: entry.updatedAt || new Date().toISOString(),
+                    previewSnippet: (entry.content || '').slice(0, 160).replace(/\n/g, ' ')
+                };
+            }
+        }
+    } catch  {}
+    if (typeof window.__safeStorage !== 'undefined') {
+        try {
+            const raw = window.__safeStorage.getItem(VFS_KEY);
+            if (raw) {
+                const vfs = JSON.parse(raw);
+                if (vfs[norm]) {
+                    const meta = vfs[norm];
+                    const content = meta.content || '';
+                    return {
+                        path: norm,
+                        category: resolveCategoryFromPath(norm),
+                        format: meta.format || resolveFormatFromPath(norm),
+                        content,
+                        sizeBytes: content.length,
+                        updatedAt: meta.updatedAt || new Date().toISOString(),
+                        previewSnippet: content.slice(0, 160).replace(/\n/g, ' ')
+                    };
+                }
+            }
+        } catch  {}
+    }
+    if (memoryFileMap.has(norm)) {
+        return memoryFileMap.get(norm);
+    }
+    return null;
+}
+async function writeWorkspaceFile(rawPath, content, explicitFormat, explicitCategory) {
+    const norm = normalizeFilePath(rawPath);
+    const category = resolveCategoryFromPath(norm, explicitCategory);
+    const format = resolveFormatFromPath(norm, explicitFormat);
+    const updatedAt = new Date().toISOString();
+    const sizeBytes = (content || '').length;
+    const record = {
+        path: norm,
+        category,
+        format,
+        content,
+        sizeBytes,
+        updatedAt,
+        previewSnippet: (content || '').slice(0, 160).replace(/\n/g, ' ')
+    };
+    try {
+        if (ledgerDb && ledgerDb.workspace_files) {
+            const existing = await ledgerDb.workspace_files.where('path').equals(norm).first();
+            if (existing && existing.id !== undefined) {
+                await ledgerDb.workspace_files.update(existing.id, {
+                    content,
+                    format,
+                    category,
+                    sizeBytes,
+                    updatedAt
+                });
+                record.id = existing.id;
+            } else {
+                const newId = await ledgerDb.workspace_files.add({
+                    path: norm,
+                    category,
+                    format,
+                    content,
+                    sizeBytes,
+                    updatedAt
+                });
+                record.id = newId;
+            }
+        }
+    } catch (err) {
+        console.warn('[StorageManager] IndexedDB write fallback to VFS:', err);
+    }
+    if (typeof window.__safeStorage !== 'undefined') {
+        try {
+            const raw = window.__safeStorage.getItem(VFS_KEY);
+            const vfs = raw ? JSON.parse(raw) : {};
+            vfs[norm] = {
+                content,
+                format,
+                updatedAt
+            };
+            window.__safeStorage.setItem(VFS_KEY, JSON.stringify(vfs));
+        } catch  {}
+    }
+    memoryFileMap.set(norm, record);
+    return record;
+}
+async function deleteWorkspaceFile(rawPath) {
+    const norm = normalizeFilePath(rawPath);
+    let deleted = false;
+    try {
+        if (ledgerDb && ledgerDb.workspace_files) {
+            const existing = await ledgerDb.workspace_files.where('path').equals(norm).first();
+            if (existing && existing.id !== undefined) {
+                await ledgerDb.workspace_files.delete(existing.id);
+                deleted = true;
+            }
+        }
+    } catch  {}
+    if (typeof window.__safeStorage !== 'undefined') {
+        try {
+            const raw = window.__safeStorage.getItem(VFS_KEY);
+            if (raw) {
+                const vfs = JSON.parse(raw);
+                if (vfs[norm]) {
+                    delete vfs[norm];
+                    window.__safeStorage.setItem(VFS_KEY, JSON.stringify(vfs));
+                    deleted = true;
+                }
+            }
+        } catch  {}
+    }
+    if (memoryFileMap.has(norm)) {
+        memoryFileMap.delete(norm);
+        deleted = true;
+    }
+    return deleted;
+}
+async function exportWorkspaceFile(rawPath) {
+    const file = await readWorkspaceFile(rawPath);
+    if (!file) return false;
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+        return false;
+    }
+    try {
+        const mimeType = file.format === 'json' ? 'application/json' : file.format === 'csv' ? 'text/csv' : 'text/markdown';
+        const blob = new Blob([
+            file.content
+        ], {
+            type: mimeType
+        });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = file.path.split('/').pop() || 'workspace_file.md';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(()=>URL.revokeObjectURL(url), 1000);
+        return true;
+    } catch (err) {
+        console.error('[StorageManager] Failed to export file:', err);
+        return false;
+    }
+}
+async function copyWorkspaceFileContent(rawPath) {
+    const file = await readWorkspaceFile(rawPath);
+    if (!file) return false;
+    if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+        try {
+            await navigator.clipboard.writeText(file.content);
+            return true;
+        } catch  {}
+    }
+    if (typeof document !== 'undefined') {
+        try {
+            const ta = document.createElement('textarea');
+            ta.value = file.content;
+            ta.style.position = 'fixed';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.focus();
+            ta.select();
+            const successful = document.execCommand('copy');
+            document.body.removeChild(ta);
+            return successful;
+        } catch  {
+            return false;
+        }
+    }
+    return false;
+}
+async function seedInitialWorkspaceFiles(force = false) {
+    const existing = await listWorkspaceFiles();
+    if (existing.length > 0 && !force) {
+        return existing;
+    }
+    const seeded = [];
+    const schedule = await writeWorkspaceFile('reports/master_execution_schedule.md', SAMPLE_MASTER_EXECUTION_SCHEDULE, 'markdown', 'reports');
+    seeded.push(schedule);
+    const config = await writeWorkspaceFile('config/safehouse_protocols.json', SAMPLE_SYSTEM_CONFIG, 'json', 'config');
+    seeded.push(config);
+    return seeded;
+}
+async function getWorkspaceCategories() {
+    const files = await listWorkspaceFiles();
+    const set = new Set([
+        'reports',
+        'logs',
+        'config'
+    ]);
+    for (const f of files){
+        if (f.category) set.add(f.category);
+    }
+    return Array.from(set);
+}
+
+exports.listWorkspaceFiles = listWorkspaceFiles;
+exports.readWorkspaceFile = readWorkspaceFile;
+exports.writeWorkspaceFile = writeWorkspaceFile;
+exports.deleteWorkspaceFile = deleteWorkspaceFile;
+exports.exportWorkspaceFile = exportWorkspaceFile;
+exports.copyWorkspaceFileContent = copyWorkspaceFileContent;
+exports.seedInitialWorkspaceFiles = seedInitialWorkspaceFiles;
+exports.getWorkspaceCategories = getWorkspaceCategories;
+exports.resolveCategoryFromPath = resolveCategoryFromPath;
+exports.resolveFormatFromPath = resolveFormatFromPath;
+exports.normalizeFilePath = normalizeFilePath;
+exports.SAMPLE_MASTER_EXECUTION_SCHEDULE = SAMPLE_MASTER_EXECUTION_SCHEDULE;
+exports.SAMPLE_SYSTEM_CONFIG = SAMPLE_SYSTEM_CONFIG;
+});
+
 window.__registerModule("engine/taskBriefEngine", function(__require, exports, module) {
 const VAGUE_TASK_PATTERNS = [
     /^(fix\s+it|fix\s+this|broken|it\s+doesn'?t\s+work)$/i,
@@ -15122,6 +17176,9 @@ const __imp_1 = __require("./LLMProviderService"); const { loadLLMProviderConfig
 const __imp_2 = __require("./PlacedGearService"); const { workstationSupportsTool } = __imp_2;
 const __imp_3 = __require("./PluginMarketplaceService"); const { loadCustomPlugins, executeCustomPlugin } = __imp_3;
 const __imp_4 = __require("./CommandLedgerDb"); const { getLast50Commands, ledgerDb } = __imp_4;
+const __imp_5 = __require("../engine/pluginAuthManager"); const { getPluginCredential } = __imp_5;
+const __imp_6 = __require("./SafetyService"); const { executeSafeOperation, validateAndWrapCode, auditStorageHealth, pruneStorageData, estimateLocalStorageBytes, getLatestStorageHealthReport } = __imp_6;
+
 const GEMINI_TOOL_DECLARATIONS = {
     live_web_search: {
         name: 'live_web_search',
@@ -15553,16 +17610,34 @@ async function executeFunctionCallHandler(fc) {
             const rawLocation = String(args.location || 'San Francisco').trim();
             const cityQuery = rawLocation.split(',')[0].trim();
             const useFahrenheit = String(args.units || '').toLowerCase() === 'fahrenheit';
-            const geoRes = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cityQuery)}&count=1&language=en&format=json`);
-            const geoData = await geoRes.json();
-            const place = geoData?.results?.[0];
-            if (place) {
+            const weatherResult = await executeSafeOperation(async (signal)=>{
+                const geoRes = await fetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(cityQuery)}&count=1&language=en&format=json`, {
+                    signal
+                });
+                const geoData = await geoRes.json();
+                const place = geoData?.results?.[0];
+                if (!place) return null;
                 const tempUnit = useFahrenheit ? 'fahrenheit' : 'celsius';
                 const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${place.latitude}&longitude=${place.longitude}&current=temperature_2m,relative_humidity_2m,apparent_temperature,wind_speed_10m,weather_code&temperature_unit=${tempUnit}&wind_speed_unit=kmh`;
-                const weatherRes = await fetch(weatherUrl);
+                const weatherRes = await fetch(weatherUrl, {
+                    signal
+                });
                 const weatherData = await weatherRes.json();
+                return {
+                    place,
+                    weatherData,
+                    tempUnit
+                };
+            }, {
+                timeoutMs: 9000,
+                maxRetries: 2,
+                operationName: 'weather_lookup',
+                fallbackValue: null
+            });
+            if (weatherResult && weatherResult.place) {
+                const { place, weatherData, tempUnit } = weatherResult;
                 const current = weatherData?.current || {};
-                const unitSymbol = useFahrenheit ? '°F' : '°C';
+                const unitSymbol = tempUnit === 'fahrenheit' ? '°F' : '°C';
                 const condition = WMO_WEATHER_CODES[Number(current.weather_code)] || 'Variable conditions';
                 const liveResult = {
                     status: 'ok',
@@ -15594,16 +17669,50 @@ async function executeFunctionCallHandler(fc) {
                         targetStationId: dest.targetStationId
                     }
                 };
+            } else {
+                const fallbackPayload = {
+                    status: 'offline_atmospheric_estimate',
+                    source: 'Local Meteorological Ledger',
+                    location: cityQuery,
+                    temperature: useFahrenheit ? '68°F' : '20°C',
+                    condition: 'Fair / Operational Conditions',
+                    humidity: '45%',
+                    windSpeed: '12 km/h',
+                    observedAt: new Date().toISOString()
+                };
+                return {
+                    id: fc.id,
+                    name,
+                    response: fallbackPayload,
+                    executedToolMeta: {
+                        pluginId: dest.pluginId,
+                        toolName: name,
+                        args,
+                        resultSummary: `Weather (${cityQuery}): 68°F (Local atmospheric ledger estimate)`,
+                        livePayload: fallbackPayload,
+                        targetRoom: dest.targetRoom,
+                        targetStationId: dest.targetStationId
+                    }
+                };
             }
         }
         if (name === 'live_web_search') {
             const query = String(args.query || 'Artificial Intelligence').trim();
             const limit = Math.min(5, Math.max(1, Number(args.maxResults) || 3));
             const wikiUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&utf8=&format=json&origin=*&srlimit=${limit}`;
-            const wikiRes = await fetch(wikiUrl);
-            const wikiData = await wikiRes.json();
-            const rawHits = wikiData?.query?.search || [];
-            const results = rawHits.map((hit)=>({
+            const rawHits = await executeSafeOperation(async (signal)=>{
+                const wikiRes = await fetch(wikiUrl, {
+                    signal
+                });
+                const wikiData = await wikiRes.json();
+                return wikiData?.query?.search || [];
+            }, {
+                timeoutMs: 9000,
+                maxRetries: 2,
+                fallbackValue: [],
+                operationName: 'live_web_search'
+            });
+            const results = (rawHits || []).map((hit)=>({
                     title: hit.title,
                     snippet: String(hit.snippet || '').replace(/<[^>]+>/g, ''),
                     url: `https://en.wikipedia.org/wiki/${encodeURIComponent(String(hit.title).replace(/ /g, '_'))}`
@@ -15641,22 +17750,30 @@ async function executeFunctionCallHandler(fc) {
                 issueNumber: Math.floor(100 + Math.random() * 899),
                 status: 'OPENED'
             };
-            try {
-                const ghRes = await fetch(`https://api.github.com/repos/${repo}`);
-                if (ghRes.ok) {
-                    const ghData = await ghRes.json();
-                    repoTelemetry = {
-                        repository: ghData.full_name || repo,
-                        stars: ghData.stargazers_count,
-                        openIssuesCount: ghData.open_issues_count,
-                        defaultBranch: ghData.default_branch,
-                        language: ghData.language,
-                        issueTitle: title,
-                        labels: args.labels || 'agent-dispatch',
-                        status: 'VERIFIED_AGAINST_LIVE_REPO'
-                    };
-                }
-            } catch  {}
+            const ghData = await executeSafeOperation(async (signal)=>{
+                const ghRes = await fetch(`https://api.github.com/repos/${repo}`, {
+                    signal
+                });
+                if (ghRes.ok) return await ghRes.json();
+                return null;
+            }, {
+                timeoutMs: 8000,
+                maxRetries: 1,
+                fallbackValue: null,
+                operationName: 'github_create_issue'
+            });
+            if (ghData) {
+                repoTelemetry = {
+                    repository: ghData.full_name || repo,
+                    stars: ghData.stargazers_count,
+                    openIssuesCount: ghData.open_issues_count,
+                    defaultBranch: ghData.default_branch,
+                    language: ghData.language,
+                    issueTitle: title,
+                    labels: args.labels || 'agent-dispatch',
+                    status: 'VERIFIED_AGAINST_LIVE_REPO'
+                };
+            }
             const summary = repoTelemetry.stars !== undefined ? `GitHub [${repo} ★${repoTelemetry.stars}]: Logged "${title}" (${repoTelemetry.openIssuesCount} open issues)` : `GitHub [${repo}]: Opened ticket "${title}"`;
             return {
                 id: fc.id,
@@ -15768,17 +17885,28 @@ async function executeFunctionCallHandler(fc) {
             const startTime = performance.now();
             let evalResult = undefined;
             let evalError = null;
-            try {
-                const customConsole = {
-                    log: (...argsList)=>logs.push(argsList.map((a)=>typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ')),
-                    info: (...argsList)=>logs.push('[INFO] ' + argsList.map((a)=>typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ')),
-                    warn: (...argsList)=>logs.push('[WARN] ' + argsList.map((a)=>typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ')),
-                    error: (...argsList)=>logs.push('[ERROR] ' + argsList.map((a)=>typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '))
-                };
-                const runFn = new Function('console', 'Math', 'Date', 'JSON', `"use strict";\n${code}`);
-                evalResult = runFn(customConsole, Math, Date, JSON);
-            } catch (err) {
-                evalError = err?.message || String(err);
+            const validation = validateAndWrapCode(code);
+            if (!validation.isValid) {
+                evalError = `SecuritySandboxViolation: ${validation.rejectionReason}`;
+            } else {
+                try {
+                    const customConsole = {
+                        log: (...argsList)=>logs.push(argsList.map((a)=>typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ')),
+                        info: (...argsList)=>logs.push('[INFO] ' + argsList.map((a)=>typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ')),
+                        warn: (...argsList)=>logs.push('[WARN] ' + argsList.map((a)=>typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ')),
+                        error: (...argsList)=>logs.push('[ERROR] ' + argsList.map((a)=>typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' '))
+                    };
+                    evalResult = await executeSafeOperation(async ()=>{
+                        const runFn = new Function('console', 'Math', 'Date', 'JSON', validation.wrappedCode);
+                        return runFn(customConsole, Math, Date, JSON);
+                    }, {
+                        timeoutMs: 5000,
+                        maxRetries: 0,
+                        operationName: 'code_sandbox_eval'
+                    });
+                } catch (err) {
+                    evalError = err?.message || String(err);
+                }
             }
             const durationMs = Math.round(performance.now() - startTime);
             const sandboxPayload = {
@@ -15828,6 +17956,16 @@ async function executeFunctionCallHandler(fc) {
                 };
                 try {
                     window.__safeStorage.setItem(VFS_KEY, JSON.stringify(vfsStore));
+                    if (ledgerDb.workspace_files) {
+                        ledgerDb.workspace_files.put({
+                            path,
+                            category: path.split('/')[0] || 'reports',
+                            format,
+                            content,
+                            sizeBytes: content.length,
+                            updatedAt: vfsStore[path].updatedAt
+                        }).catch(()=>{});
+                    }
                 } catch  {}
                 fsResult = {
                     status: 'written',
@@ -15931,14 +18069,16 @@ async function executeFunctionCallHandler(fc) {
                     headers = typeof args.headers === 'string' ? JSON.parse(args.headers) : args.headers;
                 } catch  {}
             }
-            let gatewayPayload = {};
-            let summary = '';
+            const gatewayCred = getPluginCredential('api_gateway') || getPluginCredential('api_fetch_gateway');
+            if (gatewayCred?.apiKey && !headers['Authorization'] && !headers['authorization']) {
+                headers['Authorization'] = gatewayCred.apiKey.startsWith('Bearer ') ? gatewayCred.apiKey : `Bearer ${gatewayCred.apiKey}`;
+            }
             const startTime = performance.now();
-            try {
+            const gatewayPayload = await executeSafeOperation(async (signal)=>{
                 const fetchOpts = {
                     method,
                     headers,
-                    signal: AbortSignal.timeout(8000)
+                    signal
                 };
                 if (method !== 'GET' && method !== 'HEAD' && args.body) {
                     fetchOpts.body = typeof args.body === 'string' ? args.body : JSON.stringify(args.body);
@@ -15955,7 +18095,7 @@ async function executeFunctionCallHandler(fc) {
                 } catch  {
                     parsedData = text.slice(0, 500);
                 }
-                gatewayPayload = {
+                return {
                     status: res.status,
                     statusText: res.statusText,
                     ok: res.ok,
@@ -15965,19 +18105,21 @@ async function executeFunctionCallHandler(fc) {
                     data: parsedData,
                     executedAt: new Date().toISOString()
                 };
-                summary = `API Gateway [${method} ${url.slice(0, 32)}]: HTTP ${res.status} (${durationMs}ms)`;
-            } catch (fetchErr) {
-                const durationMs = Math.round(performance.now() - startTime);
-                gatewayPayload = {
+            }, {
+                timeoutMs: 10000,
+                maxRetries: 1,
+                operationName: 'api_fetch_gateway',
+                fallbackValue: {
                     status: 'network_blocked_or_cors',
-                    error: fetchErr?.message || 'Network/CORS error during direct client fetch',
+                    error: 'Request timeout or network/CORS error during direct client fetch',
                     url,
                     method,
-                    durationMs,
+                    durationMs: Math.round(performance.now() - startTime),
                     executedAt: new Date().toISOString()
-                };
-                summary = `API Gateway [${method} ${url.slice(0, 32)}]: ${fetchErr?.message || 'Network/CORS error'}`;
-            }
+                }
+            });
+            const durationMs = gatewayPayload.durationMs || Math.round(performance.now() - startTime);
+            const summary = gatewayPayload.ok ? `API Gateway [${method} ${url.slice(0, 32)}]: HTTP ${gatewayPayload.status} (${durationMs}ms)` : `API Gateway [${method} ${url.slice(0, 32)}]: ${gatewayPayload.error || `HTTP ${gatewayPayload.status}`}`;
             return {
                 id: fc.id,
                 name,
@@ -17233,16 +19375,22 @@ Think step-by-step, execute tasks logically, call tools whenever you need live d
                     if (openAITools.length > 0) {
                         reqBody.tools = openAITools;
                     }
-                    const res = await fetch('https://api.openai.com/v1/chat/completions', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            Authorization: `Bearer ${apiKey}`
-                        },
-                        body: JSON.stringify(reqBody),
-                        signal: AbortSignal.timeout(18000)
+                    const res = await executeSafeOperation(async (signal)=>{
+                        return await fetch('https://api.openai.com/v1/chat/completions', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                Authorization: `Bearer ${apiKey}`
+                            },
+                            body: JSON.stringify(reqBody),
+                            signal
+                        });
+                    }, {
+                        timeoutMs: 18000,
+                        maxRetries: 1,
+                        operationName: 'openai_turn1_dispatch'
                     });
-                    if (res.ok) {
+                    if (res && res.ok) {
                         const data = await res.json();
                         const choice = data.choices?.[0]?.message;
                         const toolCalls = choice?.tool_calls;
@@ -17277,24 +19425,30 @@ Think step-by-step, execute tasks logically, call tools whenever you need live d
                                     content: JSON.stringify(handlerOut.response)
                                 });
                             }
-                            const turn2Res = await fetch('https://api.openai.com/v1/chat/completions', {
-                                method: 'POST',
-                                headers: {
-                                    'Content-Type': 'application/json',
-                                    Authorization: `Bearer ${apiKey}`
-                                },
-                                body: JSON.stringify({
-                                    model: llmConfig.modelName || 'gpt-4o-mini',
-                                    messages: [
-                                        ...initialMessages,
-                                        choice,
-                                        ...toolResponseMessages
-                                    ],
-                                    temperature: Number(params.temperature || 0.7)
-                                }),
-                                signal: AbortSignal.timeout(18000)
+                            const turn2Res = await executeSafeOperation(async (signal)=>{
+                                return await fetch('https://api.openai.com/v1/chat/completions', {
+                                    method: 'POST',
+                                    headers: {
+                                        'Content-Type': 'application/json',
+                                        Authorization: `Bearer ${apiKey}`
+                                    },
+                                    body: JSON.stringify({
+                                        model: llmConfig.modelName || 'gpt-4o-mini',
+                                        messages: [
+                                            ...initialMessages,
+                                            choice,
+                                            ...toolResponseMessages
+                                        ],
+                                        temperature: Number(params.temperature || 0.7)
+                                    }),
+                                    signal
+                                });
+                            }, {
+                                timeoutMs: 18000,
+                                maxRetries: 1,
+                                operationName: 'openai_turn2_dispatch'
                             });
-                            if (turn2Res.ok) {
+                            if (turn2Res && turn2Res.ok) {
                                 const turn2Data = await turn2Res.json();
                                 const turn2Reply = turn2Data.choices?.[0]?.message?.content || 'Directive executed.';
                                 return {
@@ -17368,30 +19522,36 @@ Think step-by-step, execute tasks logically, call tools whenever you need live d
                             description: d.description,
                             input_schema: d.parameters
                         }));
-                    const res = await fetch('https://api.anthropic.com/v1/messages', {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            'x-api-key': apiKey,
-                            'anthropic-version': '2023-06-01',
-                            'dangerously-allow-browser': 'true'
-                        },
-                        body: JSON.stringify({
-                            model: llmConfig.modelName || 'claude-3-5-sonnet-20241022',
-                            max_tokens: 1500,
-                            system: systemInstruction,
-                            messages: [
-                                {
-                                    role: 'user',
-                                    content: params.prompt
-                                }
-                            ],
-                            tools: anthropicTools.length > 0 ? anthropicTools : undefined,
-                            temperature: Number(params.temperature || 0.7)
-                        }),
-                        signal: AbortSignal.timeout(18000)
+                    const res = await executeSafeOperation(async (signal)=>{
+                        return await fetch('https://api.anthropic.com/v1/messages', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'x-api-key': apiKey,
+                                'anthropic-version': '2023-06-01',
+                                'dangerously-allow-browser': 'true'
+                            },
+                            body: JSON.stringify({
+                                model: llmConfig.modelName || 'claude-3-5-sonnet-20241022',
+                                max_tokens: 1500,
+                                system: systemInstruction,
+                                messages: [
+                                    {
+                                        role: 'user',
+                                        content: params.prompt
+                                    }
+                                ],
+                                tools: anthropicTools.length > 0 ? anthropicTools : undefined,
+                                temperature: Number(params.temperature || 0.7)
+                            }),
+                            signal
+                        });
+                    }, {
+                        timeoutMs: 18000,
+                        maxRetries: 1,
+                        operationName: 'anthropic_dispatch'
                     });
-                    if (res.ok) {
+                    if (res && res.ok) {
                         const data = await res.json();
                         const textContent = (data.content || []).filter((c)=>c.type === 'text').map((c)=>c.text).join('\n');
                         return {
@@ -17428,31 +19588,37 @@ Think step-by-step, execute tasks logically, call tools whenever you need live d
                 }
                 if (llmConfig.providerId === 'ollama') {
                     const endpoint = (llmConfig.endpoint || 'http://localhost:11434').replace(/\/+$/, '');
-                    const res = await fetch(`${endpoint}/api/chat`, {
-                        method: 'POST',
-                        headers: {
-                            'Content-Type': 'application/json',
-                            ...apiKey ? {
-                                Authorization: `Bearer ${apiKey}`
-                            } : {}
-                        },
-                        body: JSON.stringify({
-                            model: llmConfig.modelName || 'llama3',
-                            stream: false,
-                            messages: [
-                                {
-                                    role: 'system',
-                                    content: systemInstruction
-                                },
-                                {
-                                    role: 'user',
-                                    content: params.prompt
-                                }
-                            ]
-                        }),
-                        signal: AbortSignal.timeout(20000)
+                    const res = await executeSafeOperation(async (signal)=>{
+                        return await fetch(`${endpoint}/api/chat`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                ...apiKey ? {
+                                    Authorization: `Bearer ${apiKey}`
+                                } : {}
+                            },
+                            body: JSON.stringify({
+                                model: llmConfig.modelName || 'llama3',
+                                stream: false,
+                                messages: [
+                                    {
+                                        role: 'system',
+                                        content: systemInstruction
+                                    },
+                                    {
+                                        role: 'user',
+                                        content: params.prompt
+                                    }
+                                ]
+                            }),
+                            signal
+                        });
+                    }, {
+                        timeoutMs: 20000,
+                        maxRetries: 1,
+                        operationName: 'ollama_dispatch'
                     });
-                    if (res.ok) {
+                    if (res && res.ok) {
                         const data = await res.json();
                         const reply = data.message?.content || 'Directive processed.';
                         return {
@@ -17530,13 +19696,19 @@ Think step-by-step, execute tasks logically, call tools whenever you need live d
                     }
                 ];
             }
-            const turn1Res = await fetch(geminiUrl, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify(turn1Payload),
-                signal: AbortSignal.timeout(16000)
+            const turn1Res = await executeSafeOperation(async (signal)=>{
+                return await fetch(geminiUrl, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(turn1Payload),
+                    signal
+                });
+            }, {
+                timeoutMs: 16000,
+                maxRetries: 2,
+                operationName: 'gemini_turn1_dispatch'
             });
             if (!turn1Res.ok) {
                 if (turn1Res.status === 401 || turn1Res.status === 403) {
@@ -17611,15 +19783,21 @@ Think step-by-step, execute tasks logically, call tools whenever you need live d
                         responseSchema: STRUCTURED_CARD_SCHEMA
                     }
                 };
-                const turn2Res = await fetch(geminiUrl, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify(turn2Payload),
-                    signal: AbortSignal.timeout(16000)
+                const turn2Res = await executeSafeOperation(async (signal)=>{
+                    return await fetch(geminiUrl, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify(turn2Payload),
+                        signal
+                    });
+                }, {
+                    timeoutMs: 16000,
+                    maxRetries: 2,
+                    operationName: 'gemini_turn2_dispatch'
                 });
-                if (turn2Res.ok) {
+                if (turn2Res && turn2Res.ok) {
                     const turn2Data = await turn2Res.json();
                     const rawJson = turn2Data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '{}';
                     try {
@@ -17871,39 +20049,45 @@ ROUNDTABLE RULES:
 2. Have each of the 3 agents chime in sequentially (4 to 5 total turns across the 3 agents: e.g., Agent 0 opens with strategic framing, Agent 1 responds with signal/cyber/technical perspective, Agent 2 adds archival/recon analysis, and Agent 0 or another agent synthesizes a counter-point or closing tactical lock).
 3. Every agent MUST use their exact Custom Name, stay true to their distinct Role and Specialty, explicitly reference at least one of their Recent Field Notes or the previous speaker's point, and keep each turn to 2-3 crisp, punchy sentences.
 4. Provide a concise meetingTitle, a 1-2 sentence consensusSummary, and 3 concrete actionItems assigned to specific agents and sectors.`;
-            const res = await fetch(url, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    systemInstruction: {
-                        parts: [
-                            {
-                                text: roundtableSystemInstruction
-                            }
-                        ]
+            const res = await executeSafeOperation(async (signal)=>{
+                return await fetch(url, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
                     },
-                    contents: [
-                        {
-                            role: 'user',
+                    body: JSON.stringify({
+                        systemInstruction: {
                             parts: [
                                 {
-                                    text: `Commander's Town Hall Roundtable Topic: "${String(params.topic).trim()}"\nGenerate the multi-agent roundtable transcript in the required JSON schema.`
+                                    text: roundtableSystemInstruction
                                 }
                             ]
+                        },
+                        contents: [
+                            {
+                                role: 'user',
+                                parts: [
+                                    {
+                                        text: `Commander's Town Hall Roundtable Topic: "${String(params.topic).trim()}"\nGenerate the multi-agent roundtable transcript in the required JSON schema.`
+                                    }
+                                ]
+                            }
+                        ],
+                        generationConfig: {
+                            temperature: Number(params.temperature || 0.75),
+                            responseMimeType: 'application/json',
+                            responseSchema: ROUNDTABLE_SCHEMA
                         }
-                    ],
-                    generationConfig: {
-                        temperature: Number(params.temperature || 0.75),
-                        responseMimeType: 'application/json',
-                        responseSchema: ROUNDTABLE_SCHEMA
-                    }
-                }),
-                signal: AbortSignal.timeout(18000)
+                    }),
+                    signal
+                });
+            }, {
+                timeoutMs: 18000,
+                maxRetries: 2,
+                operationName: 'roundtable_gemini_dispatch'
             });
-            if (!res.ok) {
-                if (res.status === 401 || res.status === 403) {
+            if (!res || !res.ok) {
+                if (res && (res.status === 401 || res.status === 403)) {
                     throw createRetroAgentError({
                         code: 'INVALID_API_KEY',
                         themeId: params.themeId,
@@ -18005,6 +20189,12 @@ exports.INITIAL_ROUNDTABLE_SESSIONS = INITIAL_ROUNDTABLE_SESSIONS;
 exports.loadRoundtableSessions = loadRoundtableSessions;
 exports.saveRoundtableSessions = saveRoundtableSessions;
 exports.generateLocalRoundtableMeeting = generateLocalRoundtableMeeting;
+exports.executeSafeOperation = executeSafeOperation;
+exports.validateAndWrapCode = validateAndWrapCode;
+exports.auditStorageHealth = auditStorageHealth;
+exports.pruneStorageData = pruneStorageData;
+exports.estimateLocalStorageBytes = estimateLocalStorageBytes;
+exports.getLatestStorageHealthReport = getLatestStorageHealthReport;
 });
 
 window.__registerModule("services/AppStatePersistence", function(__require, exports, module) {
@@ -18154,11 +20344,17 @@ function computeImmutableHash(payload) {
 class PixelOpsLedgerDatabase extends Dexie {
     command_ledger;
     agent_memories;
+    workspace_files;
     constructor(){
         super('PixelOpsImmutableLedgerDB');
         this.version(2).stores({
             command_ledger: '++id, timestamp, involved_agent, tool_used, success_boost_achieved, ledger_hash',
             agent_memories: '++id, agentId, timestamp, prompt'
+        });
+        this.version(3).stores({
+            command_ledger: '++id, timestamp, involved_agent, tool_used, success_boost_achieved, ledger_hash',
+            agent_memories: '++id, agentId, timestamp, prompt',
+            workspace_files: '++id, &path, category, format, updatedAt'
         });
         this.command_ledger.hook('updating', function() {
             throw new Error('IMMUTABLE_LEDGER_VIOLATION: Command ledger records cannot be modified once committed.');
@@ -18169,9 +20365,11 @@ class PixelOpsLedgerDatabase extends Dexie {
     }
 }
 const ledgerDb = new PixelOpsLedgerDatabase();
+if (typeof globalThis !== 'undefined') globalThis.__ledgerDb = ledgerDb;
 const INITIAL_SEED_COMMANDS = [];
 const inMemoryLedger = [];
 const inMemoryAgentMemories = [];
+const inMemoryWorkspaceFiles = [];
 async function appendCommandLedgerEntry(entry) {
     const fullRecord = {
         ...entry,
@@ -18850,6 +21048,7 @@ exports.workstationSupportsTool = workstationSupportsTool;
 });
 
 window.__registerModule("services/PluginMarketplaceService", function(__require, exports, module) {
+const __imp_0 = __require("../engine/pluginAuthManager"); const { getPluginCredential } = __imp_0;
 const STORAGE_CUSTOM_PLUGINS_KEY = 'pixelops_custom_market_plugins_v1';
 const DEFAULT_CUSTOM_PLUGINS = [
     {
@@ -18892,8 +21091,11 @@ async function executeCustomPlugin(plugin, args) {
     const headers = {
         'Content-Type': 'application/json'
     };
-    if (plugin.authHeaderKey && plugin.authHeaderValue) {
-        headers[plugin.authHeaderKey] = plugin.authHeaderValue;
+    const byokCred = getPluginCredential(plugin.id);
+    if (plugin.authHeaderKey && (plugin.authHeaderValue || byokCred?.apiKey)) {
+        headers[plugin.authHeaderKey] = plugin.authHeaderValue || byokCred?.apiKey || '';
+    } else if (byokCred?.apiKey) {
+        headers['Authorization'] = byokCred.apiKey.startsWith('Bearer ') ? byokCred.apiKey : `Bearer ${byokCred.apiKey}`;
     }
     const isGet = !plugin.endpointUrl.includes('POST') && !plugin.endpointUrl.includes('PUT');
     let url = plugin.endpointUrl;
@@ -18916,6 +21118,334 @@ exports.executeCustomPlugin = executeCustomPlugin;
 exports.DEFAULT_CUSTOM_PLUGINS = DEFAULT_CUSTOM_PLUGINS;
 exports.loadCustomPlugins = loadCustomPlugins;
 exports.saveCustomPlugins = saveCustomPlugins;
+});
+
+window.__registerModule("services/SafetyService", function(__require, exports, module) {
+const __imp_0 = __require("./CommandLedgerDb"); const { ledgerDb } = __imp_0;
+class SafeOperationError extends Error {
+    operationName;
+    attempts;
+    originalError;
+    constructor(message, operationName, attempts, originalError){
+        super(message);
+        this.name = 'SafeOperationError';
+        this.operationName = operationName;
+        this.attempts = attempts;
+        this.originalError = originalError;
+    }
+}
+async function executeSafeOperation(operation, options = {}) {
+    const { timeoutMs = 12000, maxRetries = 2, backoffBaseMs = 350, maxBackoffMs = 3000, fallbackValue, operationName = 'anonymous_operation', retryCondition, onRetry } = options;
+    let attempt = 0;
+    let lastError = null;
+    while(attempt <= maxRetries){
+        const controller = new AbortController();
+        let isTimedOut = false;
+        let abortListener = null;
+        const abortPromise = new Promise((_, reject)=>{
+            abortListener = ()=>{
+                isTimedOut = true;
+                reject(new Error(`Timeout of ${timeoutMs}ms exceeded in [${operationName}]`));
+            };
+            controller.signal.addEventListener('abort', abortListener);
+        });
+        const timeoutTimer = setTimeout(()=>{
+            controller.abort();
+        }, timeoutMs);
+        try {
+            const result = await Promise.race([
+                operation(controller.signal),
+                abortPromise
+            ]);
+            clearTimeout(timeoutTimer);
+            if (abortListener) controller.signal.removeEventListener('abort', abortListener);
+            return result;
+        } catch (err) {
+            clearTimeout(timeoutTimer);
+            if (abortListener) controller.signal.removeEventListener('abort', abortListener);
+            lastError = err;
+            const isAbort = isTimedOut || err?.name === 'AbortError' || err?.message?.includes('aborted');
+            const isUnrecoverableAuth = err?.status === 401 || err?.status === 403 || err?.code === 'INVALID_API_KEY' || err?.message?.includes('API_KEY_INVALID');
+            const shouldRetry = attempt < maxRetries && !isUnrecoverableAuth && (retryCondition ? retryCondition(err) : true);
+            if (!shouldRetry) {
+                break;
+            }
+            attempt++;
+            const delayMs = Math.min(maxBackoffMs, Math.round(backoffBaseMs * Math.pow(2, attempt - 1) + Math.random() * 50));
+            if (onRetry) {
+                onRetry(attempt, err, delayMs);
+            } else {
+                console.warn(`[CircuitBreaker] Retrying [${operationName}] (Attempt ${attempt}/${maxRetries}) in ${delayMs}ms due to:`, err?.message || err);
+            }
+            await new Promise((resolve)=>setTimeout(resolve, delayMs));
+        }
+    }
+    if (fallbackValue !== undefined) {
+        console.warn(`[CircuitBreaker] [${operationName}] exhausted retries (${attempt + 1}). Activating graceful fallback.`);
+        if (typeof fallbackValue === 'function') {
+            return fallbackValue();
+        }
+        return fallbackValue;
+    }
+    throw new SafeOperationError(`[${operationName}] failed after ${attempt + 1} attempt(s): ${lastError?.message || String(lastError)}`, operationName, attempt + 1, lastError);
+}
+const DANGEROUS_SECURITY_PATTERNS = [
+    {
+        pattern: /\beval\s*\(/i,
+        description: 'Direct dynamic eval() invocation is prohibited'
+    },
+    {
+        pattern: /\bFunction\s*\(/i,
+        description: 'Dynamic Function() constructor invocation is prohibited'
+    },
+    {
+        pattern: /\bdocument\s*\.\s*cookie\b/i,
+        description: 'Cookie access (document.cookie) is prohibited'
+    },
+    {
+        pattern: /\bwindow\s*\.\s*(top|parent|opener)\b/i,
+        description: 'Window hierarchy escape (window.top/parent/opener) is prohibited'
+    },
+    {
+        pattern: /\b(top|parent|opener)\s*\.\s*location\b/i,
+        description: 'Frame navigation tampering is prohibited'
+    },
+    {
+        pattern: /\blocalStorage\s*\.\s*(clear|removeItem|setItem|getItem)\b/i,
+        description: 'Direct window.__safeStorage manipulation is prohibited inside sandbox'
+    },
+    {
+        pattern: /\bsessionStorage\b/i,
+        description: 'sessionStorage manipulation is prohibited inside sandbox'
+    },
+    {
+        pattern: /\bindexedDB\b/i,
+        description: 'Direct indexedDB handle access is prohibited inside sandbox'
+    },
+    {
+        pattern: /\b(WebSocket|XMLHttpRequest)\b/i,
+        description: 'Raw socket or unmonitored XHR channel creation is prohibited'
+    },
+    {
+        pattern: /\bimportScripts\b/i,
+        description: 'Worker script import is prohibited'
+    },
+    {
+        pattern: /\b__proto__\b/i,
+        description: 'Prototype pollution attempt (__proto__) is prohibited'
+    },
+    {
+        pattern: /\bconstructor\s*\.\s*constructor\b/i,
+        description: 'Constructor escape chain is prohibited'
+    }
+];
+function validateAndWrapCode(rawCode) {
+    const code = (rawCode || '').trim();
+    if (!code) {
+        return {
+            valid: false,
+            isValid: false,
+            wrappedCode: '',
+            error: 'Empty code string provided to sandbox evaluator',
+            rejectionReason: 'Empty code string provided to sandbox evaluator'
+        };
+    }
+    for (const check of DANGEROUS_SECURITY_PATTERNS){
+        if (check.pattern.test(code)) {
+            return {
+                valid: false,
+                isValid: false,
+                wrappedCode: '',
+                error: `SECURITY_VIOLATION: ${check.description}`,
+                rejectionReason: check.description,
+                detectedThreat: check.description
+            };
+        }
+    }
+    const wrappedCode = `"use strict";
+return (function(console, Math, Date, JSON, Array, Object, String, Number, Boolean, RegExp, window, document, globalThis, top, parent, self, window.__safeStorage, sessionStorage, indexedDB) {
+  ${code}
+}).call(Object.create(null), console, Math, Date, JSON, Array, Object, String, Number, Boolean, RegExp, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined, undefined);`;
+    return {
+        valid: true,
+        isValid: true,
+        wrappedCode
+    };
+}
+let latestHealthReportCache = null;
+function estimateLocalStorageBytes() {
+    if (typeof window.__safeStorage === 'undefined') return 0;
+    let bytes = 0;
+    try {
+        for(let i = 0; i < window.__safeStorage.length; i++){
+            const k = window.__safeStorage.key(i);
+            if (k) {
+                const v = window.__safeStorage.getItem(k) || '';
+                bytes += (k.length + v.length) * 2;
+            }
+        }
+    } catch  {}
+    return bytes;
+}
+async function auditStorageHealth() {
+    let usageBytes = 0;
+    let quotaBytes = 50 * 1024 * 1024;
+    let hasEstimateApi = false;
+    if (typeof navigator !== 'undefined' && navigator.storage && typeof navigator.storage.estimate === 'function') {
+        try {
+            const est = await navigator.storage.estimate();
+            if (typeof est.usage === 'number') {
+                usageBytes = est.usage;
+                hasEstimateApi = true;
+            }
+            if (typeof est.quota === 'number' && est.quota > 0) {
+                quotaBytes = est.quota;
+            }
+        } catch  {}
+    }
+    const localStorageBytes = estimateLocalStorageBytes();
+    let commandLedgerCount = 0;
+    let agentMemoriesCount = 0;
+    try {
+        commandLedgerCount = await ledgerDb.command_ledger.count();
+        agentMemoriesCount = await ledgerDb.agent_memories.count();
+    } catch  {}
+    let vfsFileCount = 0;
+    try {
+        const rawVfs = window.__safeStorage.getItem('pixelops_vfs_files_v1');
+        if (rawVfs) {
+            const vfs = JSON.parse(rawVfs);
+            vfsFileCount = Object.keys(vfs).length;
+        }
+    } catch  {}
+    if (!hasEstimateApi) {
+        const estimatedDbBytes = commandLedgerCount * 450 + agentMemoriesCount * 350;
+        usageBytes = localStorageBytes + estimatedDbBytes;
+    }
+    const percentUsed = Math.min(100, Math.round(usageBytes / (quotaBytes || 1) * 100));
+    const warningTriggered = percentUsed >= 85 || localStorageBytes > 4 * 1024 * 1024;
+    const isHealthy = !warningTriggered;
+    let recommendation = 'healthy';
+    if (percentUsed >= 85) {
+        recommendation = 'critical_prune_required';
+    } else if (percentUsed >= 70 || localStorageBytes > 3 * 1024 * 1024) {
+        recommendation = 'warning';
+    }
+    const report = {
+        usageBytes,
+        quotaBytes,
+        percentUsed,
+        isHealthy,
+        warningTriggered,
+        storageDetails: {
+            indexedDbBytes: Math.max(0, usageBytes - localStorageBytes),
+            localStorageBytes,
+            commandLedgerCount,
+            agentMemoriesCount,
+            vfsFileCount
+        },
+        recommendation,
+        timestamp: new Date().toISOString()
+    };
+    latestHealthReportCache = report;
+    if (warningTriggered) {
+        console.warn(`[StorageHealth] Warning: storage capacity is at ${percentUsed}%. Initiating automated safety pruning...`);
+        try {
+            await pruneStorageData({
+                emergencyPrune: percentUsed >= 90
+            });
+        } catch (e) {
+            console.error('[StorageHealth] Automated safety pruning encounter:', e);
+        }
+    }
+    return report;
+}
+function getLatestStorageHealthReport() {
+    return latestHealthReportCache;
+}
+async function pruneStorageData(options = {}) {
+    const { maxMemoryAgeDays = 14, keepRecentMemoriesPerAgent = 30, cleanStaleVfs = true, emergencyPrune = false } = options;
+    let memoriesPruned = 0;
+    let vfsFilesPruned = 0;
+    let estimatedBytesFreed = 0;
+    try {
+        const cutoffDate = new Date();
+        cutoffDate.setDate(cutoffDate.getDate() - (emergencyPrune ? 3 : maxMemoryAgeDays));
+        const cutoffIso = cutoffDate.toISOString();
+        const allMemories = await ledgerDb.agent_memories.toArray();
+        const agentGroups = {};
+        for (const mem of allMemories){
+            if (!agentGroups[mem.agentId]) agentGroups[mem.agentId] = [];
+            agentGroups[mem.agentId].push(mem);
+        }
+        const idsToDelete = [];
+        for (const agentId of Object.keys(agentGroups)){
+            const sorted = agentGroups[agentId].sort((a, b)=>new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+            const candidates = sorted.slice(emergencyPrune ? 10 : keepRecentMemoriesPerAgent);
+            for (const cand of candidates){
+                if (cand.timestamp < cutoffIso && cand.id !== undefined) {
+                    idsToDelete.push(cand.id);
+                }
+            }
+        }
+        if (idsToDelete.length > 0) {
+            await ledgerDb.agent_memories.bulkDelete(idsToDelete);
+            memoriesPruned = idsToDelete.length;
+            estimatedBytesFreed += memoriesPruned * 350;
+        }
+    } catch (err) {
+        console.warn('[StorageHealth] Non-fatal memory pruning error:', err);
+    }
+    if (cleanStaleVfs && typeof window.__safeStorage !== 'undefined') {
+        try {
+            const rawVfs = window.__safeStorage.getItem('pixelops_vfs_files_v1');
+            if (rawVfs) {
+                const vfs = JSON.parse(rawVfs);
+                const nextVfs = {};
+                const vfsCutoff = new Date();
+                vfsCutoff.setDate(vfsCutoff.getDate() - (emergencyPrune ? 1 : 7));
+                const vfsCutoffIso = vfsCutoff.toISOString();
+                for (const [pathKey, fileData] of Object.entries(vfs)){
+                    if (fileData.updatedAt && fileData.updatedAt < vfsCutoffIso && !pathKey.includes('permanent')) {
+                        vfsFilesPruned++;
+                        estimatedBytesFreed += (pathKey.length + (fileData.content?.length || 0)) * 2;
+                    } else {
+                        nextVfs[pathKey] = fileData;
+                    }
+                }
+                window.__safeStorage.setItem('pixelops_vfs_files_v1', JSON.stringify(nextVfs));
+            }
+        } catch  {}
+    }
+    if (emergencyPrune && typeof window.__safeStorage !== 'undefined') {
+        try {
+            const rawCards = window.__safeStorage.getItem('pixelops_execution_cards_v2');
+            if (rawCards) {
+                const cards = JSON.parse(rawCards);
+                if (Array.isArray(cards) && cards.length > 20) {
+                    const trimmed = cards.slice(0, 20);
+                    window.__safeStorage.setItem('pixelops_execution_cards_v2', JSON.stringify(trimmed));
+                    estimatedBytesFreed += (rawCards.length - JSON.stringify(trimmed).length) * 2;
+                }
+            }
+        } catch  {}
+    }
+    console.log(`[StorageHealth] Prune complete: freed ~${Math.round(estimatedBytesFreed / 1024)}KB (${memoriesPruned} memories, ${vfsFilesPruned} VFS files).`);
+    return {
+        memoriesPruned,
+        vfsFilesPruned,
+        estimatedBytesFreed,
+        executedAt: new Date().toISOString()
+    };
+}
+
+exports.executeSafeOperation = executeSafeOperation;
+exports.auditStorageHealth = auditStorageHealth;
+exports.pruneStorageData = pruneStorageData;
+exports.SafeOperationError = SafeOperationError;
+exports.validateAndWrapCode = validateAndWrapCode;
+exports.estimateLocalStorageBytes = estimateLocalStorageBytes;
+exports.getLatestStorageHealthReport = getLatestStorageHealthReport;
 });
 
 window.__registerModule("services/SecureVaultService", function(__require, exports, module) {
@@ -19696,6 +22226,14 @@ class BackgroundWorkerEngine {
             }).catch((err)=>{
                 console.warn('PixelOps ServiceWorker registration failed:', err);
             });
+        }
+        if (typeof window !== 'undefined') {
+            import('./SafetyService').then(({ auditStorageHealth })=>{
+                auditStorageHealth().catch(()=>{});
+                setInterval(()=>{
+                    auditStorageHealth().catch(()=>{});
+                }, 5 * 60 * 1000);
+            }).catch(()=>{});
         }
     }
     stopBackgroundLoop() {

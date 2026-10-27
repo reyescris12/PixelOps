@@ -97,6 +97,18 @@ class BackgroundWorkerEngine {
           console.warn('PixelOps ServiceWorker registration failed:', err);
         });
     }
+
+    // Periodic Storage Health Audit & Auto-Pruning
+    if (typeof window !== 'undefined') {
+      import('./SafetyService')
+        .then(({ auditStorageHealth }) => {
+          auditStorageHealth().catch(() => {});
+          setInterval(() => {
+            auditStorageHealth().catch(() => {});
+          }, 5 * 60 * 1000);
+        })
+        .catch(() => {});
+    }
   }
 
   public stopBackgroundLoop() {

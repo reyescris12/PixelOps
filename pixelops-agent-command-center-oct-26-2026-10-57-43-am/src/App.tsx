@@ -57,6 +57,7 @@ import {
   saveRoundtableSessions,
   executeAgentDirective,
   executeRoundtableMeeting,
+  auditStorageHealth,
 } from './services/ApiService';
 import {
   VaultStartupReport,
@@ -95,6 +96,13 @@ import { recordTelemetryExecution } from './services/TelemetryStore';
 import { analyzePromptAmbiguity } from './engine/taskBriefEngine';
 import { TaskBriefModal, TaskBrief } from './components/TaskBriefModal';
 import { TerminalConsole } from './components/TerminalConsole';
+import { WorkspaceFileViewer } from './components/WorkspaceFileViewer';
+import { PluginAuthModal, PluginAuthTarget } from './components/PluginAuthModal';
+import {
+  isPluginAuthenticated,
+  clearPluginCredential,
+  PluginAuthCredential,
+} from './engine/pluginAuthManager';
 
 type NavTab = 'hq' | 'crew' | 'plugins' | 'themes';
 type HqSubView = 'terminal' | 'town_hall' | 'command_log';
@@ -211,6 +219,7 @@ const CommandCenterContent: React.FC = () => {
   const [isTelemetryOpen, setIsTelemetryOpen] = useState(false);
   const [isAgentFactoryOpen, setIsAgentFactoryOpen] = useState(false);
   const [isTerminalConsoleOpen, setIsTerminalConsoleOpen] = useState(false);
+  const [isWorkspaceFilesOpen, setIsWorkspaceFilesOpen] = useState(false);
   const [taskBriefState, setTaskBriefState] = useState<{
     isOpen: boolean;
     brief: TaskBrief | null;
@@ -226,6 +235,8 @@ const CommandCenterContent: React.FC = () => {
   const [customPlugins, setCustomPlugins] = useState<CustomPluginConnector[]>(loadCustomPlugins);
   const [isCustomPluginModalOpen, setIsCustomPluginModalOpen] = useState(false);
   const [editingCustomPlugin, setEditingCustomPlugin] = useState<CustomPluginConnector | null>(null);
+  const [isPluginAuthModalOpen, setIsPluginAuthModalOpen] = useState(false);
+  const [activeAuthPlugin, setActiveAuthPlugin] = useState<PluginAuthTarget | null>(null);
 
   // Town Hall Meeting & Multi-Agent Roundtable States
   const [roundtableSessions, setRoundtableSessions] = useState<RoundtableMeetingSession[]>(
@@ -292,6 +303,7 @@ const CommandCenterContent: React.FC = () => {
   useEffect(() => {
     runStartupVaultValidation();
     refreshCommandLedger();
+    auditStorageHealth().catch((e) => console.warn('Storage health audit warning:', e));
     backgroundWorkerEngine.startBackgroundLoop();
   }, []);
 
@@ -300,23 +312,84 @@ const CommandCenterContent: React.FC = () => {
     savePreferences(next);
   };
 
+  const handleOpenPluginAuth = (plugin: any) => {
+    playBeep('tap');
+    setActiveAuthPlugin({
+      id: plugin.id,
+      name: plugin.name,
+      description: plugin.description,
+      toolFunctionName: plugin.toolFunctionName,
+      serviceLabel: plugin.serviceLabel,
+      accountHandle: plugin.accountHandle,
+      connected: plugin.connected ?? isPluginAuthenticated(plugin.id),
+      category: plugin.category,
+    });
+    setIsPluginAuthModalOpen(true);
+  };
+
+  const handlePluginAuthorized = (pluginId: string, credential: PluginAuthCredential) => {
+    playBeep('complete');
+    setPlugins((prev) => {
+      const next = prev.map((p) => {
+        if (p.id === pluginId) {
+          return {
+            ...p,
+            connected: true,
+            accountHandle: credential.accountHandle || 'BYOK Local Token',
+            lastSync: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          };
+        }
+        return p;
+      });
+      savePlugins(next);
+      return next;
+    });
+    setDialogueText(`[PLUGIN AUTHORIZED] BYOK key linked for ${pluginId}. AES-GCM local storage verified.`);
+    runStartupVaultValidation();
+  };
+
+  const handlePluginRevoked = (pluginId: string) => {
+    playBeep('tap');
+    clearPluginCredential(pluginId);
+    setPlugins((prev) => {
+      const next = prev.map((p) => {
+        if (p.id === pluginId) {
+          return {
+            ...p,
+            connected: false,
+            lastSync: 'Token Revoked',
+          };
+        }
+        return p;
+      });
+      savePlugins(next);
+      return next;
+    });
+    setDialogueText(`[PLUGIN REVOKED] Credentials cleared for ${pluginId}.`);
+    runStartupVaultValidation();
+  };
+
   const handleTogglePlugin = async (pluginId: PluginConnector['id']) => {
     playBeep('tap');
     const target = plugins.find((p) => p.id === pluginId);
     if (!target) return;
 
     if (target.connected) {
-      await revokeOAuthProviderToken(pluginId);
+      handlePluginRevoked(pluginId);
     } else {
-      await refreshOAuthProviderToken(pluginId);
+      handleOpenPluginAuth(target);
     }
-    await runStartupVaultValidation();
   };
 
   const handleRotatePluginOAuth = async (pluginId: PluginConnector['id']) => {
-    playBeep('complete');
-    await refreshOAuthProviderToken(pluginId);
-    await runStartupVaultValidation();
+    playBeep('tap');
+    const target = plugins.find((p) => p.id === pluginId);
+    if (target) {
+      handleOpenPluginAuth(target);
+    } else {
+      await refreshOAuthProviderToken(pluginId);
+      await runStartupVaultValidation();
+    }
   };
 
   const smoothCloseGameOverlay = () => {
@@ -1433,17 +1506,27 @@ const CommandCenterContent: React.FC = () => {
                     <span className="font-mono-tabular text-[10px] text-[#8c7a65] truncate">
                       {plugin.toolFunctionName}
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => handleTogglePlugin(plugin.id)}
-                      className={`min-h-[28px] px-2.5 py-0.5 font-mono-tabular text-xs border cursor-pointer ${
-                        plugin.connected
-                          ? 'bg-[#261f18] text-[#e8dcc4] border-[#6e5233]'
-                          : 'bg-[#e59838] text-[#121110] border-[#e59838] font-bold'
-                      }`}
-                    >
-                      {plugin.connected ? 'Revoke]' : 'Mint OAuth]'}
-                    </button>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => handleOpenPluginAuth(plugin)}
+                        className="min-h-[28px] px-2 py-0.5 font-mono-tabular text-[11px] bg-[#1a1410] text-[#e59838] border border-[#785732] hover:bg-[#281e14] cursor-pointer"
+                        title="Configure BYOK Key / OAuth Secret locally"
+                      >
+                        [BYOK 🔑]
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleTogglePlugin(plugin.id)}
+                        className={`min-h-[28px] px-2.5 py-0.5 font-mono-tabular text-xs border cursor-pointer ${
+                          plugin.connected
+                            ? 'bg-[#261f18] text-[#e8dcc4] border-[#6e5233]'
+                            : 'bg-[#e59838] text-[#121110] border-[#e59838] font-bold'
+                        }`}
+                      >
+                        {plugin.connected ? 'Revoke]' : 'Mint OAuth]'}
+                      </button>
+                    </div>
                   </div>
                 </div>
               );
@@ -1855,6 +1938,17 @@ const CommandCenterContent: React.FC = () => {
                     >
                       📜 Command Log ({commandLedger.length})
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsWorkspaceFilesOpen(true);
+                        playBeep('tap');
+                      }}
+                      className="px-3 py-1 font-mono-tabular text-xs cursor-pointer transition-colors text-[#38bdf8] hover:text-[#f3ead8]"
+                      title="Open Workspace File Explorer & Markdown Reports (IndexedDB)"
+                    >
+                      📁 Files
+                    </button>
                   </div>
                   <span className="hidden sm:inline font-mono-tabular text-[11px] text-[#9c8265]">
                     {hqSubView === 'town_hall'
@@ -2013,6 +2107,23 @@ const CommandCenterContent: React.FC = () => {
               <span className="hidden sm:inline">CLI (~)</span>
               <span className="sm:hidden">CLI</span>
             </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setIsWorkspaceFilesOpen((prev) => !prev);
+                playBeep('tap');
+              }}
+              className={`min-h-[42px] px-3 sm:px-5 py-1.5 font-mono-tabular text-sm sm:text-base flex items-center gap-2 transition-colors cursor-pointer border-l border-[#363b4e] ${
+                isWorkspaceFilesOpen
+                  ? 'bg-[#152e34] text-[#38bdf8] font-semibold'
+                  : 'text-[#38bdf8] hover:bg-[#15232e]'
+              }`}
+              title="Open Workspace File Explorer (IndexedDB Markdown Reports & Logs)"
+            >
+              <span className="text-base" aria-hidden="true">📁</span>
+              <span className="hidden sm:inline">Files</span>
+            </button>
           </nav>
         </footer>
       </div>
@@ -2032,6 +2143,8 @@ const CommandCenterContent: React.FC = () => {
           setCurrentRoom(room);
           playBeep('tap');
         }}
+        onOpenWorkspaceFiles={() => setIsWorkspaceFilesOpen(true)}
+        onOpenPluginAuth={handleOpenPluginAuth}
       />
 
       <RetroErrorModal
@@ -2161,6 +2274,19 @@ const CommandCenterContent: React.FC = () => {
             }
           },
         }}
+      />
+
+      <WorkspaceFileViewer
+        isOpen={isWorkspaceFilesOpen}
+        onClose={() => setIsWorkspaceFilesOpen(false)}
+      />
+
+      <PluginAuthModal
+        isOpen={isPluginAuthModalOpen}
+        onClose={() => setIsPluginAuthModalOpen(false)}
+        plugin={activeAuthPlugin}
+        onAuthorized={handlePluginAuthorized}
+        onRevoked={handlePluginRevoked}
       />
     </div>
   );

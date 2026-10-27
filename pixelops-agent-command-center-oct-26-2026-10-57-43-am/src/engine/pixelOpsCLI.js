@@ -14,6 +14,15 @@
 
 import { getAllRooms, getAllRoomIds, ROOM_TEMPLATES, spawnRoom } from './roomManager.js';
 import { AVAILABLE_SKILLS, loadRoomSkillBindings, mountSkillToRoom } from './moduleRegistry.js';
+import { listWorkspaceFiles, readWorkspaceFile } from './storageManager.js';
+import {
+  getPluginCredential,
+  savePluginCredential,
+  clearPluginCredential,
+  getAllPluginCredentials,
+  isPluginAuthenticated,
+  maskCredential,
+} from './pluginAuthManager.js';
 
 export async function executeCLICommand(rawInput, context) {
   const trimmed = (rawInput || '').trim();
@@ -317,7 +326,140 @@ export async function executeCLICommand(rawInput, context) {
     }
   }
 
-  // 10. HELP
+  // 10. FILES (List Workspace Files in IndexedDB)
+  if (action === 'files' || action === 'dir') {
+    try {
+      const cat = args[0];
+      const files = await listWorkspaceFiles(cat);
+      if (files.length === 0) {
+        return {
+          command: trimmed,
+          output: 'NO WORKSPACE FILES FOUND IN INDEXEDDB STORAGE. Use the Files drawer to seed or create reports.',
+          status: 'warning',
+          timestamp,
+        };
+      }
+      const lines = [
+        `INDEXEDDB WORKSPACE FILES (${files.length} total):`,
+        '--------------------------------------------------------------------------------',
+        ...files.map((f) => `📄 [${f.category.toUpperCase()}] ${f.path} (${f.sizeBytes} B · ${f.format})`),
+      ];
+      return {
+        command: trimmed,
+        output: lines.join('\n'),
+        status: 'ok',
+        timestamp,
+      };
+    } catch (e) {
+      return {
+        command: trimmed,
+        output: `Failed to list files: ${e?.message || e}`,
+        status: 'error',
+        timestamp,
+      };
+    }
+  }
+
+  // 11. CAT (Read Workspace File Content)
+  if (action === 'cat' || action === 'read') {
+    const filePath = args[0];
+    if (!filePath) {
+      return {
+        command: trimmed,
+        output: 'USAGE: pixelops cat <filePath> (e.g. pixelops cat reports/master_execution_schedule.md)',
+        status: 'warning',
+        timestamp,
+      };
+    }
+    try {
+      const file = await readWorkspaceFile(filePath);
+      if (!file) {
+        return {
+          command: trimmed,
+          output: `File "${filePath}" not found in IndexedDB or VFS.`,
+          status: 'error',
+          timestamp,
+        };
+      }
+      return {
+        command: trimmed,
+        output: `=== [${file.path}] (${file.sizeBytes} bytes) ===\n\n${file.content}`,
+        status: 'ok',
+        timestamp,
+      };
+    } catch (e) {
+      return {
+        command: trimmed,
+        output: `Failed to read file: ${e?.message || e}`,
+        status: 'error',
+        timestamp,
+      };
+    }
+  }
+
+  // 12. PLUGINS (List BYOK Plugins & Manage Credentials)
+  if (action === 'plugins' || action === 'plugin') {
+    const subAction = (args[0] || '').toLowerCase();
+    if (subAction === 'auth' || subAction === 'set') {
+      const pluginId = args[1];
+      const key = args.slice(2).join(' ');
+      if (!pluginId || !key) {
+        return {
+          command: trimmed,
+          output: 'USAGE: pixelops plugin auth <pluginId> <apiKey/token>',
+          status: 'warning',
+          timestamp,
+        };
+      }
+      savePluginCredential(pluginId, key);
+      return {
+        command: trimmed,
+        output: `[BYOK SAVED] Credentials saved for plugin "${pluginId}". Auth status: ACTIVE [AES-GCM].`,
+        status: 'ok',
+        timestamp,
+      };
+    }
+    if (subAction === 'revoke' || subAction === 'clear') {
+      const pluginId = args[1];
+      if (!pluginId) {
+        return {
+          command: trimmed,
+          output: 'USAGE: pixelops plugin revoke <pluginId>',
+          status: 'warning',
+          timestamp,
+        };
+      }
+      clearPluginCredential(pluginId);
+      return {
+        command: trimmed,
+        output: `[TOKEN REVOKED] Credentials cleared for plugin "${pluginId}".`,
+        status: 'ok',
+        timestamp,
+      };
+    }
+
+    const creds = getAllPluginCredentials();
+    const rows = [
+      'PIXELOPS BYOK PLUGIN CREDENTIALS & CONNECTORS:',
+      '--------------------------------------------------------------------------------',
+      ...['web_search', 'code_sandbox', 'fs_storage', 'api_gateway', 'memory_lookup', 'github', 'slack', 'calendar'].map((pid) => {
+        const isAuth = isPluginAuthenticated(pid);
+        const cred = creds[pid] || getPluginCredential(pid);
+        const masked = cred ? maskCredential(cred.apiKey) : '[UNAUTHENTICATED]';
+        return `🔌 ${pid.padEnd(16)} | ${isAuth ? '🟢 ACTIVE [AES-GCM]' : '⚪ NO KEY         '} | ${masked}`;
+      }),
+      '--------------------------------------------------------------------------------',
+      'Use: pixelops plugin auth <pluginId> <key>  to configure credentials via CLI.',
+    ];
+    return {
+      command: trimmed,
+      output: rows.join('\n'),
+      status: 'ok',
+      timestamp,
+    };
+  }
+
+  // 13. HELP
   if (action === 'help') {
     const helpText = [
       'PIXELOPS TACTICAL HEADLESS CLI UTILITY v1.0',
@@ -326,6 +468,11 @@ export async function executeCLICommand(rawInput, context) {
       '  pixelops status | ls               List active operatives, rooms & assignments',
       '  pixelops dispatch <agent> <task>   Queue a tactical directive to an operative',
       '  pixelops approve <taskId>          Approve pending human-in-the-loop task briefs',
+      '  pixelops files [category]          List IndexedDB workspace files (reports, logs, config)',
+      '  pixelops cat <filePath>            Read content of an IndexedDB workspace file',
+      '  pixelops plugins                   List BYOK capability plugins and auth tokens',
+      '  pixelops plugin auth <id> <key>    Save BYOK API key/token for plugin locally',
+      '  pixelops plugin revoke <id>        Revoke/clear local credentials for plugin',
       '  pixelops rooms                     List registered safehouse sectors',
       '  pixelops spawn <templateId>        Spawn sector (cyber_lab, quantum_vault, etc)',
       '  pixelops skills                    List available capability plugins & bindings',

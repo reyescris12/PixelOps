@@ -57,6 +57,7 @@ import {
   saveRoundtableSessions,
   executeAgentDirective,
   executeRoundtableMeeting,
+  auditStorageHealth,
 } from './services/ApiService';
 import {
   VaultStartupReport,
@@ -95,6 +96,13 @@ import { recordTelemetryExecution } from './services/TelemetryStore';
 import { analyzePromptAmbiguity } from './engine/taskBriefEngine';
 import { TaskBriefModal, TaskBrief } from './components/TaskBriefModal';
 import { TerminalConsole } from './components/TerminalConsole';
+import { WorkspaceFileViewer } from './components/WorkspaceFileViewer';
+import { PluginAuthModal, PluginAuthTarget } from './components/PluginAuthModal';
+import {
+  isPluginAuthenticated,
+  clearPluginCredential,
+  PluginAuthCredential,
+} from './engine/pluginAuthManager';
 
 type NavTab = 'hq' | 'crew' | 'plugins' | 'themes';
 type HqSubView = 'terminal' | 'town_hall' | 'command_log';
@@ -198,7 +206,7 @@ const CommandCenterContent: React.FC = () => {
     () =>
       restoredSession?.dialogueText ||
       loadExecutionCards()[0]?.dialogue ||
-      'Target acquired. Scanning web nodes for flight data...'
+      'Command Center online. Select an operative and transmit your directive.'
   );
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [retroError, setRetroError] = useState<RetroErrorDescriptor | null>(null);
@@ -211,6 +219,7 @@ const CommandCenterContent: React.FC = () => {
   const [isTelemetryOpen, setIsTelemetryOpen] = useState(false);
   const [isAgentFactoryOpen, setIsAgentFactoryOpen] = useState(false);
   const [isTerminalConsoleOpen, setIsTerminalConsoleOpen] = useState(false);
+  const [isWorkspaceFilesOpen, setIsWorkspaceFilesOpen] = useState(false);
   const [taskBriefState, setTaskBriefState] = useState<{
     isOpen: boolean;
     brief: TaskBrief | null;
@@ -226,6 +235,8 @@ const CommandCenterContent: React.FC = () => {
   const [customPlugins, setCustomPlugins] = useState<CustomPluginConnector[]>(loadCustomPlugins);
   const [isCustomPluginModalOpen, setIsCustomPluginModalOpen] = useState(false);
   const [editingCustomPlugin, setEditingCustomPlugin] = useState<CustomPluginConnector | null>(null);
+  const [isPluginAuthModalOpen, setIsPluginAuthModalOpen] = useState(false);
+  const [activeAuthPlugin, setActiveAuthPlugin] = useState<PluginAuthTarget | null>(null);
 
   // Town Hall Meeting & Multi-Agent Roundtable States
   const [roundtableSessions, setRoundtableSessions] = useState<RoundtableMeetingSession[]>(
@@ -292,6 +303,7 @@ const CommandCenterContent: React.FC = () => {
   useEffect(() => {
     runStartupVaultValidation();
     refreshCommandLedger();
+    auditStorageHealth().catch((e) => console.warn('Storage health audit warning:', e));
     backgroundWorkerEngine.startBackgroundLoop();
   }, []);
 
@@ -300,23 +312,84 @@ const CommandCenterContent: React.FC = () => {
     savePreferences(next);
   };
 
+  const handleOpenPluginAuth = (plugin: any) => {
+    playBeep('tap');
+    setActiveAuthPlugin({
+      id: plugin.id,
+      name: plugin.name,
+      description: plugin.description,
+      toolFunctionName: plugin.toolFunctionName,
+      serviceLabel: plugin.serviceLabel,
+      accountHandle: plugin.accountHandle,
+      connected: plugin.connected ?? isPluginAuthenticated(plugin.id),
+      category: plugin.category,
+    });
+    setIsPluginAuthModalOpen(true);
+  };
+
+  const handlePluginAuthorized = (pluginId: string, credential: PluginAuthCredential) => {
+    playBeep('complete');
+    setPlugins((prev) => {
+      const next = prev.map((p) => {
+        if (p.id === pluginId) {
+          return {
+            ...p,
+            connected: true,
+            accountHandle: credential.accountHandle || 'BYOK Local Token',
+            lastSync: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          };
+        }
+        return p;
+      });
+      savePlugins(next);
+      return next;
+    });
+    setDialogueText(`[PLUGIN AUTHORIZED] BYOK key linked for ${pluginId}. AES-GCM local storage verified.`);
+    runStartupVaultValidation();
+  };
+
+  const handlePluginRevoked = (pluginId: string) => {
+    playBeep('tap');
+    clearPluginCredential(pluginId);
+    setPlugins((prev) => {
+      const next = prev.map((p) => {
+        if (p.id === pluginId) {
+          return {
+            ...p,
+            connected: false,
+            lastSync: 'Token Revoked',
+          };
+        }
+        return p;
+      });
+      savePlugins(next);
+      return next;
+    });
+    setDialogueText(`[PLUGIN REVOKED] Credentials cleared for ${pluginId}.`);
+    runStartupVaultValidation();
+  };
+
   const handleTogglePlugin = async (pluginId: PluginConnector['id']) => {
     playBeep('tap');
     const target = plugins.find((p) => p.id === pluginId);
     if (!target) return;
 
     if (target.connected) {
-      await revokeOAuthProviderToken(pluginId);
+      handlePluginRevoked(pluginId);
     } else {
-      await refreshOAuthProviderToken(pluginId);
+      handleOpenPluginAuth(target);
     }
-    await runStartupVaultValidation();
   };
 
   const handleRotatePluginOAuth = async (pluginId: PluginConnector['id']) => {
-    playBeep('complete');
-    await refreshOAuthProviderToken(pluginId);
-    await runStartupVaultValidation();
+    playBeep('tap');
+    const target = plugins.find((p) => p.id === pluginId);
+    if (target) {
+      handleOpenPluginAuth(target);
+    } else {
+      await refreshOAuthProviderToken(pluginId);
+      await runStartupVaultValidation();
+    }
   };
 
   const smoothCloseGameOverlay = () => {
@@ -359,191 +432,129 @@ const CommandCenterContent: React.FC = () => {
     stationId: string;
     taskTag: string;
   } => {
-    const lower = promptText.toLowerCase();
+    const lower = promptText.toLowerCase().trim();
 
-    // Explicit agent name (default or user-customized name) mentioned in prompt
-    const c0 = getCrewAgentByIndex(0)?.customName?.toLowerCase() || '';
-    const c1 = getCrewAgentByIndex(1)?.customName?.toLowerCase() || '';
-    const c2 = getCrewAgentByIndex(2)?.customName?.toLowerCase() || '';
+    // Default to the currently selected active agent in the Command Center
+    const currentActiveIdx = Math.max(
+      0,
+      crewAgents.findIndex((a) => a.id === activeAgent.id)
+    );
+
+    // Check if another agent is explicitly called out by name or @tag
+    const c0 = getCrewAgentByIndex(0)?.customName?.toLowerCase() || 'vance';
+    const c1 = getCrewAgentByIndex(1)?.customName?.toLowerCase() || 'nyx';
+    const c2 = getCrewAgentByIndex(2)?.customName?.toLowerCase() || 'cipher';
 
     const mentionsVance =
-      /vance|oakwood|ragnar/.test(lower) || (c0.length > 2 && lower.includes(c0));
+      new RegExp(`(^|\\b)(@?${c0}|agent\\s+${c0}|vance|oakwood|ragnar)(:|,|\\s|$)`, 'i').test(lower);
     const mentionsNyx =
-      /nyx|vera|freya/.test(lower) || (c1.length > 2 && lower.includes(c1));
+      new RegExp(`(^|\\b)(@?${c1}|agent\\s+${c1}|nyx|vera|freya)(:|,|\\s|$)`, 'i').test(lower);
     const mentionsCipher =
-      /cipher|pory|skald/.test(lower) || (c2.length > 2 && lower.includes(c2));
+      new RegExp(`(^|\\b)(@?${c2}|agent\\s+${c2}|cipher|pory|skald)(:|,|\\s|$)`, 'i').test(lower);
 
-    // 1. Archive Basement (Deep Dossier Vault, Omega Clearance, Microfiche)
-    if (
-      /vault|dossier|omega|basement|cold storage|microfiche|pneumatic|classified|nightfall/.test(
-        lower
-      )
-    ) {
-      const stationId = /microfiche|tape/.test(lower)
+    let assignedAgentIdx = currentActiveIdx;
+    if (mentionsNyx && currentActiveIdx !== 1) assignedAgentIdx = 1;
+    else if (mentionsCipher && currentActiveIdx !== 2) assignedAgentIdx = 2;
+    else if (mentionsVance && currentActiveIdx !== 0) assignedAgentIdx = 0;
+
+    // Retain the assigned operative's current room unless an explicit room relocation was requested
+    const currentCrewMember = getCrewAgentByIndex(assignedAgentIdx);
+    const currentAgentRoom = (currentCrewMember?.currentRoom || currentRoom) as RoomId;
+
+    let targetRoom: RoomId = currentAgentRoom;
+    let targetStation: string =
+      currentCrewMember?.preferredStationId ||
+      (getRoomStations(targetRoom)?.[0]?.id) ||
+      'war_center_desk';
+
+    let taskTag = 'EXECUTING';
+
+    // 1. Explicit request for Archive Basement
+    if (/\b(go\s+to|move\s+to|head\s+to|in\s+the|access\s+the)?\s*(archive|basement|omega\s+safe|cold\s+storage|microfiche|pneumatic)\b/i.test(lower)) {
+      targetRoom = 'archive_basement';
+      targetStation = /microfiche|tape/.test(lower)
         ? 'basement_microfiche'
         : /pneumatic|tube/.test(lower)
         ? 'basement_pneumatic'
         : 'basement_omega_safe';
-      return {
-        room: 'archive_basement',
-        agentIndex: mentionsVance ? 0 : mentionsNyx ? 1 : 2,
-        stationId,
-        taskTag: 'UNSEALING',
-      };
+      taskTag = 'ARCHIVE SEARCH';
     }
-
-    // 2. Tactical Armory (Drones, Gear, Weapons, Gadgets, Calibration)
-    if (
-      /armory|drone|gear|armor|ballistic|weapon|gadget|calibrate|loadout|ordnance|shield/.test(
-        lower
-      )
-    ) {
-      const stationId = /drone/.test(lower)
+    // 2. Explicit request for Armory
+    else if (/\b(go\s+to|move\s+to|head\s+to|in\s+the)?\s*(armory|drone\s+bay|gear\s+rack|weapon\s+bench)\b/i.test(lower)) {
+      targetRoom = 'armory';
+      targetStation = /drone/.test(lower)
         ? 'armory_drone_bay'
-        : /bench|gadget|calibrate/.test(lower)
+        : /bench|calibrate/.test(lower)
         ? 'armory_workbench'
         : 'armory_gear_rack';
-      return {
-        room: 'armory',
-        agentIndex: mentionsNyx ? 1 : mentionsCipher ? 2 : 0,
-        stationId,
-        taskTag: stationId === 'armory_drone_bay' ? 'DRONE PREP' : 'GEAR CHECK',
-      };
+      taskTag = 'ARMORY';
     }
-
-    // 3. Comms Tower (Slack, Broadcasts, Radio, Dish, Signal, Radar)
-    if (
-      /slack|channel|dispatch|broadcast|radio|tower|comms|antenna|dish|signal|alert|perimeter/.test(
-        lower
-      )
-    ) {
-      const stationId = /radar|sweep/.test(lower)
+    // 3. Explicit request for Comms Tower
+    else if (/\b(go\s+to|move\s+to|head\s+to|in\s+the)?\s*(comms\s+tower|radio\s+dish|radar\s+scope|cipher\s+rig)\b/i.test(lower)) {
+      targetRoom = 'comms_tower';
+      targetStation = /radar/.test(lower)
         ? 'comms_radar_scope'
-        : /transceiver|cipher|frequency/.test(lower)
+        : /cipher|frequency/.test(lower)
         ? 'comms_cipher_rig'
         : 'comms_dish_console';
-      return {
-        room: 'comms_tower',
-        agentIndex: mentionsVance ? 0 : mentionsCipher ? 2 : 1,
-        stationId,
-        taskTag: 'DISPATCHING',
-      };
+      taskTag = 'COMMS';
     }
-
-    // 4. Briefing Lounge (Calendar, Scheduling, Meetings, Briefings, Coffee/Rest)
-    if (
-      /calendar|schedule|meeting|briefing|lounge|coffee|espresso|rest|appointment|sync/.test(
-        lower
-      ) &&
-      !/flight/.test(lower)
-    ) {
-      const stationId = /coffee|espresso|ration/.test(lower)
+    // 4. Explicit request for Briefing Lounge
+    else if (/\b(go\s+to|move\s+to|head\s+to|in\s+the)?\s*(briefing\s+lounge|coffee\s+bar|sofa|holo\s+table)\b/i.test(lower)) {
+      targetRoom = 'briefing_lounge';
+      targetStation = /coffee|bar/.test(lower)
         ? 'lounge_coffee_bar'
-        : /rest|sofa|couch/.test(lower)
+        : /sofa|couch/.test(lower)
         ? 'lounge_sofa'
         : 'lounge_holo_table';
-      return {
-        room: 'briefing_lounge',
-        agentIndex: mentionsNyx ? 1 : mentionsCipher ? 2 : 0,
-        stationId,
-        taskTag: 'SCHEDULING',
-      };
+      taskTag = 'BRIEFING';
+    }
+    // 5. Explicit request for Server Vault
+    else if (/\b(go\s+to|move\s+to|head\s+to|in\s+the)?\s*(server\s+vault|vault\s+laptop|breakers|core\s+rack)\b/i.test(lower)) {
+      targetRoom = 'server_vault';
+      targetStation = /breaker|power/.test(lower)
+        ? 'vault_breakers'
+        : /core|rack/.test(lower)
+        ? 'vault_core_rack'
+        : 'vault_laptop';
+      taskTag = 'VAULT OPS';
+    }
+    // 6. Explicit request for War Room
+    else if (/\b(go\s+to|move\s+to|head\s+to|in\s+the)?\s*(war\s+room|flight\s+node|center\s+desk)\b/i.test(lower)) {
+      targetRoom = 'war_room';
+      targetStation = /server|rack/.test(lower)
+        ? 'war_server_rack'
+        : /left|flight/.test(lower)
+        ? 'war_left_desk'
+        : 'war_center_desk';
+      taskTag = 'WAR ROOM';
+    }
+    // 7. Dynamic Task Tag Assignment based on actual intent
+    else if (hasAttachment || /\b(weather|forecast|temperature|humidity)\b/i.test(lower)) {
+      taskTag = 'WEATHER SCAN';
+    } else if (/\b(web\s+search|google|search\s+web|wikipedia|lookup|who\s+is|what\s+is)\b/i.test(lower)) {
+      taskTag = 'WEB SEARCH';
+    } else if (/\b(code|python|javascript|typescript|function|script|algorithm|bug|debug|implement)\b/i.test(lower)) {
+      taskTag = 'CODING';
+    } else if (/\b(calculate|compute|solve|math)\b/i.test(lower) || /^[\d\.\s\+\-\*\/\(\)\^\%]{3,}$/.test(lower)) {
+      taskTag = 'CALCULATING';
+    } else if (/\b(save|export|file|storage|write\s+to)\b/i.test(lower)) {
+      taskTag = 'STORAGE';
     }
 
-    // 5. Intel Library (Weather, Forecasts, Books, Decryption, Visual Attachments)
-    if (
-      hasAttachment ||
-      /weather|forecast|temperature|humidity|celsius|fahrenheit|wind|rain|climate|library|archive|lore|intel|file|chart|photo|image|decrypt|cipher|book|ledger/.test(
-        lower
-      )
-    ) {
-      const isWeather =
-        /weather|forecast|temperature|humidity|celsius|fahrenheit|wind|rain|climate/.test(
-          lower
-        );
-      const stationId = isWeather
-        ? 'lib_front_desk'
-        : /decrypt|cipher|code|key|lock/.test(lower)
-        ? 'lib_east_stacks'
-        : /search|stack|shelf|book/.test(lower)
-        ? 'lib_west_stacks'
-        : 'lib_front_desk';
-      return {
-        room: 'library',
-        agentIndex: mentionsVance ? 0 : mentionsNyx ? 1 : 2,
-        stationId,
-        taskTag: isWeather
-          ? 'WEATHER SCAN'
-          : stationId === 'lib_east_stacks'
-          ? 'DECRYPTING'
-          : 'INDEXING',
-      };
-    }
-
-    // 6. Server Vault (Web Search, GitHub, Mainframe, Code, JSON)
-    if (
-      /web|search|wikipedia|lookup|who is|what is|github|code|bug|patch|hack|server|mainframe|node|json|script|cyber|ticket|issue|override|compile|deploy|firewall/.test(
-        lower
-      )
-    ) {
-      if (
-        /war room|recon|flight/.test(lower) &&
-        !/search|web|wikipedia/.test(lower)
-      ) {
-        return {
-          room: 'war_room',
-          agentIndex: mentionsVance ? 0 : mentionsCipher ? 2 : 1,
-          stationId: 'war_server_rack',
-          taskTag: 'HACKING',
-        };
+    // Ensure target station exists in target room
+    const validStations = getRoomStations(targetRoom);
+    if (validStations && validStations.length > 0) {
+      if (!validStations.some((s) => s.id === targetStation)) {
+        targetStation = validStations[0].id;
       }
-      const isWebSearch = /web|search|wikipedia|lookup|who is|what is/.test(
-        lower
-      );
-      const stationId =
-        isWebSearch || /compile|laptop|terminal|script|patch|json/.test(lower)
-          ? 'vault_laptop'
-          : /power|breaker|relay|voltage/.test(lower)
-          ? 'vault_breakers'
-          : 'vault_core_rack';
-      return {
-        room: 'server_vault',
-        agentIndex: mentionsVance ? 0 : mentionsCipher ? 2 : 1,
-        stationId,
-        taskTag: isWebSearch
-          ? 'WEB SEARCH'
-          : stationId === 'vault_laptop'
-          ? 'COMPILING'
-          : 'HACKING',
-      };
     }
-
-    // 7. War Room (Flight Nodes, Tactical Recon, Command)
-    if (/scan|monitor|recon|satellite|track|flight|watch|war|extract/.test(lower)) {
-      return {
-        room: 'war_room',
-        agentIndex: mentionsNyx ? 1 : mentionsCipher ? 2 : 0,
-        stationId: /flight|scan/.test(lower)
-          ? 'war_left_desk'
-          : 'war_center_desk',
-        taskTag: 'SCANNING',
-      };
-    }
-
-    // Default: use currently selected activeAgent and assign a workstation in their target sector
-    const activeIdx = Math.max(
-      0,
-      crewAgents.findIndex((a) => a.id === activeAgent.id)
-    );
-    const defaultStation =
-      (getRoomStations(currentRoom) && getRoomStations(currentRoom)[0]?.id) ||
-      'war_center_desk';
 
     return {
-      room: currentRoom,
-      agentIndex: activeIdx,
-      stationId: defaultStation,
-      taskTag: 'EXECUTING',
+      room: targetRoom,
+      agentIndex: assignedAgentIdx,
+      stationId: targetStation,
+      taskTag,
     };
   };
 
@@ -636,7 +647,7 @@ const CommandCenterContent: React.FC = () => {
 
     setDialogueText(`[DIRECTIVE INGESTED] Dispatching ${routedDisplayName} to ${getRoomMetadata(targetRoom)?.shortBadge || String(targetRoom).toUpperCase()} (${assignment.taskTag})...`);
     setIsExecuting(true);
-    setIsGameActive(true);
+    setIsGameActive(false);
     setIsGameClosing(false);
     setDecryptionBoost(0);
     setErrorMessage(null);
@@ -651,7 +662,7 @@ const CommandCenterContent: React.FC = () => {
       assignedStationId: assignment.stationId,
       taskTag: assignment.taskTag,
       decryptionBoost: 0,
-      isGameActive: true,
+      isGameActive: false,
       startedAt: new Date().toISOString(),
     });
     playBeep('tap');
@@ -1467,9 +1478,9 @@ const CommandCenterContent: React.FC = () => {
             ))}
           </div>
 
-          {/* Built-in OAuth Vault Connectors */}
+          {/* Built-in Core Agent Capability Plugins */}
           <div className="text-[11px] font-mono-tabular font-bold text-[#e59838] uppercase tracking-wider pt-2 border-t border-[#3a2917]">
-            Built-in OAuth Connectors
+            Core Agent Capability Plugins ({plugins.length})
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
             {plugins.map((plugin) => {
@@ -1495,17 +1506,27 @@ const CommandCenterContent: React.FC = () => {
                     <span className="font-mono-tabular text-[10px] text-[#8c7a65] truncate">
                       {plugin.toolFunctionName}
                     </span>
-                    <button
-                      type="button"
-                      onClick={() => handleTogglePlugin(plugin.id)}
-                      className={`min-h-[28px] px-2.5 py-0.5 font-mono-tabular text-xs border cursor-pointer ${
-                        plugin.connected
-                          ? 'bg-[#261f18] text-[#e8dcc4] border-[#6e5233]'
-                          : 'bg-[#e59838] text-[#121110] border-[#e59838] font-bold'
-                      }`}
-                    >
-                      {plugin.connected ? 'Revoke]' : 'Mint OAuth]'}
-                    </button>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => handleOpenPluginAuth(plugin)}
+                        className="min-h-[28px] px-2 py-0.5 font-mono-tabular text-[11px] bg-[#1a1410] text-[#e59838] border border-[#785732] hover:bg-[#281e14] cursor-pointer"
+                        title="Configure BYOK Key / OAuth Secret locally"
+                      >
+                        [BYOK 🔑]
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleTogglePlugin(plugin.id)}
+                        className={`min-h-[28px] px-2.5 py-0.5 font-mono-tabular text-xs border cursor-pointer ${
+                          plugin.connected
+                            ? 'bg-[#261f18] text-[#e8dcc4] border-[#6e5233]'
+                            : 'bg-[#e59838] text-[#121110] border-[#e59838] font-bold'
+                        }`}
+                      >
+                        {plugin.connected ? 'Revoke]' : 'Mint OAuth]'}
+                      </button>
+                    </div>
                   </div>
                 </div>
               );
@@ -1917,6 +1938,17 @@ const CommandCenterContent: React.FC = () => {
                     >
                       📜 Command Log ({commandLedger.length})
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsWorkspaceFilesOpen(true);
+                        playBeep('tap');
+                      }}
+                      className="px-3 py-1 font-mono-tabular text-xs cursor-pointer transition-colors text-[#38bdf8] hover:text-[#f3ead8]"
+                      title="Open Workspace File Explorer & Markdown Reports (IndexedDB)"
+                    >
+                      📁 Files
+                    </button>
                   </div>
                   <span className="hidden sm:inline font-mono-tabular text-[11px] text-[#9c8265]">
                     {hqSubView === 'town_hall'
@@ -2075,6 +2107,23 @@ const CommandCenterContent: React.FC = () => {
               <span className="hidden sm:inline">CLI (~)</span>
               <span className="sm:hidden">CLI</span>
             </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setIsWorkspaceFilesOpen((prev) => !prev);
+                playBeep('tap');
+              }}
+              className={`min-h-[42px] px-3 sm:px-5 py-1.5 font-mono-tabular text-sm sm:text-base flex items-center gap-2 transition-colors cursor-pointer border-l border-[#363b4e] ${
+                isWorkspaceFilesOpen
+                  ? 'bg-[#152e34] text-[#38bdf8] font-semibold'
+                  : 'text-[#38bdf8] hover:bg-[#15232e]'
+              }`}
+              title="Open Workspace File Explorer (IndexedDB Markdown Reports & Logs)"
+            >
+              <span className="text-base" aria-hidden="true">📁</span>
+              <span className="hidden sm:inline">Files</span>
+            </button>
           </nav>
         </footer>
       </div>
@@ -2094,6 +2143,8 @@ const CommandCenterContent: React.FC = () => {
           setCurrentRoom(room);
           playBeep('tap');
         }}
+        onOpenWorkspaceFiles={() => setIsWorkspaceFilesOpen(true)}
+        onOpenPluginAuth={handleOpenPluginAuth}
       />
 
       <RetroErrorModal
@@ -2212,8 +2263,10 @@ const CommandCenterContent: React.FC = () => {
           },
           onApproveTask: (_taskId) => {
             if (taskBriefState.isOpen && taskBriefState.brief) {
+              const rawOpt = taskBriefState.brief.options[0];
               const defaultClarified =
-                taskBriefState.brief.options[0]?.clarifiedPrompt || taskBriefState.rawPrompt;
+                (typeof rawOpt === 'string' ? rawOpt : (rawOpt as any)?.clarifiedPrompt) ||
+                taskBriefState.rawPrompt;
               const att = taskBriefState.attachment;
               setTaskBriefState({ isOpen: false, brief: null, rawPrompt: '', attachment: null });
               setDialogueText(`[COMMAND APPROVED] Directive unblocked: "${defaultClarified.slice(0, 36)}...". Operative deploying.`);
@@ -2221,6 +2274,19 @@ const CommandCenterContent: React.FC = () => {
             }
           },
         }}
+      />
+
+      <WorkspaceFileViewer
+        isOpen={isWorkspaceFilesOpen}
+        onClose={() => setIsWorkspaceFilesOpen(false)}
+      />
+
+      <PluginAuthModal
+        isOpen={isPluginAuthModalOpen}
+        onClose={() => setIsPluginAuthModalOpen(false)}
+        plugin={activeAuthPlugin}
+        onAuthorized={handlePluginAuthorized}
+        onRevoked={handlePluginRevoked}
       />
     </div>
   );

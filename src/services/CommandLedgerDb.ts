@@ -50,9 +50,24 @@ function computeImmutableHash(
   return `0x${hex1}${hex2}`;
 }
 
+/**
+ * Workspace File Record Schema stored in Dexie.js IndexedDB.
+ * Holds agent-generated markdown reports, logs, and workspace task files.
+ */
+export interface WorkspaceFileDbEntry {
+  id?: number;
+  path: string;
+  category: string;
+  format: string;
+  content: string;
+  sizeBytes: number;
+  updatedAt: string;
+}
+
 class PixelOpsLedgerDatabase extends Dexie {
   command_ledger!: Table<CommandLedgerEntry, number>;
   agent_memories!: Table<AgentMemoryDbEntry, number>;
+  workspace_files!: Table<WorkspaceFileDbEntry, number>;
 
   constructor() {
     super('PixelOpsImmutableLedgerDB');
@@ -62,6 +77,15 @@ class PixelOpsLedgerDatabase extends Dexie {
         '++id, timestamp, involved_agent, tool_used, success_boost_achieved, ledger_hash',
       agent_memories:
         '++id, agentId, timestamp, prompt',
+    });
+
+    this.version(3).stores({
+      command_ledger:
+        '++id, timestamp, involved_agent, tool_used, success_boost_achieved, ledger_hash',
+      agent_memories:
+        '++id, agentId, timestamp, prompt',
+      workspace_files:
+        '++id, &path, category, format, updatedAt',
     });
 
     // Enforce append-only immutability on the command_ledger table
@@ -80,35 +104,15 @@ class PixelOpsLedgerDatabase extends Dexie {
 }
 
 export const ledgerDb = new PixelOpsLedgerDatabase();
+if (typeof globalThis !== 'undefined') (globalThis as any).__ledgerDb = ledgerDb;
 
 const INITIAL_SEED_COMMANDS: Array<
   Omit<CommandLedgerEntry, 'id' | 'ledger_hash'>
-> = [
-  {
-    timestamp: new Date(Date.now() - 1000 * 60 * 18).toISOString(),
-    command_input: 'Verify encrypted dossier archives and index Cipher lectern keys',
-    involved_agent: 'Agent Cipher',
-    tool_used: 'vault_query_intel',
-    result_summary: 'Retrieved dossier matches for "Omega Key Index" · 3 steps verified',
-    success_boost_achieved: 40,
-  },
-  {
-    timestamp: new Date(Date.now() - 1000 * 60 * 11).toISOString(),
-    command_input: 'Audit mainframe blade rack #2 and open patch ticket in core-engine',
-    involved_agent: 'Agent Nyx',
-    tool_used: 'github_create_issue',
-    result_summary: 'Opened ticket "Mainframe Blade #2 Firewall Patch" in pixelops/core-engine',
-    success_boost_achieved: 80,
-  },
-  {
-    timestamp: new Date(Date.now() - 1000 * 60 * 4).toISOString(),
-    command_input: 'Scan web nodes for flight data and parse JSON telemetry.',
-    involved_agent: 'Agent Vance',
-    tool_used: 'vault_query_intel',
-    result_summary: 'Flight Node Telemetry Scan: 4 tool schemas registered & JSON verified',
-    success_boost_achieved: 100,
-  },
-];
+> = [];
+
+const inMemoryLedger: CommandLedgerEntry[] = [];
+const inMemoryAgentMemories: AgentMemoryDbEntry[] = [];
+const inMemoryWorkspaceFiles: WorkspaceFileDbEntry[] = [];
 
 /**
  * Appends a new immutable command record to the Dexie/IndexedDB ledger.
@@ -120,31 +124,42 @@ export async function appendCommandLedgerEntry(
     ...entry,
     ledger_hash: computeImmutableHash(entry),
   };
-  const id = await ledgerDb.command_ledger.add(fullRecord);
-  return {
-    ...fullRecord,
-    id,
-  };
+  try {
+    const id = await ledgerDb.command_ledger.add(fullRecord);
+    return {
+      ...fullRecord,
+      id,
+    };
+  } catch {
+    const mockId = inMemoryLedger.length + 1;
+    const recordWithId = { ...fullRecord, id: mockId };
+    inMemoryLedger.unshift(recordWithId);
+    return recordWithId;
+  }
 }
 
 /**
  * Queries Dexie/IndexedDB for the last 50 commands ordered newest-first.
  */
 export async function getLast50Commands(): Promise<CommandLedgerEntry[]> {
-  const count = await ledgerDb.command_ledger.count();
-  if (count === 0) {
-    for (const seed of INITIAL_SEED_COMMANDS) {
-      await appendCommandLedgerEntry(seed);
+  try {
+    const count = await ledgerDb.command_ledger.count();
+    if (count === 0 && INITIAL_SEED_COMMANDS.length > 0) {
+      for (const seed of INITIAL_SEED_COMMANDS) {
+        await appendCommandLedgerEntry(seed);
+      }
     }
+
+    const records = await ledgerDb.command_ledger
+      .orderBy('timestamp')
+      .reverse()
+      .limit(50)
+      .toArray();
+
+    return Object.freeze(records.map((r) => Object.freeze({ ...r }))) as CommandLedgerEntry[];
+  } catch {
+    return Object.freeze(inMemoryLedger.slice(0, 50).map((r) => Object.freeze({ ...r }))) as CommandLedgerEntry[];
   }
-
-  const records = await ledgerDb.command_ledger
-    .orderBy('timestamp')
-    .reverse()
-    .limit(50)
-    .toArray();
-
-  return Object.freeze(records.map((r) => Object.freeze({ ...r }))) as CommandLedgerEntry[];
 }
 
 /**
@@ -163,25 +178,45 @@ export async function appendAgentMemoryEntry(entry: {
     summary: entry.summary,
     reflection: entry.reflection || `Operational memory logged for ${entry.agentId}`,
   };
-  const id = await ledgerDb.agent_memories.add(record);
-  return { ...record, id };
+  try {
+    const id = await ledgerDb.agent_memories.add(record);
+    return { ...record, id };
+  } catch {
+    const mockId = inMemoryAgentMemories.length + 1;
+    const rec = { ...record, id: mockId };
+    inMemoryAgentMemories.unshift(rec);
+    return rec;
+  }
 }
 
 /**
  * Retrieves isolated memory logs for a specific agent from IndexedDB.
  */
 export async function getAgentMemoriesForAgent(agentId: string): Promise<AgentMemoryDbEntry[]> {
-  const records = await ledgerDb.agent_memories
-    .where('agentId')
-    .equals(agentId)
-    .reverse()
-    .sortBy('timestamp');
-  return records;
+  try {
+    const records = await ledgerDb.agent_memories
+      .where('agentId')
+      .equals(agentId)
+      .reverse()
+      .sortBy('timestamp');
+    return records;
+  } catch {
+    return inMemoryAgentMemories.filter((m) => m.agentId === agentId);
+  }
 }
 
 /**
  * Clears isolated memory logs for a specific agent from IndexedDB.
  */
 export async function clearAgentMemoriesForAgent(agentId: string): Promise<void> {
-  await ledgerDb.agent_memories.where('agentId').equals(agentId).delete();
+  try {
+    await ledgerDb.agent_memories.where('agentId').equals(agentId).delete();
+  } catch {
+    const idxs = [];
+    for (let i = inMemoryAgentMemories.length - 1; i >= 0; i--) {
+      if (inMemoryAgentMemories[i].agentId === agentId) {
+        inMemoryAgentMemories.splice(i, 1);
+      }
+    }
+  }
 }

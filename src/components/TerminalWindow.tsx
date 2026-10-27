@@ -59,15 +59,9 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({
     saveDraftPrompt(promptInput);
   }, [promptInput]);
 
-  const latestCard = executionCards[0];
-  const stepSuffix =
-    latestCard && latestCard.steps && latestCard.steps.length > 0
-      ? ` [${latestCard.steps.length}/${latestCard.steps.length}] ${latestCard.steps[latestCard.steps.length - 1].label}.`
-      : '';
-
   const fullBriefingText = isExecuting
-    ? 'Target acquired. Scanning web nodes and executing plugin directives... [1/3] Parsing JSON.'
-    : `${dialogueText}${stepSuffix}`;
+    ? `Processing directive for ${activeCrewName}...`
+    : (dialogueText || 'Command Center online. Select an operative and transmit your directive.');
 
   // Retro Typewriter Effect
   useEffect(() => {
@@ -269,41 +263,47 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({
         </div>
 
         {/* Expandable Execution Cards / Tool Call Steps inside the Briefing Console */}
-        {showLogs && executionCards.length > 0 && (
+        {showLogs && (
           <div className="border-t border-[#382917] bg-[#0e0d0c] px-3.5 py-3 max-h-56 overflow-y-auto flex flex-col gap-3">
-            {executionCards.map((card) => (
-              <div
-                key={card.id}
-                className="border-b border-[#292015] last:border-b-0 pb-2.5 last:pb-0 flex flex-col gap-1.5"
-              >
-                <div className="flex items-center justify-between text-xs font-mono-tabular">
-                  <span className="text-[#e59838] font-semibold">
-                    {card.cardTitle} · {card.agentName}
-                  </span>
-                  <span className="text-[#9c8265]">{card.tokenEstimate} tok</span>
-                </div>
-                {card.toolCalls && card.toolCalls.length > 0 && (
+            {executionCards.length === 0 ? (
+              <div className="py-4 text-center font-mono-tabular text-xs text-[#8c7a65]">
+                [TASK LOGS EMPTY] No directives recorded yet. Transmit a command above to view execution steps.
+              </div>
+            ) : (
+              executionCards.map((card) => (
+                <div
+                  key={card.id}
+                  className="border-b border-[#292015] last:border-b-0 pb-2.5 last:pb-0 flex flex-col gap-1.5"
+                >
+                  <div className="flex items-center justify-between text-xs font-mono-tabular">
+                    <span className="text-[#e59838] font-semibold">
+                      {card.cardTitle} · {card.agentName}
+                    </span>
+                    <span className="text-[#9c8265]">{card.tokenEstimate} tok</span>
+                  </div>
+                  {card.toolCalls && card.toolCalls.length > 0 && (
+                    <div className="flex flex-col gap-1">
+                      {card.toolCalls.map((tc, i) => (
+                        <div key={i} className="flex items-center gap-1.5 text-[11px] font-mono-tabular text-[#4ade80]">
+                          <Sparkles className="w-3 h-3 shrink-0" />
+                          <span>{tc.toolName}: {tc.resultSummary}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                   <div className="flex flex-col gap-1">
-                    {card.toolCalls.map((tc, i) => (
-                      <div key={i} className="flex items-center gap-1.5 text-[11px] font-mono-tabular text-[#4ade80]">
-                        <Sparkles className="w-3 h-3 shrink-0" />
-                        <span>{tc.toolName}: {tc.resultSummary}</span>
+                    {card.steps.map((s, idx) => (
+                      <div key={idx} className="flex items-center gap-1.5 text-[11px] font-mono-tabular text-[#d6c7b2]">
+                        <CheckCircle2 className="w-3 h-3 text-[#e59838] shrink-0" />
+                        <span>
+                          [{idx + 1}/{card.steps.length}] {s.label} — {s.detail}
+                        </span>
                       </div>
                     ))}
                   </div>
-                )}
-                <div className="flex flex-col gap-1">
-                  {card.steps.map((s, idx) => (
-                    <div key={idx} className="flex items-center gap-1.5 text-[11px] font-mono-tabular text-[#d6c7b2]">
-                      <CheckCircle2 className="w-3 h-3 text-[#e59838] shrink-0" />
-                      <span>
-                        [{idx + 1}/{card.steps.length}] {s.label} — {s.detail}
-                      </span>
-                    </div>
-                  ))}
                 </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         )}
       </div>

@@ -8,6 +8,11 @@ import { checkServerStatus } from './ApiService';
  */
 
 export type ServiceProviderName =
+  | 'web_search'
+  | 'code_sandbox'
+  | 'fs_storage'
+  | 'api_gateway'
+  | 'memory_lookup'
   | 'calendar'
   | 'slack'
   | 'github'
@@ -368,6 +373,31 @@ const DEFAULT_PROVIDER_SEEDS: Array<{
   accountHandle: string;
   scope: string;
 }> = [
+  {
+    provider: 'web_search',
+    accountHandle: 'engine://live-wiki-rest',
+    scope: 'search:web extract:docs',
+  },
+  {
+    provider: 'code_sandbox',
+    accountHandle: 'sandbox://client-eval-js',
+    scope: 'compute:eval test:sandbox',
+  },
+  {
+    provider: 'fs_storage',
+    accountHandle: 'idb://pixelops-fs-store',
+    scope: 'fs:read fs:write blob:export',
+  },
+  {
+    provider: 'api_gateway',
+    accountHandle: 'gateway://byok-client-rest',
+    scope: 'http:fetch auth:bearer webhook:dispatch',
+  },
+  {
+    provider: 'memory_lookup',
+    accountHandle: 'dexie://immutable-agent-ledger',
+    scope: 'memory:query rag:vector-index',
+  },
   {
     provider: 'calendar',
     accountHandle: 'ops-calendar@workspace',

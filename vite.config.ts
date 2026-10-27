@@ -44,6 +44,10 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
+          // Increase precache size limit to 5MB (default is 2MB)
+          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+          // Exclude massive sprite sheets or media from strict precaching if needed
+          globIgnores: ['**/assets/large-sprites/**', '**/scratch/**'],
           globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
           runtimeCaching: [
             {

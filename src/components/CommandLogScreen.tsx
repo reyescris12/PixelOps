@@ -149,8 +149,14 @@ export const CommandLogScreen: React.FC<CommandLogScreenProps> = ({
         {/* Ledger Records List (Last 50 Commands) */}
         <div className="p-3 max-h-[340px] overflow-y-auto flex flex-col gap-2.5 bg-[#0e0d0b]">
           {filteredEntries.length === 0 ? (
-            <div className="py-8 text-center font-mono-tabular text-xs text-[#8c7a65]">
-              No immutable command ledger records match the current filter.
+            <div className="py-12 flex flex-col items-center justify-center gap-1.5 font-mono-tabular text-center text-[#8c7a65]">
+              <Shield className="w-8 h-8 text-[#5e4326] mb-1" />
+              <div className="text-xs font-bold text-[#e59838]">[IMMUTABLE LEDGER UNPOPULATED]</div>
+              <p className="text-[11px] max-w-sm text-[#a38c70]">
+                {entries.length === 0
+                  ? 'No command dispatches executed yet. Send a directive from the terminal to record your first verified operational entry.'
+                  : 'No records match the active filter.'}
+              </p>
             </div>
           ) : (
             filteredEntries.map((item, idx) => (

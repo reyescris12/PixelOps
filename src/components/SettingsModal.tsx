@@ -13,6 +13,7 @@ import {
   Radio,
   Cpu,
   Server,
+  FileText,
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { CommandPreferences } from '../services/ApiService';
@@ -47,6 +48,8 @@ interface SettingsModalProps {
   onRevalidateVault: () => Promise<void>;
   currentRoom?: RoomId;
   onSelectRoom?: (room: RoomId) => void;
+  onOpenWorkspaceFiles?: () => void;
+  onOpenPluginAuth?: (plugin: { id: string; name: string }) => void;
 }
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -66,6 +69,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onRevalidateVault,
   currentRoom = 'war_room',
   onSelectRoom,
+  onOpenWorkspaceFiles,
+  onOpenPluginAuth,
 }) => {
   const { theme, soundEnabled, setSoundEnabled, playBeep } = useTheme();
   const [pingStatus, setPingStatus] = useState<{
@@ -306,6 +311,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           )}
         </div>
 
+        {/* Workspace File Explorer & Reports Button */}
+        <button
+          type="button"
+          onClick={() => {
+            playBeep('tap');
+            onClose();
+            onOpenWorkspaceFiles?.();
+          }}
+          className="w-full min-h-[40px] px-3 py-2.5 rounded-xl bg-sky-950/60 hover:bg-sky-900/60 border border-sky-600/60 text-xs font-semibold text-sky-200 flex items-center justify-center gap-2 cursor-pointer transition-colors"
+        >
+          <FileText className="w-4 h-4 text-sky-400" />
+          <span>📁 Browse Workspace Reports & Logs (IndexedDB)</span>
+        </button>
+
         {/* Guardrails & Leashes Button */}
         <button
           type="button"
@@ -339,7 +358,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <div className="p-2.5 rounded-lg bg-[#12151f] border border-slate-800/90 flex flex-col gap-1">
             <div className="flex items-center justify-between text-xs font-mono-tabular">
               <span className="text-slate-200 font-semibold">
-                {ROOM_METADATA[currentRoom].shortBadge}: {activeProfile.title}
+                {ROOM_METADATA[currentRoom]?.shortBadge || String(currentRoom).toUpperCase()}: {activeProfile.title}
               </span>
               <span className="text-[10px] text-emerald-400">
                 {activeProfile.waveformLabel}
@@ -393,7 +412,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   }`}
                   title={prof.description}
                 >
-                  🔊 {ROOM_METADATA[rId].shortBadge} ({prof.shortTag})
+                  🔊 {ROOM_METADATA[rId]?.shortBadge || String(rId).toUpperCase()} ({prof.shortTag})
                 </button>
               );
             })}
@@ -430,14 +449,31 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         {PROVIDER_LABELS[item.provider] || item.provider}
                       </span>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => handleRotateProviderToken(item.provider)}
-                      disabled={rotatingProvider === item.provider}
-                      className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[11px] font-mono-tabular text-emerald-300 border border-slate-700 cursor-pointer"
-                    >
-                      {rotatingProvider === item.provider ? 'Rotating...' : 'Rotate OAuth'}
-                    </button>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {onOpenPluginAuth && (
+                        <button
+                          type="button"
+                          onClick={() =>
+                            onOpenPluginAuth({
+                              id: item.provider,
+                              name: PROVIDER_LABELS[item.provider] || item.provider,
+                            })
+                          }
+                          className="px-2 py-0.5 rounded bg-[#1e1710] hover:bg-[#2b1f14] text-[11px] font-mono-tabular text-amber-300 border border-amber-800/80 cursor-pointer"
+                          title="Configure BYOK Key / OAuth Secret locally"
+                        >
+                          BYOK Key 🔑
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleRotateProviderToken(item.provider)}
+                        disabled={rotatingProvider === item.provider}
+                        className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[11px] font-mono-tabular text-emerald-300 border border-slate-700 cursor-pointer"
+                      >
+                        {rotatingProvider === item.provider ? 'Rotating...' : 'Rotate OAuth'}
+                      </button>
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-2 font-mono-tabular text-[10px] text-slate-400">

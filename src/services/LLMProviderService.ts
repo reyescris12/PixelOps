@@ -14,7 +14,7 @@ const STORAGE_KEY = 'pixelops_llm_provider_config_v2';
 export const DEFAULT_PROVIDER_CONFIGS: Record<LLMProviderType, { defaultModel: string; defaultEndpoint: string; label: string; placeholderKey: string }> = {
   gemini: {
     label: 'Google Gemini',
-    defaultModel: 'gemini-3.8-flash',
+    defaultModel: 'gemini-2.5-flash',
     defaultEndpoint: 'https://generativelanguage.googleapis.com',
     placeholderKey: 'AIzaSy...',
   },
@@ -41,21 +41,43 @@ export const DEFAULT_PROVIDER_CONFIGS: Record<LLMProviderType, { defaultModel: s
 export function loadLLMProviderConfig(): LLMProviderConfig {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      return {
-        providerId: 'gemini',
-        apiKey: '',
-        endpoint: DEFAULT_PROVIDER_CONFIGS.gemini.defaultEndpoint,
-        modelName: DEFAULT_PROVIDER_CONFIGS.gemini.defaultModel,
-      };
+    let parsed: any = null;
+    if (raw) {
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        parsed = null;
+      }
     }
-    const parsed = JSON.parse(raw);
-    const pId = (parsed.providerId || 'gemini') as LLMProviderType;
+
+    const pId = (parsed?.providerId || 'gemini') as LLMProviderType;
+    let apiKey = (parsed?.apiKey || '').trim();
+
+    // Check alternate storage locations & environment variables if key is unset
+    if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
+      const altKey =
+        localStorage.getItem('pixelops_gemini_api_key') ||
+        localStorage.getItem('gemini_api_key') ||
+        localStorage.getItem('apiKey') ||
+        (typeof globalThis !== 'undefined' && (globalThis as any).process?.env?.GEMINI_API_KEY) ||
+        (typeof globalThis !== 'undefined' && (globalThis as any).process?.env?.VITE_GEMINI_API_KEY) ||
+        '';
+      if (altKey && typeof altKey === 'string' && altKey.trim() !== 'MY_GEMINI_API_KEY') {
+        apiKey = altKey.trim();
+      }
+    }
+
     return {
       providerId: pId,
-      apiKey: parsed.apiKey || '',
-      endpoint: parsed.endpoint || DEFAULT_PROVIDER_CONFIGS[pId]?.defaultEndpoint || DEFAULT_PROVIDER_CONFIGS.gemini.defaultEndpoint,
-      modelName: parsed.modelName || DEFAULT_PROVIDER_CONFIGS[pId]?.defaultModel || 'gemini-3.8-flash',
+      apiKey,
+      endpoint:
+        parsed?.endpoint ||
+        DEFAULT_PROVIDER_CONFIGS[pId]?.defaultEndpoint ||
+        DEFAULT_PROVIDER_CONFIGS.gemini.defaultEndpoint,
+      modelName:
+        parsed?.modelName ||
+        DEFAULT_PROVIDER_CONFIGS[pId]?.defaultModel ||
+        'gemini-2.5-flash',
     };
   } catch {
     return {
@@ -90,7 +112,7 @@ export async function testLLMProviderConnection(
           error: 'Gemini API key is missing. Enter your Google Gemini API key above.',
         };
       }
-      const model = config.modelName || 'gemini-3.8-flash';
+      const model = config.modelName || 'gemini-2.5-flash';
       const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
       const res = await fetch(endpoint, {
         method: 'POST',

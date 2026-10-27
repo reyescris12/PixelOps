@@ -4,6 +4,8 @@
  * via BroadcastChannel / Web Workers independently of the main UI thread.
  */
 
+import { auditStorageHealth } from './SafetyService';
+
 export interface BackgroundQueueTask {
   id: string;
   prompt: string;
@@ -87,15 +89,25 @@ class BackgroundWorkerEngine {
     this.isRunning = true;
 
     // Register Service Worker for offline PWA & background sync support
-    if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+    if (typeof window !== 'undefined' && 'serviceWorker' in navigator && window.location.protocol.startsWith('http')) {
       navigator.serviceWorker
-        .register('/sw.js')
+        .register('./sw.js')
         .then((reg) => {
           console.log('PixelOps ServiceWorker registered with scope:', reg.scope);
         })
         .catch((err) => {
           console.warn('PixelOps ServiceWorker registration failed:', err);
         });
+    }
+
+    // Periodic Storage Health Audit & Auto-Pruning
+    if (typeof window !== 'undefined') {
+      try {
+        auditStorageHealth().catch(() => {});
+        setInterval(() => {
+          auditStorageHealth().catch(() => {});
+        }, 5 * 60 * 1000);
+      } catch {}
     }
   }
 

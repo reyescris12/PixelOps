@@ -498,6 +498,24 @@ const STORAGE_SOUND_KEY = 'pixelops_sound_enabled_v1';
 const STORAGE_ACTIVE_AGENT_KEY = 'pixelops_active_agent_id_v1';
 export const STORAGE_CUSTOM_THEME_RGB_KEY = 'pixelops_custom_theme_rgb_v1';
 
+let sharedAudioCtx: AudioContext | null = null;
+function getSharedAudioContext(): AudioContext | null {
+  if (typeof window === 'undefined') return null;
+  const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+  if (!AudioCtx) return null;
+  try {
+    if (!sharedAudioCtx || sharedAudioCtx.state === 'closed') {
+      sharedAudioCtx = new AudioCtx();
+    }
+    if (sharedAudioCtx.state === 'suspended') {
+      sharedAudioCtx.resume().catch(() => {});
+    }
+    return sharedAudioCtx;
+  } catch {
+    return null;
+  }
+}
+
 export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [themeId, setThemeIdState] = useState<ThemeId>(() => {
     try {
@@ -734,9 +752,8 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     (type: 'tap' | 'complete' | 'tick' | 'switch' | 'error') => {
       if (!soundEnabled || typeof window === 'undefined') return;
       try {
-        const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-        if (!AudioCtx) return;
-        const ctx = new AudioCtx();
+        const ctx = getSharedAudioContext();
+        if (!ctx) return;
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
         osc.type = type === 'error' ? 'sawtooth' : 'square';

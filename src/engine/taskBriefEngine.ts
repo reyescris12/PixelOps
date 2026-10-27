@@ -3,84 +3,47 @@
  * Matches StarNet's pattern for unblocking autonomous agents.
  *
  * When a prompt is overly vague, ambiguous, or lacks critical parameters
- * (e.g., target file, scope, output format, or tool mode), this engine
- * calculates an ambiguity score and constructs a structured clarification brief.
+ * (e.g., "fix it", "broken", or empty input), this engine calculates an
+ * ambiguity score and constructs a structured clarification brief.
+ * Normal questions, direct commands, coding requests, and conversational
+ * queries pass straight to the agent without interruption.
  */
 
-// Common vague task triggers
+export interface StructuredTaskBrief {
+  headline: string;
+  understanding: string;
+  missingParameter: string;
+  question: string;
+  options: string[];
+}
+
+export interface AmbiguityAnalysisResult {
+  requiresClarification: boolean;
+  ambiguityScore: number;
+  brief: StructuredTaskBrief | null;
+}
+
+// Common ultra-vague stubs that truly lack any instruction
 const VAGUE_TASK_PATTERNS = [
-  /^(fix\s+it|fix\s+this|fix\s+the\s+bug|it\s+doesn'?t\s+work|broken)$/i,
-  /^(help|hello|test|run|start|execute|check|analyze|optimize)$/i,
-  /^(make\s+it\s+better|improve\s+this|update\s+code|refactor)$/i,
-  /^(do\s+the\s+thing|clean\s+up|search|find\s+data)$/i,
+  /^(fix\s+it|fix\s+this|broken|it\s+doesn'?t\s+work)$/i,
+  /^(do\s+the\s+thing)$/i,
 ];
 
-// Ambiguity categories with specific clarifying parameter prompts
+// Ambiguity categories with clarifying questions only when prompt is a single bare keyword without context
 const AMBIGUITY_CATEGORY_PRESETS = [
   {
     category: 'CODE_ACTION',
-    matcher: /\b(refactor|optimize|clean\s*up|debug|fix|patch|format)\b/i,
+    matcher: /^(refactor|optimize|clean\s*up|debug|patch)$/i,
     missingChecks: [
       {
         param: 'targetScope',
-        test: (p) => !/\b(\.js|\.ts|\.tsx|\.css|\.html|file|component|module|function|class|test)\b/i.test(p),
+        test: (p: string) => !/\b(\.js|\.ts|\.tsx|\.css|\.html|file|component|module|function|class|test)\b/i.test(p),
         issue: 'Target file or component scope unspecified',
         question: 'Which sector of the codebase should the operative target for this code action?',
         options: [
           'Active workspace project files (src/components & src/services)',
           'Local test suite & test scripts only',
           'Autonomous agent rendering & sprite animation engine',
-        ],
-      },
-    ],
-  },
-  {
-    category: 'RESEARCH_ACTION',
-    matcher: /\b(research|investigate|search|find|lookup|scan|analyze)\b/i,
-    missingChecks: [
-      {
-        param: 'researchDepth',
-        test: (p) => !/\b(live|wikipedia|docs|latest|overview|detailed|summary)\b/i.test(p),
-        issue: 'Research depth & data source unspecified',
-        question: 'What depth of intelligence retrieval is required?',
-        options: [
-          'High-level summary (Top 3 validated sources via Live Web Search)',
-          'Deep architectural & technical deep-dive with actionable breakdown',
-          'Local vault dossier query & historical telemetry inspection',
-        ],
-      },
-    ],
-  },
-  {
-    category: 'WRITING_ACTION',
-    matcher: /\b(write|draft|document|readme|spec|summary|report)\b/i,
-    missingChecks: [
-      {
-        param: 'formatStyle',
-        test: (p) => !/\b(markdown|bullets?|formal|executive|changelog|spec)\b/i.test(p),
-        issue: 'Output format & audience tone unspecified',
-        question: 'What output format should the operative deliver?',
-        options: [
-          'Executive briefing markdown bulleted summary with action items',
-          'Comprehensive technical documentation & API spec',
-          'Tactical debrief dispatch formatted for terminal logs',
-        ],
-      },
-    ],
-  },
-  {
-    category: 'FILE_SYSTEM_ACTION',
-    matcher: /\b(file|read|write|save|export|load|delete|create)\b/i,
-    missingChecks: [
-      {
-        param: 'targetPath',
-        test: (p) => !/\b(\/|\\|\.txt|\.json|\.md|\.js|\.ts|path|dir)\b/i.test(p),
-        issue: 'Exact file path or output directory unspecified',
-        question: 'Specify target file location within the safehouse workspace:',
-        options: [
-          'Save to ./scratch/ directory as a temporary output artifact',
-          'Update directly in ./src/ application source directory',
-          'Write to root README or project telemetry notes',
         ],
       },
     ],
@@ -92,9 +55,12 @@ const AMBIGUITY_CATEGORY_PRESETS = [
  *
  * @param {string} prompt - Raw user instruction
  * @param {object} context - Agent & workspace context (agentRole, currentRoom, etc.)
- * @returns {object} { requiresClarification: boolean, ambiguityScore: number, brief: object | null }
+ * @returns {AmbiguityAnalysisResult}
  */
-export function analyzePromptAmbiguity(prompt, context = {}) {
+export function analyzePromptAmbiguity(
+  prompt: string,
+  context: Record<string, any> = {}
+): AmbiguityAnalysisResult {
   const trimmed = (prompt || '').trim();
   if (!trimmed) {
     return {
@@ -114,11 +80,9 @@ export function analyzePromptAmbiguity(prompt, context = {}) {
     };
   }
 
-  // 1. Extreme brevity or vague keywords (< 18 characters or matches vague pattern)
-  const isTooShort = trimmed.length < 18 && trimmed.split(/\s+/).length <= 3;
+  // 1. Check for ultra-vague stubs
   const matchesVague = VAGUE_TASK_PATTERNS.some((rgx) => rgx.test(trimmed));
-
-  if (isTooShort || matchesVague) {
+  if (matchesVague) {
     return {
       requiresClarification: true,
       ambiguityScore: 0.85,
@@ -136,7 +100,7 @@ export function analyzePromptAmbiguity(prompt, context = {}) {
     };
   }
 
-  // 2. Domain-specific missing parameter heuristics
+  // 2. Domain-specific bare-keyword missing parameter heuristics
   for (const preset of AMBIGUITY_CATEGORY_PRESETS) {
     if (preset.matcher.test(trimmed)) {
       for (const check of preset.missingChecks) {

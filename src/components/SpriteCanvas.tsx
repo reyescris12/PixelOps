@@ -810,7 +810,7 @@ function isLineOfSightWalkable(
   clearanceY: number = AGENT_CLEARANCE_Y
 ): boolean {
   const dist = Math.hypot(x2 - x1, y2 - y1);
-  const steps = Math.max(8, Math.ceil(dist / 0.8));
+  const steps = Math.max(4, Math.ceil(dist / 1.6));
   for (let i = 0; i <= steps; i++) {
     const t = i / steps;
     const ix = x1 + (x2 - x1) * t;
@@ -1039,10 +1039,13 @@ function buildSingleRoomWaypoints(
   let closestDist = Math.hypot(endGX - startGX, endGY - startGY);
   let iterations = 0;
 
-  while (open.length > 0 && iterations < 700) {
+  while (open.length > 0 && iterations < 350) {
     iterations++;
-    open.sort((a, b) => a.f - b.f);
-    const current = open.shift()!;
+    let bestIdx = 0;
+    for (let i = 1; i < open.length; i++) {
+      if (open[i].f < open[bestIdx].f) bestIdx = i;
+    }
+    const current = open.splice(bestIdx, 1)[0];
 
     const distToGoal = Math.hypot(endGX - current.gx, endGY - current.gy);
     if (distToGoal < closestDist) {
@@ -1153,8 +1156,9 @@ function findSectorRoute(fromRoom: RoomId, toRoom: RoomId): RoomId[] {
   if (fromRoom === toRoom) return [fromRoom];
   const queue: RoomId[][] = [[fromRoom]];
   const visited = new Set<RoomId>([fromRoom]);
+  let iters = 0;
 
-  while (queue.length > 0) {
+  while (queue.length > 0 && iters++ < 50) {
     const path = queue.shift()!;
     const current = path[path.length - 1];
     const neighbors = getRoomMeta(current)?.neighbors || [];
@@ -1685,7 +1689,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
       const a1 = saved.liveAgents[1];
       const a2 = saved.liveAgents[2];
       const allValidRooms =
-        ROOM_METADATA[a0.room] && ROOM_METADATA[a1.room] && ROOM_METADATA[a2.room];
+        Boolean(getRoomMeta(a0.room) && getRoomMeta(a1.room) && getRoomMeta(a2.room));
       const allCrowdedInOneRoom = a0.room === a1.room && a1.room === a2.room;
 
       const allOnWalkableFloor =
@@ -1872,7 +1876,11 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
     overrideTag?: string
   ) => {
     const crewMember = crewAgents[agentIdx];
-    if (crewMember) {
+    if (
+      crewMember &&
+      (crewMember.currentRoom !== destRoom ||
+        (destStationId && crewMember.preferredStationId !== destStationId))
+    ) {
       updateAgentRoom(crewMember.id, destRoom, destStationId);
     }
 
@@ -1970,7 +1978,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
             targetYPct: dFirst.yPct,
             pose: 'walking',
             facing: dFirst.xPct >= crowdedAgent.xPct ? 'right' : 'left',
-            statusTag: `TO ${ROOM_METADATA[disperseRoom].shortBadge}`,
+            statusTag: `TO ${getRoomMeta(disperseRoom).shortBadge}`,
             isMoving: true,
             phase: 'walking_to_door',
             waypoints: dispersePath,
@@ -1982,10 +1990,20 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
     });
   };
 
-  // Sync task-driven walkingTransition from App.tsx
+  const lastHandledTransitionRef = useRef<any>(null);
+  const crewAgentsRef = useRef(crewAgents);
+  useEffect(() => {
+    crewAgentsRef.current = crewAgents;
+  }, [crewAgents]);
+
+  // Sync task-driven walkingTransition from App.tsx (processed strictly ONCE per transition instance)
   useEffect(() => {
     if (!walkingTransition) return;
-    const idx = crewAgents.findIndex((a) => a.id === walkingTransition.agentId);
+    if (lastHandledTransitionRef.current === walkingTransition) return;
+    lastHandledTransitionRef.current = walkingTransition;
+
+    const currentCrew = crewAgentsRef.current;
+    const idx = currentCrew.findIndex((a) => a.id === walkingTransition.agentId);
     if (idx !== -1) {
       commandAgentWalkTo(
         idx,
@@ -1994,13 +2012,17 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
         walkingTransition.taskTag
       );
     }
-  }, [walkingTransition, crewAgents]);
+  }, [walkingTransition]);
 
-  // Town Hall Meeting Trigger Effect
+  // Town Hall Meeting Trigger Effect (strictly triggered once per summon nonce)
+  const lastHandledTownHallNonceRef = useRef<number>(0);
   useEffect(() => {
     if (!townHallSummonNonce || townHallSummonNonce <= 0) return;
+    if (lastHandledTownHallNonceRef.current === townHallSummonNonce) return;
+    lastHandledTownHallNonceRef.current = townHallSummonNonce;
 
-    crewAgents.forEach((crewMember, idx) => {
+    const currentCrew = crewAgentsRef.current;
+    currentCrew.forEach((crewMember, idx) => {
       const seat = TOWN_HALL_SEATS[idx % 3] || TOWN_HALL_SEATS[0];
       if (crewMember && seat) {
         updateAgentRoom(crewMember.id, 'war_room', seat.id);
@@ -2009,7 +2031,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
 
     setLiveAgents((prev) => {
       const next: Record<number, LiveAgentState> = { ...prev };
-      crewAgents.forEach((_, idx) => {
+      currentCrew.forEach((_, idx) => {
         const curr = next[idx];
         const baseSeat = TOWN_HALL_SEATS[idx % 3] || TOWN_HALL_SEATS[0];
         if (!curr) return;
@@ -2052,7 +2074,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
       });
       return next;
     });
-  }, [townHallSummonNonce, crewAgents]);
+  }, [townHallSummonNonce]);
 
   // 60ms autonomous coordinate waypoint interpolation loop
   useEffect(() => {
@@ -3053,7 +3075,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
                   </div>
                   <div className="grid grid-cols-4 gap-1">
                     {UPPER_DECK_ROOMS.map((rId) => {
-                      const m = ROOM_METADATA[rId];
+                      const m = getRoomMeta(rId);
                       const isCam = currentRoom === rId;
                       const agentsHere = crewAgents
                         .map((crew, i) => ({
@@ -3109,7 +3131,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
                   </div>
                   <div className="grid grid-cols-4 gap-1">
                     {LOWER_DECK_ROOMS.map((rId) => {
-                      const m = ROOM_METADATA[rId];
+                      const m = getRoomMeta(rId);
                       const isCam = currentRoom === rId;
                       const agentsHere = crewAgents
                         .map((crew, i) => ({
@@ -3226,7 +3248,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
                     playBeep('tap');
                   }}
                   className="flex items-center gap-1 cursor-pointer group text-left"
-                  title={`Focus ${crew.customName} in ${ROOM_METADATA[st.room].shortBadge}`}
+                  title={`Focus ${crew.customName} in ${getRoomMeta(st.room).shortBadge}`}
                 >
                   <span
                     className={
@@ -3249,7 +3271,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
                     [{statusLabel}]
                   </span>
                   <span className="text-[#64748b] text-[9px]">
-                    @{ROOM_METADATA[st.room].sectorCode}
+                    @{getRoomMeta(st.room).sectorCode}
                   </span>
                 </button>
               );
@@ -3262,8 +3284,8 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
               <span className="text-[#e59838] flex items-center gap-1">
                 <Footprints className="w-3 h-3 inline" />
                 <span>
-                  TRANSIT: {ROOM_METADATA[walkingTransition.fromRoom].shortBadge}{' '}
-                  &rarr; {ROOM_METADATA[walkingTransition.toRoom].shortBadge}
+                  TRANSIT: {getRoomMeta(walkingTransition.fromRoom).shortBadge}{' '}
+                  &rarr; {getRoomMeta(walkingTransition.toRoom).shortBadge}
                 </span>
               </span>
             ) : isRoutingCamera ? (
@@ -3303,7 +3325,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
                 onClick={() => onMoveAgentToRoom(activeCrewMember.id, targetRoom)}
                 className="text-[#e59838] hover:text-[#fde047] cursor-pointer whitespace-nowrap"
               >
-                [&rarr; {ROOM_METADATA[targetRoom].shortBadge}]
+                [&rarr; {getRoomMeta(targetRoom).shortBadge}]
               </button>
             ))}
 
@@ -3349,7 +3371,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
                       onMoveAgentToRoom(crew.id, currentRoom);
                     }}
                     className="text-[#4ade80] hover:text-[#86efac] cursor-pointer whitespace-nowrap"
-                    title={`Summon ${crew.customName} from ${ROOM_METADATA[state.room].shortBadge}`}
+                    title={`Summon ${crew.customName} from ${getRoomMeta(state.room).shortBadge}`}
                   >
                     [+SUMMON {crew.customName.toUpperCase()}]
                   </button>

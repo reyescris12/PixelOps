@@ -1,3 +1,5 @@
+import { getPluginCredential } from '../engine/pluginAuthManager';
+
 export interface CustomPluginConnector {
   id: string;
   name: string;
@@ -68,8 +70,15 @@ export async function executeCustomPlugin(
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
-  if (plugin.authHeaderKey && plugin.authHeaderValue) {
-    headers[plugin.authHeaderKey] = plugin.authHeaderValue;
+
+  // Check stored BYOK credentials from local storage
+  const byokCred = getPluginCredential(plugin.id);
+  if (plugin.authHeaderKey && (plugin.authHeaderValue || byokCred?.apiKey)) {
+    headers[plugin.authHeaderKey] = plugin.authHeaderValue || byokCred?.apiKey || '';
+  } else if (byokCred?.apiKey) {
+    headers['Authorization'] = byokCred.apiKey.startsWith('Bearer ')
+      ? byokCred.apiKey
+      : `Bearer ${byokCred.apiKey}`;
   }
 
   const isGet = !plugin.endpointUrl.includes('POST') && !plugin.endpointUrl.includes('PUT');

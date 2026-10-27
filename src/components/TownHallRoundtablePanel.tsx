@@ -519,7 +519,15 @@ export const TownHallRoundtablePanel: React.FC<TownHallRoundtablePanelProps> = (
                 </div>
               )}
             </>
-          ) : null}
+          ) : (
+            <div className="py-12 flex flex-col items-center justify-center gap-2 font-mono-tabular text-center text-[#94a3b8]">
+              <MessageSquare className="w-8 h-8 text-[#5e4326]" />
+              <div className="text-xs font-bold text-[#e59838]">[WAR ROOM ROUNDTABLE UNPOPULATED]</div>
+              <p className="text-[11px] max-w-sm text-[#a38c70]">
+                No town hall sessions recorded yet. Enter a strategic topic below or summon the crew to convene the first multi-agent roundtable.
+              </p>
+            </div>
+          )}
         </div>
       </div>
 

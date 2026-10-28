@@ -27,8 +27,6 @@ import {
   getComposioApiKey,
   setComposioApiKey,
   pingComposio,
-  runAgentWithTools,
-  getAvailableIntegrations,
 } from '../services/ComposioService';
 
 export interface CLICommandContext {
@@ -519,7 +517,7 @@ export async function executeCLICommand(
         `  ISOLATED ENTITY ID : ${entityId}`,
         `  API KEY SOURCE     : ${customKey ? 'Custom BYOK Key (Direct Browser REST active)' : 'Cloudflare Server Proxy (/api/composio)'}`,
         `  LIVE CONNECTION    : ${pingStatus}`,
-        `  PROXY ENDPOINT     : ${customKey ? 'https://backend.composio.dev/api/v3 (Direct)' : '/api/composio (Cloudflare Function)'}`,
+        `  PROXY ENDPOINT     : ${customKey ? 'https://backend.composio.dev/api/v2 (Direct)' : '/api/composio (Cloudflare Function)'}`,
         '--------------------------------------------------------------------------------',
         `  CONNECTED ACCOUNTS (${accounts.length}):`,
         accounts.length === 0
@@ -669,81 +667,10 @@ export async function executeCLICommand(
       }
     }
 
-    // composio agent <prompt> | composio prompt <prompt>
-    if (subAction === 'agent' || subAction === 'prompt') {
-      const userPrompt = args.slice(1).join(' ').trim();
-      if (!userPrompt) {
-        return {
-          command: trimmed,
-          output:
-            'USAGE: pixelops composio agent <prompt>\nExample: pixelops composio agent "List open pull requests on repo owner/repo"',
-          status: 'warning',
-          timestamp,
-        };
-      }
-
-      try {
-        const result = await runAgentWithTools(userPrompt);
-        const outputLines = [
-          `[COMPOSIO AGENT WITH GEMINI EXECUTION]`,
-          `PROMPT: ${userPrompt}`,
-          '--------------------------------------------------------------------------------',
-          typeof result === 'object' ? JSON.stringify(result, null, 2) : String(result),
-        ];
-
-        return {
-          command: trimmed,
-          output: outputLines.join('\n'),
-          status: 'ok',
-          timestamp,
-        };
-      } catch (err: any) {
-        return {
-          command: trimmed,
-          output: `Composio agent execution error: ${err?.message || err}`,
-          status: 'error',
-          timestamp,
-        };
-      }
-    }
-
-    // composio list | composio integrations | composio toolkits
-    if (subAction === 'list' || subAction === 'integrations' || subAction === 'toolkits') {
-      try {
-        const items = await getAvailableIntegrations();
-        const lines = [
-          '╔════════════════════════════════════════════════════════════════════════════════╗',
-          '║ COMPOSIO ARMORY TOOLKIT MATRIX                                                 ║',
-          '╠════════════════════════════════════════════════════════════════════════════════╣',
-          ...items.map(
-            (it) =>
-              `  ${it.connected ? '●' : '○'} [${it.appName.padEnd(14)}] ${it.name.padEnd(18)} · ${it.category.padEnd(18)} · ${it.connected ? '[CONNECTED]' : '[OFFLINE]'}`
-          ),
-          '--------------------------------------------------------------------------------',
-          `Total Toolkits: ${items.length} · Connected: ${items.filter((i) => i.connected).length}`,
-          'Commands: composio connect <app> | composio agent <prompt>',
-          '╚════════════════════════════════════════════════════════════════════════════════╝',
-        ];
-        return {
-          command: trimmed,
-          output: lines.join('\n'),
-          status: 'ok',
-          timestamp,
-        };
-      } catch (err: any) {
-        return {
-          command: trimmed,
-          output: `Failed to fetch toolkits: ${err?.message || err}`,
-          status: 'error',
-          timestamp,
-        };
-      }
-    }
-
     return {
       command: trimmed,
       output:
-        'USAGE: pixelops composio <status|list|connect|run|agent|key>\n  composio status               Inspect isolated entityId and connected apps\n  composio list                 List available Composio Armory toolkits\n  composio connect <app>        Initiate OAuth connect for github, slack, gmail, notion\n  composio run <action> <json>  Dispatch an action with JSON payload\n  composio agent <prompt>       Run Gemini agent with active Composio tools\n  composio key <customKey>      Set or clear a custom Composio BYOK API key',
+        'USAGE: pixelops composio <status|connect|run|key>\n  composio status               Inspect isolated entityId and connected apps\n  composio connect <app>        Initiate OAuth connect for github, slack, gmail, notion\n  composio run <action> <json>  Dispatch an action with JSON payload\n  composio key <customKey>      Set or clear a custom Composio BYOK API key',
       status: 'warning',
       timestamp,
     };
@@ -764,10 +691,8 @@ export async function executeCLICommand(
       '  pixelops plugin auth <id> <key>    Save BYOK API key/token for plugin locally',
       '  pixelops plugin revoke <id>        Revoke/clear local credentials for plugin',
       '  pixelops composio [status]         Inspect multi-user Composio entityId and apps',
-      '  pixelops composio list             List available Composio Armory toolkits',
       '  pixelops composio connect <app>    Initiate OAuth connect (github, slack, gmail, notion)',
       '  pixelops composio run <act> <json> Execute a Composio action via proxy',
-      '  pixelops composio agent <prompt>   Run Gemini agent with Composio function tools',
       '  pixelops rooms                     List registered safehouse sectors',
       '  pixelops spawn <templateId>        Spawn sector (cyber_lab, quantum_vault, etc)',
       '  pixelops skills                    List available capability plugins & bindings',

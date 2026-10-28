@@ -10,7 +10,6 @@
  */
 
 import { get, set } from 'idb-keyval';
-import { GoogleGenAI } from '@google/genai';
 
 export interface ComposioConnectedAccount {
   id: string;
@@ -20,210 +19,6 @@ export interface ComposioConnectedAccount {
   userUuid?: string;
 }
 
-export interface ComposioIntegration {
-  appName: string;
-  name: string;
-  description: string;
-  logoUrl?: string;
-  category: string;
-  isToolkit: boolean;
-  authSchemes?: string[];
-  connected?: boolean;
-  connectionId?: string;
-}
-
-export const CURATED_COMPOSIO_INTEGRATIONS: ComposioIntegration[] = [
-  {
-    appName: 'github',
-    name: 'GitHub',
-    description: 'Manage repositories, create and track issues, inspect pull requests, and trigger CI workflows.',
-    logoUrl: 'https://cdn.simpleicons.org/github/f3ead8',
-    category: 'Developer',
-    isToolkit: true,
-    authSchemes: ['oauth2', 'api_key'],
-  },
-  {
-    appName: 'slack',
-    name: 'Slack',
-    description: 'Dispatch operational channel broadcasts, monitor security alerts, and send automated direct messages.',
-    logoUrl: 'https://cdn.simpleicons.org/slack/4A154B',
-    category: 'Communication',
-    isToolkit: true,
-    authSchemes: ['oauth2'],
-  },
-  {
-    appName: 'gmail',
-    name: 'Gmail',
-    description: 'Compose mission briefs, analyze inbound messages, and dispatch cryptographically secure emails.',
-    logoUrl: 'https://cdn.simpleicons.org/gmail/EA4335',
-    category: 'Communication',
-    isToolkit: true,
-    authSchemes: ['oauth2'],
-  },
-  {
-    appName: 'googlecalendar',
-    name: 'Google Calendar',
-    description: 'Coordinate synchronized team schedules, track deployment events, and book briefing slots.',
-    logoUrl: 'https://cdn.simpleicons.org/googlecalendar/4285F4',
-    category: 'Productivity',
-    isToolkit: true,
-    authSchemes: ['oauth2'],
-  },
-  {
-    appName: 'notion',
-    name: 'Notion',
-    description: 'Create tactical battle documentation, update operational roadmaps, and sync knowledge bases.',
-    logoUrl: 'https://cdn.simpleicons.org/notion/f3ead8',
-    category: 'Productivity',
-    isToolkit: true,
-    authSchemes: ['oauth2'],
-  },
-  {
-    appName: 'linear',
-    name: 'Linear',
-    description: 'Manage engineering sprints, track bug reports, and prioritize rapid security patches.',
-    logoUrl: 'https://cdn.simpleicons.org/linear/5E6AD2',
-    category: 'Project Management',
-    isToolkit: true,
-    authSchemes: ['oauth2'],
-  },
-  {
-    appName: 'discord',
-    name: 'Discord',
-    description: 'Relay telemetry broadcasts to operative guild servers, announce releases, and ping channel webhooks.',
-    logoUrl: 'https://cdn.simpleicons.org/discord/5865F2',
-    category: 'Communication',
-    isToolkit: true,
-    authSchemes: ['oauth2', 'bot_token'],
-  },
-  {
-    appName: 'jira',
-    name: 'Jira Software',
-    description: 'Enterprise issue tracking, agile backlog management, and vulnerability resolution tracking.',
-    logoUrl: 'https://cdn.simpleicons.org/jira/0052CC',
-    category: 'Project Management',
-    isToolkit: true,
-    authSchemes: ['oauth2'],
-  },
-  {
-    appName: 'asana',
-    name: 'Asana',
-    description: 'Organize team operational workflows, manage milestone dependencies, and allocate field resources.',
-    logoUrl: 'https://cdn.simpleicons.org/asana/F06A6A',
-    category: 'Project Management',
-    isToolkit: true,
-    authSchemes: ['oauth2'],
-  },
-  {
-    appName: 'trello',
-    name: 'Trello',
-    description: 'Visual kanban board manipulation, operative card movements, and checklist verifications.',
-    logoUrl: 'https://cdn.simpleicons.org/trello/0052CC',
-    category: 'Project Management',
-    isToolkit: true,
-    authSchemes: ['oauth2'],
-  },
-  {
-    appName: 'twitter',
-    name: 'Twitter / X',
-    description: 'Broadcast high-priority public bulletins, monitor keyword chatter, and engage community nodes.',
-    logoUrl: 'https://cdn.simpleicons.org/x/f3ead8',
-    category: 'Communication',
-    isToolkit: true,
-    authSchemes: ['oauth2'],
-  },
-  {
-    appName: 'googlesheets',
-    name: 'Google Sheets',
-    description: 'Tabular intelligence logging, automated metric appending, and ledger spreadsheet analysis.',
-    logoUrl: 'https://cdn.simpleicons.org/googlesheets/34A853',
-    category: 'Productivity',
-    isToolkit: true,
-    authSchemes: ['oauth2'],
-  },
-  {
-    appName: 'googledrive',
-    name: 'Google Drive',
-    description: 'Cloud document retrieval, surveillance asset staging, and secure folder structure maintenance.',
-    logoUrl: 'https://cdn.simpleicons.org/googledrive/4285F4',
-    category: 'Productivity',
-    isToolkit: true,
-    authSchemes: ['oauth2'],
-  },
-  {
-    appName: 'airtable',
-    name: 'Airtable',
-    description: 'Relational intelligence store, operative asset rosters, and automated field record updating.',
-    logoUrl: 'https://cdn.simpleicons.org/airtable/18BFFF',
-    category: 'Productivity',
-    isToolkit: true,
-    authSchemes: ['oauth2', 'api_key'],
-  },
-  {
-    appName: 'figma',
-    name: 'Figma',
-    description: 'Extract visual component tokens, inspect operative interface specs, and post design review comments.',
-    logoUrl: 'https://cdn.simpleicons.org/figma/F24E1E',
-    category: 'Developer',
-    isToolkit: true,
-    authSchemes: ['oauth2'],
-  },
-  {
-    appName: 'zoom',
-    name: 'Zoom',
-    description: 'Provision encrypted video briefing rooms, generate conference links, and fetch meeting recordings.',
-    logoUrl: 'https://cdn.simpleicons.org/zoom/2D8CFF',
-    category: 'Communication',
-    isToolkit: true,
-    authSchemes: ['oauth2'],
-  },
-  {
-    appName: 'gitlab',
-    name: 'GitLab',
-    description: 'Self-hosted and cloud git repo governance, pipeline dispatching, and merge request validations.',
-    logoUrl: 'https://cdn.simpleicons.org/gitlab/FC6D26',
-    category: 'Developer',
-    isToolkit: true,
-    authSchemes: ['oauth2', 'api_key'],
-  },
-  {
-    appName: 'clickup',
-    name: 'ClickUp',
-    description: 'All-in-one mission task assignment, status updates, and operative time allocation tracking.',
-    logoUrl: 'https://cdn.simpleicons.org/clickup/7B68EE',
-    category: 'Project Management',
-    isToolkit: true,
-    authSchemes: ['oauth2'],
-  },
-  {
-    appName: 'hubspot',
-    name: 'HubSpot',
-    description: 'CRM lead intelligence, customer contact tracking, and marketing automation dispatching.',
-    logoUrl: 'https://cdn.simpleicons.org/hubspot/FF7A59',
-    category: 'Finance',
-    isToolkit: true,
-    authSchemes: ['oauth2'],
-  },
-  {
-    appName: 'stripe',
-    name: 'Stripe',
-    description: 'Financial transaction querying, subscription ledger auditing, and invoice status confirmation.',
-    logoUrl: 'https://cdn.simpleicons.org/stripe/635BFF',
-    category: 'Finance',
-    isToolkit: true,
-    authSchemes: ['api_key'],
-  },
-  {
-    appName: 'spotify',
-    name: 'Spotify',
-    description: 'Safehouse audio ambience controls, operative focus playlists, and tactical background music.',
-    logoUrl: 'https://cdn.simpleicons.org/spotify/1DB954',
-    category: 'Productivity',
-    isToolkit: true,
-    authSchemes: ['oauth2'],
-  },
-];
-
 export interface ComposioActionExecutionResult {
   successful: boolean;
   data?: any;
@@ -231,8 +26,6 @@ export interface ComposioActionExecutionResult {
   actionName: string;
   executedAt: string;
 }
-
-export const COMPOSIO_BASE_URL = 'https://backend.composio.dev/api/v3';
 
 const STORAGE_ENTITY_ID_KEY = 'pixelops_composio_entity_id';
 const STORAGE_CUSTOM_KEY_KEY = 'pixelops_composio_custom_api_key';
@@ -338,7 +131,7 @@ export async function pingComposio(): Promise<{ ok: boolean; status: number; lat
       const tid = setTimeout(() => controller.abort(), 6000);
       try {
         const res = await fetch(
-          `${COMPOSIO_BASE_URL}/connected_accounts?user_uuid=${encodeURIComponent(entityId)}&user_id=${encodeURIComponent(entityId)}`,
+          `https://backend.composio.dev/api/v2/connectedAccounts?user_uuid=${encodeURIComponent(entityId)}`,
           {
             method: 'GET',
             headers: {
@@ -359,7 +152,7 @@ export async function pingComposio(): Promise<{ ok: boolean; status: number; lat
         clearTimeout(tid);
       }
     } else {
-      await callComposioProxy(`/connected_accounts?user_uuid=${encodeURIComponent(entityId)}&user_id=${encodeURIComponent(entityId)}`, 'GET');
+      await callComposioProxy(`/connectedAccounts?user_uuid=${encodeURIComponent(entityId)}`, 'GET');
       const latencyMs = Math.round(performance.now() - start);
       return {
         ok: true,
@@ -379,7 +172,7 @@ export async function pingComposio(): Promise<{ ok: boolean; status: number; lat
 }
 
 /**
- * Direct call fallback to backend.composio.dev/api/v3 when on local dev or when proxy is unreachable
+ * Direct call fallback to backend.composio.dev/api/v2 when on local dev or when proxy is unreachable
  */
 async function callComposioDirect(
   url: string,
@@ -388,26 +181,19 @@ async function callComposioDirect(
   apiKey: string,
   entityId: string
 ): Promise<any> {
-  // Enforce v3 base URL and snake_case route structure
-  let targetUrl = url.replace('https://backend.composio.dev/api/v2', COMPOSIO_BASE_URL);
-  if (targetUrl.includes('/connectedAccounts')) {
-    targetUrl = targetUrl.replace('/connectedAccounts', '/connected_accounts');
-  }
-
+  let targetUrl = url;
   let modifiedBody = body ? { ...body } : undefined;
 
-  if (targetUrl.includes('/connected_accounts')) {
+  if (targetUrl.includes('/connectedAccounts')) {
     if (method.toUpperCase() === 'GET') {
       const sep = targetUrl.includes('?') ? '&' : '?';
-      targetUrl = `${targetUrl}${sep}user_uuid=${encodeURIComponent(entityId)}&user_id=${encodeURIComponent(entityId)}`;
+      targetUrl = `${targetUrl}${sep}user_uuid=${encodeURIComponent(entityId)}`;
     } else if (method.toUpperCase() === 'POST' && modifiedBody) {
       modifiedBody.user_uuid = entityId;
-      modifiedBody.user_id = entityId;
       modifiedBody.entityId = entityId;
     }
-  } else if ((targetUrl.includes('/execute') || targetUrl.includes('/tools/')) && modifiedBody) {
+  } else if (targetUrl.includes('/execute') && modifiedBody) {
     modifiedBody.entityId = entityId;
-    modifiedBody.user_id = entityId;
     modifiedBody.user_uuid = entityId;
   }
 
@@ -439,18 +225,13 @@ async function callComposioProxy(
 ): Promise<any> {
   const entityId = getOrCreateEntityId();
   const customKey = getComposioApiKey();
-  let cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-
-  // Normalize legacy v2 / camelCase paths to v3
-  if (cleanEndpoint.startsWith('/connectedAccounts')) {
-    cleanEndpoint = cleanEndpoint.replace('/connectedAccounts', '/connected_accounts');
-  }
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
 
   // 1. Direct browser REST execution if user configured their own COMPOSIO_API_KEY
   // Bypasses any SPA fallback or Vite dev server proxy issues
   if (customKey) {
     return await callComposioDirect(
-      `${COMPOSIO_BASE_URL}${cleanEndpoint}`,
+      `https://backend.composio.dev/api/v2${cleanEndpoint}`,
       method,
       body,
       customKey,
@@ -514,24 +295,19 @@ async function callComposioProxy(
 }
 
 /**
- * 2. Get user's personal connected accounts via v3 connected_accounts endpoint
+ * 2. Get user's personal connected accounts
  */
 export async function getConnectedAccounts(): Promise<ComposioConnectedAccount[]> {
   const entityId = getOrCreateEntityId();
   try {
-    const data = await callComposioProxy(
-      `/connected_accounts?user_uuid=${encodeURIComponent(entityId)}&user_id=${encodeURIComponent(entityId)}`,
-      'GET'
-    );
-    const items = Array.isArray(data)
-      ? data
-      : data?.items || data?.connected_accounts || data?.connectedAccounts || data?.data || [];
+    const data = await callComposioProxy(`/connectedAccounts?user_uuid=${encodeURIComponent(entityId)}`, 'GET');
+    const items = Array.isArray(data) ? data : data?.items || data?.connectedAccounts || [];
     return items.map((item: any) => ({
-      id: item.id || item.connectionId || item.connected_account_id,
-      appName: (item.appName || item.app || item.toolkit_slug || item.toolkitSlug || '').toLowerCase(),
+      id: item.id || item.connectionId,
+      appName: (item.appName || item.app || '').toLowerCase(),
       status: item.status || 'ACTIVE',
-      createdAt: item.createdAt || item.created_at,
-      userUuid: item.user_uuid || item.user_id || item.entityId || entityId,
+      createdAt: item.createdAt,
+      userUuid: item.user_uuid || item.entityId || entityId,
     }));
   } catch {
     // Return empty list if backend unconfigured
@@ -540,47 +316,25 @@ export async function getConnectedAccounts(): Promise<ComposioConnectedAccount[]
 }
 
 /**
- * 3. Initiate OAuth App Connection via v3 link endpoint (e.g. GitHub, Slack, Gmail, Notion)
+ * 3. Initiate OAuth App Connection (e.g. GitHub, Slack, Gmail, Notion)
  */
 export async function initiateAppConnection(
   appName: string,
   redirectUri: string = typeof window !== 'undefined' ? window.location.origin : ''
 ): Promise<{ connectionUrl?: string; redirectUrl?: string; connectionId?: string }> {
   const entityId = getOrCreateEntityId();
-  const normalizedApp = appName.toLowerCase().trim();
   const payload = {
-    appName: normalizedApp,
-    app: normalizedApp,
-    auth_config_id: normalizedApp,
-    integration_id: normalizedApp,
+    appName: appName.toLowerCase().trim(),
     entityId,
-    user_id: entityId,
     user_uuid: entityId,
     redirectUri,
-    redirect_url: redirectUri,
-    callback_url: redirectUri,
   };
 
-  let response: any;
-  try {
-    // Try modern Composio v3 link endpoint first (Composio Connect Link)
-    response = await callComposioProxy('/connected_accounts/link', 'POST', payload);
-  } catch (err: any) {
-    // Fallback to base connected_accounts creation
-    try {
-      response = await callComposioProxy('/connected_accounts', 'POST', payload);
-    } catch {
-      throw err;
-    }
-  }
-
+  const response = await callComposioProxy('/connectedAccounts', 'POST', payload);
   const targetUrl =
-    response.redirect_url ||
-    response.redirectUrl ||
     response.connectionUrl ||
+    response.redirectUrl ||
     response.url ||
-    response.data?.redirect_url ||
-    response.data?.redirectUrl ||
     response.data?.connectionUrl;
 
   if (targetUrl && typeof window !== 'undefined') {
@@ -591,122 +345,15 @@ export async function initiateAppConnection(
     const top = window.screenY + (window.outerHeight - height) / 2;
     window.open(
       targetUrl,
-      `composio_auth_${normalizedApp}`,
+      `composio_auth_${appName}`,
       `width=${width},height=${height},left=${left},top=${top},status=no,menubar=no`
     );
   }
 
   return {
     connectionUrl: targetUrl,
-    redirectUrl: targetUrl,
-    connectionId:
-      response.connected_account_id ||
-      response.connectionId ||
-      response.id ||
-      response.link_token,
+    connectionId: response.id || response.connectionId,
   };
-}
-
-/**
- * Disconnect/Revoke a connected third-party account
- */
-export async function disconnectAccount(connectionId: string): Promise<boolean> {
-  try {
-    await callComposioProxy(`/connected_accounts/${encodeURIComponent(connectionId)}`, 'DELETE');
-    return true;
-  } catch (err: any) {
-    console.warn(`[COMPOSIO DISCONNECT WARNING] ${err?.message || err}`);
-    return false;
-  }
-}
-
-function normalizeCategory(cat: string): string {
-  const lower = cat.toLowerCase();
-  if (lower.includes('dev') || lower.includes('code') || lower.includes('git')) return 'Developer';
-  if (lower.includes('comm') || lower.includes('chat') || lower.includes('mail') || lower.includes('social')) return 'Communication';
-  if (lower.includes('project') || lower.includes('task') || lower.includes('issue') || lower.includes('agile')) return 'Project Management';
-  if (lower.includes('fin') || lower.includes('pay') || lower.includes('crm') || lower.includes('sales')) return 'Finance';
-  return 'Productivity';
-}
-
-/**
- * Fetch all available Composio toolkits/integrations for the Armory marketplace
- */
-export async function getAvailableIntegrations(): Promise<ComposioIntegration[]> {
-  // 1. Fetch live connected accounts
-  let connectedAccounts: ComposioConnectedAccount[] = [];
-  try {
-    connectedAccounts = await getConnectedAccounts();
-  } catch {}
-
-  const connectedMap = new Map<string, ComposioConnectedAccount>();
-  for (const acc of connectedAccounts) {
-    if (acc.appName) {
-      connectedMap.set(acc.appName.toLowerCase().trim(), acc);
-    }
-  }
-
-  // 2. Fetch live toolkits from backend if API key or proxy is available
-  let liveToolkits: any[] = [];
-  try {
-    const data = await callComposioProxy('/toolkits', 'GET');
-    liveToolkits = Array.isArray(data)
-      ? data
-      : data?.items || data?.toolkits || data?.data || [];
-  } catch {
-    try {
-      const data2 = await callComposioProxy('/integrations', 'GET');
-      liveToolkits = Array.isArray(data2)
-        ? data2
-        : data2?.items || data2?.integrations || data2?.data || [];
-    } catch {}
-  }
-
-  // 3. Assemble catalog
-  const resultMap = new Map<string, ComposioIntegration>();
-
-  for (const item of CURATED_COMPOSIO_INTEGRATIONS) {
-    const slug = item.appName.toLowerCase().trim();
-    const activeConn = connectedMap.get(slug);
-    resultMap.set(slug, {
-      ...item,
-      connected: Boolean(activeConn && activeConn.status === 'ACTIVE'),
-      connectionId: activeConn?.id,
-    });
-  }
-
-  if (Array.isArray(liveToolkits) && liveToolkits.length > 0) {
-    for (const tk of liveToolkits) {
-      const slug = (tk.slug || tk.appName || tk.name || '').toLowerCase().trim();
-      if (!slug) continue;
-
-      const activeConn = connectedMap.get(slug);
-      const existing = resultMap.get(slug);
-      const categories = Array.isArray(tk.meta?.categories)
-        ? tk.meta.categories
-        : typeof tk.meta?.category === 'string'
-        ? [tk.meta.category]
-        : [];
-      const cat = categories[0] ? normalizeCategory(categories[0]) : existing?.category || 'Productivity';
-
-      resultMap.set(slug, {
-        appName: slug,
-        name: tk.name || existing?.name || slug.toUpperCase(),
-        description:
-          tk.meta?.description ||
-          existing?.description ||
-          `Interact with ${tk.name || slug} via user-authenticated Composio OAuth connection.`,
-        logoUrl: tk.meta?.logo || existing?.logoUrl,
-        category: cat,
-        isToolkit: true,
-        authSchemes: tk.auth_schemes || existing?.authSchemes || ['oauth2'],
-        connected: Boolean(activeConn && activeConn.status === 'ACTIVE'),
-        connectionId: activeConn?.id,
-      });
-    }
-  }
-
-  return Array.from(resultMap.values());
 }
 
 /**
@@ -799,138 +446,16 @@ export const COMPOSIO_GEMINI_TOOL_SCHEMAS: Record<string, any> = {
       required: ['title'],
     },
   },
-
-  // GOOGLE CALENDAR
-  composio_googlecalendar_create_event: {
-    name: 'composio_googlecalendar_create_event',
-    description: 'Schedule a new calendar event, briefing, or meeting on Google Calendar.',
-    parameters: {
-      type: 'OBJECT',
-      properties: {
-        summary: { type: 'STRING', description: 'Event title or mission name.' },
-        description: { type: 'STRING', description: 'Detailed event description or mission brief.' },
-        start_time: { type: 'STRING', description: 'ISO 8601 start timestamp (e.g., 2026-10-29T10:00:00Z).' },
-        end_time: { type: 'STRING', description: 'ISO 8601 end timestamp (e.g., 2026-10-29T11:00:00Z).' },
-      },
-      required: ['summary'],
-    },
-  },
-
-  // DISCORD
-  composio_discord_send_message: {
-    name: 'composio_discord_send_message',
-    description: 'Dispatch a broadcast or alert message to a connected Discord channel.',
-    parameters: {
-      type: 'OBJECT',
-      properties: {
-        channel_id: { type: 'STRING', description: 'Discord text channel ID or guild target.' },
-        content: { type: 'STRING', description: 'Message content to broadcast.' },
-      },
-      required: ['content'],
-    },
-  },
-
-  // JIRA
-  composio_jira_create_issue: {
-    name: 'composio_jira_create_issue',
-    description: 'File an agile ticket, story, or bug in Jira project management.',
-    parameters: {
-      type: 'OBJECT',
-      properties: {
-        project_key: { type: 'STRING', description: 'Jira project key (e.g., "SEC", "OPS").' },
-        summary: { type: 'STRING', description: 'Issue summary title.' },
-        description: { type: 'STRING', description: 'Detailed ticket description.' },
-        issue_type: { type: 'STRING', description: 'Type: "Task", "Bug", or "Story".' },
-      },
-      required: ['summary'],
-    },
-  },
-
-  // ASANA
-  composio_asana_create_task: {
-    name: 'composio_asana_create_task',
-    description: 'Create an operational task item in an Asana project or workspace.',
-    parameters: {
-      type: 'OBJECT',
-      properties: {
-        workspace_id: { type: 'STRING', description: 'Asana workspace identifier.' },
-        name: { type: 'STRING', description: 'Task name or operative directive.' },
-        notes: { type: 'STRING', description: 'Detailed task notes or checklist.' },
-      },
-      required: ['name'],
-    },
-  },
-
-  // TRELLO
-  composio_trello_create_card: {
-    name: 'composio_trello_create_card',
-    description: 'Add a new mission card to a Trello kanban board list.',
-    parameters: {
-      type: 'OBJECT',
-      properties: {
-        list_id: { type: 'STRING', description: 'Target Trello list ID.' },
-        name: { type: 'STRING', description: 'Card title or objective.' },
-        desc: { type: 'STRING', description: 'Card description and telemetry details.' },
-      },
-      required: ['name'],
-    },
-  },
-
-  // TWITTER / X
-  composio_twitter_post_tweet: {
-    name: 'composio_twitter_post_tweet',
-    description: 'Publish a public mission bulletin or status update to Twitter / X.',
-    parameters: {
-      type: 'OBJECT',
-      properties: {
-        text: { type: 'STRING', description: 'Tweet content up to 280 characters.' },
-      },
-      required: ['text'],
-    },
-  },
-
-  // GOOGLE SHEETS
-  composio_googlesheets_append_row: {
-    name: 'composio_googlesheets_append_row',
-    description: 'Append a row of intelligence data or tactical metrics into a Google Sheet spreadsheet.',
-    parameters: {
-      type: 'OBJECT',
-      properties: {
-        spreadsheet_id: { type: 'STRING', description: 'Google Spreadsheet document ID.' },
-        range: { type: 'STRING', description: 'Target sheet or range (e.g., "Sheet1!A:E").' },
-        values: {
-          type: 'ARRAY',
-          description: 'Row values to append.',
-          items: { type: 'STRING' },
-        },
-      },
-      required: ['spreadsheet_id', 'values'],
-    },
-  },
 };
 
 /**
- * 4. Get Gemini FunctionDeclaration tools for all connected apps.
- * Automatically inspects the current user's live connected accounts if no specific list is passed,
- * ensuring newly connected Armory toolkits are instantly available to Vance, Cipher, Nyx, etc.
+ * 4. Get Gemini FunctionDeclaration tools for all connected apps
  */
-export async function getGeminiTools(connectedAppNames?: string[]): Promise<any[]> {
+export async function getGeminiTools(connectedAppNames: string[] = []): Promise<any[]> {
   const tools: any[] = [];
-  let apps = connectedAppNames;
+  const normalized = connectedAppNames.map((a) => a.toLowerCase().trim());
 
-  // Auto-detect connected accounts for this user if not explicitly passed
-  if (!apps || apps.length === 0) {
-    try {
-      const activeAccounts = await getConnectedAccounts();
-      if (activeAccounts && activeAccounts.length > 0) {
-        apps = activeAccounts.map((a) => a.appName);
-      }
-    } catch {}
-  }
-
-  const normalized = (apps || []).map((a) => a.toLowerCase().trim());
-
-  // 1. Match known schemas from COMPOSIO_GEMINI_TOOL_SCHEMAS
+  // Match connected apps to their Gemini function declarations
   for (const [toolKey, schema] of Object.entries(COMPOSIO_GEMINI_TOOL_SCHEMAS)) {
     const isAppMatch = normalized.some((app) => toolKey.toLowerCase().includes(app));
     // Include if user explicitly connected the app, or if all core tools are requested
@@ -939,77 +464,28 @@ export async function getGeminiTools(connectedAppNames?: string[]): Promise<any[
     }
   }
 
-  // 2. Synthesize dynamic tools for any connected apps that lack a dedicated static declaration
-  if (normalized.length > 0) {
-    for (const app of normalized) {
-      const hasSpecificTool = tools.some((t) => t.name.toLowerCase().includes(app));
-      if (!hasSpecificTool) {
-        tools.push({
-          name: `composio_${app}_execute_action`,
-          description: `Execute an action or query on authenticated ${app.toUpperCase()} integration via Composio.`,
-          parameters: {
-            type: 'OBJECT',
-            properties: {
-              action_slug: {
-                type: 'STRING',
-                description: `Specific ${app.toUpperCase()} action slug to execute (e.g. ${app.toUpperCase()}_GET_INFO).`,
-              },
-              parameters: {
-                type: 'OBJECT',
-                description: 'Arguments and configuration dictionary for the action.',
-              },
-            },
-            required: ['action_slug'],
-          },
-        });
-      }
-    }
-  }
-
   return tools;
 }
 
 /**
- * 5. Execute Composio Action Scoped Strictly to User's entityId (v3 Tools Execute)
+ * 5. Execute Composio Action Scoped Strictly to User's entityId
  */
 export async function executeComposioAction(
   actionName: string,
   params: Record<string, any>
 ): Promise<ComposioActionExecutionResult> {
   const entityId = getOrCreateEntityId();
-  let normalizedAction = actionName
-    .replace(/^composio_/i, '')
+  // Map internal function name back to standard Composio action identifier if prefixed
+  const normalizedAction = actionName
+    .replace(/^composio_/, '')
     .toUpperCase();
-  let actionParams = params;
-
-  // Handle generic dynamic tool invocation: composio_${app}_execute_action
-  if (normalizedAction.endsWith('_EXECUTE_ACTION') && params?.action_slug) {
-    normalizedAction = String(params.action_slug).toUpperCase();
-    actionParams = (params.parameters as Record<string, any>) || {};
-  }
-
-  const payload = {
-    entityId,
-    user_id: entityId,
-    user_uuid: entityId,
-    input: actionParams,
-    arguments: actionParams,
-    parameters: actionParams,
-  };
 
   try {
-    let result: any;
-    try {
-      // Modern v3 tool execution route
-      result = await callComposioProxy(`/tools/execute/${encodeURIComponent(normalizedAction)}`, 'POST', payload);
-    } catch (toolErr: any) {
-      // Fallback route if backend aliases via /actions/{slug}/execute
-      try {
-        result = await callComposioProxy(`/actions/${encodeURIComponent(normalizedAction)}/execute`, 'POST', payload);
-      } catch {
-        throw toolErr;
-      }
-    }
+    const result = await callComposioProxy(`/actions/${encodeURIComponent(normalizedAction)}/execute`, 'POST', {
+      entityId,
+      user_uuid: entityId,
+      input: params,
+    });
 
     return {
       successful: true,
@@ -1026,80 +502,3 @@ export async function executeComposioAction(
     };
   }
 }
-
-/**
- * 6. High-Level Agent Runner with Dynamic Composio Tools via @google/genai SDK
- * Fetches active Composio function declarations for the current user and passes
- * them directly into ai.models.generateContent(), automatically executing any
- * triggered functionCalls through ComposioService.
- */
-export async function runAgentWithTools(
-  prompt: string,
-  selectedModel: string = 'gemini-2.5-flash',
-  apiKey?: string
-): Promise<any> {
-  let effectiveKey = (apiKey || '').trim();
-  if (!effectiveKey) {
-    try {
-      const stored =
-        localStorage.getItem('pixelops_gemini_api_key') ||
-        localStorage.getItem('gemini_api_key') ||
-        '';
-      effectiveKey = stored.trim();
-    } catch {}
-  }
-
-  const ai = new GoogleGenAI({ apiKey: effectiveKey });
-
-  // 1. Fetch active tool declarations from Composio for this user
-  const composioTools = await getGeminiTools();
-
-  // 2. Pass them directly into the config.tools array
-  const response = await ai.models.generateContent({
-    model: selectedModel,
-    contents: prompt,
-    config: {
-      systemInstruction: 'You are an elite tactical agent. Use your assigned tools when requested.',
-      tools: composioTools.length > 0 ? [{ functionDeclarations: composioTools }] : undefined,
-    },
-  });
-
-  // 3. Check if Gemini triggered a function call
-  if (response.functionCalls && response.functionCalls.length > 0) {
-    for (const call of response.functionCalls) {
-      console.log(`Executing Composio Action: ${call.name}`, call.args);
-
-      // Execute the action through Composio
-      const result = await executeComposioAction(
-        call.name,
-        (call.args as Record<string, any>) || {}
-      );
-      return result;
-    }
-  }
-
-  return response.text;
-}
-
-/**
- * ComposioService object export providing both namespace and object invocation:
- * e.g., ComposioService.getGeminiTools(), ComposioService.executeComposioAction()
- */
-export const ComposioService = {
-  COMPOSIO_BASE_URL,
-  getOrCreateEntityId,
-  getComposioApiKey,
-  setComposioApiKey,
-  pingComposio,
-  getConnectedAccounts,
-  initiateAppConnection,
-  disconnectAccount,
-  getAvailableIntegrations,
-  getGeminiTools,
-  executeComposioAction,
-  runAgentWithTools,
-  COMPOSIO_GEMINI_TOOL_SCHEMAS,
-  CURATED_COMPOSIO_INTEGRATIONS,
-};
-
-export default ComposioService;

@@ -4,6 +4,9 @@ import {
   ComposioIntegration,
   CURATED_COMPOSIO_INTEGRATIONS,
   getOrCreateEntityId,
+  getComposioApiKey,
+  setComposioApiKey,
+  pingComposio,
 } from '../services/ComposioService';
 
 interface PluginMarketplaceProps {
@@ -33,6 +36,13 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<CategoryFilter>('All');
   const [feedbackMessage, setFeedbackMessage] = useState<{ text: string; type: 'success' | 'info' | 'error' } | null>(null);
+
+  // BYOK Composio API Key state
+  const [apiKey, setApiKey] = useState(() => getComposioApiKey());
+  const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
+  const [inputApiKey, setInputApiKey] = useState(() => getComposioApiKey());
+  const [isTestingKey, setIsTestingKey] = useState(false);
+  const [testResult, setTestResult] = useState<string | null>(null);
 
   const entityId = useMemo(() => getOrCreateEntityId(), []);
 
@@ -93,10 +103,26 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
         onPluginStatusChange?.();
       }, 6000);
     } catch (err: any) {
-      setFeedbackMessage({
-        text: `[CONNECTION ERROR] Failed to initiate ${app.name}: ${err?.message || err}`,
-        type: 'error',
-      });
+      const errStr = String(err?.message || err);
+      const isMissingKey =
+        errStr.includes('COMPOSIO_API_KEY_MISSING') ||
+        errStr.includes('No Composio API key configured') ||
+        errStr.includes('401') ||
+        errStr.includes('unauthorized') ||
+        errStr.includes('UNAUTHORIZED');
+
+      if (isMissingKey) {
+        setIsApiKeyModalOpen(true);
+        setFeedbackMessage({
+          text: `[COMPOSIO API KEY REQUIRED] Provide your Composio API key below to link ${app.name} accounts.`,
+          type: 'error',
+        });
+      } else {
+        setFeedbackMessage({
+          text: `[CONNECTION ERROR] Failed to initiate ${app.name}: ${errStr}`,
+          type: 'error',
+        });
+      }
     } finally {
       setConnectingApp(null);
     }
@@ -181,6 +207,22 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setInputApiKey(getComposioApiKey());
+                setTestResult(null);
+                setIsApiKeyModalOpen(true);
+              }}
+              className={`px-2.5 py-1 font-mono-tabular text-xs cursor-pointer flex items-center gap-1.5 transition-colors border ${
+                apiKey
+                  ? 'bg-[#0f2416] text-[#4ade80] border-[#2d6a4f]'
+                  : 'bg-[#2b1c0e] text-[#e59838] border-[#8c5e26] hover:bg-[#3d2714]'
+              }`}
+              title="Configure custom BYOK Composio API Key from dashboard.composio.dev"
+            >
+              <span>🔑 {apiKey ? 'BYOK KEY ACTIVE' : 'SET COMPOSIO KEY'}</span>
+            </button>
             <button
               type="button"
               onClick={refreshIntegrations}
@@ -440,6 +482,152 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
           </div>
         </div>
       </div>
+
+      {/* Composio BYOK API Key Configuration Modal */}
+      {isApiKeyModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-lg bg-[#141210] border-2 border-[#b47b38] shadow-[0_0_40px_rgba(229,152,56,0.35)] rounded-xs overflow-hidden font-mono-tabular">
+            {/* Modal Header */}
+            <div className="bg-[#231b12] border-b border-[#4a351d] px-4 py-2.5 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-base">🔑</span>
+                <span className="font-bold text-xs sm:text-sm text-[#e59838] tracking-wider uppercase">
+                  COMPOSIO PLATFORM API KEY CONFIGURATION
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsApiKeyModalOpen(false)}
+                className="text-xs text-[#8c7a65] hover:text-[#f3ead8] px-1 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-4 flex flex-col gap-3 text-xs">
+              <p className="text-[#c8b79f] leading-relaxed">
+                To connect tools (GitHub, Slack, Gmail, Notion, Linear) for your isolated Commander entity, provide your Composio project API key.
+              </p>
+
+              <div className="bg-[#0b0a09] border border-[#2e2114] p-2.5 text-[11px] text-[#9c8a77] flex flex-col gap-1">
+                <span className="text-[#e59838] font-bold">GET A FREE API KEY:</span>
+                <span>
+                  1. Visit <a href="https://dashboard.composio.dev" target="_blank" rel="noopener noreferrer" className="text-[#38bdf8] underline hover:text-[#7dd3fc]">dashboard.composio.dev</a>
+                </span>
+                <span>2. Open Platform &rarr; Settings &rarr; API Keys and copy your Project Key.</span>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="text-[11px] text-[#e59838] font-bold uppercase tracking-wider">
+                  Composio API Key:
+                </label>
+                <input
+                  type="password"
+                  value={inputApiKey}
+                  onChange={(e) => {
+                    setInputApiKey(e.target.value);
+                    setTestResult(null);
+                  }}
+                  placeholder="Paste ak_... or project key here"
+                  className="w-full bg-[#0d0c0b] text-[#f3ead8] placeholder-[#665442] border border-[#4a351d] px-3 py-2 font-mono-tabular text-xs focus:outline-none focus:border-[#e59838]"
+                />
+              </div>
+
+              {testResult && (
+                <div className={`p-2 border text-[11px] ${
+                  testResult.includes('OK') || testResult.includes('Active')
+                    ? 'bg-[#0f2416] text-[#4ade80] border-[#2d6a4f]'
+                    : 'bg-[#291313] text-[#fca5a5] border-[#5c2424]'
+                }`}>
+                  {testResult}
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="pt-2 flex flex-wrap items-center justify-between gap-2 border-t border-[#2d2014]">
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={isTestingKey}
+                    onClick={async () => {
+                      const trimmed = inputApiKey.trim();
+                      if (!trimmed) {
+                        setTestResult('Enter an API key first.');
+                        return;
+                      }
+                      setIsTestingKey(true);
+                      setTestResult('Testing connection to Composio v3...');
+                      try {
+                        setComposioApiKey(trimmed);
+                        const ping = await pingComposio();
+                        if (ping.ok) {
+                          setTestResult(`✓ Connection Active! Latency: ${ping.latencyMs}ms`);
+                        } else {
+                          setTestResult(`⚠ Backend returned status ${ping.status}${ping.error ? `: ${ping.error}` : ''}`);
+                        }
+                      } catch (err: any) {
+                        setTestResult(`✕ Connection failed: ${err?.message || err}`);
+                      } finally {
+                        setIsTestingKey(false);
+                      }
+                    }}
+                    className="px-2.5 py-1 bg-[#1a1410] hover:bg-[#2c2014] text-[#c8b79f] hover:text-[#f3ead8] border border-[#4a351d] cursor-pointer text-xs"
+                  >
+                    {isTestingKey ? 'Pinging...' : 'Test Connection'}
+                  </button>
+
+                  {apiKey && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setComposioApiKey('');
+                        setApiKey('');
+                        setInputApiKey('');
+                        setTestResult('API Key cleared. Reverted to default server proxy.');
+                        refreshIntegrations();
+                      }}
+                      className="px-2.5 py-1 bg-[#241212] hover:bg-[#381a1a] text-[#fca5a5] border border-[#6b2c2c] cursor-pointer text-xs"
+                    >
+                      Clear Key
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsApiKeyModalOpen(false)}
+                    className="px-3 py-1 bg-[#1a1410] text-[#c8b79f] border border-[#4a351d] cursor-pointer text-xs"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const trimmed = inputApiKey.trim();
+                      setComposioApiKey(trimmed);
+                      setApiKey(trimmed);
+                      setIsApiKeyModalOpen(false);
+                      setFeedbackMessage({
+                        text: trimmed
+                          ? '[API KEY SAVED] Custom Composio BYOK key configured for your session.'
+                          : '[API KEY CLEARED] Reverted to default server proxy.',
+                        type: 'success',
+                      });
+                      await refreshIntegrations();
+                      onPluginStatusChange?.();
+                    }}
+                    className="px-3.5 py-1 bg-[#e59838] hover:bg-[#d48828] text-[#121110] font-bold border border-[#e59838] cursor-pointer text-xs"
+                  >
+                    Save Key
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -449,16 +449,20 @@ async function callComposioProxy(
   // 1. Direct browser REST execution if user configured their own COMPOSIO_API_KEY
   // Bypasses any SPA fallback or Vite dev server proxy issues
   if (customKey) {
-    return await callComposioDirect(
-      `${COMPOSIO_BASE_URL}${cleanEndpoint}`,
-      method,
-      body,
-      customKey,
-      entityId
-    );
+    try {
+      return await callComposioDirect(
+        `${COMPOSIO_BASE_URL}${cleanEndpoint}`,
+        method,
+        body,
+        customKey,
+        entityId
+      );
+    } catch (directErr: any) {
+      console.warn('[COMPOSIO DIRECT FETCH NOTICE] Trying proxy fallback with custom key:', directErr?.message || directErr);
+    }
   }
 
-  // 2. Otherwise route via Cloudflare Pages Function proxy (/api/composio) with 8s circuit breaker
+  // 2. Route via Cloudflare Pages Function proxy (/api/composio) with 8s circuit breaker
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 8000);
 
@@ -467,6 +471,9 @@ async function callComposioProxy(
       'Content-Type': 'application/json',
       'x-entity-id': entityId,
     };
+    if (customKey) {
+      headers['x-composio-api-key'] = customKey;
+    }
 
     const proxyUrl = '/api/composio';
     let res: Response;
@@ -540,7 +547,50 @@ export async function getConnectedAccounts(): Promise<ComposioConnectedAccount[]
 }
 
 /**
- * 3. Initiate OAuth App Connection via v3 link endpoint (e.g. GitHub, Slack, Gmail, Notion)
+ * Resolves or creates a Composio Managed Auth Config ID for a toolkit (e.g. "github", "slack")
+ */
+export async function getOrCreateAuthConfig(toolkitSlug: string): Promise<string> {
+  const slug = toolkitSlug.toLowerCase().trim();
+
+  // 1. Try listing existing auth configs for this toolkit
+  try {
+    const listRes = await callComposioProxy(`/auth_configs?toolkit=${encodeURIComponent(slug)}`, 'GET');
+    const items = Array.isArray(listRes) ? listRes : listRes?.items || listRes?.data || [];
+    const match = items.find(
+      (c: any) =>
+        (c.toolkit?.slug || c.toolkit_slug || c.toolkit || '').toLowerCase() === slug &&
+        (c.id || c.auth_config?.id)
+    );
+    if (match) {
+      return match.id || match.auth_config?.id;
+    }
+  } catch (err) {
+    console.warn(`[COMPOSIO AUTH CONFIG LIST] Notice for ${slug}:`, err);
+  }
+
+  // 2. Try creating a managed auth config for this toolkit
+  try {
+    const createRes = await callComposioProxy('/auth_configs', 'POST', {
+      toolkit: { slug },
+      auth_config: { type: 'use_composio_managed_auth' },
+    });
+    const configId =
+      createRes?.auth_config?.id ||
+      createRes?.id ||
+      createRes?.auth_config_id ||
+      createRes?.data?.id;
+    if (configId) {
+      return configId;
+    }
+  } catch (createErr) {
+    console.warn(`[COMPOSIO AUTH CONFIG CREATE] Notice for ${slug}:`, createErr);
+  }
+
+  return slug;
+}
+
+/**
+ * 3. Initiate OAuth App Connection via v3.1 link endpoint (e.g. GitHub, Slack, Gmail, Notion)
  */
 export async function initiateAppConnection(
   appName: string,
@@ -548,40 +598,76 @@ export async function initiateAppConnection(
 ): Promise<{ connectionUrl?: string; redirectUrl?: string; connectionId?: string }> {
   const entityId = getOrCreateEntityId();
   const normalizedApp = appName.toLowerCase().trim();
-  const payload = {
-    appName: normalizedApp,
-    app: normalizedApp,
-    auth_config_id: normalizedApp,
-    integration_id: normalizedApp,
-    entityId,
-    user_id: entityId,
-    user_uuid: entityId,
-    redirectUri,
-    redirect_url: redirectUri,
-    callback_url: redirectUri,
-  };
+
+  // Resolve or create auth_config_id (e.g. ac_...)
+  let authConfigId = normalizedApp;
+  try {
+    authConfigId = await getOrCreateAuthConfig(normalizedApp);
+  } catch {}
 
   let response: any;
+  let linkError: any = null;
+
+  // Attempt 1: Modern Composio v3.1 /connected_accounts/link
   try {
-    // Try modern Composio v3 link endpoint first (Composio Connect Link)
-    response = await callComposioProxy('/connected_accounts/link', 'POST', payload);
-  } catch (err: any) {
-    // Fallback to base connected_accounts creation
+    response = await callComposioProxy('/connected_accounts/link', 'POST', {
+      auth_config_id: authConfigId,
+      user_id: entityId,
+      callback_url: redirectUri,
+    });
+  } catch (err1: any) {
+    linkError = err1;
+  }
+
+  // Attempt 2: If auth_config_id format failed, try with toolkit slug directly
+  if (!response?.redirect_url && !response?.connectionUrl && !response?.url && !response?.data?.redirect_url) {
     try {
-      response = await callComposioProxy('/connected_accounts', 'POST', payload);
-    } catch {
-      throw err;
+      response = await callComposioProxy('/connected_accounts/link', 'POST', {
+        toolkit: { slug: normalizedApp },
+        toolkit_slug: normalizedApp,
+        user_id: entityId,
+        callback_url: redirectUri,
+      });
+    } catch {}
+  }
+
+  // Attempt 3: Fallback to /connected_accounts creation
+  if (!response?.redirect_url && !response?.connectionUrl && !response?.url && !response?.data?.redirect_url) {
+    try {
+      response = await callComposioProxy('/connected_accounts', 'POST', {
+        appName: normalizedApp,
+        app: normalizedApp,
+        toolkit: normalizedApp,
+        auth_config_id: authConfigId,
+        user_id: entityId,
+        user_uuid: entityId,
+        entityId,
+        redirectUri,
+        redirect_url: redirectUri,
+        callback_url: redirectUri,
+      });
+    } catch (err3: any) {
+      throw linkError || err3;
     }
   }
 
   const targetUrl =
-    response.redirect_url ||
-    response.redirectUrl ||
-    response.connectionUrl ||
-    response.url ||
-    response.data?.redirect_url ||
-    response.data?.redirectUrl ||
-    response.data?.connectionUrl;
+    response?.redirect_url ||
+    response?.redirectUrl ||
+    response?.connectionUrl ||
+    response?.url ||
+    response?.data?.redirect_url ||
+    response?.data?.redirectUrl ||
+    response?.data?.connectionUrl;
+
+  if (!targetUrl) {
+    throw new Error(
+      response?.message ||
+      response?.error ||
+      linkError?.message ||
+      'No redirect URL returned by Composio authorization endpoint.'
+    );
+  }
 
   if (targetUrl && typeof window !== 'undefined') {
     // Open OAuth link in a clean popup or redirect window
@@ -600,10 +686,10 @@ export async function initiateAppConnection(
     connectionUrl: targetUrl,
     redirectUrl: targetUrl,
     connectionId:
-      response.connected_account_id ||
-      response.connectionId ||
-      response.id ||
-      response.link_token,
+      response?.connected_account_id ||
+      response?.connectionId ||
+      response?.id ||
+      response?.link_token,
   };
 }
 

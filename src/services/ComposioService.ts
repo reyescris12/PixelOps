@@ -232,6 +232,8 @@ export interface ComposioActionExecutionResult {
   executedAt: string;
 }
 
+export const COMPOSIO_BASE_URL = 'https://backend.composio.dev/api/v3';
+
 const STORAGE_ENTITY_ID_KEY = 'pixelops_composio_entity_id';
 const STORAGE_CUSTOM_KEY_KEY = 'pixelops_composio_custom_api_key';
 
@@ -336,7 +338,7 @@ export async function pingComposio(): Promise<{ ok: boolean; status: number; lat
       const tid = setTimeout(() => controller.abort(), 6000);
       try {
         const res = await fetch(
-          `https://backend.composio.dev/api/v3/connected_accounts?user_uuid=${encodeURIComponent(entityId)}&user_id=${encodeURIComponent(entityId)}`,
+          `${COMPOSIO_BASE_URL}/connected_accounts?user_uuid=${encodeURIComponent(entityId)}&user_id=${encodeURIComponent(entityId)}`,
           {
             method: 'GET',
             headers: {
@@ -386,10 +388,15 @@ async function callComposioDirect(
   apiKey: string,
   entityId: string
 ): Promise<any> {
-  let targetUrl = url;
+  // Enforce v3 base URL and snake_case route structure
+  let targetUrl = url.replace('https://backend.composio.dev/api/v2', COMPOSIO_BASE_URL);
+  if (targetUrl.includes('/connectedAccounts')) {
+    targetUrl = targetUrl.replace('/connectedAccounts', '/connected_accounts');
+  }
+
   let modifiedBody = body ? { ...body } : undefined;
 
-  if (targetUrl.includes('/connected_accounts') || targetUrl.includes('/connectedAccounts')) {
+  if (targetUrl.includes('/connected_accounts')) {
     if (method.toUpperCase() === 'GET') {
       const sep = targetUrl.includes('?') ? '&' : '?';
       targetUrl = `${targetUrl}${sep}user_uuid=${encodeURIComponent(entityId)}&user_id=${encodeURIComponent(entityId)}`;
@@ -432,13 +439,18 @@ async function callComposioProxy(
 ): Promise<any> {
   const entityId = getOrCreateEntityId();
   const customKey = getComposioApiKey();
-  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+  let cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+
+  // Normalize legacy v2 / camelCase paths to v3
+  if (cleanEndpoint.startsWith('/connectedAccounts')) {
+    cleanEndpoint = cleanEndpoint.replace('/connectedAccounts', '/connected_accounts');
+  }
 
   // 1. Direct browser REST execution if user configured their own COMPOSIO_API_KEY
   // Bypasses any SPA fallback or Vite dev server proxy issues
   if (customKey) {
     return await callComposioDirect(
-      `https://backend.composio.dev/api/v3${cleanEndpoint}`,
+      `${COMPOSIO_BASE_URL}${cleanEndpoint}`,
       method,
       body,
       customKey,
@@ -1074,6 +1086,7 @@ export async function runAgentWithTools(
  * e.g., ComposioService.getGeminiTools(), ComposioService.executeComposioAction()
  */
 export const ComposioService = {
+  COMPOSIO_BASE_URL,
   getOrCreateEntityId,
   getComposioApiKey,
   setComposioApiKey,

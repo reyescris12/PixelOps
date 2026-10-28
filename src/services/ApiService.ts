@@ -6,6 +6,7 @@ import { loadCustomPlugins, executeCustomPlugin } from './PluginMarketplaceServi
 import { getLast50Commands, ledgerDb } from './CommandLedgerDb';
 import { getPluginCredential } from '../engine/pluginAuthManager';
 import {
+  COMPOSIO_BASE_URL,
   COMPOSIO_GEMINI_TOOL_SCHEMAS,
   executeComposioAction,
   getOrCreateEntityId,
@@ -35,6 +36,7 @@ export {
   executeCodeSandboxEval,
   runAgentWithTools,
   ComposioService,
+  COMPOSIO_BASE_URL,
   getAvailableIntegrations,
   disconnectAccount,
 };

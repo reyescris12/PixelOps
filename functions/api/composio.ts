@@ -100,6 +100,8 @@ export const onRequest = async (context: {
 
     // Build target URL
     let cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+    // Strip leading /api/v2 or /api/v3 if present in endpoint
+    cleanEndpoint = cleanEndpoint.replace(/^\/api\/v2/, '').replace(/^\/api\/v3/, '');
     // Normalize v2 paths to v3
     if (cleanEndpoint.startsWith('/connectedAccounts')) {
       cleanEndpoint = cleanEndpoint.replace('/connectedAccounts', '/connected_accounts');

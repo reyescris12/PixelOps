@@ -22,6 +22,7 @@ import {
   maskCredential,
   isPluginAuthenticated,
 } from '../engine/pluginAuthManager';
+import { initiateAppConnection } from '../services/ComposioService';
 
 export interface PluginAuthTarget {
   id: string;
@@ -103,11 +104,29 @@ function getPluginGuidance(pluginId: string): { label: string; placeholder: stri
       hint: 'Queries Dexie.js local ledger and client-side keyword indices. Cloud vector models are optional.',
     };
   }
+  if (clean.includes('composio')) {
+    return {
+      label: 'Composio Project API Key (Optional Override)',
+      placeholder: 'ak_... or leave blank for Cloudflare Pages proxy',
+      hint: 'Leave blank to use the secure Cloudflare server-side proxy on pixelops.app, or provide your personal Composio project key to override.',
+    };
+  }
   return {
     label: 'API Key / Access Token / Secret',
     placeholder: 'Enter your authorization token or secret key...',
     hint: 'Credentials are stored securely in browser localStorage/IndexedDB under your BYOK configuration.',
   };
+}
+
+function getComposioAppName(pluginId: string): string | null {
+  const clean = pluginId.toLowerCase();
+  if (clean.includes('github')) return 'github';
+  if (clean.includes('slack')) return 'slack';
+  if (clean.includes('gmail') || clean.includes('google') || clean.includes('calendar')) return 'gmail';
+  if (clean.includes('notion')) return 'notion';
+  if (clean.includes('linear')) return 'linear';
+  if (clean.includes('composio')) return 'github';
+  return null;
 }
 
 export const PluginAuthModal: React.FC<PluginAuthModalProps> = ({
@@ -124,6 +143,7 @@ export const PluginAuthModal: React.FC<PluginAuthModalProps> = ({
   const [statusMessage, setStatusMessage] = useState<{ text: string; type: 'success' | 'error' | 'info' } | null>(null);
   const [existingCred, setExistingCred] = useState<PluginAuthCredential | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [isConnectingComposio, setIsConnectingComposio] = useState(false);
 
   // Sync state whenever modal opens or active plugin changes
   useEffect(() => {
@@ -185,6 +205,34 @@ export const PluginAuthModal: React.FC<PluginAuthModalProps> = ({
         text: err?.message || 'Failed to save credentials locally.',
         type: 'error',
       });
+    }
+  };
+
+  const handleComposioOAuth = async () => {
+    const app = getComposioAppName(plugin.id);
+    if (!app) return;
+    setIsConnectingComposio(true);
+    try {
+      const res = await initiateAppConnection(app);
+      setStatusMessage({
+        type: 'info',
+        text: res.connectionUrl
+          ? `[Composio OAuth] Authorization popup opened for ${app.toUpperCase()}. Complete sign-in to authorize.`
+          : `[Composio OAuth] Connection active for ${app.toUpperCase()}.`,
+      });
+      const saved = savePluginCredential(plugin.id, {
+        apiKey: 'composio-oauth-linked',
+        accountHandle: accountHandle || `${app}_user`,
+      });
+      setExistingCred(saved);
+      onAuthorized?.(plugin.id, saved);
+    } catch (err: any) {
+      setStatusMessage({
+        type: 'error',
+        text: `Composio connect failed: ${err?.message || err}`,
+      });
+    } finally {
+      setIsConnectingComposio(false);
     }
   };
 
@@ -281,6 +329,37 @@ export const PluginAuthModal: React.FC<PluginAuthModalProps> = ({
             <p className="text-xs text-[#b8a690] leading-relaxed bg-[#14100c] p-2.5 rounded border border-[#2b2015]">
               {plugin.description}
             </p>
+          )}
+
+          {/* Composio Instant 1-Click OAuth Connect */}
+          {getComposioAppName(plugin.id) && (
+            <div className="p-3 bg-[#101926] border border-[#1d3d63] rounded flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold text-[#60a5fa] flex items-center gap-1.5">
+                  <Globe className="w-3.5 h-3.5 text-[#38bdf8]" />
+                  Instant 1-Click OAuth (Composio)
+                </span>
+                <span className="text-[10px] bg-[#1e293b] text-[#93c5fd] px-1.5 py-0.5 rounded border border-[#2563eb]/40 font-mono">
+                  Isolated Entity ID
+                </span>
+              </div>
+              <p className="text-[11px] text-[#94a3b8] leading-tight">
+                Authorize your {getComposioAppName(plugin.id)?.toUpperCase()} account securely without generating manual API tokens.
+              </p>
+              <button
+                type="button"
+                onClick={handleComposioOAuth}
+                disabled={isConnectingComposio}
+                className="w-full py-1.5 px-3 bg-[#2563eb] hover:bg-[#1d4ed8] text-white rounded text-xs font-bold flex items-center justify-center gap-1.5 transition-colors cursor-pointer shadow-[0_0_10px_rgba(37,99,235,0.3)]"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>
+                  {isConnectingComposio
+                    ? 'Connecting to Composio...'
+                    : `Connect ${getComposioAppName(plugin.id)?.toUpperCase()} with Composio`}
+                </span>
+              </button>
+            </div>
           )}
 
           {/* Primary Key Input */}

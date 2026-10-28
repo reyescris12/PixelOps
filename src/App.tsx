@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Check, RotateCcw, Smartphone } from 'lucide-react';
 import { ThemeProvider, useTheme, THEMES, ThemeId } from './context/ThemeContext';
 import {

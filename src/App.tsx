@@ -681,21 +681,22 @@ const CommandCenterContent: React.FC = () => {
     setErrorMessage(null);
     setRetroError(null);
     setIsRetroErrorModalOpen(false);
-    setPendingTask({
-      isPending: true,
-      prompt,
-      attachment: attachment || null,
-      assignedAgentId: routedAgent.id,
-      assignedRoom: targetRoom,
-      assignedStationId: assignment.stationId,
-      taskTag: assignment.taskTag,
-      decryptionBoost: 0,
-      isGameActive: false,
-      startedAt: new Date().toISOString(),
-    });
-    playBeep('tap');
 
     try {
+      setPendingTask({
+        isPending: true,
+        prompt,
+        attachment: attachment || null,
+        assignedAgentId: routedAgent.id,
+        assignedRoom: targetRoom,
+        assignedStationId: assignmentStationId || 'war_center_desk',
+        taskTag: assignmentTaskTag || 'EXECUTING',
+        decryptionBoost: 0,
+        isGameActive: false,
+        startedAt: new Date().toISOString(),
+      });
+      playBeep('tap');
+
       const enabledPlugins = plugins.filter((p) => p.connected).map((p) => p.id);
       const operativeRoom = (routedCrewMember?.currentRoom || currentRoom) as RoomId;
       const operativeStation = routedCrewMember?.preferredStationId;
@@ -849,6 +850,7 @@ const CommandCenterContent: React.FC = () => {
       });
     } finally {
       setIsExecuting(false);
+      setPendingTask(null);
     }
   };
 

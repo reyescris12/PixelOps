@@ -79,7 +79,51 @@ export function setComposioApiKey(key: string): void {
 }
 
 /**
- * Core Proxy Request Dispatcher
+ * Direct call fallback to backend.composio.dev/api/v2 when on local dev or when proxy is unreachable
+ */
+async function callComposioDirect(
+  url: string,
+  method: string,
+  body: Record<string, any> | null | undefined,
+  apiKey: string,
+  entityId: string
+): Promise<any> {
+  let targetUrl = url;
+  let modifiedBody = body ? { ...body } : undefined;
+
+  if (targetUrl.includes('/connectedAccounts')) {
+    if (method.toUpperCase() === 'GET') {
+      const sep = targetUrl.includes('?') ? '&' : '?';
+      targetUrl = `${targetUrl}${sep}user_uuid=${encodeURIComponent(entityId)}`;
+    } else if (method.toUpperCase() === 'POST' && modifiedBody) {
+      modifiedBody.user_uuid = entityId;
+      modifiedBody.entityId = entityId;
+    }
+  } else if (targetUrl.includes('/execute') && modifiedBody) {
+    modifiedBody.entityId = entityId;
+    modifiedBody.user_uuid = entityId;
+  }
+
+  const directRes = await fetch(targetUrl, {
+    method: method.toUpperCase(),
+    headers: {
+      'x-api-key': apiKey,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: modifiedBody && method.toUpperCase() !== 'GET' ? JSON.stringify(modifiedBody) : undefined,
+  });
+
+  if (!directRes.ok) {
+    const txt = await directRes.text();
+    throw new Error(`Composio API (${directRes.status}): ${txt.slice(0, 150)}`);
+  }
+
+  return await directRes.json();
+}
+
+/**
+ * Core Proxy Request Dispatcher with 8s Circuit Breaker
  */
 async function callComposioProxy(
   endpoint: string,
@@ -89,40 +133,82 @@ async function callComposioProxy(
   const entityId = getOrCreateEntityId();
   const customKey = getComposioApiKey();
 
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    'x-entity-id': entityId,
-  };
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-  if (customKey) {
-    headers['x-composio-api-key'] = customKey;
-  }
+  try {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      'x-entity-id': entityId,
+    };
 
-  const proxyUrl = '/api/composio';
-
-  const res = await fetch(proxyUrl, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify({
-      endpoint,
-      method,
-      body: body || null,
-      entityId,
-    }),
-  });
-
-  if (!res.ok) {
-    const errorText = await res.text();
-    let parsedError: any;
-    try {
-      parsedError = JSON.parse(errorText);
-    } catch {
-      parsedError = { message: errorText || `HTTP ${res.status}` };
+    if (customKey) {
+      headers['x-composio-api-key'] = customKey;
     }
-    throw new Error(parsedError.message || parsedError.error || `Composio proxy error (${res.status})`);
-  }
 
-  return await res.json();
+    const proxyUrl = '/api/composio';
+    let res: Response;
+
+    try {
+      res = await fetch(proxyUrl, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          endpoint,
+          method,
+          body: body || null,
+          entityId,
+        }),
+        signal: controller.signal,
+      });
+    } catch (fetchErr: any) {
+      if (controller.signal.aborted) {
+        throw new Error('Composio proxy request timed out (8s limit).');
+      }
+      if (customKey) {
+        const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+        return await callComposioDirect(
+          `https://backend.composio.dev/api/v2${cleanEndpoint}`,
+          method,
+          body,
+          customKey,
+          entityId
+        );
+      }
+      throw new Error(`Composio proxy unreachable: ${fetchErr?.message || fetchErr}`);
+    }
+
+    const contentType = res.headers.get('content-type') || '';
+
+    if (!res.ok) {
+      const errorText = await res.text();
+      let parsedError: any;
+      try {
+        parsedError = JSON.parse(errorText);
+      } catch {
+        parsedError = { message: errorText || `HTTP ${res.status}` };
+      }
+      throw new Error(parsedError.message || parsedError.error || `Composio proxy error (${res.status})`);
+    }
+
+    if (!contentType.includes('application/json')) {
+      if (customKey) {
+        const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+        return await callComposioDirect(
+          `https://backend.composio.dev/api/v2${cleanEndpoint}`,
+          method,
+          body,
+          customKey,
+          entityId
+        );
+      }
+      throw new Error('Composio proxy endpoint returned non-JSON response.');
+    }
+
+    return await res.json();
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 /**

@@ -401,17 +401,11 @@ export function buildDynamicToolDeclarations(
     }
   }
 
-  // Include Composio tools if composio plugin or any composio app is enabled
-  if (
-    enabledPlugins.includes('composio') ||
-    enabledPlugins.includes('all') ||
-    enabledPlugins.some((p) => p.startsWith('composio'))
-  ) {
-    for (const schema of Object.values(COMPOSIO_GEMINI_TOOL_SCHEMAS)) {
-      if (!addedNames.has(schema.name)) {
-        declarations.push(schema);
-        addedNames.add(schema.name);
-      }
+  // Include Composio tools (GitHub, Slack, Gmail, Notion, Linear)
+  for (const schema of Object.values(COMPOSIO_GEMINI_TOOL_SCHEMAS)) {
+    if (!addedNames.has(schema.name)) {
+      declarations.push(schema);
+      addedNames.add(schema.name);
     }
   }
 

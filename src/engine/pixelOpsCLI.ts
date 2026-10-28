@@ -518,7 +518,7 @@ export async function executeCLICommand(
         `  ISOLATED ENTITY ID : ${entityId}`,
         `  API KEY SOURCE     : ${customKey ? 'Custom BYOK Key (Direct Browser REST active)' : 'Cloudflare Server Proxy (/api/composio)'}`,
         `  LIVE CONNECTION    : ${pingStatus}`,
-        `  PROXY ENDPOINT     : ${customKey ? 'https://backend.composio.dev/api/v2 (Direct)' : '/api/composio (Cloudflare Function)'}`,
+        `  PROXY ENDPOINT     : ${customKey ? 'https://backend.composio.dev/api/v3 (Direct)' : '/api/composio (Cloudflare Function)'}`,
         '--------------------------------------------------------------------------------',
         `  CONNECTED ACCOUNTS (${accounts.length}):`,
         accounts.length === 0

@@ -2,7 +2,7 @@
  * Cloudflare Pages Function Proxy for Multi-User Composio API
  * Route: /api/composio
  *
- * Proxies calls to https://backend.composio.dev/api/v2
+ * Proxies calls to https://backend.composio.dev/api/v3
  * Enforces per-user entityId isolation so multi-user external callers
  * on pixelops.app cannot access each other's OAuth connections.
  */
@@ -99,24 +99,31 @@ export const onRequest = async (context: {
     }
 
     // Build target URL
-    const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-    const baseUrl = 'https://backend.composio.dev/api/v2';
+    let cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+    // Normalize v2 paths to v3
+    if (cleanEndpoint.startsWith('/connectedAccounts')) {
+      cleanEndpoint = cleanEndpoint.replace('/connectedAccounts', '/connected_accounts');
+    }
+
+    const baseUrl = 'https://backend.composio.dev/api/v3';
     
-    // Enforce entityId scoping for connectedAccounts and action executions
+    // Enforce entityId scoping for connected_accounts and tool/action executions
     let targetUrl = `${baseUrl}${cleanEndpoint}`;
     let modifiedBody = body ? { ...body } : undefined;
 
-    if (cleanEndpoint.startsWith('/connectedAccounts')) {
+    if (cleanEndpoint.startsWith('/connected_accounts')) {
       if (method.toUpperCase() === 'GET') {
         const separator = targetUrl.includes('?') ? '&' : '?';
-        targetUrl = `${targetUrl}${separator}user_uuid=${encodeURIComponent(entityId)}`;
+        targetUrl = `${targetUrl}${separator}user_uuid=${encodeURIComponent(entityId)}&user_id=${encodeURIComponent(entityId)}`;
       } else if (method.toUpperCase() === 'POST' && modifiedBody) {
         modifiedBody.user_uuid = entityId;
+        modifiedBody.user_id = entityId;
         modifiedBody.entityId = entityId;
       }
-    } else if (cleanEndpoint.includes('/execute') && modifiedBody) {
+    } else if ((cleanEndpoint.includes('/execute') || cleanEndpoint.includes('/tools/')) && modifiedBody) {
       modifiedBody.entityId = entityId;
       modifiedBody.user_uuid = entityId;
+      modifiedBody.user_id = entityId;
     }
 
     const composioHeaders: Record<string, string> = {

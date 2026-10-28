@@ -132,7 +132,7 @@ export async function pingComposio(): Promise<{ ok: boolean; status: number; lat
       const tid = setTimeout(() => controller.abort(), 6000);
       try {
         const res = await fetch(
-          `https://backend.composio.dev/api/v2/connectedAccounts?user_uuid=${encodeURIComponent(entityId)}`,
+          `https://backend.composio.dev/api/v3/connected_accounts?user_uuid=${encodeURIComponent(entityId)}&user_id=${encodeURIComponent(entityId)}`,
           {
             method: 'GET',
             headers: {
@@ -153,7 +153,7 @@ export async function pingComposio(): Promise<{ ok: boolean; status: number; lat
         clearTimeout(tid);
       }
     } else {
-      await callComposioProxy(`/connectedAccounts?user_uuid=${encodeURIComponent(entityId)}`, 'GET');
+      await callComposioProxy(`/connected_accounts?user_uuid=${encodeURIComponent(entityId)}&user_id=${encodeURIComponent(entityId)}`, 'GET');
       const latencyMs = Math.round(performance.now() - start);
       return {
         ok: true,
@@ -173,7 +173,7 @@ export async function pingComposio(): Promise<{ ok: boolean; status: number; lat
 }
 
 /**
- * Direct call fallback to backend.composio.dev/api/v2 when on local dev or when proxy is unreachable
+ * Direct call fallback to backend.composio.dev/api/v3 when on local dev or when proxy is unreachable
  */
 async function callComposioDirect(
   url: string,
@@ -185,16 +185,18 @@ async function callComposioDirect(
   let targetUrl = url;
   let modifiedBody = body ? { ...body } : undefined;
 
-  if (targetUrl.includes('/connectedAccounts')) {
+  if (targetUrl.includes('/connected_accounts') || targetUrl.includes('/connectedAccounts')) {
     if (method.toUpperCase() === 'GET') {
       const sep = targetUrl.includes('?') ? '&' : '?';
-      targetUrl = `${targetUrl}${sep}user_uuid=${encodeURIComponent(entityId)}`;
+      targetUrl = `${targetUrl}${sep}user_uuid=${encodeURIComponent(entityId)}&user_id=${encodeURIComponent(entityId)}`;
     } else if (method.toUpperCase() === 'POST' && modifiedBody) {
       modifiedBody.user_uuid = entityId;
+      modifiedBody.user_id = entityId;
       modifiedBody.entityId = entityId;
     }
-  } else if (targetUrl.includes('/execute') && modifiedBody) {
+  } else if ((targetUrl.includes('/execute') || targetUrl.includes('/tools/')) && modifiedBody) {
     modifiedBody.entityId = entityId;
+    modifiedBody.user_id = entityId;
     modifiedBody.user_uuid = entityId;
   }
 
@@ -232,7 +234,7 @@ async function callComposioProxy(
   // Bypasses any SPA fallback or Vite dev server proxy issues
   if (customKey) {
     return await callComposioDirect(
-      `https://backend.composio.dev/api/v2${cleanEndpoint}`,
+      `https://backend.composio.dev/api/v3${cleanEndpoint}`,
       method,
       body,
       customKey,
@@ -296,19 +298,24 @@ async function callComposioProxy(
 }
 
 /**
- * 2. Get user's personal connected accounts
+ * 2. Get user's personal connected accounts via v3 connected_accounts endpoint
  */
 export async function getConnectedAccounts(): Promise<ComposioConnectedAccount[]> {
   const entityId = getOrCreateEntityId();
   try {
-    const data = await callComposioProxy(`/connectedAccounts?user_uuid=${encodeURIComponent(entityId)}`, 'GET');
-    const items = Array.isArray(data) ? data : data?.items || data?.connectedAccounts || [];
+    const data = await callComposioProxy(
+      `/connected_accounts?user_uuid=${encodeURIComponent(entityId)}&user_id=${encodeURIComponent(entityId)}`,
+      'GET'
+    );
+    const items = Array.isArray(data)
+      ? data
+      : data?.items || data?.connected_accounts || data?.connectedAccounts || data?.data || [];
     return items.map((item: any) => ({
-      id: item.id || item.connectionId,
-      appName: (item.appName || item.app || '').toLowerCase(),
+      id: item.id || item.connectionId || item.connected_account_id,
+      appName: (item.appName || item.app || item.toolkit_slug || item.toolkitSlug || '').toLowerCase(),
       status: item.status || 'ACTIVE',
-      createdAt: item.createdAt,
-      userUuid: item.user_uuid || item.entityId || entityId,
+      createdAt: item.createdAt || item.created_at,
+      userUuid: item.user_uuid || item.user_id || item.entityId || entityId,
     }));
   } catch {
     // Return empty list if backend unconfigured
@@ -317,25 +324,47 @@ export async function getConnectedAccounts(): Promise<ComposioConnectedAccount[]
 }
 
 /**
- * 3. Initiate OAuth App Connection (e.g. GitHub, Slack, Gmail, Notion)
+ * 3. Initiate OAuth App Connection via v3 link endpoint (e.g. GitHub, Slack, Gmail, Notion)
  */
 export async function initiateAppConnection(
   appName: string,
   redirectUri: string = typeof window !== 'undefined' ? window.location.origin : ''
 ): Promise<{ connectionUrl?: string; redirectUrl?: string; connectionId?: string }> {
   const entityId = getOrCreateEntityId();
+  const normalizedApp = appName.toLowerCase().trim();
   const payload = {
-    appName: appName.toLowerCase().trim(),
+    appName: normalizedApp,
+    app: normalizedApp,
+    auth_config_id: normalizedApp,
+    integration_id: normalizedApp,
     entityId,
+    user_id: entityId,
     user_uuid: entityId,
     redirectUri,
+    redirect_url: redirectUri,
+    callback_url: redirectUri,
   };
 
-  const response = await callComposioProxy('/connectedAccounts', 'POST', payload);
+  let response: any;
+  try {
+    // Try modern Composio v3 link endpoint first (Composio Connect Link)
+    response = await callComposioProxy('/connected_accounts/link', 'POST', payload);
+  } catch (err: any) {
+    // Fallback to base connected_accounts creation
+    try {
+      response = await callComposioProxy('/connected_accounts', 'POST', payload);
+    } catch {
+      throw err;
+    }
+  }
+
   const targetUrl =
-    response.connectionUrl ||
+    response.redirect_url ||
     response.redirectUrl ||
+    response.connectionUrl ||
     response.url ||
+    response.data?.redirect_url ||
+    response.data?.redirectUrl ||
     response.data?.connectionUrl;
 
   if (targetUrl && typeof window !== 'undefined') {
@@ -346,14 +375,19 @@ export async function initiateAppConnection(
     const top = window.screenY + (window.outerHeight - height) / 2;
     window.open(
       targetUrl,
-      `composio_auth_${appName}`,
+      `composio_auth_${normalizedApp}`,
       `width=${width},height=${height},left=${left},top=${top},status=no,menubar=no`
     );
   }
 
   return {
     connectionUrl: targetUrl,
-    connectionId: response.id || response.connectionId,
+    redirectUrl: targetUrl,
+    connectionId:
+      response.connected_account_id ||
+      response.connectionId ||
+      response.id ||
+      response.link_token,
   };
 }
 
@@ -469,7 +503,7 @@ export async function getGeminiTools(connectedAppNames: string[] = []): Promise<
 }
 
 /**
- * 5. Execute Composio Action Scoped Strictly to User's entityId
+ * 5. Execute Composio Action Scoped Strictly to User's entityId (v3 Tools Execute)
  */
 export async function executeComposioAction(
   actionName: string,
@@ -478,15 +512,31 @@ export async function executeComposioAction(
   const entityId = getOrCreateEntityId();
   // Map internal function name back to standard Composio action identifier if prefixed
   const normalizedAction = actionName
-    .replace(/^composio_/, '')
+    .replace(/^composio_/i, '')
     .toUpperCase();
 
+  const payload = {
+    entityId,
+    user_id: entityId,
+    user_uuid: entityId,
+    input: params,
+    arguments: params,
+    parameters: params,
+  };
+
   try {
-    const result = await callComposioProxy(`/actions/${encodeURIComponent(normalizedAction)}/execute`, 'POST', {
-      entityId,
-      user_uuid: entityId,
-      input: params,
-    });
+    let result: any;
+    try {
+      // Modern v3 tool execution route
+      result = await callComposioProxy(`/tools/execute/${encodeURIComponent(normalizedAction)}`, 'POST', payload);
+    } catch (toolErr: any) {
+      // Fallback route if backend aliases via /actions/{slug}/execute
+      try {
+        result = await callComposioProxy(`/actions/${encodeURIComponent(normalizedAction)}/execute`, 'POST', payload);
+      } catch {
+        throw toolErr;
+      }
+    }
 
     return {
       successful: true,

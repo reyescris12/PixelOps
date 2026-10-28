@@ -12,6 +12,7 @@ import {
   pruneStorageData,
   estimateLocalStorageBytes,
   getLatestStorageHealthReport,
+  executeCodeSandboxEval,
 } from './SafetyService';
 
 export {
@@ -21,6 +22,7 @@ export {
   pruneStorageData,
   estimateLocalStorageBytes,
   getLatestStorageHealthReport,
+  executeCodeSandboxEval,
 };
 
 export interface ExecutionStep {
@@ -124,14 +126,22 @@ export const GEMINI_TOOL_DECLARATIONS: Record<string, GeminiFunctionDeclarationS
   code_sandbox_eval: {
     name: 'code_sandbox_eval',
     description:
-      'Execute and evaluate JavaScript code expressions, algorithms, data formatting, and computational processing safely inside an isolated client-side sandbox.',
+      'Execute safe client-side operational subsystem diagnostics, data formatting, or computational routines (e.g. target="memory", cadence="60s").',
     parameters: {
       type: 'OBJECT',
       description: 'Code sandbox execution parameters',
       properties: {
+        target: {
+          type: 'STRING',
+          description: 'Subsystem or diagnostic target (e.g., "memory", "storage", "network", "cadence", "diagnostics").',
+        },
+        cadence: {
+          type: 'STRING',
+          description: 'Cadence interval or schedule description (e.g., "60s", "nominal").',
+        },
         code: {
           type: 'STRING',
-          description: 'JavaScript code or computational expression to execute.',
+          description: 'JavaScript code, command, or computational expression to execute.',
         },
         language: {
           type: 'STRING',
@@ -142,7 +152,6 @@ export const GEMINI_TOOL_DECLARATIONS: Record<string, GeminiFunctionDeclarationS
           description: 'Maximum timeout in milliseconds (default: 5000).',
         },
       },
-      required: ['code'],
     },
   },
   fs_storage_manager: {
@@ -866,41 +875,21 @@ export async function executeFunctionCallHandler(fc: {
       };
     }
 
-    // 7. Client-Side Code Sandbox & JS Evaluator (Sanitized Sandbox & Circuit Breaker)
+    // 7. Client-Side Code Sandbox & Subsystem Dispatcher (Zero Dynamic Function() / eval())
     if (name === 'code_sandbox_eval' || name === 'code_sandbox' || name === 'execute_shell' || name === 'run_shell_command') {
-      const code = String(args.code || args.command || '').trim();
-      const logs: string[] = [];
       const startTime = performance.now();
+      const logs: string[] = [];
       let evalResult: any = undefined;
       let evalError: string | null = null;
 
-      // Static analysis security sanitization
-      const validation = validateAndWrapCode(code);
-      if (!validation.isValid) {
-        evalError = `SecuritySandboxViolation: ${validation.rejectionReason}`;
-      } else {
-        try {
-          const customConsole = {
-            log: (...argsList: any[]) => logs.push(argsList.map((a) => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ')),
-            info: (...argsList: any[]) => logs.push('[INFO] ' + argsList.map((a) => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ')),
-            warn: (...argsList: any[]) => logs.push('[WARN] ' + argsList.map((a) => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ')),
-            error: (...argsList: any[]) => logs.push('[ERROR] ' + argsList.map((a) => (typeof a === 'object' ? JSON.stringify(a) : String(a))).join(' ')),
-          };
-
-          evalResult = await executeSafeOperation(
-            async () => {
-              const runFn = new Function('console', 'Math', 'Date', 'JSON', validation.wrappedCode);
-              return runFn(customConsole, Math, Date, JSON);
-            },
-            {
-              timeoutMs: 5000,
-              maxRetries: 0,
-              operationName: 'code_sandbox_eval',
-            }
-          );
-        } catch (err: any) {
-          evalError = err?.message || String(err);
+      try {
+        const safeRes = await executeCodeSandboxEval(args);
+        evalResult = safeRes.output || safeRes.result;
+        if (Array.isArray(safeRes.logs)) {
+          logs.push(...safeRes.logs);
         }
+      } catch (err: any) {
+        evalError = err?.message || String(err);
       }
 
       const durationMs = Math.round(performance.now() - startTime);
@@ -914,8 +903,8 @@ export async function executeFunctionCallHandler(fc: {
       };
 
       const summary = evalError
-        ? `Code Sandbox Error (${durationMs}ms): ${evalError}`
-        : `Code Sandbox (${durationMs}ms): ${String(sandboxPayload.result).slice(0, 80)}`;
+        ? `Sandbox Dispatch Error (${durationMs}ms): ${evalError}`
+        : `Sandbox (${durationMs}ms): ${String(sandboxPayload.result).slice(0, 80)}`;
 
       return {
         id: fc.id,
@@ -1933,14 +1922,31 @@ function trySolveMath(prompt: string): { expression: string; result: number | st
   }
 
   if (rawExpr) {
-    const sanitized = rawExpr.replace(/\^/g, '**').trim();
-    if (!/^[0-9\.\s\+\-\*\/\(\)\*]+$/.test(sanitized)) return null;
+    const sanitized = rawExpr.trim();
+    if (!/^[0-9\.\s\+\-\*\/\(\)]+$/.test(sanitized)) return null;
     try {
-      // Evaluate only numeric math expressions
-      const fn = new Function(`return (${sanitized});`);
-      const val = fn();
-      if (typeof val === 'number' && !isNaN(val)) {
-        return { expression: rawExpr.trim(), result: Number(val.toFixed(4)).toString() };
+      // Safe arithmetic evaluator without new Function() or eval()
+      const tokens = sanitized.match(/(\d+(?:\.\d+)?|[+\-*/()])/g);
+      if (tokens && tokens.length > 0) {
+        let total = parseFloat(tokens[0]);
+        let currentOp = '+';
+        for (let i = 1; i < tokens.length; i++) {
+          const t = tokens[i];
+          if (['+', '-', '*', '/'].includes(t)) {
+            currentOp = t;
+          } else {
+            const num = parseFloat(t);
+            if (!isNaN(num)) {
+              if (currentOp === '+') total += num;
+              else if (currentOp === '-') total -= num;
+              else if (currentOp === '*') total *= num;
+              else if (currentOp === '/') total = num !== 0 ? total / num : NaN;
+            }
+          }
+        }
+        if (!isNaN(total)) {
+          return { expression: rawExpr.trim(), result: Number(total.toFixed(4)).toString() };
+        }
       }
     } catch {
       return null;

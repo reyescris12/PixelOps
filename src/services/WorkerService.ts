@@ -4,7 +4,9 @@
  * via BroadcastChannel / Web Workers independently of the main UI thread.
  */
 
-import { auditStorageHealth } from './SafetyService';
+import { auditStorageHealth, executeCodeSandboxEval } from './SafetyService';
+
+export { executeCodeSandboxEval };
 
 export interface BackgroundQueueTask {
   id: string;
@@ -139,9 +141,12 @@ export function parseAgentActionBlock(responseText: string): { toolName: string;
 }
 
 /**
- * Invokes a local tool service via dynamic handler dispatch
+ * Invokes a local tool service via static action routing or registered handler dispatch
  */
 export async function executeAgentTool(toolName: string, toolArgs: Record<string, any>) {
+  if (toolName === 'code_sandbox_eval' || toolName === 'code_sandbox') {
+    return await executeCodeSandboxEval(toolArgs);
+  }
   if (typeof window !== 'undefined' && (window as any).__executeToolHandler) {
     return await (window as any).__executeToolHandler(toolName, toolArgs);
   }

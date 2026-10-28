@@ -19,6 +19,14 @@ import {
   isPluginAuthenticated,
   maskCredential,
 } from './pluginAuthManager';
+import {
+  getOrCreateEntityId,
+  getConnectedAccounts,
+  initiateAppConnection,
+  executeComposioAction,
+  getComposioApiKey,
+  setComposioApiKey,
+} from '../services/ComposioService';
 
 export interface CLICommandContext {
   crewAgents: Array<{
@@ -481,7 +489,169 @@ export async function executeCLICommand(
     };
   }
 
-  // 13. HELP
+  // 13. COMPOSIO (Multi-User OAuth Integrations & Action Dispatcher)
+  if (action === 'composio') {
+    const subAction = (args[0] || '').toLowerCase();
+
+    // composio status
+    if (!subAction || subAction === 'status' || subAction === 'whoami') {
+      const entityId = getOrCreateEntityId();
+      const customKey = getComposioApiKey();
+      let accounts: any[] = [];
+      try {
+        accounts = await getConnectedAccounts();
+      } catch {
+        // Handled below
+      }
+
+      const rows = [
+        '╔════════════════════════════════════════════════════════════════════════════════╗',
+        '║ COMPOSIO MULTI-USER PLUGIN ENGINE STATUS                                       ║',
+        '╠════════════════════════════════════════════════════════════════════════════════╣',
+        `  ISOLATED ENTITY ID : ${entityId}`,
+        `  API KEY SOURCE     : ${customKey ? 'Custom BYOK Override (client)' : 'Cloudflare Pages Proxy (server)'}`,
+        `  PROXY ENDPOINT     : /api/composio (Cloudflare Pages Function)`,
+        '--------------------------------------------------------------------------------',
+        '  CONNECTED ACCOUNTS:',
+        accounts.length === 0
+          ? '  (No third-party accounts connected yet. Run "pixelops composio connect <app>")'
+          : accounts
+              .map(
+                (acc) =>
+                  `  🔗 [${acc.appName.toUpperCase().padEnd(10)}] ID: ${acc.id} · Status: ${acc.status}`
+              )
+              .join('\n'),
+        '╚════════════════════════════════════════════════════════════════════════════════╝',
+        'Supported apps: github, slack, gmail, notion, linear',
+        'Run "pixelops composio connect <app>" to authorize a new app connection.',
+      ];
+
+      return {
+        command: trimmed,
+        output: rows.join('\n'),
+        status: 'ok',
+        timestamp,
+      };
+    }
+
+    // composio connect <appName>
+    if (subAction === 'connect' || subAction === 'auth' || subAction === 'link') {
+      const appName = args[1];
+      if (!appName) {
+        return {
+          command: trimmed,
+          output:
+            'USAGE: pixelops composio connect <appName>\nSupported: github, slack, gmail, notion, linear\nExample: pixelops composio connect github',
+          status: 'warning',
+          timestamp,
+        };
+      }
+
+      try {
+        const conn = await initiateAppConnection(appName);
+        const entityId = getOrCreateEntityId();
+        return {
+          command: trimmed,
+          output: [
+            `[COMPOSIO OAUTH INITIATED] Connecting ${appName.toUpperCase()} for Commander (${entityId}):`,
+            conn.connectionUrl
+              ? `Authorization popup opened. If blocked, open:\n${conn.connectionUrl}`
+              : `Connection initiated with ID: ${conn.connectionId || 'active'}`,
+            'Once authorized in your browser, the tool will automatically become available to all agents.',
+          ].join('\n'),
+          status: 'ok',
+          timestamp,
+        };
+      } catch (err: any) {
+        return {
+          command: trimmed,
+          output: `Failed to initiate connection for "${appName}": ${err?.message || err}`,
+          status: 'error',
+          timestamp,
+        };
+      }
+    }
+
+    // composio key <apiKey>
+    if (subAction === 'key' || subAction === 'setkey') {
+      const key = args.slice(1).join(' ').trim();
+      setComposioApiKey(key);
+      return {
+        command: trimmed,
+        output: key
+          ? `[KEY STORED] Custom Composio BYOK key configured locally.`
+          : `[KEY CLEARED] Switched back to Cloudflare Pages Functions server-side key proxy.`,
+        status: 'ok',
+        timestamp,
+      };
+    }
+
+    // composio run <actionName> <jsonInput>
+    if (subAction === 'run' || subAction === 'exec') {
+      const actionName = args[1];
+      const rawPayload = args.slice(2).join(' ').trim();
+      if (!actionName) {
+        return {
+          command: trimmed,
+          output:
+            'USAGE: pixelops composio run <actionName> <jsonInput>\nExample: pixelops composio run github_create_issue {"owner":"octocat","repo":"demo","title":"Bug"}',
+          status: 'warning',
+          timestamp,
+        };
+      }
+
+      let parsedPayload: Record<string, any> = {};
+      if (rawPayload) {
+        try {
+          parsedPayload = JSON.parse(rawPayload);
+        } catch (e: any) {
+          return {
+            command: trimmed,
+            output: `INVALID JSON PAYLOAD: ${e?.message}\nInput received: ${rawPayload}`,
+            status: 'error',
+            timestamp,
+          };
+        }
+      }
+
+      try {
+        const res = await executeComposioAction(actionName, parsedPayload);
+        const outputLines = [
+          `COMPOSIO ACTION: ${actionName}`,
+          `STATUS: ${res.successful ? 'SUCCESS' : 'FAILED'}`,
+          `EXECUTED AT: ${res.executedAt}`,
+          '--------------------------------------------------------------------------------',
+          res.successful
+            ? JSON.stringify(res.data, null, 2)
+            : `Error: ${res.error || 'Execution failed'}`,
+        ];
+
+        return {
+          command: trimmed,
+          output: outputLines.join('\n'),
+          status: res.successful ? 'ok' : 'error',
+          timestamp,
+        };
+      } catch (err: any) {
+        return {
+          command: trimmed,
+          output: `Composio action dispatch error: ${err?.message || err}`,
+          status: 'error',
+          timestamp,
+        };
+      }
+    }
+
+    return {
+      command: trimmed,
+      output:
+        'USAGE: pixelops composio <status|connect|run|key>\n  composio status               Inspect isolated entityId and connected apps\n  composio connect <app>        Initiate OAuth connect for github, slack, gmail, notion\n  composio run <action> <json>  Dispatch an action with JSON payload\n  composio key <customKey>      Set or clear a custom Composio BYOK API key',
+      status: 'warning',
+      timestamp,
+    };
+  }
+
+  // 14. HELP
   if (action === 'help') {
     const helpText = [
       'PIXELOPS TACTICAL HEADLESS CLI UTILITY v1.0',
@@ -495,6 +665,9 @@ export async function executeCLICommand(
       '  pixelops plugins                   List BYOK capability plugins and auth tokens',
       '  pixelops plugin auth <id> <key>    Save BYOK API key/token for plugin locally',
       '  pixelops plugin revoke <id>        Revoke/clear local credentials for plugin',
+      '  pixelops composio [status]         Inspect multi-user Composio entityId and apps',
+      '  pixelops composio connect <app>    Initiate OAuth connect (github, slack, gmail, notion)',
+      '  pixelops composio run <act> <json> Execute a Composio action via proxy',
       '  pixelops rooms                     List registered safehouse sectors',
       '  pixelops spawn <templateId>        Spawn sector (cyber_lab, quantum_vault, etc)',
       '  pixelops skills                    List available capability plugins & bindings',

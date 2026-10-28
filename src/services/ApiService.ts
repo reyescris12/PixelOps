@@ -6,6 +6,11 @@ import { loadCustomPlugins, executeCustomPlugin } from './PluginMarketplaceServi
 import { getLast50Commands, ledgerDb } from './CommandLedgerDb';
 import { getPluginCredential } from '../engine/pluginAuthManager';
 import {
+  COMPOSIO_GEMINI_TOOL_SCHEMAS,
+  executeComposioAction,
+  getOrCreateEntityId,
+} from './ComposioService';
+import {
   executeSafeOperation,
   validateAndWrapCode,
   auditStorageHealth,
@@ -396,6 +401,20 @@ export function buildDynamicToolDeclarations(
     }
   }
 
+  // Include Composio tools if composio plugin or any composio app is enabled
+  if (
+    enabledPlugins.includes('composio') ||
+    enabledPlugins.includes('all') ||
+    enabledPlugins.some((p) => p.startsWith('composio'))
+  ) {
+    for (const schema of Object.values(COMPOSIO_GEMINI_TOOL_SCHEMAS)) {
+      if (!addedNames.has(schema.name)) {
+        declarations.push(schema);
+        addedNames.add(schema.name);
+      }
+    }
+  }
+
   return declarations;
 }
 
@@ -409,6 +428,56 @@ export function resolveToolWorkflowDestination(toolName: string): {
   targetStationId: string;
   taskTag: string;
 } {
+  if (toolName.startsWith('composio_') || toolName.startsWith('COMPOSIO_')) {
+    const lower = toolName.toLowerCase();
+    if (lower.includes('github')) {
+      return {
+        pluginId: 'github',
+        targetRoom: 'server_vault',
+        targetStationId: 'vault_core_rack',
+        taskTag: 'GITHUB',
+      };
+    }
+    if (lower.includes('slack')) {
+      return {
+        pluginId: 'slack',
+        targetRoom: 'comms_tower',
+        targetStationId: 'comms_dish_console',
+        taskTag: 'SLACK',
+      };
+    }
+    if (lower.includes('gmail')) {
+      return {
+        pluginId: 'gmail',
+        targetRoom: 'comms_tower',
+        targetStationId: 'comms_dish_console',
+        taskTag: 'GMAIL',
+      };
+    }
+    if (lower.includes('notion')) {
+      return {
+        pluginId: 'notion',
+        targetRoom: 'library',
+        targetStationId: 'lib_front_desk',
+        taskTag: 'NOTION',
+      };
+    }
+    if (lower.includes('linear')) {
+      return {
+        pluginId: 'linear',
+        targetRoom: 'briefing_lounge',
+        targetStationId: 'lounge_holo_table',
+        taskTag: 'LINEAR',
+      };
+    }
+    return {
+      pluginId: 'composio',
+      targetRoom: 'comms_tower',
+      targetStationId: 'comms_dish_console',
+      taskTag: 'COMPOSIO',
+    };
+  }
+
   switch (toolName) {
     case 'live_web_search':
       return {
@@ -539,6 +608,28 @@ export async function executeFunctionCallHandler(fc: {
   }
 
   try {
+    // Check Composio integration actions (e.g. composio_github_create_issue, composio_slack_send_message, etc.)
+    if (name.startsWith('composio_') || name.startsWith('COMPOSIO_')) {
+      const compResult = await executeComposioAction(name, args);
+      const summary = compResult.successful
+        ? `Composio [${name.replace(/^composio_/i, '').toUpperCase()}]: Dispatched successfully`
+        : `Composio Error: ${compResult.error || 'Execution failed'}`;
+      return {
+        id: fc.id,
+        name,
+        response: compResult,
+        executedToolMeta: {
+          pluginId: dest.pluginId || 'composio',
+          toolName: name,
+          args,
+          resultSummary: summary,
+          livePayload: compResult.data || { error: compResult.error },
+          targetRoom: dest.targetRoom,
+          targetStationId: dest.targetStationId,
+        },
+      };
+    }
+
     // Check user-defined custom plugins
     const customPlugins = loadCustomPlugins();
     const matchedCustom = customPlugins.find((cp) => cp.toolFunctionName === name && cp.enabled);

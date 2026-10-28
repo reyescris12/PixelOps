@@ -1796,7 +1796,7 @@ export const ROUNDTABLE_SCHEMA = {
         properties: {
           agentIndex: {
             type: 'INTEGER',
-            description: 'Slot index of the speaking agent: 0, 1, or 2.',
+            description: 'Slot index of the speaking agent corresponding to their index in the crew roster (0, 1, 2, ...).',
           },
           speakerName: {
             type: 'STRING',
@@ -3317,65 +3317,57 @@ export function generateLocalRoundtableMeeting(params: {
   themeId: ThemeId;
   participants: RoundtableParticipantPayload[];
 }): RoundtableMeetingSession {
-  const p0 = params.participants[0] || { customName: 'Agent Vance', role: 'Lead Strategist' };
-  const p1 = params.participants[1] || { customName: 'Agent Nyx', role: 'Cyber & Signal Specialist' };
-  const p2 = params.participants[2] || { customName: 'Agent Cipher', role: 'Cryptographic Recon' };
+  const participants =
+    params.participants && params.participants.length > 0
+      ? params.participants
+      : [
+          { customName: 'Agent Vance', role: 'Lead Strategist', agentIndex: 0 },
+          { customName: 'Agent Nyx', role: 'Cyber & Signal Specialist', agentIndex: 1 },
+          { customName: 'Agent Cipher', role: 'Cryptographic Recon', agentIndex: 2 },
+        ];
 
-  const turns: RoundtableDialogueTurn[] = [
-    {
-      agentIndex: 0,
-      speakerName: p0.customName,
-      role: p0.role,
-      perspectiveTag: 'STRATEGIC LEAD',
-      dialogue: `Command has called a council regarding "${params.topic.slice(0, 45)}...". We must coordinate our sector assets immediately.`,
-      referencedNote: p0.recentNotes?.[0] || 'War Room Strategic Telemetry',
-    },
-    {
-      agentIndex: 1,
-      speakerName: p1.customName,
-      role: p1.role,
-      perspectiveTag: 'CYBER & SIGNAL',
-      dialogue: `Signal relays and placed server gear are nominal. I have verified our local subnet and tool endpoints are fully responsive.`,
-      referencedNote: p1.recentNotes?.[0] || 'Comms Dish Frequency Array',
-    },
-    {
-      agentIndex: 2,
-      speakerName: p2.customName,
-      role: p2.role,
-      perspectiveTag: 'ARCHIVE INTEL',
-      dialogue: `Archival records and encrypted ledgers in IndexedDB confirm our parameters. All nodes are ready for execution.`,
-      referencedNote: p2.recentNotes?.[0] || 'Omega Dossier Archive Verified',
-    },
-    {
-      agentIndex: 0,
-      speakerName: p0.customName,
-      role: p0.role,
-      perspectiveTag: 'FINAL CONSENSUS',
-      dialogue: `Tactical alignment achieved. Let us deploy to our designated sectors and fulfill the Commander directive.`,
-      referencedNote: 'Full Sector Readiness Approved',
-    },
+  const targetSectors: RoomId[] = [
+    'war_room',
+    'server_vault',
+    'armory',
+    'comms_tower',
+    'library',
+    'briefing_lounge',
+    'archive_basement',
   ];
 
-  const actionItems: RoundtableActionItem[] = [
-    {
-      agentIndex: 0,
-      ownerName: p0.customName,
-      directive: `Coordinate strategic assets for "${params.topic.slice(0, 30)}"`,
-      targetSector: 'war_room',
-    },
-    {
-      agentIndex: 1,
-      ownerName: p1.customName,
-      directive: 'Monitor Comms Tower uplink and server gear health',
-      targetSector: 'server_vault',
-    },
-    {
-      agentIndex: 2,
-      ownerName: p2.customName,
-      directive: 'Verify cryptographic archive entries and memory state',
-      targetSector: 'archive_basement',
-    },
-  ];
+  const turns: RoundtableDialogueTurn[] = participants.map((p, idx) => {
+    const isFirst = idx === 0;
+    const dialogue = isFirst
+      ? `Command has convened council regarding "${params.topic.slice(0, 45)}...". We must coordinate all recruited operative assets immediately.`
+      : `Sector systems reporting in. Operative ${p.customName || p.name} (${p.role}) ready to support operation "${params.topic.slice(0, 30)}".`;
+    return {
+      agentIndex: p.agentIndex ?? idx,
+      speakerName: p.customName || p.name || `Operative ${idx + 1}`,
+      role: p.role || 'Tactical Specialist',
+      perspectiveTag: (p.role || 'TACTICAL').toUpperCase().slice(0, 18),
+      dialogue,
+      referencedNote: p.recentNotes?.[0] || `${p.role} Telemetry Nominal`,
+    };
+  });
+
+  // Final consensus turn from lead agent
+  const leadAgent = participants[0];
+  turns.push({
+    agentIndex: leadAgent.agentIndex ?? 0,
+    speakerName: leadAgent.customName || leadAgent.name || 'Lead Operative',
+    role: leadAgent.role || 'Lead Strategist',
+    perspectiveTag: 'FINAL CONSENSUS',
+    dialogue: `Tactical alignment achieved across all ${participants.length} recruited operatives. Deploying to respective sectors.`,
+    referencedNote: 'Full Crew Consensus Approved',
+  });
+
+  const actionItems: RoundtableActionItem[] = participants.map((p, idx) => ({
+    agentIndex: p.agentIndex ?? idx,
+    ownerName: p.customName || p.name || `Operative ${idx + 1}`,
+    directive: `Execute task for "${params.topic.slice(0, 30)}" (${p.role || 'Sector Operations'})`,
+    targetSector: targetSectors[idx % targetSectors.length],
+  }));
 
   return {
     id: `roundtable-${Date.now()}`,
@@ -3462,16 +3454,16 @@ export async function executeRoundtableMeeting(params: {
 
         const roundtableSystemInstruction = `${personaInstruction}
 You are orchestrating a live "Town Hall" Multi-Agent Roundtable inside the central War Room.
-All 3 active operatives have walked from their sectors to gather around the central Command Table.
+All ${params.participants.length} recruited operatives have gathered around the central Command Table.
 
 ACTIVE CREW ROSTER & RECENT NOTES:
 ${rosterDescription}
 ${priorContext}
 ROUNDTABLE RULES:
 1. Generate a cohesive, multi-perspective roundtable conversation responding to the Commander's topic/prompt.
-2. Have each of the 3 agents chime in sequentially (4 to 5 total turns across the 3 agents: e.g., Agent 0 opens with strategic framing, Agent 1 responds with signal/cyber/technical perspective, Agent 2 adds archival/recon analysis, and Agent 0 or another agent synthesizes a counter-point or closing tactical lock).
+2. Have the operatives contribute sequentially based on their specialized functional roles (providing viewpoints across strategic, technical, archival, and tactical dimensions).
 3. Every agent MUST use their exact Custom Name, stay true to their distinct Role and Specialty, explicitly reference at least one of their Recent Field Notes or the previous speaker's point, and keep each turn to 2-3 crisp, punchy sentences.
-4. Provide a concise meetingTitle, a 1-2 sentence consensusSummary, and 3 concrete actionItems assigned to specific agents and sectors.`;
+4. Provide a concise meetingTitle, a 1-2 sentence consensusSummary, and concrete actionItems assigned to specific agents and sectors.`;
 
         const res = await executeSafeOperation(
           async (signal) => {

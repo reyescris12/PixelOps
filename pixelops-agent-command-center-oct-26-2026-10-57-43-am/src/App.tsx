@@ -1927,7 +1927,7 @@ const CommandCenterContent: React.FC = () => {
                           ? 'bg-[#38bdf8] text-[#0c1017] font-bold'
                           : 'text-[#38bdf8] hover:text-[#f3ead8]'
                       }`}
-                      title="Summon all 3 active agents to the War Room for a Town Hall Roundtable"
+                      title={`Summon all ${crewAgents.length} active agents to the War Room for a Town Hall Roundtable`}
                     >
                       <span>📣 Call Meeting ({roundtableSessions.length})</span>
                     </button>

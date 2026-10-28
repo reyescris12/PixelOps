@@ -2516,7 +2516,7 @@ const CommandCenterContent = ()=>{
         "type": "button",
         "onClick": handleCallTownHallMeeting,
         "className": `px-3 py-1 font-mono-tabular text-xs cursor-pointer transition-colors flex items-center gap-1 ${hqSubView === 'town_hall' ? 'bg-[#38bdf8] text-[#0c1017] font-bold' : 'text-[#38bdf8] hover:text-[#f3ead8]'}`,
-        "title": "Summon all 3 active agents to the War Room for a Town Hall Roundtable"
+        "title": `Summon all ${crewAgents.length} active agents to the War Room for a Town Hall Roundtable`
     }, React.createElement("span", null, "📣 Call Meeting (", roundtableSessions.length, ")")), React.createElement("button", {
         "type": "button",
         "onClick": ()=>{
@@ -8144,9 +8144,9 @@ const LOWER_DECK_ROOMS = [
     'library',
     'archive_basement'
 ];
-const TOWN_HALL_SEATS = {
-    0: {
-        id: 'war_left_desk',
+const TOWN_HALL_PRESET_SEATS = [
+    {
+        id: 'war_seat_0',
         label: 'Town Hall West Seat',
         xPct: 36.0,
         yPct: 75.0,
@@ -8156,8 +8156,8 @@ const TOWN_HALL_SEATS = {
         facing: 'right',
         taskTag: 'ROUNDTABLE'
     },
-    1: {
-        id: 'war_center_desk',
+    {
+        id: 'war_seat_1',
         label: 'Town Hall Center Podium',
         xPct: 50.0,
         yPct: 83.5,
@@ -8167,8 +8167,8 @@ const TOWN_HALL_SEATS = {
         facing: 'right',
         taskTag: 'ROUNDTABLE'
     },
-    2: {
-        id: 'war_server_rack',
+    {
+        id: 'war_seat_2',
         label: 'Town Hall East Seat',
         xPct: 64.0,
         yPct: 75.0,
@@ -8177,7 +8177,87 @@ const TOWN_HALL_SEATS = {
         pose: 'work',
         facing: 'left',
         taskTag: 'ROUNDTABLE'
+    },
+    {
+        id: 'war_seat_3',
+        label: 'Town Hall North-West Flank',
+        xPct: 38.0,
+        yPct: 68.0,
+        corridorXPct: 40.0,
+        corridorYPct: 70.0,
+        pose: 'desk',
+        facing: 'right',
+        taskTag: 'ROUNDTABLE'
+    },
+    {
+        id: 'war_seat_4',
+        label: 'Town Hall North-East Flank',
+        xPct: 62.0,
+        yPct: 68.0,
+        corridorXPct: 60.0,
+        corridorYPct: 70.0,
+        pose: 'work',
+        facing: 'left',
+        taskTag: 'ROUNDTABLE'
+    },
+    {
+        id: 'war_seat_5',
+        label: 'Town Hall South-West Guard',
+        xPct: 42.0,
+        yPct: 82.0,
+        corridorXPct: 44.0,
+        corridorYPct: 83.0,
+        pose: 'desk',
+        facing: 'right',
+        taskTag: 'ROUNDTABLE'
+    },
+    {
+        id: 'war_seat_6',
+        label: 'Town Hall South-East Guard',
+        xPct: 58.0,
+        yPct: 82.0,
+        corridorXPct: 56.0,
+        corridorYPct: 83.0,
+        pose: 'work',
+        facing: 'left',
+        taskTag: 'ROUNDTABLE'
+    },
+    {
+        id: 'war_seat_7',
+        label: 'Town Hall High Council Bench',
+        xPct: 50.0,
+        yPct: 65.0,
+        corridorXPct: 50.0,
+        corridorYPct: 67.0,
+        pose: 'desk',
+        facing: 'right',
+        taskTag: 'ROUNDTABLE'
     }
+];
+function getTownHallSeat(idx, total = 3) {
+    if (idx < TOWN_HALL_PRESET_SEATS.length) {
+        return TOWN_HALL_PRESET_SEATS[idx];
+    }
+    const count = Math.max(8, total);
+    const angle = idx * (2 * Math.PI) / count;
+    const x = Math.max(28, Math.min(72, Math.round(50 + 18 * Math.cos(angle))));
+    const y = Math.max(65, Math.min(84, Math.round(75 + 9 * Math.sin(angle))));
+    return {
+        id: `war_seat_${idx}`,
+        label: `Town Hall Seat #${idx + 1}`,
+        xPct: x,
+        yPct: y,
+        corridorXPct: x,
+        corridorYPct: Math.min(85, y + 2),
+        pose: idx % 2 === 0 ? 'desk' : 'work',
+        facing: x >= 50 ? 'left' : 'right',
+        taskTag: 'ROUNDTABLE'
+    };
+}
+const TOWN_HALL_SEATS = {
+    0: TOWN_HALL_PRESET_SEATS[0],
+    1: TOWN_HALL_PRESET_SEATS[1],
+    2: TOWN_HALL_PRESET_SEATS[2]
 };
 const AMBIENT_IDLE_TAGS = [
     'PATROL',
@@ -8470,7 +8550,7 @@ const SpriteCanvas = ({ currentRoom, onChangeRoom, onMoveAgentToRoom, walkingTra
         lastHandledTownHallNonceRef.current = townHallSummonNonce;
         const currentCrew = crewAgentsRef.current;
         currentCrew.forEach((crewMember, idx)=>{
-            const seat = TOWN_HALL_SEATS[idx % 3] || TOWN_HALL_SEATS[0];
+            const seat = getTownHallSeat(idx, currentCrew.length);
             if (crewMember && seat) {
                 updateAgentRoom(crewMember.id, 'war_room', seat.id);
             }
@@ -8481,13 +8561,8 @@ const SpriteCanvas = ({ currentRoom, onChangeRoom, onMoveAgentToRoom, walkingTra
             };
             currentCrew.forEach((_, idx)=>{
                 const curr = next[idx];
-                const baseSeat = TOWN_HALL_SEATS[idx % 3] || TOWN_HALL_SEATS[0];
+                const seat = getTownHallSeat(idx, currentCrew.length);
                 if (!curr) return;
-                const seat = idx >= 3 ? {
-                    ...baseSeat,
-                    xPct: Math.max(26, Math.min(74, baseSeat.xPct + (idx % 2 === 0 ? 5 : -5))),
-                    yPct: Math.max(64, Math.min(84, baseSeat.yPct + 3))
-                } : baseSeat;
                 const path = buildAgentWaypointPath(curr.room, curr.xPct, curr.yPct, 'war_room', seat);
                 const firstWp = path[0] || {
                     xPct: seat.xPct,
@@ -8577,8 +8652,8 @@ const SpriteCanvas = ({ currentRoom, onChangeRoom, onMoveAgentToRoom, walkingTra
                                 waypoints: remaining
                             };
                         } else {
-                            if (isMeetingActive && ag.room === 'war_room' && TOWN_HALL_SEATS[idx]) {
-                                const seat = TOWN_HALL_SEATS[idx];
+                            if (isMeetingActive && ag.room === 'war_room') {
+                                const seat = getTownHallSeat(idx, liveAgentCount);
                                 next[idx] = {
                                     ...ag,
                                     stationId: seat.id,
@@ -9449,6 +9524,9 @@ exports.snapToSafeInteractionPerimeter = snapToSafeInteractionPerimeter;
 exports.snapToWalkableFloor = snapToWalkableFloor;
 exports.buildAgentWaypointPath = buildAgentWaypointPath;
 exports.AgentSpriteFigure = AgentSpriteFigure;
+exports.TOWN_HALL_PRESET_SEATS = TOWN_HALL_PRESET_SEATS;
+exports.getTownHallSeat = getTownHallSeat;
+exports.TOWN_HALL_SEATS = TOWN_HALL_SEATS;
 exports.SpriteCanvas = SpriteCanvas;
 });
 
@@ -10632,9 +10710,13 @@ const __imp_2 = __require("../context/ThemeContext"); const { useTheme } = __imp
 const __imp_3 = __require("../context/CrewContext"); const { useCrew, SPRITE_VARIANTS } = __imp_3;
 const __imp_4 = __require("./SpriteCanvas"); const { AgentSpriteFigure, ROOM_METADATA, RoomId } = __imp_4;
 const __imp_5 = __require("../services/ApiService"); const { RoundtableMeetingSession, RoundtableParticipantPayload } = __imp_5;
+function getActiveMeetingParticipants(allAgents) {
+    return (allAgents || []).filter((agent)=>agent.isRecruited || agent.status === 'active' || agent.agentIndex !== undefined || true);
+}
 const TownHallRoundtablePanel = ({ sessions, isExecutingMeeting, onConveneMeeting, onSummonAgain, onAdjournMeeting, onDispatchActionItem, activeSpeakerAgentIndex, onSelectSpeakerAgentIndex, participantsWithNotes })=>{
     const { themeId, playBeep } = useTheme();
     const { crewAgents, getCrewAgentByIndex } = useCrew();
+    const activeParticipants = getActiveMeetingParticipants(crewAgents);
     const [selectedSessionIdx, setSelectedSessionIdx] = useState(0);
     const [topicInput, setTopicInput] = useState('');
     const [includePriorTurns, setIncludePriorTurns] = useState(true);
@@ -10723,7 +10805,7 @@ const TownHallRoundtablePanel = ({ sessions, isExecutingMeeting, onConveneMeetin
         "className": "font-mono-tabular text-xs sm:text-sm font-bold tracking-wider text-[#38bdf8] uppercase"
     }, "🏛️ TOWN HALL ROUNDTABLE · WAR ROOM [SEC-B1]"), React.createElement("span", {
         "className": "px-1.5 py-0.5 bg-[#0c1420] border border-[#4ade80]/60 font-mono-tabular text-[10px] text-[#4ade80] font-bold"
-    }, "3/3 AGENTS SUMMONED")), React.createElement("div", {
+    }, activeParticipants.length, "/", activeParticipants.length, " AGENTS SUMMONED")), React.createElement("div", {
         "className": "flex items-center gap-1.5"
     }, React.createElement("button", {
         "type": "button",
@@ -10732,7 +10814,7 @@ const TownHallRoundtablePanel = ({ sessions, isExecutingMeeting, onConveneMeetin
             onSummonAgain();
         },
         "className": "px-2 py-0.5 bg-[#162336] hover:bg-[#1f314a] border border-[#38bdf8]/60 font-mono-tabular text-[11px] text-[#bae6fd] cursor-pointer",
-        "title": "Re-align all 3 agents around the central War Room table"
+        "title": `Re-align all ${activeParticipants.length} agents around the central War Room table`
     }, "[📍 Re-Gather Crew]"), React.createElement("button", {
         "type": "button",
         "onClick": ()=>{
@@ -10742,15 +10824,10 @@ const TownHallRoundtablePanel = ({ sessions, isExecutingMeeting, onConveneMeetin
         "className": "px-2 py-0.5 bg-[#231b12] hover:bg-[#33271a] border border-[#6e5233] font-mono-tabular text-[11px] text-[#e59838] cursor-pointer",
         "title": "Adjourn Town Hall Meeting and return to single-agent Briefing Terminal"
     }, "[🔓 Adjourn]"))), React.createElement("div", {
-        "className": "bg-[#0d1017] border-b border-[#1f293a] px-3.5 py-2.5 grid grid-cols-1 sm:grid-cols-3 gap-2"
-    }, [
-        0,
-        1,
-        2
-    ].map((idx)=>{
-        const crewMember = crewAgents[idx] || getCrewAgentByIndex(idx);
+        "className": "bg-[#0d1017] border-b border-[#1f293a] px-3.5 py-2.5 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 max-h-72 overflow-y-auto no-scrollbar"
+    }, activeParticipants.map((crewMember, idx)=>{
         const variantMeta = SPRITE_VARIANTS[crewMember.spriteVariant] || SPRITE_VARIANTS.trenchcoat;
-        const participantMeta = participantsWithNotes[idx];
+        const participantMeta = participantsWithNotes[idx] || participantsWithNotes.find((p)=>p.name === crewMember.customName);
         const latestNote = participantMeta?.recentNotes?.[0] || crewMember.specialty;
         const isSpeakingNow = activeSpeakerAgentIndex === idx;
         return React.createElement("button", {
@@ -10850,18 +10927,13 @@ const TownHallRoundtablePanel = ({ sessions, isExecutingMeeting, onConveneMeetin
     }, isExecutingMeeting ? React.createElement("div", {
         "className": "py-8 flex flex-col items-center justify-center gap-2 font-mono-tabular text-center"
     }, React.createElement("div", {
-        "className": "flex items-center gap-3"
-    }, [
-        0,
-        1,
-        2
-    ].map((idx)=>{
-        const c = getCrewAgentByIndex(idx);
+        "className": "flex items-center gap-2.5 flex-wrap justify-center"
+    }, activeParticipants.slice(0, 8).map((c, idx)=>{
         return React.createElement("div", {
             "key": c.id,
             "className": "w-10 h-12 bg-[#141822] border border-[#38bdf8] p-1 animate-bounce",
             "style": {
-                animationDelay: `${idx * 140}ms`
+                animationDelay: `${idx * 120}ms`
             }
         }, React.createElement(AgentSpriteFigure, {
             "spriteVariant": c.spriteVariant,
@@ -10876,12 +10948,12 @@ const TownHallRoundtablePanel = ({ sessions, isExecutingMeeting, onConveneMeetin
         "className": "text-xs sm:text-sm text-[#38bdf8] font-bold mt-2"
     }, "[ROUNDTABLE IN PROGRESS · SYNTHESIZING MULTI-AGENT PERSPECTIVES...]"), React.createElement("p", {
         "className": "text-[11px] text-[#94a3b8] max-w-md"
-    }, "Passing custom agent names (", crewAgents.map((a)=>a.customName).join(', '), "), distinct roles, and recent command ledger notes to Gemini...")) : activeSession ? React.createElement(React.Fragment, null, React.createElement("div", {
+    }, "Passing custom agent names (", activeParticipants.map((a)=>a.customName).join(', '), "), distinct roles, and recent command ledger notes to Gemini...")) : activeSession ? React.createElement(React.Fragment, null, React.createElement("div", {
         "className": "px-2.5 py-1.5 bg-[#16130f] border-l-2 border-[#e59838] font-mono-tabular text-[11px] text-[#d6c7b2]"
     }, React.createElement("span", {
         "className": "text-[#e59838] font-bold"
     }, "AGENDA:"), ' ', "“", activeSession.topic, "”"), displayedTurns.map((turn, tIdx)=>{
-        const slotIdx = typeof turn.agentIndex === 'number' && turn.agentIndex >= 0 && turn.agentIndex <= 2 ? turn.agentIndex : tIdx % 3;
+        const slotIdx = typeof turn.agentIndex === 'number' && turn.agentIndex >= 0 && turn.agentIndex < crewAgents.length ? turn.agentIndex : tIdx % Math.max(1, crewAgents.length);
         const crewMember = crewAgents[slotIdx] || getCrewAgentByIndex(slotIdx);
         const variantMeta = SPRITE_VARIANTS[crewMember.spriteVariant] || SPRITE_VARIANTS.trenchcoat;
         const isActiveTurn = activeSpeakerAgentIndex === slotIdx;
@@ -10948,7 +11020,7 @@ const TownHallRoundtablePanel = ({ sessions, isExecutingMeeting, onConveneMeetin
     }, activeSession.consensusSummary), activeSession.actionItems && activeSession.actionItems.length > 0 && React.createElement("div", {
         "className": "pt-1.5 border-t border-[#1f3b2b] flex flex-col gap-1.5"
     }, activeSession.actionItems.map((item, idx)=>{
-        const slotIdx = typeof item.agentIndex === 'number' && item.agentIndex >= 0 && item.agentIndex <= 2 ? item.agentIndex : idx % 3;
+        const slotIdx = typeof item.agentIndex === 'number' && item.agentIndex >= 0 && item.agentIndex < crewAgents.length ? item.agentIndex : idx % Math.max(1, crewAgents.length);
         const crew = crewAgents[slotIdx] || getCrewAgentByIndex(slotIdx);
         const sectorMeta = ROOM_METADATA[item.targetSector] || ROOM_METADATA.war_room;
         return React.createElement("div", {
@@ -11029,6 +11101,7 @@ const TownHallRoundtablePanel = ({ sessions, isExecutingMeeting, onConveneMeetin
     }, "📣"), React.createElement("span", null, isExecutingMeeting ? 'CONVENING...]' : 'CONVENE ROUNDTABLE]')))));
 };
 
+exports.getActiveMeetingParticipants = getActiveMeetingParticipants;
 exports.TownHallRoundtablePanel = TownHallRoundtablePanel;
 });
 
@@ -18674,7 +18747,7 @@ const ROUNDTABLE_SCHEMA = {
                 properties: {
                     agentIndex: {
                         type: 'INTEGER',
-                        description: 'Slot index of the speaking agent: 0, 1, or 2.'
+                        description: 'Slot index of the speaking agent corresponding to their index in the crew roster (0, 1, 2, ...).'
                     },
                     speakerName: {
                         type: 'STRING',
@@ -20097,72 +20170,59 @@ function saveRoundtableSessions(sessions) {
     } catch  {}
 }
 function generateLocalRoundtableMeeting(params) {
-    const p0 = params.participants[0] || {
-        customName: 'Agent Vance',
-        role: 'Lead Strategist'
-    };
-    const p1 = params.participants[1] || {
-        customName: 'Agent Nyx',
-        role: 'Cyber & Signal Specialist'
-    };
-    const p2 = params.participants[2] || {
-        customName: 'Agent Cipher',
-        role: 'Cryptographic Recon'
-    };
-    const turns = [
+    const participants = params.participants && params.participants.length > 0 ? params.participants : [
         {
-            agentIndex: 0,
-            speakerName: p0.customName,
-            role: p0.role,
-            perspectiveTag: 'STRATEGIC LEAD',
-            dialogue: `Command has called a council regarding "${params.topic.slice(0, 45)}...". We must coordinate our sector assets immediately.`,
-            referencedNote: p0.recentNotes?.[0] || 'War Room Strategic Telemetry'
+            customName: 'Agent Vance',
+            role: 'Lead Strategist',
+            agentIndex: 0
         },
         {
-            agentIndex: 1,
-            speakerName: p1.customName,
-            role: p1.role,
-            perspectiveTag: 'CYBER & SIGNAL',
-            dialogue: `Signal relays and placed server gear are nominal. I have verified our local subnet and tool endpoints are fully responsive.`,
-            referencedNote: p1.recentNotes?.[0] || 'Comms Dish Frequency Array'
+            customName: 'Agent Nyx',
+            role: 'Cyber & Signal Specialist',
+            agentIndex: 1
         },
         {
-            agentIndex: 2,
-            speakerName: p2.customName,
-            role: p2.role,
-            perspectiveTag: 'ARCHIVE INTEL',
-            dialogue: `Archival records and encrypted ledgers in IndexedDB confirm our parameters. All nodes are ready for execution.`,
-            referencedNote: p2.recentNotes?.[0] || 'Omega Dossier Archive Verified'
-        },
-        {
-            agentIndex: 0,
-            speakerName: p0.customName,
-            role: p0.role,
-            perspectiveTag: 'FINAL CONSENSUS',
-            dialogue: `Tactical alignment achieved. Let us deploy to our designated sectors and fulfill the Commander directive.`,
-            referencedNote: 'Full Sector Readiness Approved'
+            customName: 'Agent Cipher',
+            role: 'Cryptographic Recon',
+            agentIndex: 2
         }
     ];
-    const actionItems = [
-        {
-            agentIndex: 0,
-            ownerName: p0.customName,
-            directive: `Coordinate strategic assets for "${params.topic.slice(0, 30)}"`,
-            targetSector: 'war_room'
-        },
-        {
-            agentIndex: 1,
-            ownerName: p1.customName,
-            directive: 'Monitor Comms Tower uplink and server gear health',
-            targetSector: 'server_vault'
-        },
-        {
-            agentIndex: 2,
-            ownerName: p2.customName,
-            directive: 'Verify cryptographic archive entries and memory state',
-            targetSector: 'archive_basement'
-        }
+    const targetSectors = [
+        'war_room',
+        'server_vault',
+        'armory',
+        'comms_tower',
+        'library',
+        'briefing_lounge',
+        'archive_basement'
     ];
+    const turns = participants.map((p, idx)=>{
+        const isFirst = idx === 0;
+        const dialogue = isFirst ? `Command has convened council regarding "${params.topic.slice(0, 45)}...". We must coordinate all recruited operative assets immediately.` : `Sector systems reporting in. Operative ${p.customName || p.name} (${p.role}) ready to support operation "${params.topic.slice(0, 30)}".`;
+        return {
+            agentIndex: p.agentIndex ?? idx,
+            speakerName: p.customName || p.name || `Operative ${idx + 1}`,
+            role: p.role || 'Tactical Specialist',
+            perspectiveTag: (p.role || 'TACTICAL').toUpperCase().slice(0, 18),
+            dialogue,
+            referencedNote: p.recentNotes?.[0] || `${p.role} Telemetry Nominal`
+        };
+    });
+    const leadAgent = participants[0];
+    turns.push({
+        agentIndex: leadAgent.agentIndex ?? 0,
+        speakerName: leadAgent.customName || leadAgent.name || 'Lead Operative',
+        role: leadAgent.role || 'Lead Strategist',
+        perspectiveTag: 'FINAL CONSENSUS',
+        dialogue: `Tactical alignment achieved across all ${participants.length} recruited operatives. Deploying to respective sectors.`,
+        referencedNote: 'Full Crew Consensus Approved'
+    });
+    const actionItems = participants.map((p, idx)=>({
+            agentIndex: p.agentIndex ?? idx,
+            ownerName: p.customName || p.name || `Operative ${idx + 1}`,
+            directive: `Execute task for "${params.topic.slice(0, 30)}" (${p.role || 'Sector Operations'})`,
+            targetSector: targetSectors[idx % targetSectors.length]
+        }));
     return {
         id: `roundtable-${Date.now()}`,
         topic: params.topic,
@@ -20208,16 +20268,16 @@ async function executeRoundtableMeeting(params) {
             const priorContext = Array.isArray(params.priorTurns) && params.priorTurns.length > 0 ? `\nPrior Roundtable Transcript in this Session:\n${params.priorTurns.slice(-6).map((t)=>`[${t.speakerName} (${t.role})]: "${t.dialogue}"`).join('\n')}\n` : '';
             const roundtableSystemInstruction = `${personaInstruction}
 You are orchestrating a live "Town Hall" Multi-Agent Roundtable inside the central War Room.
-All 3 active operatives have walked from their sectors to gather around the central Command Table.
+All ${params.participants.length} recruited operatives have gathered around the central Command Table.
 
 ACTIVE CREW ROSTER & RECENT NOTES:
 ${rosterDescription}
 ${priorContext}
 ROUNDTABLE RULES:
 1. Generate a cohesive, multi-perspective roundtable conversation responding to the Commander's topic/prompt.
-2. Have each of the 3 agents chime in sequentially (4 to 5 total turns across the 3 agents: e.g., Agent 0 opens with strategic framing, Agent 1 responds with signal/cyber/technical perspective, Agent 2 adds archival/recon analysis, and Agent 0 or another agent synthesizes a counter-point or closing tactical lock).
+2. Have the operatives contribute sequentially based on their specialized functional roles (providing viewpoints across strategic, technical, archival, and tactical dimensions).
 3. Every agent MUST use their exact Custom Name, stay true to their distinct Role and Specialty, explicitly reference at least one of their Recent Field Notes or the previous speaker's point, and keep each turn to 2-3 crisp, punchy sentences.
-4. Provide a concise meetingTitle, a 1-2 sentence consensusSummary, and 3 concrete actionItems assigned to specific agents and sectors.`;
+4. Provide a concise meetingTitle, a 1-2 sentence consensusSummary, and concrete actionItems assigned to specific agents and sectors.`;
             const res = await executeSafeOperation(async (signal)=>{
                 return await fetch(url, {
                     method: 'POST',

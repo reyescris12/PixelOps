@@ -1561,40 +1561,43 @@ const UPPER_DECK_ROOMS: RoomId[] = ['comms_tower', 'war_room', 'server_vault', '
 const LOWER_DECK_ROOMS: RoomId[] = ['briefing_lounge', 'library', 'archive_basement'];
 
 // Central War Room "Town Hall" Roundtable Formation Coordinates (Positioned on Walkable Floor around the Holo-Table)
-const TOWN_HALL_SEATS: Record<number, WorkstationDef> = {
-  0: {
-    id: 'war_left_desk',
-    label: 'Town Hall West Seat',
-    xPct: 36.0,
-    yPct: 75.0,
-    corridorXPct: 36.0,
-    corridorYPct: 79.0,
-    pose: 'desk',
-    facing: 'right',
+export const TOWN_HALL_PRESET_SEATS: WorkstationDef[] = [
+  { id: 'war_seat_0', label: 'Town Hall West Seat', xPct: 36.0, yPct: 75.0, corridorXPct: 36.0, corridorYPct: 79.0, pose: 'desk', facing: 'right', taskTag: 'ROUNDTABLE' },
+  { id: 'war_seat_1', label: 'Town Hall Center Podium', xPct: 50.0, yPct: 83.5, corridorXPct: 50.0, corridorYPct: 84.5, pose: 'desk', facing: 'right', taskTag: 'ROUNDTABLE' },
+  { id: 'war_seat_2', label: 'Town Hall East Seat', xPct: 64.0, yPct: 75.0, corridorXPct: 64.0, corridorYPct: 79.0, pose: 'work', facing: 'left', taskTag: 'ROUNDTABLE' },
+  { id: 'war_seat_3', label: 'Town Hall North-West Flank', xPct: 38.0, yPct: 68.0, corridorXPct: 40.0, corridorYPct: 70.0, pose: 'desk', facing: 'right', taskTag: 'ROUNDTABLE' },
+  { id: 'war_seat_4', label: 'Town Hall North-East Flank', xPct: 62.0, yPct: 68.0, corridorXPct: 60.0, corridorYPct: 70.0, pose: 'work', facing: 'left', taskTag: 'ROUNDTABLE' },
+  { id: 'war_seat_5', label: 'Town Hall South-West Guard', xPct: 42.0, yPct: 82.0, corridorXPct: 44.0, corridorYPct: 83.0, pose: 'desk', facing: 'right', taskTag: 'ROUNDTABLE' },
+  { id: 'war_seat_6', label: 'Town Hall South-East Guard', xPct: 58.0, yPct: 82.0, corridorXPct: 56.0, corridorYPct: 83.0, pose: 'work', facing: 'left', taskTag: 'ROUNDTABLE' },
+  { id: 'war_seat_7', label: 'Town Hall High Council Bench', xPct: 50.0, yPct: 65.0, corridorXPct: 50.0, corridorYPct: 67.0, pose: 'desk', facing: 'right', taskTag: 'ROUNDTABLE' },
+];
+
+export function getTownHallSeat(idx: number, total: number = 3): WorkstationDef {
+  if (idx < TOWN_HALL_PRESET_SEATS.length) {
+    return TOWN_HALL_PRESET_SEATS[idx];
+  }
+  // Dynamic elliptical distribution around the central War Room holo-table for large recruited crews
+  const count = Math.max(8, total);
+  const angle = (idx * (2 * Math.PI)) / count;
+  const x = Math.max(28, Math.min(72, Math.round(50 + 18 * Math.cos(angle))));
+  const y = Math.max(65, Math.min(84, Math.round(75 + 9 * Math.sin(angle))));
+  return {
+    id: `war_seat_${idx}`,
+    label: `Town Hall Seat #${idx + 1}`,
+    xPct: x,
+    yPct: y,
+    corridorXPct: x,
+    corridorYPct: Math.min(85, y + 2),
+    pose: idx % 2 === 0 ? 'desk' : 'work',
+    facing: x >= 50 ? 'left' : 'right',
     taskTag: 'ROUNDTABLE',
-  },
-  1: {
-    id: 'war_center_desk',
-    label: 'Town Hall Center Podium',
-    xPct: 50.0,
-    yPct: 83.5,
-    corridorXPct: 50.0,
-    corridorYPct: 84.5,
-    pose: 'desk',
-    facing: 'right',
-    taskTag: 'ROUNDTABLE',
-  },
-  2: {
-    id: 'war_server_rack',
-    label: 'Town Hall East Seat',
-    xPct: 64.0,
-    yPct: 75.0,
-    corridorXPct: 64.0,
-    corridorYPct: 79.0,
-    pose: 'work',
-    facing: 'left',
-    taskTag: 'ROUNDTABLE',
-  },
+  };
+}
+
+export const TOWN_HALL_SEATS: Record<number, WorkstationDef> = {
+  0: TOWN_HALL_PRESET_SEATS[0],
+  1: TOWN_HALL_PRESET_SEATS[1],
+  2: TOWN_HALL_PRESET_SEATS[2],
 };
 
 const AMBIENT_IDLE_TAGS = [
@@ -2023,7 +2026,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
 
     const currentCrew = crewAgentsRef.current;
     currentCrew.forEach((crewMember, idx) => {
-      const seat = TOWN_HALL_SEATS[idx % 3] || TOWN_HALL_SEATS[0];
+      const seat = getTownHallSeat(idx, currentCrew.length);
       if (crewMember && seat) {
         updateAgentRoom(crewMember.id, 'war_room', seat.id);
       }
@@ -2033,17 +2036,8 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
       const next: Record<number, LiveAgentState> = { ...prev };
       currentCrew.forEach((_, idx) => {
         const curr = next[idx];
-        const baseSeat = TOWN_HALL_SEATS[idx % 3] || TOWN_HALL_SEATS[0];
+        const seat = getTownHallSeat(idx, currentCrew.length);
         if (!curr) return;
-
-        const seat: WorkstationDef =
-          idx >= 3
-            ? {
-                ...baseSeat,
-                xPct: Math.max(26, Math.min(74, baseSeat.xPct + (idx % 2 === 0 ? 5 : -5))),
-                yPct: Math.max(64, Math.min(84, baseSeat.yPct + 3)),
-              }
-            : baseSeat;
 
         const path = buildAgentWaypointPath(
           curr.room,
@@ -2145,8 +2139,8 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
                 waypoints: remaining,
               };
             } else {
-              if (isMeetingActive && ag.room === 'war_room' && TOWN_HALL_SEATS[idx]) {
-                const seat = TOWN_HALL_SEATS[idx];
+              if (isMeetingActive && ag.room === 'war_room') {
+                const seat = getTownHallSeat(idx, liveAgentCount);
                 next[idx] = {
                   ...ag,
                   stationId: seat.id,

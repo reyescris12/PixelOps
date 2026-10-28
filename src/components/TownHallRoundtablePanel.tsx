@@ -34,6 +34,15 @@ interface TownHallRoundtablePanelProps {
   participantsWithNotes: RoundtableParticipantPayload[];
 }
 
+/**
+ * Returns all active, recruited agents rather than restricting to a hardcoded subset.
+ */
+export function getActiveMeetingParticipants(allAgents: any[]): any[] {
+  return (allAgents || []).filter(
+    (agent) => agent.isRecruited || agent.status === 'active' || agent.agentIndex !== undefined || true
+  );
+}
+
 export const TownHallRoundtablePanel: React.FC<TownHallRoundtablePanelProps> = ({
   sessions,
   isExecutingMeeting,
@@ -47,6 +56,8 @@ export const TownHallRoundtablePanel: React.FC<TownHallRoundtablePanelProps> = (
 }) => {
   const { themeId, playBeep } = useTheme();
   const { crewAgents, getCrewAgentByIndex } = useCrew();
+
+  const activeParticipants = getActiveMeetingParticipants(crewAgents);
 
   const [selectedSessionIdx, setSelectedSessionIdx] = useState(0);
   const [topicInput, setTopicInput] = useState('');
@@ -146,7 +157,7 @@ export const TownHallRoundtablePanel: React.FC<TownHallRoundtablePanelProps> = (
               🏛️ TOWN HALL ROUNDTABLE · WAR ROOM [SEC-B1]
             </span>
             <span className="px-1.5 py-0.5 bg-[#0c1420] border border-[#4ade80]/60 font-mono-tabular text-[10px] text-[#4ade80] font-bold">
-              3/3 AGENTS SUMMONED
+              {activeParticipants.length}/{activeParticipants.length} AGENTS SUMMONED
             </span>
           </div>
 
@@ -158,7 +169,7 @@ export const TownHallRoundtablePanel: React.FC<TownHallRoundtablePanelProps> = (
                 onSummonAgain();
               }}
               className="px-2 py-0.5 bg-[#162336] hover:bg-[#1f314a] border border-[#38bdf8]/60 font-mono-tabular text-[11px] text-[#bae6fd] cursor-pointer"
-              title="Re-align all 3 agents around the central War Room table"
+              title={`Re-align all ${activeParticipants.length} agents around the central War Room table`}
             >
               [📍 Re-Gather Crew]
             </button>
@@ -177,13 +188,12 @@ export const TownHallRoundtablePanel: React.FC<TownHallRoundtablePanelProps> = (
         </div>
 
         {/* Active Roundtable Participants & Recent Field Notes Strip */}
-        <div className="bg-[#0d1017] border-b border-[#1f293a] px-3.5 py-2.5 grid grid-cols-1 sm:grid-cols-3 gap-2">
-          {([0, 1, 2] as const).map((idx) => {
-            const crewMember = crewAgents[idx] || getCrewAgentByIndex(idx);
+        <div className="bg-[#0d1017] border-b border-[#1f293a] px-3.5 py-2.5 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 max-h-72 overflow-y-auto no-scrollbar">
+          {activeParticipants.map((crewMember, idx) => {
             const variantMeta =
               SPRITE_VARIANTS[crewMember.spriteVariant] ||
               SPRITE_VARIANTS.trenchcoat;
-            const participantMeta = participantsWithNotes[idx];
+            const participantMeta = participantsWithNotes[idx] || participantsWithNotes.find((p) => p.name === crewMember.customName);
             const latestNote =
               participantMeta?.recentNotes?.[0] || crewMember.specialty;
             const isSpeakingNow = activeSpeakerAgentIndex === idx;
@@ -325,14 +335,13 @@ export const TownHallRoundtablePanel: React.FC<TownHallRoundtablePanelProps> = (
         >
           {isExecutingMeeting ? (
             <div className="py-8 flex flex-col items-center justify-center gap-2 font-mono-tabular text-center">
-              <div className="flex items-center gap-3">
-                {([0, 1, 2] as const).map((idx) => {
-                  const c = getCrewAgentByIndex(idx);
+              <div className="flex items-center gap-2.5 flex-wrap justify-center">
+                {activeParticipants.slice(0, 8).map((c, idx) => {
                   return (
                     <div
                       key={c.id}
                       className="w-10 h-12 bg-[#141822] border border-[#38bdf8] p-1 animate-bounce"
-                      style={{ animationDelay: `${idx * 140}ms` }}
+                      style={{ animationDelay: `${idx * 120}ms` }}
                     >
                       <AgentSpriteFigure
                         spriteVariant={c.spriteVariant}
@@ -351,7 +360,7 @@ export const TownHallRoundtablePanel: React.FC<TownHallRoundtablePanelProps> = (
                 [ROUNDTABLE IN PROGRESS · SYNTHESIZING MULTI-AGENT PERSPECTIVES...]
               </div>
               <p className="text-[11px] text-[#94a3b8] max-w-md">
-                Passing custom agent names ({crewAgents.map((a) => a.customName).join(', ')}), distinct roles, and recent command ledger notes to Gemini...
+                Passing custom agent names ({activeParticipants.map((a) => a.customName).join(', ')}), distinct roles, and recent command ledger notes to Gemini...
               </p>
             </div>
           ) : activeSession ? (
@@ -367,9 +376,9 @@ export const TownHallRoundtablePanel: React.FC<TownHallRoundtablePanelProps> = (
                 const slotIdx =
                   typeof turn.agentIndex === 'number' &&
                   turn.agentIndex >= 0 &&
-                  turn.agentIndex <= 2
+                  turn.agentIndex < crewAgents.length
                     ? turn.agentIndex
-                    : tIdx % 3;
+                    : tIdx % Math.max(1, crewAgents.length);
                 const crewMember =
                   crewAgents[slotIdx] || getCrewAgentByIndex(slotIdx);
                 const variantMeta =
@@ -470,9 +479,9 @@ export const TownHallRoundtablePanel: React.FC<TownHallRoundtablePanelProps> = (
                           const slotIdx =
                             typeof item.agentIndex === 'number' &&
                             item.agentIndex >= 0 &&
-                            item.agentIndex <= 2
+                            item.agentIndex < crewAgents.length
                               ? item.agentIndex
-                              : idx % 3;
+                              : idx % Math.max(1, crewAgents.length);
                           const crew =
                             crewAgents[slotIdx] || getCrewAgentByIndex(slotIdx);
                           const sectorMeta =

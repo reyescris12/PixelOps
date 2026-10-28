@@ -15,6 +15,8 @@ import {
   getAvailableIntegrations,
   disconnectAccount,
   ComposioIntegration,
+  getConnectedAccounts,
+  normalizeAppSlug,
 } from './ComposioService';
 import {
   executeSafeOperation,
@@ -2221,6 +2223,403 @@ function tryExtractSearchQuery(prompt: string): string | null {
 }
 
 /**
+ * Executes a parsed external tool action live via ComposioService on the connected account.
+ */
+async function executeAndFormatExternalTool(opts: {
+  appSlug: string;
+  appName: string;
+  actionName: string;
+  actionArgs: Record<string, any>;
+  params: {
+    prompt: string;
+    themeId: ThemeId;
+    activeAgentName: string;
+    activeAgentRole: string;
+    attachment?: { data: string; mimeType: string; name: string } | null;
+  };
+  targetRoom: RoomId;
+  targetStationId: string;
+}): Promise<AgentExecutionCard> {
+  const { appSlug, appName, actionName, actionArgs, params, targetRoom, targetStationId } = opts;
+  const accounts = await getConnectedAccounts();
+  const matched = accounts.find(
+    (a) =>
+      normalizeAppSlug(a.appName) === normalizeAppSlug(appSlug) &&
+      a.status !== 'FAILED' &&
+      a.status !== 'EXPIRED'
+  );
+
+  // If not connected: do NOT simulate! Report honest operational status & instructions to connect
+  if (!matched) {
+    const dialogue = `${params.activeAgentName} (${params.activeAgentRole}): Directive recognized for live ${appName} integration.\n\n• Action: ${actionName}\n• Extracted Parameters:\n${JSON.stringify(actionArgs, null, 2)}\n\n⚠️ EXTERNAL GATEWAY OFFLINE: Your ${appName} account is currently disconnected in the Command Center Armory.\n\nTo execute live directives on ${appName}, open the Armory Toolkit tab (or run "pixelops composio connect ${appSlug}") to authorize via OAuth.`;
+
+    return {
+      id: `card-${Date.now()}`,
+      prompt: params.prompt,
+      dialogue,
+      cardTitle: `${appName.toUpperCase()} GATEWAY OFFLINE`,
+      actionCategory: 'External Tools',
+      steps: [
+        { label: 'Intent Parsed', detail: `Identified ${actionName} with target parameters`, status: 'completed' },
+        { label: 'Connection Verification', detail: `${appName} account not connected in Armory`, status: 'queued' },
+        { label: 'Awaiting Authorization', detail: `Connect ${appName} via Armory Toolkit to dispatch live`, status: 'queued' },
+      ],
+      toolCalls: [
+        {
+          pluginId: appSlug,
+          toolName: actionName,
+          args: actionArgs,
+          resultSummary: `Connection offline: ${appName} requires OAuth authentication in Armory`,
+          livePayload: { error: 'ACCOUNT_NOT_CONNECTED', app: appSlug },
+          targetRoom,
+          targetStationId,
+        },
+      ],
+      tokenEstimate: 70,
+      agentName: params.activeAgentName,
+      themeId: params.themeId,
+      timestamp: new Date().toISOString(),
+      hasAttachment: Boolean(params.attachment),
+    };
+  }
+
+  // Connected! Execute live via ComposioService.executeComposioAction
+  const result = await executeComposioAction(actionName, actionArgs);
+  const executedToolMeta: ExecutedToolCall = {
+    pluginId: appSlug,
+    toolName: actionName,
+    args: actionArgs,
+    resultSummary: result.successful
+      ? `Live execution succeeded on connected ${appName} account (${matched.id})`
+      : `Live execution error: ${result.error || 'Provider rejected request'}`,
+    livePayload: result.successful ? (result.data || { status: 'SUCCESS' }) : { error: result.error },
+    targetRoom,
+    targetStationId,
+  };
+
+  if (result.successful) {
+    const liveDataPreview =
+      typeof result.data === 'object'
+        ? JSON.stringify(result.data, null, 2).slice(0, 350)
+        : String(result.data || 'Action executed successfully.');
+
+    const dialogue = `${params.activeAgentName} (${params.activeAgentRole}): Live external action executed successfully on your connected ${appName} account!\n\n• Action: ${actionName}\n• Account: ${matched.id}\n• Parameters:\n${JSON.stringify(actionArgs, null, 2)}\n\n• Live Response Telemetry:\n${liveDataPreview}\n\nDirective verified live on external infrastructure.`;
+
+    return {
+      id: `card-${Date.now()}`,
+      prompt: params.prompt,
+      dialogue,
+      cardTitle: `${appName.toUpperCase()} DISPATCH SUCCESSFUL`,
+      actionCategory: 'Live Telemetry',
+      steps: [
+        { label: 'Intent & Parameters Parsed', detail: `Target action: ${actionName}`, status: 'completed' },
+        { label: 'Composio Live Execution', detail: `Dispatched to connected account (${matched.id})`, status: 'verified' },
+        { label: 'External Provider Confirmation', detail: `Live response verified from ${appName}`, status: 'completed' },
+      ],
+      toolCalls: [executedToolMeta],
+      tokenEstimate: Math.max(90, Math.round(dialogue.length / 4)),
+      agentName: params.activeAgentName,
+      themeId: params.themeId,
+      timestamp: new Date().toISOString(),
+      hasAttachment: Boolean(params.attachment),
+    };
+  } else {
+    const dialogue = `${params.activeAgentName} (${params.activeAgentRole}): External dispatch error occurred while executing ${actionName} on your connected ${appName} account:\n\nError: ${result.error || 'Provider execution failed'}\n\nParameters attempted:\n${JSON.stringify(actionArgs, null, 2)}\n\nPlease verify that your account has necessary permissions in dashboard.composio.dev.`;
+
+    return {
+      id: `card-${Date.now()}`,
+      prompt: params.prompt,
+      dialogue,
+      cardTitle: `${appName.toUpperCase()} EXECUTION REJECTED`,
+      actionCategory: 'Live Telemetry',
+      steps: [
+        { label: 'Intent Parsed', detail: `Target action: ${actionName}`, status: 'completed' },
+        { label: 'Composio Live Execution', detail: `Dispatched to ${matched.id}`, status: 'queued' },
+        { label: 'Provider Error', detail: String(result.error || 'Action failed'), status: 'queued' },
+      ],
+      toolCalls: [executedToolMeta],
+      tokenEstimate: Math.max(80, Math.round(dialogue.length / 4)),
+      agentName: params.activeAgentName,
+      themeId: params.themeId,
+      timestamp: new Date().toISOString(),
+      hasAttachment: Boolean(params.attachment),
+    };
+  }
+}
+
+/**
+ * Dynamically parses agent directive intent and extracts parameters for external tools
+ * (Gmail, GitHub, Slack, Calendar, Notion, Linear) to execute live on connected accounts.
+ */
+export async function tryParseAndExecuteExternalToolDirective(params: {
+  prompt: string;
+  themeId: ThemeId;
+  activeAgentName: string;
+  activeAgentRole: string;
+  attachment?: { data: string; mimeType: string; name: string } | null;
+  onFunctionCallTriggered?: (info: {
+    toolName: string;
+    args: Record<string, any>;
+    targetRoom: RoomId;
+    targetStationId: string;
+    taskTag: string;
+  }) => void;
+}): Promise<AgentExecutionCard | null> {
+  const rawPrompt = (params.prompt || '').trim();
+  const lower = rawPrompt.toLowerCase();
+
+  // 1. GMAIL INTENT
+  const isGmailSend =
+    /\b(send\s+email|dispatch\s+email|compose\s+email|email\s+to|mail\s+to|write\s+an?\s+email)\b/i.test(lower) ||
+    (/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i.test(rawPrompt) && /\b(email|send|dispatch|message|mail|notify)\b/i.test(lower));
+  const isGmailFetch =
+    /\b(check\s+(my\s+)?(emails?|gmail|inbox)|unread\s+emails?|list\s+(my\s+)?(emails?|messages?)|get\s+(latest\s+)?emails?|fetch\s+emails?)\b/i.test(lower);
+
+  if (isGmailSend || isGmailFetch) {
+    const actionName = isGmailFetch ? 'GMAIL_FETCH_EMAILS' : 'GMAIL_SEND_EMAIL';
+    const appSlug = 'gmail';
+
+    params.onFunctionCallTriggered?.({
+      toolName: actionName.toLowerCase(),
+      args: {},
+      targetRoom: 'comms_tower',
+      targetStationId: 'comms_broadcast_desk',
+      taskTag: 'GMAIL',
+    });
+
+    let actionArgs: Record<string, any> = {};
+
+    if (isGmailFetch) {
+      actionArgs = { max_results: 5 };
+    } else {
+      const emailMatch = rawPrompt.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i);
+      const recipient = emailMatch ? emailMatch[1] : 'team@pixelops.app';
+
+      const subjectMatch =
+        rawPrompt.match(/(?:subject|titled?|with\s+subject)\s*[:"']\s*([^"'\n\r]+)["']?/i) ||
+        rawPrompt.match(/(?:about|regarding)\s+([^,"'.\n\r]+)/i);
+      const subject = subjectMatch
+        ? subjectMatch[1].trim()
+        : `Tactical Dispatch: Directive from Operative ${params.activeAgentName}`;
+
+      const bodyMatch = rawPrompt.match(/(?:saying|body|content|message|text)\s*[:"']\s*([^"'\n\r]+)["']?/i);
+      const body = bodyMatch
+        ? bodyMatch[1].trim()
+        : `[PIXELOPS OPERATIVE DISPATCH]\n\nDirective: ${rawPrompt}\n\nOperative: ${params.activeAgentName} (${params.activeAgentRole})\nStatus: Transmitted via connected Gmail account.\nTimestamp: ${new Date().toISOString()}`;
+
+      actionArgs = {
+        recipient_email: recipient,
+        to: recipient,
+        subject,
+        body,
+        is_html: false,
+      };
+    }
+
+    return await executeAndFormatExternalTool({
+      appSlug,
+      appName: 'Gmail',
+      actionName,
+      actionArgs,
+      params,
+      targetRoom: 'comms_tower',
+      targetStationId: 'comms_broadcast_desk',
+    });
+  }
+
+  // 2. GITHUB INTENT
+  const isGithubStar = /\bstar\s+(?:the\s+)?(?:repo|repository)?\s*([a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)?)/i.test(lower);
+  const isGithubIssue =
+    /\b(github|create\s+issue|open\s+issue|file\s+an?\s+issue|bug\s+report|new\s+issue|repo\s+issue)\b/i.test(lower);
+
+  if (isGithubStar || isGithubIssue) {
+    const actionName = isGithubStar ? 'GITHUB_STAR_A_REPOSITORY_FOR_THE_AUTHENTICATED_USER' : 'GITHUB_CREATE_AN_ISSUE';
+    const appSlug = 'github';
+
+    params.onFunctionCallTriggered?.({
+      toolName: actionName.toLowerCase(),
+      args: {},
+      targetRoom: 'server_vault',
+      targetStationId: 'vault_core_rack',
+      taskTag: 'GITHUB',
+    });
+
+    let actionArgs: Record<string, any> = {};
+
+    const repoMatch = rawPrompt.match(/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)/i);
+    const owner = repoMatch ? repoMatch[1] : 'reyescris12';
+    const repo = repoMatch ? repoMatch[2] : 'PixelOps';
+
+    if (isGithubStar) {
+      actionArgs = { owner, repo };
+    } else {
+      const titleMatch = rawPrompt.match(/(?:titled?|title|named?|issue)\s*[:"']\s*([^"'\n\r]+)["']?/i);
+      const title = titleMatch ? titleMatch[1].trim() : `[Ops Directive] ${rawPrompt.slice(0, 48)}`;
+
+      const bodyMatch = rawPrompt.match(/(?:body|description|content|saying)\s*[:"']\s*([^"'\n\r]+)["']?/i);
+      const body = bodyMatch
+        ? bodyMatch[1].trim()
+        : `### Automated Dispatch\n\n- **Directive:** ${rawPrompt}\n- **Operative:** ${params.activeAgentName} (${params.activeAgentRole})\n- **Safehouse Node:** PixelOps Command Center\n- **Timestamp:** ${new Date().toISOString()}`;
+
+      actionArgs = { owner, repo, title, body };
+    }
+
+    return await executeAndFormatExternalTool({
+      appSlug,
+      appName: 'GitHub',
+      actionName,
+      actionArgs,
+      params,
+      targetRoom: 'server_vault',
+      targetStationId: 'vault_core_rack',
+    });
+  }
+
+  // 3. SLACK INTENT
+  const isSlack =
+    /\b(slack|post\s+to\s+slack|send\s+to\s+slack|broadcast\s+to\s+slack)\b/i.test(lower) ||
+    (/#([a-zA-Z0-9_-]+)/i.test(rawPrompt) && /\b(message|post|send|broadcast|notify|alert)\b/i.test(lower));
+
+  if (isSlack) {
+    const actionName = 'SLACK_CHAT_POST_MESSAGE';
+    const appSlug = 'slack';
+
+    params.onFunctionCallTriggered?.({
+      toolName: actionName.toLowerCase(),
+      args: {},
+      targetRoom: 'war_room',
+      targetStationId: 'war_crypto_terminal',
+      taskTag: 'SLACK',
+    });
+
+    const channelMatch = rawPrompt.match(/#([a-zA-Z0-9_-]+)/i);
+    const channel = channelMatch ? `#${channelMatch[1]}` : '#general';
+
+    const textMatch = rawPrompt.match(/(?:saying|message|text|content)\s*[:"']\s*([^"'\n\r]+)["']?/i);
+    const text = textMatch
+      ? textMatch[1].trim()
+      : `[PIXELOPS TACTICAL BROADCAST] Operative ${params.activeAgentName}: "${rawPrompt}"`;
+
+    const actionArgs = { channel, text, message: text };
+
+    return await executeAndFormatExternalTool({
+      appSlug,
+      appName: 'Slack',
+      actionName,
+      actionArgs,
+      params,
+      targetRoom: 'war_room',
+      targetStationId: 'war_crypto_terminal',
+    });
+  }
+
+  // 4. GOOGLE CALENDAR INTENT
+  const isCalendar =
+    /\b(calendar|gcal|schedule\s+(a\s+)?(meeting|briefing|event|call|session)|book\s+(a\s+)?(meeting|slot|briefing))\b/i.test(lower);
+
+  if (isCalendar) {
+    const actionName = 'GOOGLECALENDAR_CREATE_EVENT';
+    const appSlug = 'googlecalendar';
+
+    params.onFunctionCallTriggered?.({
+      toolName: actionName.toLowerCase(),
+      args: {},
+      targetRoom: 'lounge',
+      targetStationId: 'lounge_comms_chair',
+      taskTag: 'CALENDAR',
+    });
+
+    const titleMatch = rawPrompt.match(/(?:titled?|named?|event|meeting|briefing)\s*[:"']\s*([^"'\n\r]+)["']?/i);
+    const summary = titleMatch ? titleMatch[1].trim() : `Tactical Briefing: ${params.activeAgentName}`;
+
+    const tomorrow = new Date(Date.now() + 86400000);
+    const startTime = tomorrow.toISOString();
+    const endTime = new Date(tomorrow.getTime() + 3600000).toISOString();
+
+    const actionArgs = {
+      summary,
+      description: `PixelOps Mission Briefing initiated by ${params.activeAgentName} (${params.activeAgentRole}). Directive: ${rawPrompt}`,
+      start_time: startTime,
+      end_time: endTime,
+    };
+
+    return await executeAndFormatExternalTool({
+      appSlug,
+      appName: 'Google Calendar',
+      actionName,
+      actionArgs,
+      params,
+      targetRoom: 'lounge',
+      targetStationId: 'lounge_comms_chair',
+    });
+  }
+
+  // 5. NOTION INTENT
+  const isNotion = /\b(notion|create\s+(a\s+)?notion\s+page|notion\s+doc)\b/i.test(lower);
+  if (isNotion) {
+    const actionName = 'NOTION_CREATE_PAGE';
+    const appSlug = 'notion';
+
+    params.onFunctionCallTriggered?.({
+      toolName: actionName.toLowerCase(),
+      args: {},
+      targetRoom: 'library',
+      targetStationId: 'library_archive_terminal',
+      taskTag: 'NOTION',
+    });
+
+    const titleMatch = rawPrompt.match(/(?:titled?|title|named?|page)\s*[:"']\s*([^"'\n\r]+)["']?/i);
+    const title = titleMatch ? titleMatch[1].trim() : `Mission Brief: ${params.activeAgentName}`;
+    const content = `Directive: ${rawPrompt}\n\nOperative: ${params.activeAgentName} (${params.activeAgentRole})\nStatus: Logged into Notion workspace.`;
+
+    const actionArgs = { title, content };
+
+    return await executeAndFormatExternalTool({
+      appSlug,
+      appName: 'Notion',
+      actionName,
+      actionArgs,
+      params,
+      targetRoom: 'library',
+      targetStationId: 'library_archive_terminal',
+    });
+  }
+
+  // 6. LINEAR INTENT
+  const isLinear = /\b(linear|linear\s+ticket|linear\s+issue|file\s+(a\s+)?linear)\b/i.test(lower);
+  if (isLinear) {
+    const actionName = 'LINEAR_CREATE_ISSUE';
+    const appSlug = 'linear';
+
+    params.onFunctionCallTriggered?.({
+      toolName: actionName.toLowerCase(),
+      args: {},
+      targetRoom: 'library',
+      targetStationId: 'library_archive_terminal',
+      taskTag: 'LINEAR',
+    });
+
+    const titleMatch = rawPrompt.match(/(?:titled?|title|named?|issue)\s*[:"']\s*([^"'\n\r]+)["']?/i);
+    const title = titleMatch ? titleMatch[1].trim() : `Engineering Task: ${params.activeAgentName}`;
+    const description = `Directive: ${rawPrompt}\n\nFiled by Operative ${params.activeAgentName} (${params.activeAgentRole}).`;
+
+    const actionArgs = { title, description };
+
+    return await executeAndFormatExternalTool({
+      appSlug,
+      appName: 'Linear',
+      actionName,
+      actionArgs,
+      params,
+      targetRoom: 'library',
+      targetStationId: 'library_archive_terminal',
+    });
+  }
+
+  return null;
+}
+
+/**
  * Generates an authentic, in-character AgentExecutionCard locally using client-side tools and heuristic intelligence.
  * Completely autonomous: zero network latency, zero remote backend dependencies.
  */
@@ -2241,6 +2640,13 @@ export async function generateLocalHeuristicCard(params: {
 }): Promise<AgentExecutionCard> {
   const promptLower = (params.prompt || '').toLowerCase().trim();
   const rawPrompt = (params.prompt || '').trim();
+
+  // 0. Intercept any external tool directive (Gmail, GitHub, Slack, Calendar, Notion, Linear)
+  const externalToolCard = await tryParseAndExecuteExternalToolDirective(params);
+  if (externalToolCard) {
+    return externalToolCard;
+  }
+
   const executedTools: ExecutedToolCall[] = [];
 
   // ==========================================
@@ -2772,6 +3178,13 @@ export async function executeAgentDirective(params: {
       // Check active LLM provider configuration
       const llmConfig = loadLLMProviderConfig();
       const apiKey = llmConfig.apiKey?.trim();
+
+      // Intercept any explicit external tool directives (Gmail, GitHub, Slack, Calendar, Notion, Linear)
+      // to execute live via ComposioService and connected accounts instead of simulating
+      const externalToolCard = await tryParseAndExecuteExternalToolDirective(params);
+      if (externalToolCard) {
+        return externalToolCard;
+      }
 
       // If no valid API key is configured or key is placeholder, run pure client heuristic simulation
       if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {

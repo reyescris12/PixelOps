@@ -115,17 +115,32 @@ export const onRequest = async (context: {
 
     if (isConnectedAccounts) {
       if (method.toUpperCase() === 'GET') {
-        const separator = targetUrl.includes('?') ? '&' : '?';
-        targetUrl = `${targetUrl}${separator}entityId=${encodeURIComponent(entityId)}&user_uuid=${encodeURIComponent(entityId)}&user_id=${encodeURIComponent(entityId)}`;
+        const hasExplicitEntity =
+          cleanEndpoint.includes('entityId=') ||
+          cleanEndpoint.includes('user_uuid=') ||
+          cleanEndpoint.includes('user_id=');
+        const wantsAllAccounts =
+          entityId === 'all' ||
+          cleanEndpoint.includes('includeAll=true') ||
+          cleanEndpoint.includes('all=true');
+
+        if (!hasExplicitEntity && !wantsAllAccounts) {
+          const separator = targetUrl.includes('?') ? '&' : '?';
+          targetUrl = `${targetUrl}${separator}entityId=${encodeURIComponent(entityId)}&user_uuid=${encodeURIComponent(entityId)}&user_id=${encodeURIComponent(entityId)}`;
+        }
       } else if (method.toUpperCase() === 'POST' && modifiedBody) {
-        modifiedBody.user_uuid = entityId;
-        modifiedBody.user_id = entityId;
-        modifiedBody.entityId = entityId;
+        if (!modifiedBody.user_uuid && !modifiedBody.entityId && !modifiedBody.user_id) {
+          modifiedBody.user_uuid = entityId;
+          modifiedBody.user_id = entityId;
+          modifiedBody.entityId = entityId;
+        }
       }
     } else if ((cleanEndpoint.includes('/execute') || cleanEndpoint.includes('/tools/')) && modifiedBody) {
-      modifiedBody.entityId = entityId;
-      modifiedBody.user_uuid = entityId;
-      modifiedBody.user_id = entityId;
+      if (!modifiedBody.entityId && !modifiedBody.user_id && !modifiedBody.user_uuid) {
+        modifiedBody.entityId = entityId;
+        modifiedBody.user_uuid = entityId;
+        modifiedBody.user_id = entityId;
+      }
     }
 
     const composioHeaders: Record<string, string> = {

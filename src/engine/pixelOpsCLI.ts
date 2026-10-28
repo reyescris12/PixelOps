@@ -1,4 +1,4 @@
-﻿/**
+/**
  * PixelOps CLI & Headless Command Router
  * Parses and executes tactical developer/power-user CLI commands:
  * - pixelops status / ls
@@ -513,9 +513,9 @@ export async function executeCLICommand(
         : `🔴 OFFLINE (${ping.error || 'Unreachable'} in ${ping.latencyMs}ms)`;
 
       const rows = [
-        'ΓòöΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòù',
-        'Γòæ COMPOSIO MULTI-USER PLUGIN ENGINE STATUS                                       Γòæ',
-        'ΓòáΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòú',
+        '+------------------------------------------------------------------------------+',
+        '| COMPOSIO MULTI-USER PLUGIN ENGINE STATUS                                     |',
+        '+------------------------------------------------------------------------------+',
         `  ISOLATED ENTITY ID : ${entityId}`,
         `  API KEY SOURCE     : ${customKey ? 'Custom BYOK Key (Direct Browser REST active)' : 'Cloudflare Server Proxy (/api/composio)'}`,
         `  LIVE CONNECTION    : ${pingStatus}`,
@@ -527,10 +527,10 @@ export async function executeCLICommand(
           : accounts
               .map(
                 (acc) =>
-                  `  🔗 [${acc.appName.toUpperCase().padEnd(10)}] ID: ${acc.id} · Status: ${acc.status}`
+                  `  [ONLINE] [${acc.appName.toUpperCase().padEnd(10)}] ID: ${acc.id} · Status: ${acc.status}`
               )
               .join('\n'),
-        'ΓòÜΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓò¥',
+        '+------------------------------------------------------------------------------+',
         'Supported apps: github, slack, gmail, notion, linear',
         'Commands: composio connect <app> | composio key <api_key> | composio run <action> <json>',
       ];
@@ -712,17 +712,17 @@ export async function executeCLICommand(
       try {
         const items = await getAvailableIntegrations();
         const lines = [
-          'ΓòöΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòù',
-          'Γòæ COMPOSIO ARMORY TOOLKIT MATRIX                                                 Γòæ',
-          'ΓòáΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòú',
+          '+------------------------------------------------------------------------------+',
+          '| COMPOSIO ARMORY TOOLKIT MATRIX                                               |',
+          '+------------------------------------------------------------------------------+',
           ...items.map(
             (it) =>
-              `  ${it.connected ? '●' : '○'} [${it.appName.padEnd(14)}] ${it.name.padEnd(18)} · ${it.category.padEnd(18)} · ${it.connected ? '[CONNECTED]' : '[OFFLINE]'}`
+              `  ${it.connected ? '[*]' : '[ ]'} [${it.appName.padEnd(14)}] ${it.name.padEnd(18)} · ${it.category.padEnd(18)} · ${it.connected ? '[CONNECTED]' : '[OFFLINE]'}`
           ),
           '--------------------------------------------------------------------------------',
           `Total Toolkits: ${items.length} · Connected: ${items.filter((i) => i.connected).length}`,
           'Commands: composio connect <app> | composio agent <prompt>',
-          'ΓòÜΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓò¥',
+          '+------------------------------------------------------------------------------+',
         ];
         return {
           command: trimmed,

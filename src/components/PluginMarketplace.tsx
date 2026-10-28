@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   ComposioService,
   ComposioIntegration,
@@ -7,6 +7,7 @@ import {
   getComposioApiKey,
   setComposioApiKey,
   pingComposio,
+  normalizeAppSlug,
 } from '../services/ComposioService';
 
 interface PluginMarketplaceProps {
@@ -46,10 +47,21 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
 
   const entityId = useMemo(() => getOrCreateEntityId(), []);
 
+  const isRefreshingRef = useRef(false);
+  const lastRefreshTimeRef = useRef(0);
+
   // Fetch available integrations and annotate with live connection status
-  const refreshIntegrations = useCallback(async () => {
+  const refreshIntegrations = useCallback(async (isInitial = false) => {
+    const now = Date.now();
+    if (isRefreshingRef.current) return;
+    if (!isInitial && now - lastRefreshTimeRef.current < 2000) return;
+
     try {
-      setLoading(true);
+      isRefreshingRef.current = true;
+      lastRefreshTimeRef.current = now;
+      if (isInitial) {
+        setLoading(true);
+      }
       const items = await ComposioService.getAvailableIntegrations();
       if (items && items.length > 0) {
         setIntegrations(items);
@@ -57,27 +69,51 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
     } catch (err: any) {
       console.error('[ARMORY MARKETPLACE FETCH ERROR]', err);
     } finally {
-      setLoading(false);
+      isRefreshingRef.current = false;
+      if (isInitial) {
+        setLoading(false);
+      }
     }
   }, []);
 
   useEffect(() => {
-    refreshIntegrations();
+    refreshIntegrations(true);
 
-    // Re-check connections when window re-focuses or when OAuth handshake dispatches events
+    let debounceTimer: any = null;
     const handleSync = () => {
-      refreshIntegrations();
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        refreshIntegrations(false);
+      }, 500);
     };
 
     window.addEventListener('focus', handleSync);
     window.addEventListener('composio:connection-updated', handleSync);
     window.addEventListener('composio:session-synced', handleSync);
 
-    const unsubscribe = ComposioService.subscribeToConnectionChanges?.(() => {
-      refreshIntegrations();
+    // In-memory sync without network refetch to eliminate infinite re-render loops
+    const unsubscribe = ComposioService.subscribeToConnectionChanges?.((accounts) => {
+      if (Array.isArray(accounts)) {
+        setIntegrations((prev) => {
+          const map = new Map(accounts.map((a) => [normalizeAppSlug(a.appName), a]));
+          return prev.map((item) => {
+            const acc = map.get(normalizeAppSlug(item.appName));
+            if (acc) {
+              const isOnline = acc.status !== 'FAILED' && acc.status !== 'EXPIRED';
+              return {
+                ...item,
+                connected: isOnline,
+                connectionId: acc.id || item.connectionId,
+              };
+            }
+            return item;
+          });
+        });
+      }
     });
 
     return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
       window.removeEventListener('focus', handleSync);
       window.removeEventListener('composio:connection-updated', handleSync);
       window.removeEventListener('composio:session-synced', handleSync);
@@ -281,7 +317,7 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
             </button>
             <button
               type="button"
-              onClick={refreshIntegrations}
+              onClick={() => refreshIntegrations(false)}
               disabled={loading}
               className="px-2.5 py-1 bg-[#1a1410] hover:bg-[#2c2014] text-[#e59838] border border-[#785732] font-mono-tabular text-xs cursor-pointer flex items-center gap-1.5 transition-colors"
               title="Sync connection status with backend"

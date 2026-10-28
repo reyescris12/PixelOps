@@ -433,17 +433,32 @@ async function callComposioDirect(
 
   if (isConnectedAccounts) {
     if (method.toUpperCase() === 'GET') {
-      const sep = targetUrl.includes('?') ? '&' : '?';
-      targetUrl = `${targetUrl}${sep}entityId=${encodeURIComponent(entityId)}&user_uuid=${encodeURIComponent(entityId)}&user_id=${encodeURIComponent(entityId)}`;
+      const hasExplicitEntity =
+        targetUrl.includes('entityId=') ||
+        targetUrl.includes('user_uuid=') ||
+        targetUrl.includes('user_id=');
+      const wantsAllAccounts =
+        entityId === 'all' ||
+        targetUrl.includes('includeAll=true') ||
+        targetUrl.includes('all=true');
+
+      if (!hasExplicitEntity && !wantsAllAccounts) {
+        const sep = targetUrl.includes('?') ? '&' : '?';
+        targetUrl = `${targetUrl}${sep}entityId=${encodeURIComponent(entityId)}&user_uuid=${encodeURIComponent(entityId)}&user_id=${encodeURIComponent(entityId)}`;
+      }
     } else if (method.toUpperCase() === 'POST' && modifiedBody) {
-      modifiedBody.user_uuid = entityId;
-      modifiedBody.user_id = entityId;
-      modifiedBody.entityId = entityId;
+      if (!modifiedBody.user_uuid && !modifiedBody.entityId && !modifiedBody.user_id) {
+        modifiedBody.user_uuid = entityId;
+        modifiedBody.user_id = entityId;
+        modifiedBody.entityId = entityId;
+      }
     }
   } else if ((targetUrl.includes('/execute') || targetUrl.includes('/tools/')) && modifiedBody) {
-    modifiedBody.entityId = entityId;
-    modifiedBody.user_id = entityId;
-    modifiedBody.user_uuid = entityId;
+    if (!modifiedBody.entityId && !modifiedBody.user_id && !modifiedBody.user_uuid) {
+      modifiedBody.entityId = entityId;
+      modifiedBody.user_id = entityId;
+      modifiedBody.user_uuid = entityId;
+    }
   }
 
   let directRes = await fetch(targetUrl, {
@@ -588,9 +603,10 @@ async function callComposioProxy(
 export function normalizeAppSlug(slug: string): string {
   const s = String(slug || '').toLowerCase().replace(/[-_\s]/g, '');
   if (s === 'x') return 'twitter';
-  if (s === 'calendar') return 'googlecalendar';
+  if (s === 'calendar' || s === 'gcal') return 'googlecalendar';
   if (s === 'sheets') return 'googlesheets';
   if (s === 'drive') return 'googledrive';
+  if (s === 'googlemail' || s === 'email' || s === 'mail') return 'gmail';
   return s;
 }
 
@@ -633,71 +649,85 @@ export function removeLocalConnectedAccount(connectionIdOrAppName: string): void
 }
 
 /**
- * 2. Get user's personal connected accounts via v3 connectedAccounts endpoint
- * Scoped strictly to the caller's entityId to update UI counters from (0) to active count.
+ * 2. Get connected accounts across project, CLI default entity, and caller entityId
+ * Retrieves all valid connections so external connections (CLI/browser/dashboard) show online.
  */
 export async function getConnectedAccounts(): Promise<ComposioConnectedAccount[]> {
   const entityId = getOrCreateEntityId();
   try {
-    let data: any;
+    const rawItems: any[] = [];
+
+    // Query 1: Project-wide connected accounts (includes CLI connections linked to this project/API key)
     try {
-      data = await callComposioProxy(
-        `/api/v3/connectedAccounts?entityId=${encodeURIComponent(entityId)}&user_id=${encodeURIComponent(entityId)}&entity_id=${encodeURIComponent(entityId)}`,
-        'GET'
-      );
+      const dataAll = await callComposioProxy('/connectedAccounts?includeAll=true', 'GET');
+      const list = Array.isArray(dataAll) ? dataAll : dataAll?.items || dataAll?.connectedAccounts || dataAll?.data || [];
+      if (Array.isArray(list)) rawItems.push(...list);
     } catch {
-      data = await callComposioProxy(
-        `/connected_accounts?entityId=${encodeURIComponent(entityId)}&entity_id=${encodeURIComponent(entityId)}&user_uuid=${encodeURIComponent(entityId)}&user_id=${encodeURIComponent(entityId)}`,
-        'GET'
-      );
+      try {
+        const dataAltAll = await callComposioProxy('/connected_accounts?includeAll=true', 'GET');
+        const list = Array.isArray(dataAltAll) ? dataAltAll : dataAltAll?.items || dataAltAll?.connected_accounts || dataAltAll?.data || [];
+        if (Array.isArray(list)) rawItems.push(...list);
+      } catch {}
     }
 
-    const items = Array.isArray(data)
-      ? data
-      : data?.items ||
-        data?.connectedAccounts ||
-        data?.connected_accounts ||
-        data?.connections ||
-        data?.data ||
-        [];
+    // Query 2: Composio CLI standard 'default' entity
+    try {
+      const dataDef = await callComposioProxy('/connectedAccounts?entityId=default', 'GET');
+      const list = Array.isArray(dataDef) ? dataDef : dataDef?.items || dataDef?.connectedAccounts || dataDef?.data || [];
+      if (Array.isArray(list)) rawItems.push(...list);
+    } catch {}
 
-    const normalized: ComposioConnectedAccount[] = items.map((item: any) => {
-      const rawStatus = String(item.status || item.connection_status || 'ACTIVE').toUpperCase();
-      const status: 'ACTIVE' | 'INITIATED' | 'FAILED' | 'EXPIRED' =
-        rawStatus.includes('FAIL')
-          ? 'FAILED'
-          : rawStatus.includes('EXPIR')
-          ? 'EXPIRED'
-          : rawStatus.includes('INIT')
-          ? 'INITIATED'
-          : 'ACTIVE';
+    // Query 3: Commander isolated entity
+    try {
+      const dataUser = await callComposioProxy(
+        `/connectedAccounts?entityId=${encodeURIComponent(entityId)}`,
+        'GET'
+      );
+      const list = Array.isArray(dataUser) ? dataUser : dataUser?.items || dataUser?.connectedAccounts || dataUser?.data || [];
+      if (Array.isArray(list)) rawItems.push(...list);
+    } catch {}
 
-      const rawAppName = String(
-        item.appName ||
-        item.app ||
-        item.toolkit?.slug ||
-        item.toolkit?.name ||
-        item.toolkit_slug ||
-        item.toolkitSlug ||
-        item.toolkit ||
-        item.integration?.slug ||
-        item.integration?.name ||
-        item.integrationId ||
-        item.integration_id ||
-        item.app_name ||
-        item.authConfig?.toolkit?.slug ||
-        item.auth_config?.toolkit?.slug ||
-        ''
-      ).toLowerCase().trim();
+    const normalized: ComposioConnectedAccount[] = rawItems
+      .filter((item) => item && typeof item === 'object')
+      .map((item: any) => {
+        const rawStatus = String(item.status || item.connection_status || 'ACTIVE').toUpperCase();
+        const status: 'ACTIVE' | 'INITIATED' | 'FAILED' | 'EXPIRED' =
+          rawStatus.includes('FAIL')
+            ? 'FAILED'
+            : rawStatus.includes('EXPIR')
+            ? 'EXPIRED'
+            : rawStatus.includes('INIT')
+            ? 'INITIATED'
+            : 'ACTIVE';
 
-      return {
-        id: String(item.id || item.connectionId || item.connected_account_id || item.connection_id || ''),
-        appName: rawAppName,
-        status,
-        createdAt: item.createdAt || item.created_at || new Date().toISOString(),
-        userUuid: item.userUuid || item.user_uuid || item.user_id || item.entityId || entityId,
-      };
-    });
+        const rawAppName = String(
+          item.appName ||
+          item.app ||
+          item.toolkit?.slug ||
+          item.toolkit?.name ||
+          item.toolkit_slug ||
+          item.toolkitSlug ||
+          item.toolkit ||
+          item.integration?.slug ||
+          item.integration?.name ||
+          item.integrationId ||
+          item.integration_id ||
+          item.app_name ||
+          item.authConfig?.toolkit?.slug ||
+          item.auth_config?.toolkit?.slug ||
+          item.authConfig?.toolkitSlug ||
+          item.auth_config?.toolkitSlug ||
+          ''
+        ).toLowerCase().trim();
+
+        return {
+          id: String(item.id || item.connectionId || item.connected_account_id || item.connection_id || ''),
+          appName: rawAppName,
+          status,
+          createdAt: item.createdAt || item.created_at || new Date().toISOString(),
+          userUuid: item.userUuid || item.user_uuid || item.user_id || item.entityId || entityId,
+        };
+      });
 
     // Merge persistent local accounts so live UI always reflects confirmed connections
     const localAccounts = getLocalConnectedAccounts();
@@ -715,14 +745,10 @@ export async function getConnectedAccounts(): Promise<ComposioConnectedAccount[]
       }
     }
 
-    const mergedList = Array.from(mergedMap.values());
-    notifyConnectionSync(mergedList);
-    return mergedList;
+    return Array.from(mergedMap.values());
   } catch (err) {
     console.warn('[COMPOSIO GET CONNECTED ACCOUNTS ERROR]', err);
-    const fallback = getLocalConnectedAccounts();
-    notifyConnectionSync(fallback);
-    return fallback;
+    return getLocalConnectedAccounts();
   }
 }
 
@@ -1456,7 +1482,7 @@ export async function getGeminiTools(connectedAppNames?: string[]): Promise<any[
 }
 
 /**
- * 5. Execute Composio Action Scoped Strictly to User's entityId (v3 Tools Execute)
+ * 5. Execute Composio Action Scoped to Connected Account and entityId (v3 Tools Execute)
  */
 export async function executeComposioAction(
   actionName: string,
@@ -1466,7 +1492,7 @@ export async function executeComposioAction(
   let normalizedAction = actionName
     .replace(/^composio_/i, '')
     .toUpperCase();
-  let actionParams = params;
+  let actionParams: Record<string, any> = { ...(params || {}) };
 
   // Handle generic dynamic tool invocation: composio_${app}_execute_action
   if (normalizedAction.endsWith('_EXECUTE_ACTION') && params?.action_slug) {
@@ -1474,43 +1500,107 @@ export async function executeComposioAction(
     actionParams = (params.parameters as Record<string, any>) || {};
   }
 
-  const payload = {
-    entityId,
-    user_id: entityId,
-    user_uuid: entityId,
+  // Find corresponding connected account if available
+  const appPrefix = normalizedAction.split('_')[0].toLowerCase();
+  const normalizedApp = normalizeAppSlug(appPrefix);
+  let matchedAccount: ComposioConnectedAccount | undefined;
+  try {
+    const activeAccounts = await getConnectedAccounts();
+    matchedAccount = activeAccounts.find(
+      (a) =>
+        normalizeAppSlug(a.appName) === normalizedApp &&
+        a.status !== 'FAILED' &&
+        a.status !== 'EXPIRED'
+    );
+  } catch {}
+
+  // Parameter normalizations
+  if (normalizedAction.includes('GMAIL')) {
+    if (actionParams.recipient_email && !actionParams.to) {
+      actionParams.to = actionParams.recipient_email;
+    } else if (actionParams.to && !actionParams.recipient_email) {
+      actionParams.recipient_email = actionParams.to;
+    }
+    if (actionParams.is_html === undefined) {
+      actionParams.is_html = false;
+    }
+  }
+
+  if (normalizedAction.includes('GITHUB')) {
+    if (actionParams.repo && String(actionParams.repo).includes('/')) {
+      const parts = String(actionParams.repo).split('/');
+      actionParams.owner = actionParams.owner || parts[0];
+      actionParams.repo = parts[1];
+    }
+  }
+
+  if (normalizedAction.includes('SLACK')) {
+    if (actionParams.text && !actionParams.message) {
+      actionParams.message = actionParams.text;
+    } else if (actionParams.message && !actionParams.text) {
+      actionParams.text = actionParams.message;
+    }
+  }
+
+  const effectiveUserId = matchedAccount?.userUuid || entityId || 'default';
+  const payload: Record<string, any> = {
+    entityId: effectiveUserId,
+    user_id: effectiveUserId,
+    user_uuid: effectiveUserId,
     input: actionParams,
     arguments: actionParams,
     parameters: actionParams,
   };
 
-  try {
-    let result: any;
-    try {
-      // Modern v3 tool execution route
-      result = await callComposioProxy(`/tools/execute/${encodeURIComponent(normalizedAction)}`, 'POST', payload);
-    } catch (toolErr: any) {
-      // Fallback route if backend aliases via /actions/{slug}/execute
-      try {
-        result = await callComposioProxy(`/actions/${encodeURIComponent(normalizedAction)}/execute`, 'POST', payload);
-      } catch {
-        throw toolErr;
-      }
-    }
-
-    return {
-      successful: true,
-      data: result?.data || result?.response || result,
-      actionName,
-      executedAt: new Date().toISOString(),
-    };
-  } catch (err: any) {
-    return {
-      successful: false,
-      error: err?.message || 'Composio execution failed.',
-      actionName,
-      executedAt: new Date().toISOString(),
-    };
+  if (matchedAccount?.id) {
+    payload.connected_account_id = matchedAccount.id;
+    payload.connectedAccountId = matchedAccount.id;
   }
+
+  // Action aliases to try if initial execution fails
+  const actionsToTry = [normalizedAction];
+  if (normalizedAction === 'GITHUB_CREATE_ISSUE') {
+    actionsToTry.push('GITHUB_CREATE_AN_ISSUE');
+  } else if (normalizedAction === 'GITHUB_CREATE_AN_ISSUE') {
+    actionsToTry.push('GITHUB_CREATE_ISSUE');
+  } else if (normalizedAction === 'SLACK_SEND_MESSAGE') {
+    actionsToTry.push('SLACK_CHAT_POST_MESSAGE');
+  } else if (normalizedAction === 'SLACK_CHAT_POST_MESSAGE') {
+    actionsToTry.push('SLACK_SEND_MESSAGE');
+  }
+
+  let lastError: any = null;
+
+  for (const act of actionsToTry) {
+    try {
+      let result: any;
+      try {
+        result = await callComposioProxy(`/tools/execute/${encodeURIComponent(act)}`, 'POST', payload);
+      } catch (toolErr: any) {
+        try {
+          result = await callComposioProxy(`/actions/${encodeURIComponent(act)}/execute`, 'POST', payload);
+        } catch {
+          result = await callComposioProxy(`/api/v3/tools/execute/${encodeURIComponent(act)}`, 'POST', payload);
+        }
+      }
+
+      return {
+        successful: true,
+        data: result?.data || result?.response || result,
+        actionName: act,
+        executedAt: new Date().toISOString(),
+      };
+    } catch (err: any) {
+      lastError = err;
+    }
+  }
+
+  return {
+    successful: false,
+    error: lastError?.message || 'Composio execution failed.',
+    actionName,
+    executedAt: new Date().toISOString(),
+  };
 }
 
 /**

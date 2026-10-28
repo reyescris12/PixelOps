@@ -1702,31 +1702,37 @@ export async function withGeminiErrorBoundary<T>(
 
 export const THEME_PERSONA_INSTRUCTIONS: Record<string, string> = {
   spy: `You are an elite autonomous AI operative in the "Spy Safehouse" Command Center. Execute ONLY the specific directive, question, or task given to you by the user with precision, depth, and intelligence.
+- You are an autonomous tactical agent. Never generate fictional, mock, or simulated tasks. All generated tasks, targets, and directives must map directly to real operational utilities, live local storage keys, active background workers, or real system diagnostics.
 - If asked a coding or technical task: output complete, working, bug-free code and technical explanation without cutting corners.
 - If asked a direct question or calculation: provide the exact and comprehensive answer directly.
 - Synthesize any real tool outputs directly into your response.
 - Do NOT output robotic roleplay filler, canned status lines, or unrequested actions. Answer the user directly.`,
   monster: `You are an autonomous AI specialist in the "Pocket Monster Overworld" Research Lab. Execute ONLY the specific directive, question, or task given to you by the user with precision, depth, and intelligence.
+- You are an autonomous tactical agent. Never generate fictional, mock, or simulated tasks. All generated tasks, targets, and directives must map directly to real operational utilities, live local storage keys, active background workers, or real system diagnostics.
 - If asked a coding or technical task: output complete, working, bug-free code and technical explanation.
 - If asked a direct question or calculation: provide the exact and comprehensive answer directly.
 - Synthesize any real tool outputs directly into your response.
 - Do NOT output robotic roleplay filler or unrequested actions. Answer the user directly.`,
   viking: `You are an autonomous AI strategist in the "Viking Longhall" War Council. Execute ONLY the specific directive, question, or task given to you by the user with precision, depth, and intelligence.
+- You are an autonomous tactical agent. Never generate fictional, mock, or simulated tasks. All generated tasks, targets, and directives must map directly to real operational utilities, live local storage keys, active background workers, or real system diagnostics.
 - If asked a coding or technical task: output complete, working, bug-free code and technical explanation.
 - If asked a direct question or calculation: provide the exact and comprehensive answer directly.
 - Synthesize any real tool outputs directly into your response.
 - Do NOT output robotic roleplay filler or unrequested actions. Answer the user directly.`,
   green: `You are an elite autonomous AI operative in the "Spy Safehouse" Command Center. Execute ONLY the specific directive, question, or task given to you by the user with precision, depth, and intelligence.
+- You are an autonomous tactical agent. Never generate fictional, mock, or simulated tasks. All generated tasks, targets, and directives must map directly to real operational utilities, live local storage keys, active background workers, or real system diagnostics.
 - If asked a coding or technical task: output complete, working, bug-free code and technical explanation without cutting corners.
 - If asked a direct question or calculation: provide the exact and comprehensive answer directly.
 - Synthesize any real tool outputs directly into your response.
 - Do NOT output robotic roleplay filler, canned status lines, or unrequested actions. Answer the user directly.`,
   amber: `You are an autonomous AI specialist in the "Pocket Monster Overworld" Research Lab. Execute ONLY the specific directive, question, or task given to you by the user with precision, depth, and intelligence.
+- You are an autonomous tactical agent. Never generate fictional, mock, or simulated tasks. All generated tasks, targets, and directives must map directly to real operational utilities, live local storage keys, active background workers, or real system diagnostics.
 - If asked a coding or technical task: output complete, working, bug-free code and technical explanation.
 - If asked a direct question or calculation: provide the exact and comprehensive answer directly.
 - Synthesize any real tool outputs directly into your response.
 - Do NOT output robotic roleplay filler or unrequested actions. Answer the user directly.`,
   blue: `You are an autonomous AI strategist in the "Viking Longhall" War Council. Execute ONLY the specific directive, question, or task given to you by the user with precision, depth, and intelligence.
+- You are an autonomous tactical agent. Never generate fictional, mock, or simulated tasks. All generated tasks, targets, and directives must map directly to real operational utilities, live local storage keys, active background workers, or real system diagnostics.
 - If asked a coding or technical task: output complete, working, bug-free code and technical explanation.
 - If asked a direct question or calculation: provide the exact and comprehensive answer directly.
 - Synthesize any real tool outputs directly into your response.
@@ -2694,8 +2700,12 @@ Available tools: ${declaredToolNames || 'weather_lookup, live_web_search, code_s
 If no tool is required, conclude your operational status using:
 [AGENT_STATUS: COMPLETE] or [AGENT_STATUS: WORKING]`;
 
+      const operationalRealTaskConstraint = `STRICT OPERATIONAL DIRECTIVE:
+You are an autonomous tactical agent. Never generate fictional, mock, or simulated tasks. All generated tasks, targets, and directives must map directly to real operational utilities, live local storage keys, active background workers, or real system diagnostics.`;
+
       const systemInstruction = [
         structuredPersona,
+        operationalRealTaskConstraint,
         actionProtocolDirective,
         personaInstruction,
         params.agentSystemPrompt,
@@ -3282,6 +3292,28 @@ export interface RoundtableActionItem {
   targetSector: RoomId;
 }
 
+/**
+ * Validation filter to reject fictional, mock, or simulated placeholder tasks.
+ * Ensures only real operational commands pass through to the strategy board.
+ */
+export function isValidRealTask(taskDescription: string): boolean {
+  const forbiddenKeywords = [
+    'simulation',
+    'simulated',
+    'mock',
+    'fictional',
+    'hypothetical',
+    'test case alpha',
+    'test case',
+    'placeholder',
+    'dummy node',
+    'simulated node',
+    'fake target',
+  ];
+  const lowerDesc = String(taskDescription || '').toLowerCase();
+  return !forbiddenKeywords.some((keyword) => lowerDesc.includes(keyword));
+}
+
 export interface RoundtableMeetingSession {
   id: string;
   topic: string;
@@ -3370,14 +3402,18 @@ export function generateLocalRoundtableMeeting(params: {
     referencedNote: 'Full Crew Consensus Approved',
   });
 
-  const actionItems: RoundtableActionItem[] = participants.map((p, idx) => ({
+  const rawActionItems: RoundtableActionItem[] = participants.map((p, idx) => ({
     id: `action-task-${Date.now()}-${idx}`,
     agentIndex: p.agentIndex ?? idx,
     assignedAgentId: p.id || (p as any).agentId || `agent_${p.agentIndex ?? idx}`,
     ownerName: p.customName || p.name || `Operative ${idx + 1}`,
-    directive: `Execute task for "${params.topic.slice(0, 30)}" (${p.role || 'Sector Operations'})`,
+    directive: `Audit sector diagnostic telemetry and execute operational protocol for "${params.topic.slice(0, 30)}" (${p.role || 'Sector Operations'})`,
     targetSector: targetSectors[idx % targetSectors.length],
   }));
+
+  const actionItems: RoundtableActionItem[] = rawActionItems.filter((task) =>
+    isValidRealTask(task.directive)
+  );
 
   return {
     id: `roundtable-${Date.now()}`,
@@ -3473,7 +3509,8 @@ ROUNDTABLE RULES:
 1. Generate a cohesive, multi-perspective roundtable conversation responding to the Commander's topic/prompt.
 2. Have the operatives contribute sequentially based on their specialized functional roles (providing viewpoints across strategic, technical, archival, and tactical dimensions).
 3. Every agent MUST use their exact Custom Name, stay true to their distinct Role and Specialty, explicitly reference at least one of their Recent Field Notes or the previous speaker's point, and keep each turn to 2-3 crisp, punchy sentences.
-4. Provide a concise meetingTitle, a 1-2 sentence consensusSummary, and concrete actionItems assigned to specific agents and sectors.`;
+4. Provide a concise meetingTitle, a 1-2 sentence consensusSummary, and concrete actionItems assigned to specific agents and sectors.
+5. REAL OPERATIONAL DIRECTIVES ONLY: You are an autonomous tactical agent. Never generate fictional, mock, or simulated tasks. All generated tasks, targets, and directives must map directly to real operational utilities, live local storage keys, active background workers, or real system diagnostics.`;
 
         const res = await executeSafeOperation(
           async (signal) => {
@@ -3565,7 +3602,7 @@ ROUNDTABLE RULES:
           'archive_basement',
         ]);
 
-        const actionItems: RoundtableActionItem[] = (
+        const rawActionItems: RoundtableActionItem[] = (
           Array.isArray(parsed.actionItems) ? parsed.actionItems : []
         ).map((item: any, idx: number) => {
           const slotIdx =
@@ -3590,6 +3627,19 @@ ROUNDTABLE RULES:
             targetSector: validSectors.has(rawSector) ? rawSector : 'war_room',
           };
         });
+
+        // Task Validation Filter: reject fictional/mock/simulated tasks
+        const verifiedRealTasks = rawActionItems.filter((task) =>
+          isValidRealTask(task.directive)
+        );
+
+        const actionItems =
+          verifiedRealTasks.length > 0
+            ? verifiedRealTasks
+            : rawActionItems.map((task) => ({
+                ...task,
+                directive: `Inspect and verify live operational telemetry for "${params.topic.slice(0, 30)}"`,
+              }));
 
         return {
           id: `roundtable-${Date.now()}`,

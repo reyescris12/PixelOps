@@ -17,6 +17,7 @@ import {
   RoundtableActionItem,
   RoundtableMeetingSession,
   RoundtableParticipantPayload,
+  isValidRealTask,
 } from '../services/ApiService';
 
 interface TownHallRoundtablePanelProps {
@@ -502,62 +503,69 @@ export const TownHallRoundtablePanel: React.FC<TownHallRoundtablePanelProps> = (
                   </p>
 
                   {activeSession.actionItems &&
-                    activeSession.actionItems.length > 0 && (
-                      <div className="pt-1.5 border-t border-[#1f3b2b] flex flex-col gap-1.5">
-                        {activeSession.actionItems.map((item, idx) => {
-                          const slotIdx =
-                            typeof item.agentIndex === 'number' &&
-                            item.agentIndex >= 0 &&
-                            item.agentIndex < crewAgents.length
-                              ? item.agentIndex
-                              : idx % Math.max(1, crewAgents.length);
-                          const crew =
-                            crewAgents[slotIdx] || getCrewAgentByIndex(slotIdx);
-                          const taskId = item.id || `task_${activeSession.id}_${idx}`;
-                          const assignedAgentId = item.assignedAgentId || crew.id;
-                          const agentDisplayName = getAgentName(assignedAgentId, slotIdx);
-                          const sectorMeta =
-                            ROOM_METADATA[item.targetSector] ||
-                            ROOM_METADATA.war_room;
+                    activeSession.actionItems.length > 0 && (() => {
+                      const verifiedTasks = activeSession.actionItems.filter((item) =>
+                        isValidRealTask(item.directive)
+                      );
+                      if (verifiedTasks.length === 0) return null;
 
-                          return (
-                            <div
-                              key={taskId}
-                              className="flex flex-wrap items-center justify-between gap-2 bg-[#0b110e] border border-[#233d2e] px-2.5 py-1.5 text-[11px]"
-                            >
-                              <div className="min-w-0 flex-1">
-                                <span className="text-[#e59838] font-bold">
-                                  {agentDisplayName}:
-                                </span>{' '}
-                                <span className="text-[#f3ead8]">
-                                  {item.directive}
-                                </span>{' '}
-                                <span className="text-[#4ade80] text-[10px]">
-                                  [{sectorMeta.shortBadge}]
-                                </span>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  handleDeployTask(
-                                    taskId,
-                                    assignedAgentId,
-                                    slotIdx,
-                                    item.directive,
-                                    item.targetSector
-                                  )
-                                }
-                                className="px-2.5 py-1 bg-[#1e2f24] hover:bg-[#4ade80] text-[#4ade80] hover:text-[#0c120e] border border-[#3a6349] font-bold text-[10px] flex items-center gap-1.5 cursor-pointer shrink-0 transition-colors rounded shadow-sm"
-                                title={`Deploy ${agentDisplayName} to ${sectorMeta.shortBadge} to execute this directive`}
+                      return (
+                        <div className="pt-1.5 border-t border-[#1f3b2b] flex flex-col gap-1.5">
+                          {verifiedTasks.map((item, idx) => {
+                            const slotIdx =
+                              typeof item.agentIndex === 'number' &&
+                              item.agentIndex >= 0 &&
+                              item.agentIndex < crewAgents.length
+                                ? item.agentIndex
+                                : idx % Math.max(1, crewAgents.length);
+                            const crew =
+                              crewAgents[slotIdx] || getCrewAgentByIndex(slotIdx);
+                            const taskId = item.id || `task_${activeSession.id}_${idx}`;
+                            const assignedAgentId = item.assignedAgentId || crew.id;
+                            const agentDisplayName = getAgentName(assignedAgentId, slotIdx);
+                            const sectorMeta =
+                              ROOM_METADATA[item.targetSector] ||
+                              ROOM_METADATA.war_room;
+
+                            return (
+                              <div
+                                key={taskId}
+                                className="flex flex-wrap items-center justify-between gap-2 bg-[#0b110e] border border-[#233d2e] px-2.5 py-1.5 text-[11px]"
                               >
-                                <span>Deploy {agentDisplayName}</span>
-                                <ArrowRight className="w-2.5 h-2.5" />
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
+                                <div className="min-w-0 flex-1">
+                                  <span className="text-[#e59838] font-bold">
+                                    {agentDisplayName}:
+                                  </span>{' '}
+                                  <span className="text-[#f3ead8]">
+                                    {item.directive}
+                                  </span>{' '}
+                                  <span className="text-[#4ade80] text-[10px]">
+                                    [{sectorMeta.shortBadge}]
+                                  </span>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    handleDeployTask(
+                                      taskId,
+                                      assignedAgentId,
+                                      slotIdx,
+                                      item.directive,
+                                      item.targetSector
+                                    )
+                                  }
+                                  className="px-2.5 py-1 bg-[#1e2f24] hover:bg-[#4ade80] text-[#4ade80] hover:text-[#0c120e] border border-[#3a6349] font-bold text-[10px] flex items-center gap-1.5 cursor-pointer shrink-0 transition-colors rounded shadow-sm"
+                                  title={`Deploy ${agentDisplayName} to ${sectorMeta.shortBadge} to execute this directive`}
+                                >
+                                  <span>Deploy {agentDisplayName}</span>
+                                  <ArrowRight className="w-2.5 h-2.5" />
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
                 </div>
               )}
             </>

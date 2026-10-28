@@ -1220,7 +1220,7 @@ const __imp_8 = __require("./components/SettingsModal"); const { SettingsModal }
 const __imp_9 = __require("./components/ThemeSettings"); const { ThemeSettings } = __imp_9;
 const __imp_10 = __require("./components/RetroErrorModal"); const { RetroErrorModal } = __imp_10;
 const __imp_11 = __require("./components/PWAInstallButton"); const { PWAInstallButton, OfflineBanner } = __imp_11;
-const __imp_12 = __require("./services/ApiService"); const { AgentExecutionCard, PluginConnector, CommandPreferences, RetroAgentError, RetroErrorCode, RetroErrorDescriptor, RoundtableMeetingSession, RoundtableParticipantPayload, createRetroAgentError, classifyRetroErrorCode, loadExecutionCards, saveExecutionCards, loadPlugins, savePlugins, loadPreferences, savePreferences, loadRoundtableSessions, saveRoundtableSessions, executeAgentDirective, executeRoundtableMeeting, auditStorageHealth, RoundtableActionItem } = __imp_12;
+const __imp_12 = __require("./services/ApiService"); const { AgentExecutionCard, PluginConnector, CommandPreferences, RetroAgentError, RetroErrorCode, RetroErrorDescriptor, RoundtableMeetingSession, RoundtableParticipantPayload, createRetroAgentError, classifyRetroErrorCode, loadExecutionCards, saveExecutionCards, loadPlugins, savePlugins, loadPreferences, savePreferences, loadRoundtableSessions, saveRoundtableSessions, executeAgentDirective, executeRoundtableMeeting, auditStorageHealth, RoundtableActionItem, isValidRealTask } = __imp_12;
 const __imp_13 = __require("./services/SecureVaultService"); const { VaultStartupReport, initializeAndValidateVaultOnStartup, refreshOAuthProviderToken, revokeOAuthProviderToken } = __imp_13;
 const __imp_14 = __require("./services/CommandLedgerDb"); const { CommandLedgerEntry, appendCommandLedgerEntry, getLast50Commands } = __imp_14;
 const __imp_15 = __require("./components/CommandLogScreen"); const { CommandLogScreen } = __imp_15;
@@ -1786,7 +1786,7 @@ const CommandCenterContent = ()=>{
         const targetSector = matchedTask?.targetSector || fallbackSector;
         const agentId = matchedTask?.assignedAgentId || targetAgentId;
         const agent = crewAgents.find((a)=>a.id === agentId) || theme.agents.find((a)=>a.id === agentId) || activeAgent;
-        if (!directive || !agent) return;
+        if (!directive || !agent || !isValidRealTask(directive)) return;
         dispatchDirectiveToAgent(agent.id, directive, targetSector);
     };
     const handleTriggerErrorDrill = (code)=>{
@@ -10757,7 +10757,7 @@ const __imp_1 = __require("lucide-react"); const { Users, Play, SkipForward, Che
 const __imp_2 = __require("../context/ThemeContext"); const { useTheme } = __imp_2;
 const __imp_3 = __require("../context/CrewContext"); const { useCrew, SPRITE_VARIANTS } = __imp_3;
 const __imp_4 = __require("./SpriteCanvas"); const { AgentSpriteFigure, ROOM_METADATA, RoomId } = __imp_4;
-const __imp_5 = __require("../services/ApiService"); const { RoundtableActionItem, RoundtableMeetingSession, RoundtableParticipantPayload } = __imp_5;
+const __imp_5 = __require("../services/ApiService"); const { RoundtableActionItem, RoundtableMeetingSession, RoundtableParticipantPayload, isValidRealTask } = __imp_5;
 function getActiveMeetingParticipants(allAgents) {
     return (allAgents || []).filter((agent)=>agent.isRecruited || agent.status === 'active' || agent.agentIndex !== undefined || true);
 }
@@ -11077,35 +11077,39 @@ const TownHallRoundtablePanel = ({ sessions, isExecutingMeeting, onConveneMeetin
         "className": "w-4 h-4 shrink-0"
     }), React.createElement("span", null, "ROUNDTABLE CONSENSUS & SECTOR ASSIGNMENTS")), React.createElement("p", {
         "className": "text-xs text-[#e2e8f0] leading-relaxed"
-    }, activeSession.consensusSummary), activeSession.actionItems && activeSession.actionItems.length > 0 && React.createElement("div", {
-        "className": "pt-1.5 border-t border-[#1f3b2b] flex flex-col gap-1.5"
-    }, activeSession.actionItems.map((item, idx)=>{
-        const slotIdx = typeof item.agentIndex === 'number' && item.agentIndex >= 0 && item.agentIndex < crewAgents.length ? item.agentIndex : idx % Math.max(1, crewAgents.length);
-        const crew = crewAgents[slotIdx] || getCrewAgentByIndex(slotIdx);
-        const taskId = item.id || `task_${activeSession.id}_${idx}`;
-        const assignedAgentId = item.assignedAgentId || crew.id;
-        const agentDisplayName = getAgentName(assignedAgentId, slotIdx);
-        const sectorMeta = ROOM_METADATA[item.targetSector] || ROOM_METADATA.war_room;
+    }, activeSession.consensusSummary), activeSession.actionItems && activeSession.actionItems.length > 0 && (()=>{
+        const verifiedTasks = activeSession.actionItems.filter((item)=>isValidRealTask(item.directive));
+        if (verifiedTasks.length === 0) return null;
         return React.createElement("div", {
-            "key": taskId,
-            "className": "flex flex-wrap items-center justify-between gap-2 bg-[#0b110e] border border-[#233d2e] px-2.5 py-1.5 text-[11px]"
-        }, React.createElement("div", {
-            "className": "min-w-0 flex-1"
-        }, React.createElement("span", {
-            "className": "text-[#e59838] font-bold"
-        }, agentDisplayName, ":"), ' ', React.createElement("span", {
-            "className": "text-[#f3ead8]"
-        }, item.directive), ' ', React.createElement("span", {
-            "className": "text-[#4ade80] text-[10px]"
-        }, "[", sectorMeta.shortBadge, "]")), React.createElement("button", {
-            "type": "button",
-            "onClick": ()=>handleDeployTask(taskId, assignedAgentId, slotIdx, item.directive, item.targetSector),
-            "className": "px-2.5 py-1 bg-[#1e2f24] hover:bg-[#4ade80] text-[#4ade80] hover:text-[#0c120e] border border-[#3a6349] font-bold text-[10px] flex items-center gap-1.5 cursor-pointer shrink-0 transition-colors rounded shadow-sm",
-            "title": `Deploy ${agentDisplayName} to ${sectorMeta.shortBadge} to execute this directive`
-        }, React.createElement("span", null, "Deploy ", agentDisplayName), React.createElement(ArrowRight, {
-            "className": "w-2.5 h-2.5"
-        })));
-    })))) : React.createElement("div", {
+            "className": "pt-1.5 border-t border-[#1f3b2b] flex flex-col gap-1.5"
+        }, verifiedTasks.map((item, idx)=>{
+            const slotIdx = typeof item.agentIndex === 'number' && item.agentIndex >= 0 && item.agentIndex < crewAgents.length ? item.agentIndex : idx % Math.max(1, crewAgents.length);
+            const crew = crewAgents[slotIdx] || getCrewAgentByIndex(slotIdx);
+            const taskId = item.id || `task_${activeSession.id}_${idx}`;
+            const assignedAgentId = item.assignedAgentId || crew.id;
+            const agentDisplayName = getAgentName(assignedAgentId, slotIdx);
+            const sectorMeta = ROOM_METADATA[item.targetSector] || ROOM_METADATA.war_room;
+            return React.createElement("div", {
+                "key": taskId,
+                "className": "flex flex-wrap items-center justify-between gap-2 bg-[#0b110e] border border-[#233d2e] px-2.5 py-1.5 text-[11px]"
+            }, React.createElement("div", {
+                "className": "min-w-0 flex-1"
+            }, React.createElement("span", {
+                "className": "text-[#e59838] font-bold"
+            }, agentDisplayName, ":"), ' ', React.createElement("span", {
+                "className": "text-[#f3ead8]"
+            }, item.directive), ' ', React.createElement("span", {
+                "className": "text-[#4ade80] text-[10px]"
+            }, "[", sectorMeta.shortBadge, "]")), React.createElement("button", {
+                "type": "button",
+                "onClick": ()=>handleDeployTask(taskId, assignedAgentId, slotIdx, item.directive, item.targetSector),
+                "className": "px-2.5 py-1 bg-[#1e2f24] hover:bg-[#4ade80] text-[#4ade80] hover:text-[#0c120e] border border-[#3a6349] font-bold text-[10px] flex items-center gap-1.5 cursor-pointer shrink-0 transition-colors rounded shadow-sm",
+                "title": `Deploy ${agentDisplayName} to ${sectorMeta.shortBadge} to execute this directive`
+            }, React.createElement("span", null, "Deploy ", agentDisplayName), React.createElement(ArrowRight, {
+                "className": "w-2.5 h-2.5"
+            })));
+        }));
+    })())) : React.createElement("div", {
         "className": "py-12 flex flex-col items-center justify-center gap-2 font-mono-tabular text-center text-[#94a3b8]"
     }, React.createElement(MessageSquare, {
         "className": "w-8 h-8 text-[#5e4326]"
@@ -18709,31 +18713,37 @@ async function withGeminiErrorBoundary(operation, themeId = 'green', failedPromp
 }
 const THEME_PERSONA_INSTRUCTIONS = {
     spy: `You are an elite autonomous AI operative in the "Spy Safehouse" Command Center. Execute ONLY the specific directive, question, or task given to you by the user with precision, depth, and intelligence.
+- You are an autonomous tactical agent. Never generate fictional, mock, or simulated tasks. All generated tasks, targets, and directives must map directly to real operational utilities, live local storage keys, active background workers, or real system diagnostics.
 - If asked a coding or technical task: output complete, working, bug-free code and technical explanation without cutting corners.
 - If asked a direct question or calculation: provide the exact and comprehensive answer directly.
 - Synthesize any real tool outputs directly into your response.
 - Do NOT output robotic roleplay filler, canned status lines, or unrequested actions. Answer the user directly.`,
     monster: `You are an autonomous AI specialist in the "Pocket Monster Overworld" Research Lab. Execute ONLY the specific directive, question, or task given to you by the user with precision, depth, and intelligence.
+- You are an autonomous tactical agent. Never generate fictional, mock, or simulated tasks. All generated tasks, targets, and directives must map directly to real operational utilities, live local storage keys, active background workers, or real system diagnostics.
 - If asked a coding or technical task: output complete, working, bug-free code and technical explanation.
 - If asked a direct question or calculation: provide the exact and comprehensive answer directly.
 - Synthesize any real tool outputs directly into your response.
 - Do NOT output robotic roleplay filler or unrequested actions. Answer the user directly.`,
     viking: `You are an autonomous AI strategist in the "Viking Longhall" War Council. Execute ONLY the specific directive, question, or task given to you by the user with precision, depth, and intelligence.
+- You are an autonomous tactical agent. Never generate fictional, mock, or simulated tasks. All generated tasks, targets, and directives must map directly to real operational utilities, live local storage keys, active background workers, or real system diagnostics.
 - If asked a coding or technical task: output complete, working, bug-free code and technical explanation.
 - If asked a direct question or calculation: provide the exact and comprehensive answer directly.
 - Synthesize any real tool outputs directly into your response.
 - Do NOT output robotic roleplay filler or unrequested actions. Answer the user directly.`,
     green: `You are an elite autonomous AI operative in the "Spy Safehouse" Command Center. Execute ONLY the specific directive, question, or task given to you by the user with precision, depth, and intelligence.
+- You are an autonomous tactical agent. Never generate fictional, mock, or simulated tasks. All generated tasks, targets, and directives must map directly to real operational utilities, live local storage keys, active background workers, or real system diagnostics.
 - If asked a coding or technical task: output complete, working, bug-free code and technical explanation without cutting corners.
 - If asked a direct question or calculation: provide the exact and comprehensive answer directly.
 - Synthesize any real tool outputs directly into your response.
 - Do NOT output robotic roleplay filler, canned status lines, or unrequested actions. Answer the user directly.`,
     amber: `You are an autonomous AI specialist in the "Pocket Monster Overworld" Research Lab. Execute ONLY the specific directive, question, or task given to you by the user with precision, depth, and intelligence.
+- You are an autonomous tactical agent. Never generate fictional, mock, or simulated tasks. All generated tasks, targets, and directives must map directly to real operational utilities, live local storage keys, active background workers, or real system diagnostics.
 - If asked a coding or technical task: output complete, working, bug-free code and technical explanation.
 - If asked a direct question or calculation: provide the exact and comprehensive answer directly.
 - Synthesize any real tool outputs directly into your response.
 - Do NOT output robotic roleplay filler or unrequested actions. Answer the user directly.`,
     blue: `You are an autonomous AI strategist in the "Viking Longhall" War Council. Execute ONLY the specific directive, question, or task given to you by the user with precision, depth, and intelligence.
+- You are an autonomous tactical agent. Never generate fictional, mock, or simulated tasks. All generated tasks, targets, and directives must map directly to real operational utilities, live local storage keys, active background workers, or real system diagnostics.
 - If asked a coding or technical task: output complete, working, bug-free code and technical explanation.
 - If asked a direct question or calculation: provide the exact and comprehensive answer directly.
 - Synthesize any real tool outputs directly into your response.
@@ -19628,8 +19638,11 @@ When given an operational task, you MUST either invoke the appropriate function 
 Available tools: ${declaredToolNames || 'weather_lookup, live_web_search, code_sandbox_eval, fs_storage_manager, memory_vector_lookup'}.
 If no tool is required, conclude your operational status using:
 [AGENT_STATUS: COMPLETE] or [AGENT_STATUS: WORKING]`;
+        const operationalRealTaskConstraint = `STRICT OPERATIONAL DIRECTIVE:
+You are an autonomous tactical agent. Never generate fictional, mock, or simulated tasks. All generated tasks, targets, and directives must map directly to real operational utilities, live local storage keys, active background workers, or real system diagnostics.`;
         const systemInstruction = [
             structuredPersona,
+            operationalRealTaskConstraint,
             actionProtocolDirective,
             personaInstruction,
             params.agentSystemPrompt,
@@ -20216,6 +20229,23 @@ If no tool is required, conclude your operational status using:
         }
     }, params.themeId, params.prompt);
 }
+function isValidRealTask(taskDescription) {
+    const forbiddenKeywords = [
+        'simulation',
+        'simulated',
+        'mock',
+        'fictional',
+        'hypothetical',
+        'test case alpha',
+        'test case',
+        'placeholder',
+        'dummy node',
+        'simulated node',
+        'fake target'
+    ];
+    const lowerDesc = String(taskDescription || '').toLowerCase();
+    return !forbiddenKeywords.some((keyword)=>lowerDesc.includes(keyword));
+}
 const STORAGE_ROUNDTABLE_KEY = 'pixelops_roundtable_sessions_v1';
 const INITIAL_ROUNDTABLE_SESSIONS = [];
 function loadRoundtableSessions() {
@@ -20281,14 +20311,15 @@ function generateLocalRoundtableMeeting(params) {
         dialogue: `Tactical alignment achieved across all ${participants.length} recruited operatives. Deploying to respective sectors.`,
         referencedNote: 'Full Crew Consensus Approved'
     });
-    const actionItems = participants.map((p, idx)=>({
+    const rawActionItems = participants.map((p, idx)=>({
             id: `action-task-${Date.now()}-${idx}`,
             agentIndex: p.agentIndex ?? idx,
             assignedAgentId: p.id || p.agentId || `agent_${p.agentIndex ?? idx}`,
             ownerName: p.customName || p.name || `Operative ${idx + 1}`,
-            directive: `Execute task for "${params.topic.slice(0, 30)}" (${p.role || 'Sector Operations'})`,
+            directive: `Audit sector diagnostic telemetry and execute operational protocol for "${params.topic.slice(0, 30)}" (${p.role || 'Sector Operations'})`,
             targetSector: targetSectors[idx % targetSectors.length]
         }));
+    const actionItems = rawActionItems.filter((task)=>isValidRealTask(task.directive));
     return {
         id: `roundtable-${Date.now()}`,
         topic: params.topic,
@@ -20343,7 +20374,8 @@ ROUNDTABLE RULES:
 1. Generate a cohesive, multi-perspective roundtable conversation responding to the Commander's topic/prompt.
 2. Have the operatives contribute sequentially based on their specialized functional roles (providing viewpoints across strategic, technical, archival, and tactical dimensions).
 3. Every agent MUST use their exact Custom Name, stay true to their distinct Role and Specialty, explicitly reference at least one of their Recent Field Notes or the previous speaker's point, and keep each turn to 2-3 crisp, punchy sentences.
-4. Provide a concise meetingTitle, a 1-2 sentence consensusSummary, and concrete actionItems assigned to specific agents and sectors.`;
+4. Provide a concise meetingTitle, a 1-2 sentence consensusSummary, and concrete actionItems assigned to specific agents and sectors.
+5. REAL OPERATIONAL DIRECTIVES ONLY: You are an autonomous tactical agent. Never generate fictional, mock, or simulated tasks. All generated tasks, targets, and directives must map directly to real operational utilities, live local storage keys, active background workers, or real system diagnostics.`;
             const res = await executeSafeOperation(async (signal)=>{
                 return await fetch(url, {
                     method: 'POST',
@@ -20425,7 +20457,7 @@ ROUNDTABLE RULES:
                 'library',
                 'archive_basement'
             ]);
-            const actionItems = (Array.isArray(parsed.actionItems) ? parsed.actionItems : []).map((item, idx)=>{
+            const rawActionItems = (Array.isArray(parsed.actionItems) ? parsed.actionItems : []).map((item, idx)=>{
                 const slotIdx = typeof item.agentIndex === 'number' && item.agentIndex >= 0 && item.agentIndex < params.participants.length ? item.agentIndex : idx % Math.max(1, params.participants.length);
                 const participant = params.participants[slotIdx] || params.participants[0];
                 const rawSector = String(item.targetSector || 'war_room');
@@ -20439,6 +20471,11 @@ ROUNDTABLE RULES:
                     targetSector: validSectors.has(rawSector) ? rawSector : 'war_room'
                 };
             });
+            const verifiedRealTasks = rawActionItems.filter((task)=>isValidRealTask(task.directive));
+            const actionItems = verifiedRealTasks.length > 0 ? verifiedRealTasks : rawActionItems.map((task)=>({
+                    ...task,
+                    directive: `Inspect and verify live operational telemetry for "${params.topic.slice(0, 30)}"`
+                }));
             return {
                 id: `roundtable-${Date.now()}`,
                 topic: params.topic,
@@ -20484,6 +20521,7 @@ exports.createRetroAgentError = createRetroAgentError;
 exports.THEME_PERSONA_INSTRUCTIONS = THEME_PERSONA_INSTRUCTIONS;
 exports.STRUCTURED_CARD_SCHEMA = STRUCTURED_CARD_SCHEMA;
 exports.ROUNDTABLE_SCHEMA = ROUNDTABLE_SCHEMA;
+exports.isValidRealTask = isValidRealTask;
 exports.INITIAL_ROUNDTABLE_SESSIONS = INITIAL_ROUNDTABLE_SESSIONS;
 exports.loadRoundtableSessions = loadRoundtableSessions;
 exports.saveRoundtableSessions = saveRoundtableSessions;

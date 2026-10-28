@@ -59,6 +59,7 @@ import {
   executeRoundtableMeeting,
   auditStorageHealth,
   RoundtableActionItem,
+  isValidRealTask,
 } from './services/ApiService';
 import {
   VaultStartupReport,
@@ -915,7 +916,7 @@ const CommandCenterContent: React.FC = () => {
       theme.agents.find((a) => a.id === agentId) ||
       activeAgent;
 
-    if (!directive || !agent) return;
+    if (!directive || !agent || !isValidRealTask(directive)) return;
 
     // Dispatch directive strictly to the designated agent
     dispatchDirectiveToAgent(agent.id, directive, targetSector);

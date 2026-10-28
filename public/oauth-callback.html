@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PixelOps · Authorization Handshake</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      background-color: #0c0d12;
+      color: #4ade80;
+      font-family: 'JetBrains Mono', monospace, ui-monospace, monospace;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      margin: 0;
+      padding: 16px;
+      text-align: center;
+    }
+    .card {
+      background: #141620;
+      border: 1px solid #363d54;
+      border-radius: 4px;
+      padding: 24px;
+      max-width: 440px;
+      width: 100%;
+      box-shadow: 0 0 25px rgba(74, 222, 128, 0.2);
+    }
+    .badge {
+      display: inline-block;
+      padding: 3px 8px;
+      background: #13221a;
+      color: #4ade80;
+      border: 1px solid #4ade80;
+      font-size: 11px;
+      font-weight: bold;
+      letter-spacing: 1px;
+      margin-bottom: 12px;
+    }
+    h1 {
+      font-size: 15px;
+      color: #f3ead8;
+      margin: 0 0 8px 0;
+      letter-spacing: 0.5px;
+    }
+    p {
+      font-size: 12px;
+      color: #94a3b8;
+      line-height: 1.5;
+      margin: 0 0 16px 0;
+    }
+    .closing {
+      color: #e59838;
+      font-size: 11px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="badge">[COMPOSIO PROTOCOL]</div>
+    <h1>OAUTH HANDSHAKE VERIFIED</h1>
+    <p>Authentication token bound to Commander session. Transmitting signal to Command Center...</p>
+    <div class="closing">Closing authorization window...</div>
+  </div>
+  <script>
+    (function() {
+      try {
+        var searchParams = new URLSearchParams(window.location.search);
+        var paramsObj = {};
+        searchParams.forEach(function(val, key) {
+          paramsObj[key] = val;
+        });
+
+        var payload = {
+          type: 'COMPOSIO_AUTH_SUCCESS',
+          composioAuthSuccess: true,
+          status: 'SUCCESS',
+          url: window.location.href,
+          params: paramsObj,
+          timestamp: Date.now()
+        };
+
+        // 1. Post message to opener window
+        if (window.opener && !window.opener.closed) {
+          try {
+            window.opener.postMessage(payload, '*');
+          } catch (e) {}
+        }
+
+        // 2. BroadcastChannel for cross-window reliability
+        if ('BroadcastChannel' in window) {
+          try {
+            var bc = new BroadcastChannel('pixelops_composio_oauth');
+            bc.postMessage(payload);
+            bc.close();
+          } catch (e) {}
+        }
+
+        // 3. Persistent localStorage signal for cross-tab sync
+        try {
+          localStorage.setItem('pixelops_last_oauth_sync', JSON.stringify(payload));
+        } catch (e) {}
+      } catch (err) {
+        console.error('Handshake error:', err);
+      }
+
+      // Close popup window cleanly
+      setTimeout(function() {
+        try {
+          window.close();
+        } catch (e) {}
+      }, 500);
+    })();
+  </script>
+</body>
+</html>

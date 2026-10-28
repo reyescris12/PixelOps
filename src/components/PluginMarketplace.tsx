@@ -110,14 +110,28 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
       // Automatically sync as soon as popup closes or completion is reported
       if (typeof res.waitForCompletion === 'function') {
         res.waitForCompletion().then((completed: boolean) => {
-          refreshIntegrations();
-          onPluginStatusChange?.();
           if (completed) {
+            setIntegrations((prev) =>
+              prev.map((item) => {
+                const normA = item.appName.toLowerCase().replace(/[^a-z0-9]/g, '');
+                const normB = app.appName.toLowerCase().replace(/[^a-z0-9]/g, '');
+                if (normA === normB) {
+                  return {
+                    ...item,
+                    connected: true,
+                    connectionId: res.connectionId || item.connectionId || `conn_${app.appName}`,
+                  };
+                }
+                return item;
+              })
+            );
             setFeedbackMessage({
               text: `[CONNECTION ACTIVE] ${app.name} connected successfully! Live tool schemas calibrated for agents.`,
               type: 'success',
             });
           }
+          refreshIntegrations();
+          onPluginStatusChange?.();
         });
       }
 
@@ -125,11 +139,11 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
       setTimeout(() => {
         refreshIntegrations();
         onPluginStatusChange?.();
-      }, 3000);
+      }, 2500);
       setTimeout(() => {
         refreshIntegrations();
         onPluginStatusChange?.();
-      }, 6500);
+      }, 5000);
     } catch (err: any) {
       const errStr = String(err?.message || err);
       const isMissingKey =
@@ -170,6 +184,20 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
     try {
       const success = await ComposioService.disconnectAccount(app.connectionId);
       if (success) {
+        setIntegrations((prev) =>
+          prev.map((item) => {
+            const normA = item.appName.toLowerCase().replace(/[^a-z0-9]/g, '');
+            const normB = app.appName.toLowerCase().replace(/[^a-z0-9]/g, '');
+            if (normA === normB) {
+              return {
+                ...item,
+                connected: false,
+                connectionId: undefined,
+              };
+            }
+            return item;
+          })
+        );
         setFeedbackMessage({
           text: `[REVOKED] ${app.name} connection disconnected successfully.`,
           type: 'success',

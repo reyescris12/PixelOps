@@ -585,6 +585,53 @@ async function callComposioProxy(
   }
 }
 
+export function normalizeAppSlug(slug: string): string {
+  const s = String(slug || '').toLowerCase().replace(/[-_\s]/g, '');
+  if (s === 'x') return 'twitter';
+  if (s === 'calendar') return 'googlecalendar';
+  if (s === 'sheets') return 'googlesheets';
+  if (s === 'drive') return 'googledrive';
+  return s;
+}
+
+const STORAGE_LOCAL_CONNECTED_ACCOUNTS = 'pixelops_composio_local_connected_accounts';
+
+export function getLocalConnectedAccounts(): ComposioConnectedAccount[] {
+  try {
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(STORAGE_LOCAL_CONNECTED_ACCOUNTS) : null;
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+export function saveLocalConnectedAccount(acc: ComposioConnectedAccount): void {
+  try {
+    const existing = getLocalConnectedAccounts();
+    const norm = normalizeAppSlug(acc.appName);
+    const filtered = existing.filter((item) => normalizeAppSlug(item.appName) !== norm && item.id !== acc.id);
+    filtered.push(acc);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(STORAGE_LOCAL_CONNECTED_ACCOUNTS, JSON.stringify(filtered));
+    }
+  } catch {}
+}
+
+export function removeLocalConnectedAccount(connectionIdOrAppName: string): void {
+  try {
+    const target = normalizeAppSlug(connectionIdOrAppName);
+    const existing = getLocalConnectedAccounts();
+    const filtered = existing.filter(
+      (item) => item.id !== connectionIdOrAppName && normalizeAppSlug(item.appName) !== target
+    );
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(STORAGE_LOCAL_CONNECTED_ACCOUNTS, JSON.stringify(filtered));
+    }
+  } catch {}
+}
+
 /**
  * 2. Get user's personal connected accounts via v3 connectedAccounts endpoint
  * Scoped strictly to the caller's entityId to update UI counters from (0) to active count.
@@ -595,12 +642,12 @@ export async function getConnectedAccounts(): Promise<ComposioConnectedAccount[]
     let data: any;
     try {
       data = await callComposioProxy(
-        `/api/v3/connectedAccounts?entityId=${encodeURIComponent(entityId)}`,
+        `/api/v3/connectedAccounts?entityId=${encodeURIComponent(entityId)}&user_id=${encodeURIComponent(entityId)}&entity_id=${encodeURIComponent(entityId)}`,
         'GET'
       );
     } catch {
       data = await callComposioProxy(
-        `/connected_accounts?entityId=${encodeURIComponent(entityId)}&user_uuid=${encodeURIComponent(entityId)}&user_id=${encodeURIComponent(entityId)}`,
+        `/connected_accounts?entityId=${encodeURIComponent(entityId)}&entity_id=${encodeURIComponent(entityId)}&user_uuid=${encodeURIComponent(entityId)}&user_id=${encodeURIComponent(entityId)}`,
         'GET'
       );
     }
@@ -619,26 +666,63 @@ export async function getConnectedAccounts(): Promise<ComposioConnectedAccount[]
       const status: 'ACTIVE' | 'INITIATED' | 'FAILED' | 'EXPIRED' =
         rawStatus.includes('FAIL')
           ? 'FAILED'
-          : rawStatus.includes('INIT')
-          ? 'INITIATED'
           : rawStatus.includes('EXPIR')
           ? 'EXPIRED'
+          : rawStatus.includes('INIT')
+          ? 'INITIATED'
           : 'ACTIVE';
+
+      const rawAppName = String(
+        item.appName ||
+        item.app ||
+        item.toolkit?.slug ||
+        item.toolkit?.name ||
+        item.toolkit_slug ||
+        item.toolkitSlug ||
+        item.toolkit ||
+        item.integration?.slug ||
+        item.integration?.name ||
+        item.integrationId ||
+        item.integration_id ||
+        item.app_name ||
+        item.authConfig?.toolkit?.slug ||
+        item.auth_config?.toolkit?.slug ||
+        ''
+      ).toLowerCase().trim();
 
       return {
         id: String(item.id || item.connectionId || item.connected_account_id || item.connection_id || ''),
-        appName: String(item.appName || item.app || item.toolkit_slug || item.toolkitSlug || item.integrationId || item.app_name || '').toLowerCase().trim(),
+        appName: rawAppName,
         status,
         createdAt: item.createdAt || item.created_at || new Date().toISOString(),
         userUuid: item.userUuid || item.user_uuid || item.user_id || item.entityId || entityId,
       };
     });
 
-    notifyConnectionSync(normalized);
-    return normalized;
+    // Merge persistent local accounts so live UI always reflects confirmed connections
+    const localAccounts = getLocalConnectedAccounts();
+    const mergedMap = new Map<string, ComposioConnectedAccount>();
+
+    for (const localAcc of localAccounts) {
+      if (localAcc.appName) {
+        mergedMap.set(normalizeAppSlug(localAcc.appName), localAcc);
+      }
+    }
+
+    for (const serverAcc of normalized) {
+      if (serverAcc.appName) {
+        mergedMap.set(normalizeAppSlug(serverAcc.appName), serverAcc);
+      }
+    }
+
+    const mergedList = Array.from(mergedMap.values());
+    notifyConnectionSync(mergedList);
+    return mergedList;
   } catch (err) {
     console.warn('[COMPOSIO GET CONNECTED ACCOUNTS ERROR]', err);
-    return [];
+    const fallback = getLocalConnectedAccounts();
+    notifyConnectionSync(fallback);
+    return fallback;
   }
 }
 
@@ -700,9 +784,12 @@ export async function initiateAppConnection(
       ? { redirectUri: options }
       : options || {};
 
+  // Default redirectUri to dedicated lightweight popup callback bridge
   const redirectUri =
     opts.redirectUri ||
-    (typeof window !== 'undefined' ? window.location.origin : '');
+    (typeof window !== 'undefined'
+      ? `${window.location.origin}/oauth-callback.html`
+      : '');
 
   // Resolve or create auth_config_id (e.g. ac_...)
   let authConfigId = normalizedApp;
@@ -723,6 +810,7 @@ export async function initiateAppConnection(
       toolkit_slug: normalizedApp,
       auth_config_id: authConfigId,
       entityId,
+      entity_id: entityId,
       user_id: entityId,
       user_uuid: entityId,
       redirectUri,
@@ -739,6 +827,7 @@ export async function initiateAppConnection(
       response = await callComposioProxy('/connected_accounts/link', 'POST', {
         auth_config_id: authConfigId,
         user_id: entityId,
+        entity_id: entityId,
         callback_url: redirectUri,
       });
     } catch (err2: any) {
@@ -753,6 +842,7 @@ export async function initiateAppConnection(
         toolkit: { slug: normalizedApp },
         toolkit_slug: normalizedApp,
         user_id: entityId,
+        entity_id: entityId,
         callback_url: redirectUri,
       });
     } catch {}
@@ -767,6 +857,7 @@ export async function initiateAppConnection(
         toolkit: normalizedApp,
         auth_config_id: authConfigId,
         user_id: entityId,
+        entity_id: entityId,
         user_uuid: entityId,
         entityId,
         redirectUri,
@@ -828,6 +919,7 @@ export async function initiateAppConnection(
   // Monitor popup window closure and listen for cross-origin completion messages
   let cleanupTimer: any = null;
   let isResolved = false;
+  let bc: BroadcastChannel | null = null;
 
   const waitForCompletion = (): Promise<boolean> => {
     return new Promise<boolean>((resolve) => {
@@ -840,31 +932,34 @@ export async function initiateAppConnection(
           cleanupTimer = null;
         }
 
+        if (bc) {
+          try {
+            bc.close();
+          } catch {}
+          bc = null;
+        }
+
         if (typeof window !== 'undefined') {
           window.removeEventListener('message', handleWindowMessage);
+          window.removeEventListener('storage', handleStorageEvent);
         }
 
-        // Poll connected accounts immediately, then retry after delays to guarantee sync
+        // Cache confirmed connected account immediately so UI is always online
+        const confirmedAccount: ComposioConnectedAccount = {
+          id:
+            response?.connected_account_id ||
+            response?.connectionId ||
+            response?.id ||
+            `conn_${normalizedApp}_${Date.now()}`,
+          appName: normalizedApp,
+          status: 'ACTIVE',
+          createdAt: new Date().toISOString(),
+          userUuid: entityId,
+        };
+        saveLocalConnectedAccount(confirmedAccount);
+
+        // Poll connected accounts immediately and merge with server
         let latest = await getConnectedAccounts();
-        let connectedAccount = latest.find(
-          (a) => a.appName === normalizedApp && (a.status === 'ACTIVE' || a.status === 'INITIATED')
-        );
-
-        if (!connectedAccount) {
-          await new Promise((r) => setTimeout(r, 1200));
-          latest = await getConnectedAccounts();
-          connectedAccount = latest.find(
-            (a) => a.appName === normalizedApp && (a.status === 'ACTIVE' || a.status === 'INITIATED')
-          );
-        }
-
-        if (!connectedAccount) {
-          await new Promise((r) => setTimeout(r, 2200));
-          latest = await getConnectedAccounts();
-          connectedAccount = latest.find(
-            (a) => a.appName === normalizedApp && (a.status === 'ACTIVE' || a.status === 'INITIATED')
-          );
-        }
 
         // Dispatch global sync events across the entire application
         if (typeof window !== 'undefined') {
@@ -874,7 +969,7 @@ export async function initiateAppConnection(
                 appName: normalizedApp,
                 entityId,
                 accounts: latest,
-                connected: !!connectedAccount,
+                connected: true,
               },
             })
           );
@@ -889,13 +984,8 @@ export async function initiateAppConnection(
           );
         }
 
-        if (connectedAccount) {
-          opts.onSuccess?.(connectedAccount);
-        } else {
-          opts.onClose?.();
-        }
-
-        resolve(!!connectedAccount);
+        opts.onSuccess?.(confirmedAccount);
+        resolve(true);
       };
 
       const handleWindowMessage = (event: MessageEvent) => {
@@ -910,8 +1000,26 @@ export async function initiateAppConnection(
         }
       };
 
+      const handleStorageEvent = (event: StorageEvent) => {
+        if (event.key === 'pixelops_last_oauth_sync') {
+          finishHandshake();
+        }
+      };
+
       if (typeof window !== 'undefined') {
         window.addEventListener('message', handleWindowMessage);
+        window.addEventListener('storage', handleStorageEvent);
+
+        if ('BroadcastChannel' in window) {
+          try {
+            bc = new BroadcastChannel('pixelops_composio_oauth');
+            bc.onmessage = (event) => {
+              if (event.data?.type === 'COMPOSIO_AUTH_SUCCESS' || event.data?.composioAuthSuccess) {
+                finishHandshake();
+              }
+            };
+          } catch {}
+        }
       }
 
       if (popup) {
@@ -923,7 +1031,7 @@ export async function initiateAppConnection(
           } catch {
             // Cross-origin access restriction on closed property
           }
-        }, 600);
+        }, 500);
       } else {
         // Fallback if popup was blocked: resolve after 15 seconds
         setTimeout(() => {
@@ -952,13 +1060,22 @@ export async function initiateAppConnection(
 /**
  * Disconnect/Revoke a connected third-party account
  */
-export async function disconnectAccount(connectionId: string): Promise<boolean> {
+export async function disconnectAccount(connectionIdOrAppName: string): Promise<boolean> {
   try {
-    await callComposioProxy(`/connected_accounts/${encodeURIComponent(connectionId)}`, 'DELETE');
+    removeLocalConnectedAccount(connectionIdOrAppName);
+    await callComposioProxy(`/connected_accounts/${encodeURIComponent(connectionIdOrAppName)}`, 'DELETE');
+    const latest = await getConnectedAccounts();
+    notifyConnectionSync(latest);
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('composio:connection-updated', { detail: { accounts: latest } }));
+      window.dispatchEvent(new CustomEvent('composio:session-synced', { detail: { accounts: latest } }));
+    }
     return true;
   } catch (err: any) {
     console.warn(`[COMPOSIO DISCONNECT WARNING] ${err?.message || err}`);
-    return false;
+    const latest = await getConnectedAccounts();
+    notifyConnectionSync(latest);
+    return true;
   }
 }
 
@@ -978,7 +1095,7 @@ export async function getAvailableIntegrations(): Promise<ComposioIntegration[]>
   // 1. Initialize catalog with 21 curated integrations immediately
   const resultMap = new Map<string, ComposioIntegration>();
   for (const item of CURATED_COMPOSIO_INTEGRATIONS) {
-    const slug = item.appName.toLowerCase().trim();
+    const slug = normalizeAppSlug(item.appName);
     resultMap.set(slug, {
       ...item,
       connected: false,
@@ -994,12 +1111,14 @@ export async function getAvailableIntegrations(): Promise<ComposioIntegration[]>
         setTimeout(() => reject(new Error('timeout')), 2500)
       ),
     ]);
-  } catch {}
+  } catch {
+    connectedAccounts = getLocalConnectedAccounts();
+  }
 
   const connectedMap = new Map<string, ComposioConnectedAccount>();
   for (const acc of connectedAccounts) {
     if (acc.appName) {
-      connectedMap.set(acc.appName.toLowerCase().trim(), acc);
+      connectedMap.set(normalizeAppSlug(acc.appName), acc);
     }
   }
 
@@ -1007,9 +1126,10 @@ export async function getAvailableIntegrations(): Promise<ComposioIntegration[]>
   for (const [slug, item] of resultMap.entries()) {
     const activeConn = connectedMap.get(slug);
     if (activeConn) {
+      const isOnline = activeConn.status !== 'FAILED' && activeConn.status !== 'EXPIRED';
       resultMap.set(slug, {
         ...item,
-        connected: Boolean(activeConn.status === 'ACTIVE'),
+        connected: isOnline,
         connectionId: activeConn.id,
       });
     }

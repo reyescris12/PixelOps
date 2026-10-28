@@ -199,7 +199,7 @@ export async function executeCLICommand(
       'ΓòáΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòú',
       ...entries.map(
         (e, i) =>
-          `[#${i + 1}] [${new Date(e.timestamp || Date.now()).toLocaleTimeString()}] ${e.command || 'UNKNOWN'}\n    Γå│ ${e.output || 'Complete'}`
+          `[#${i + 1}] [${new Date(e.timestamp || Date.now()).toLocaleTimeString()}] ${e.command || 'UNKNOWN'}\n    └─ ${e.output || 'Complete'}`
       ),
       'ΓòÜΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓò¥',
     ];
@@ -232,7 +232,7 @@ export async function executeCLICommand(
       const allIds = getAllRoomIds();
       const rows = allIds.map((id: string, i: number) => {
         const r = allRooms[id];
-        return `[#${i + 1}] [${r.sectorCode}] ${r.shortBadge.padEnd(16)} ┬╖ Wing: ${r.wingLabel} ┬╖ Status: ONLINE`;
+        return `[#${i + 1}] [${r.sectorCode}] ${r.shortBadge.padEnd(16)} · Wing: ${r.wingLabel} · Status: ONLINE`;
       });
       return {
         command: trimmed,
@@ -304,7 +304,7 @@ export async function executeCLICommand(
           .filter(([_, skills]: any) => skills.includes(sk.id))
           .map(([r]) => r.toUpperCase());
         const boundStr = boundRooms.length > 0 ? boundRooms.join(', ') : 'NONE';
-        return `Γùê [${sk.shortCode}] ${sk.name}\n  Γå│ Category: ${sk.category} ┬╖ Bound to: [${boundStr}]\n  Γå│ Tools: ${sk.providedTools.join(', ')}`;
+        return `● [${sk.shortCode}] ${sk.name}\n  └─ Category: ${sk.category} · Bound to: [${boundStr}]\n  └─ Tools: ${sk.providedTools.join(', ')}`;
       });
       return {
         command: trimmed,
@@ -375,7 +375,7 @@ export async function executeCLICommand(
       const lines = [
         `INDEXEDDB WORKSPACE FILES (${files.length} total):`,
         '--------------------------------------------------------------------------------',
-        ...files.map((f) => `≡ƒôä [${f.category.toUpperCase()}] ${f.path} (${f.sizeBytes} B ┬╖ ${f.format})`),
+        ...files.map((f) => `📄 [${f.category.toUpperCase()}] ${f.path} (${f.sizeBytes} B · ${f.format})`),
       ];
       return {
         command: trimmed,
@@ -479,7 +479,7 @@ export async function executeCLICommand(
         const isAuth = isPluginAuthenticated(pid);
         const cred = creds[pid] || getPluginCredential(pid);
         const masked = cred ? maskCredential(cred.apiKey) : '[UNAUTHENTICATED]';
-        return `≡ƒöî ${pid.padEnd(16)} | ${isAuth ? '≡ƒƒó ACTIVE [AES-GCM]' : 'ΓÜ¬ NO KEY         '} | ${masked}`;
+        return `🔌 ${pid.padEnd(16)} | ${isAuth ? '🟢 ACTIVE [AES-GCM]' : '⚠️ NO KEY         '} | ${masked}`;
       }),
       '--------------------------------------------------------------------------------',
       'Use: pixelops plugin auth <pluginId> <key>  to configure credentials via CLI.',
@@ -509,8 +509,8 @@ export async function executeCLICommand(
 
       const ping = await pingComposio();
       const pingStatus = ping.ok
-        ? `≡ƒƒó ONLINE (${ping.latencyMs}ms ┬╖ HTTP ${ping.status})`
-        : `≡ƒö┤ OFFLINE (${ping.error || 'Unreachable'} in ${ping.latencyMs}ms)`;
+        ? `🟢 ONLINE (${ping.latencyMs}ms · HTTP ${ping.status})`
+        : `🔴 OFFLINE (${ping.error || 'Unreachable'} in ${ping.latencyMs}ms)`;
 
       const rows = [
         'ΓòöΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòù',
@@ -527,7 +527,7 @@ export async function executeCLICommand(
           : accounts
               .map(
                 (acc) =>
-                  `  ≡ƒöù [${acc.appName.toUpperCase().padEnd(10)}] ID: ${acc.id} ┬╖ Status: ${acc.status}`
+                  `  🔗 [${acc.appName.toUpperCase().padEnd(10)}] ID: ${acc.id} · Status: ${acc.status}`
               )
               .join('\n'),
         'ΓòÜΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓò¥',
@@ -717,10 +717,10 @@ export async function executeCLICommand(
           'ΓòáΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòú',
           ...items.map(
             (it) =>
-              `  ${it.connected ? 'ΓùÅ' : 'Γùï'} [${it.appName.padEnd(14)}] ${it.name.padEnd(18)} ┬╖ ${it.category.padEnd(18)} ┬╖ ${it.connected ? '[CONNECTED]' : '[OFFLINE]'}`
+              `  ${it.connected ? '●' : '○'} [${it.appName.padEnd(14)}] ${it.name.padEnd(18)} · ${it.category.padEnd(18)} · ${it.connected ? '[CONNECTED]' : '[OFFLINE]'}`
           ),
           '--------------------------------------------------------------------------------',
-          `Total Toolkits: ${items.length} ┬╖ Connected: ${items.filter((i) => i.connected).length}`,
+          `Total Toolkits: ${items.length} · Connected: ${items.filter((i) => i.connected).length}`,
           'Commands: composio connect <app> | composio agent <prompt>',
           'ΓòÜΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓòÉΓò¥',
         ];

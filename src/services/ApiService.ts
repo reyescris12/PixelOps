@@ -720,7 +720,7 @@ export async function executeFunctionCallHandler(fc: {
       if (weatherResult && weatherResult.place) {
         const { place, weatherData, tempUnit } = weatherResult;
         const current = weatherData?.current || {};
-        const unitSymbol = tempUnit === 'fahrenheit' ? '┬░F' : '┬░C';
+        const unitSymbol = tempUnit === 'fahrenheit' ? '°F' : '°C';
         const condition =
           WMO_WEATHER_CODES[Number(current.weather_code)] || 'Variable conditions';
 
@@ -759,7 +759,7 @@ export async function executeFunctionCallHandler(fc: {
           status: 'offline_atmospheric_estimate',
           source: 'Local Meteorological Ledger',
           location: cityQuery,
-          temperature: useFahrenheit ? '68┬░F' : '20┬░C',
+          temperature: useFahrenheit ? '68°F' : '20°C',
           condition: 'Fair / Operational Conditions',
           humidity: '45%',
           windSpeed: '12 km/h',
@@ -773,7 +773,7 @@ export async function executeFunctionCallHandler(fc: {
             pluginId: dest.pluginId,
             toolName: name,
             args,
-            resultSummary: `Weather (${cityQuery}): 68┬░F (Local atmospheric ledger estimate)`,
+            resultSummary: `Weather (${cityQuery}): 68°F (Local atmospheric ledger estimate)`,
             livePayload: fallbackPayload,
             targetRoom: dest.targetRoom,
             targetStationId: dest.targetStationId,
@@ -882,7 +882,7 @@ export async function executeFunctionCallHandler(fc: {
 
       const summary =
         repoTelemetry.stars !== undefined
-          ? `GitHub [${repo} Γÿà${repoTelemetry.stars}]: Logged "${title}" (${repoTelemetry.openIssuesCount} open issues)`
+          ? `GitHub [${repo} ★${repoTelemetry.stars}]: Logged "${title}" (${repoTelemetry.openIssuesCount} open issues)`
           : `GitHub [${repo}]: Opened ticket "${title}"`;
 
       return {
@@ -916,7 +916,7 @@ export async function executeFunctionCallHandler(fc: {
             codename: `DOSSIER-${query.toUpperCase().replace(/[^A-Z0-9]/g, '-').slice(0, 14)}`,
             classification: clearance,
             intelSummary: `Encrypted telemetry node verified for "${query}". Cross-referenced against ${storedCards.length} recent command dispatches.`,
-            coordinates: '37.7749┬░ N, 122.4194┬░ W ┬╖ Sector 7 Vault',
+            coordinates: '37.7749° N, 122.4194° W · Sector 7 Vault',
           },
         ],
         queriedAt: new Date().toISOString(),
@@ -1544,30 +1544,30 @@ const RETRO_THEME_ERROR_FLAVOR: Record<
   }
 > = {
   INVALID_API_KEY: {
-    retroBadge: 'ERR-401 ┬╖ AUTH_SEVERED',
+    retroBadge: 'ERR-401 · AUTH_SEVERED',
     httpStatus: 401,
     headline: 'NEURAL LINK SEVERED: Invalid API Key detected in Vault',
     remediationHint:
-      'Open the Gear Vault [ΓÜÖ∩╕Å] to re-validate your encrypted keychain credentials and test the Gemini proxy handshake.',
+      'Open the Gear Vault [⚙️] to re-validate your encrypted keychain credentials and test the Gemini proxy handshake.',
     byTheme: {
       green:
         'SAFEHOUSE ALARM: Cryptographic handshake rejected by Mainframe Proxy. The Gemini credential in your AES-256-GCM Vault failed clearance verification.',
       amber:
-        'COMMAND ALARM: Amber tactical terminal rejected authorization token. Inspect the Gear Vault [ΓÜÖ∩╕Å] to re-validate credentials.',
+        'COMMAND ALARM: Amber tactical terminal rejected authorization token. Inspect the Gear Vault [⚙️] to re-validate credentials.',
       cyan:
         'NEO-TOKYO ICE LOCK: Biometric proxy handshake rejected by Net-Core. Verify your Vault credentials.',
       ruby:
         'RED ALERT LOCKDOWN: Emergency bunker perimeter active. Key clearance failed.',
       purple:
-        'ARCANE SEAL BROKEN: Cipher terminal reported key authentication failure. Inspect the Gear Vault [ΓÜÖ∩╕Å].',
+        'ARCANE SEAL BROKEN: Cipher terminal reported key authentication failure. Inspect the Gear Vault [⚙️].',
     },
   },
   RATE_LIMIT: {
-    retroBadge: 'ERR-429 ┬╖ THERMAL_OVERHEAT',
+    retroBadge: 'ERR-429 · THERMAL_OVERHEAT',
     httpStatus: 429,
     headline: 'OVERHEAT: Rate limit reached, cooling down...',
     remediationHint:
-      'Wait for the core thermal gauge to vent or open the Gear Vault [ΓÜÖ∩╕Å] to recharge battery tokens and lower reasoning temperature.',
+      'Wait for the core thermal gauge to vent or open the Gear Vault [⚙️] to recharge battery tokens and lower reasoning temperature.',
     retryAfterSeconds: 15,
     byTheme: {
       green:
@@ -1583,35 +1583,35 @@ const RETRO_THEME_ERROR_FLAVOR: Record<
     },
   },
   NETWORK_DROP: {
-    retroBadge: 'ERR-503 ┬╖ UPLINK_LOST',
+    retroBadge: 'ERR-503 · UPLINK_LOST',
     httpStatus: 503,
     headline: 'SIGNAL BLACKOUT: Uplink packet lost in transit',
     remediationHint:
-      'Verify network signal or open the Gear Vault [ΓÜÖ∩╕Å] to run a live Gemini Link diagnostic ping.',
+      'Verify network signal or open the Gear Vault [⚙️] to run a live Gemini Link diagnostic ping.',
     byTheme: {
       green:
-        'SATELLITE UPLINK DROPPED: Encrypted field carrier wave flatlined mid-transmission. Check bunker comm-link or ping the proxy from the Gear Vault [ΓÜÖ∩╕Å].',
+        'SATELLITE UPLINK DROPPED: Encrypted field carrier wave flatlined mid-transmission. Check bunker comm-link or ping the proxy from the Gear Vault [⚙️].',
       amber:
-        'TACTICAL UPLINK DOWN: Signal carrier wave dropped mid-packet. Check network status or test ping in [ΓÜÖ∩╕Å].',
+        'TACTICAL UPLINK DOWN: Signal carrier wave dropped mid-packet. Check network status or test ping in [⚙️].',
       cyan:
         'SUBNET BLACKOUT: Mesh router node severed mid-packet. Check wireless feed or Vault ping.',
       ruby:
-        'COMM INTERCEPTION: Hardline link dropped during satellite transit. Reconnect in [ΓÜÖ∩╕Å].',
+        'COMM INTERCEPTION: Hardline link dropped during satellite transit. Reconnect in [⚙️].',
       purple:
         'VOID RESONANCE LOST: Sub-level transceiver beacon unreachable.',
     },
   },
   MALFORMED_JSON: {
-    retroBadge: 'ERR-422 ┬╖ PACKET_CORRUPT',
+    retroBadge: 'ERR-422 · PACKET_CORRUPT',
     httpStatus: 422,
     headline: 'CORRUPTED TELEMETRY: Malformed JSON packet intercepted',
     remediationHint:
-      'Lower the Agent Reasoning Temperature in the Gear Vault [ΓÜÖ∩╕Å] or retry the directive to request a clean structured schema.',
+      'Lower the Agent Reasoning Temperature in the Gear Vault [⚙️] or retry the directive to request a clean structured schema.',
     byTheme: {
       green:
-        'PARSING FAULT: Intercepted cipher payload contained scrambled JSON syntax. Adjust neural temperature in the Gear Vault [ΓÜÖ∩╕Å] and re-transmit.',
+        'PARSING FAULT: Intercepted cipher payload contained scrambled JSON syntax. Adjust neural temperature in the Gear Vault [⚙️] and re-transmit.',
       amber:
-        'SYNTAX CORRUPTION: Telemetry returned unparsed character sequence. Adjust reasoning temp in [ΓÜÖ∩╕Å] and retry.',
+        'SYNTAX CORRUPTION: Telemetry returned unparsed character sequence. Adjust reasoning temp in [⚙️] and retry.',
       cyan:
         'ICE CORRUPTION: Intercepted data packet contained scrambled cryptographic frames.',
       ruby:
@@ -1621,11 +1621,11 @@ const RETRO_THEME_ERROR_FLAVOR: Record<
     },
   },
   SYSTEM_FAULT: {
-    retroBadge: 'ERR-500 ┬╖ CORE_FAULT',
+    retroBadge: 'ERR-500 · CORE_FAULT',
     httpStatus: 500,
     headline: 'MAINFRAME ANOMALY: Unexpected neural execution fault',
     remediationHint:
-      'Open the Gear Vault [ΓÜÖ∩╕Å] to inspect keychain attestation, rotate OAuth tokens, or test the Gemini server link.',
+      'Open the Gear Vault [⚙️] to inspect keychain attestation, rotate OAuth tokens, or test the Gemini server link.',
     byTheme: {
       green:
         'BUNKER FAULT: Unexpected exception tripped the Sector 7 circuit breakers during directive execution.',
@@ -2366,7 +2366,7 @@ export async function generateLocalHeuristicCard(params: {
       });
       executedTools.push(toolOut.executedToolMeta);
       const live = toolOut.response;
-      const dialogue = `${params.activeAgentName}: Real-time atmospheric telemetry for ${live.location || loc}:\n\nΓÇó Condition: ${live.condition || 'Clear'}\nΓÇó Temperature: ${live.temperature || 'N/A'} (Feels like ${live.feelsLike || 'N/A'})\nΓÇó Humidity: ${live.humidity || 'N/A'}\nΓÇó Wind Speed: ${live.windSpeed || 'N/A'}\n\nTelemetry verified live via Open-Meteo satellites.`;
+      const dialogue = `${params.activeAgentName}: Real-time atmospheric telemetry for ${live.location || loc}:\n\n• Condition: ${live.condition || 'Clear'}\n• Temperature: ${live.temperature || 'N/A'} (Feels like ${live.feelsLike || 'N/A'})\n• Humidity: ${live.humidity || 'N/A'}\n• Wind Speed: ${live.windSpeed || 'N/A'}\n\nTelemetry verified live via Open-Meteo satellites.`;
 
       return {
         id: `card-${Date.now()}`,
@@ -2739,7 +2739,7 @@ export async function executeAgentDirective(params: {
         throw createRetroAgentError({
           code: 'INVALID_API_KEY',
           themeId: params.themeId,
-          technicalDetail: 'DIAGNOSTIC DRILL ┬╖ Simulated HTTP 401 API_KEY_INVALID from Vault',
+          technicalDetail: 'DIAGNOSTIC DRILL · Simulated HTTP 401 API_KEY_INVALID from Vault',
           failedPrompt: params.prompt,
         });
       }
@@ -2747,7 +2747,7 @@ export async function executeAgentDirective(params: {
         throw createRetroAgentError({
           code: 'RATE_LIMIT',
           themeId: params.themeId,
-          technicalDetail: 'DIAGNOSTIC DRILL ┬╖ Simulated HTTP 429 RESOURCE_EXHAUSTED (Rate limit reached)',
+          technicalDetail: 'DIAGNOSTIC DRILL · Simulated HTTP 429 RESOURCE_EXHAUSTED (Rate limit reached)',
           failedPrompt: params.prompt,
           retryAfterSeconds: 15,
         });
@@ -2756,7 +2756,7 @@ export async function executeAgentDirective(params: {
         throw createRetroAgentError({
           code: 'MALFORMED_JSON',
           themeId: params.themeId,
-          technicalDetail: 'DIAGNOSTIC DRILL ┬╖ Simulated SyntaxError: Unexpected token < in JSON at position 0',
+          technicalDetail: 'DIAGNOSTIC DRILL · Simulated SyntaxError: Unexpected token < in JSON at position 0',
           failedPrompt: params.prompt,
         });
       }
@@ -2764,7 +2764,7 @@ export async function executeAgentDirective(params: {
         throw createRetroAgentError({
           code: 'NETWORK_DROP',
           themeId: params.themeId,
-          technicalDetail: 'DIAGNOSTIC DRILL ┬╖ Simulated TypeError: Failed to fetch (Uplink Carrier Severed)',
+          technicalDetail: 'DIAGNOSTIC DRILL · Simulated TypeError: Failed to fetch (Uplink Carrier Severed)',
           failedPrompt: params.prompt,
         });
       }
@@ -2813,7 +2813,7 @@ You have direct access to local execution tools: ${declaredToolNames || 'local e
 Think step-by-step, execute tasks logically, call tools whenever you need live data or local operations, and return structured results.`;
 
       const actionProtocolDirective = `CRITICAL OPERATIONAL DIRECTIVE:
-You are an autonomous tactical operative in PixelOps. You do NOT just generate conversational textΓÇöyou execute tasks.
+You are an autonomous tactical operative in PixelOps. You do NOT just generate conversational text—you execute tasks.
 When given an operational task, you MUST either invoke the appropriate function call OR format your operational action using a strict execution tag before any conversational commentary, like this:
 
 [AGENT_ACTION: <tool_name>]
@@ -3572,7 +3572,7 @@ export async function executeRoundtableMeeting(params: {
         throw createRetroAgentError({
           code: 'INVALID_API_KEY',
           themeId: params.themeId,
-          technicalDetail: 'DIAGNOSTIC DRILL ┬╖ Simulated HTTP 401 API_KEY_INVALID during Roundtable',
+          technicalDetail: 'DIAGNOSTIC DRILL · Simulated HTTP 401 API_KEY_INVALID during Roundtable',
           failedPrompt: params.topic,
         });
       }
@@ -3580,7 +3580,7 @@ export async function executeRoundtableMeeting(params: {
         throw createRetroAgentError({
           code: 'RATE_LIMIT',
           themeId: params.themeId,
-          technicalDetail: 'DIAGNOSTIC DRILL ┬╖ Simulated HTTP 429 RESOURCE_EXHAUSTED during Roundtable',
+          technicalDetail: 'DIAGNOSTIC DRILL · Simulated HTTP 429 RESOURCE_EXHAUSTED during Roundtable',
           failedPrompt: params.topic,
           retryAfterSeconds: 15,
         });
@@ -3607,14 +3607,14 @@ export async function executeRoundtableMeeting(params: {
             ? params.participants
                 .map(
                   (p: any, idx: number) =>
-                    `Agent Slot ${idx} ΓÇö Custom Name: "${p.customName || p.defaultName || `Agent ${idx + 1}`}", Role: "${p.role || 'Operative'}", Specialty: "${p.specialty || 'Field Ops'}", Sprite Gear: "${p.spriteVariant || 'trenchcoat'}", Recent Field Notes: ${
+                    `Agent Slot ${idx} — Custom Name: "${p.customName || p.defaultName || `Agent ${idx + 1}`}", Role: "${p.role || 'Operative'}", Specialty: "${p.specialty || 'Field Ops'}", Sprite Gear: "${p.spriteVariant || 'trenchcoat'}", Recent Field Notes: ${
                       Array.isArray(p.recentNotes) && p.recentNotes.length > 0
                         ? p.recentNotes.join(' | ')
                         : 'Standing by at Command Center'
                     }`
                 )
                 .join('\n')
-            : `Agent Slot 0 ΓÇö Custom Name: "Agent Vance", Role: "Lead Strategist"\nAgent Slot 1 ΓÇö Custom Name: "Agent Nyx", Role: "Cyber & Signal Specialist"\nAgent Slot 2 ΓÇö Custom Name: "Agent Cipher", Role: "Cryptographic Recon"`;
+            : `Agent Slot 0 — Custom Name: "Agent Vance", Role: "Lead Strategist"\nAgent Slot 1 — Custom Name: "Agent Nyx", Role: "Cyber & Signal Specialist"\nAgent Slot 2 — Custom Name: "Agent Cipher", Role: "Cryptographic Recon"`;
 
         const priorContext =
           Array.isArray(params.priorTurns) && params.priorTurns.length > 0

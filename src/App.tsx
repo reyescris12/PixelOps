@@ -331,7 +331,7 @@ const CommandCenterContent: React.FC = () => {
             connected: val.valid,
             accountHandle: val.accountHandle || p.accountHandle,
             lastSync: val.valid
-              ? `AES-GCM Verified ┬╖ ${val.maskedAccessToken}`
+              ? `AES-GCM Verified · ${val.maskedAccessToken}`
               : 'Token Revoked / Unlinked',
           };
         });
@@ -820,8 +820,8 @@ const CommandCenterContent: React.FC = () => {
           : 'direct_neural_inference';
       const primaryResultSummary =
         newCard.toolCalls && newCard.toolCalls.length > 0
-          ? `${newCard.cardTitle} ΓÇö ${newCard.toolCalls[0].resultSummary}`
-          : `${newCard.cardTitle} ΓÇö ${newCard.dialogue}`;
+          ? `${newCard.cardTitle} — ${newCard.toolCalls[0].resultSummary}`
+          : `${newCard.cardTitle} — ${newCard.dialogue}`;
 
       await appendCommandLedgerEntry({
         timestamp: newCard.timestamp,
@@ -974,7 +974,7 @@ const CommandCenterContent: React.FC = () => {
     const simulated = createRetroAgentError({
       code,
       themeId,
-      technicalDetail: `DIAGNOSTIC DRILL ┬╖ Simulated ${code} intercepted by Retro Error Boundary`,
+      technicalDetail: `DIAGNOSTIC DRILL · Simulated ${code} intercepted by Retro Error Boundary`,
       failedPrompt: 'Scan flight nodes and schedule extraction briefing',
     });
     setRetroError(simulated.descriptor);
@@ -1006,7 +1006,7 @@ const CommandCenterContent: React.FC = () => {
       const combinedNotes = [...cardNotes, ...ledgerNotes].slice(0, 3);
       if (combinedNotes.length === 0) {
         combinedNotes.push(
-          `${crewMember.specialty} ┬╖ Stationed at ${
+          `${crewMember.specialty} · Stationed at ${
             getRoomMetadata(agentRooms[crewMember.id] || crewMember.currentRoom || 'war_room')
               ?.shortBadge || 'WAR ROOM'
           }`
@@ -1095,7 +1095,7 @@ const CommandCenterContent: React.FC = () => {
         command_input: `[TOWN HALL] ${newSession.topic}`,
         involved_agent: crewAgents.map((a) => a.customName).join(', '),
         tool_used: 'town_hall_roundtable',
-        result_summary: `${newSession.meetingTitle} ΓÇö ${newSession.consensusSummary}`,
+        result_summary: `${newSession.meetingTitle} — ${newSession.consensusSummary}`,
         success_boost_achieved: decryptionBoost,
       });
       await refreshCommandLedger();
@@ -1160,7 +1160,7 @@ const CommandCenterContent: React.FC = () => {
           <div className="bg-[#231b12] border-b border-[#4a351d] px-3.5 py-2 flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">
               <span className="font-mono-tabular text-xs sm:text-sm font-bold tracking-wider text-[#e59838] uppercase">
-                ≡ƒò╡∩╕Å CREW CUSTOMIZATION & WAYPOINT DISPATCH ┬╖ {theme.name}
+                🕵️ CREW CUSTOMIZATION & WAYPOINT DISPATCH · {theme.name}
               </span>
             </div>
             <div className="flex items-center gap-2">
@@ -1258,7 +1258,7 @@ const CommandCenterContent: React.FC = () => {
                             placeholder={crewMember.defaultName}
                             className="px-2 py-0.5 bg-[#090807] border border-[#5e4326] focus:border-[#e59838] text-[#f3ead8] font-mono-tabular text-xs sm:text-sm font-bold w-40 sm:w-48 outline-none"
                           />
-                          <span className="text-[#8c7a65]">┬╖</span>
+                          <span className="text-[#8c7a65]">·</span>
                           <span className="text-[#f3ead8] font-semibold">{crewMember.role}</span>
                           <span className="text-[#38bdf8] text-[10px] font-bold px-1.5 py-0.2 bg-[#0d141e] border border-[#1e2f42] rounded-xs">
                             {crewMember.functionalRole ? crewMember.functionalRole.toUpperCase().replace('_', ' ') : 'AGENT'}
@@ -1268,7 +1268,7 @@ const CommandCenterContent: React.FC = () => {
                           </span>
                         </div>
                         <p className="font-mono-tabular text-[11px] text-[#b8a690] mt-1">
-                          {crewMember.specialty} ΓÇö{' '}
+                          {crewMember.specialty} —{' '}
                           <span style={{ color: variantMeta.accentHex }}>
                             {variantMeta.label} ({variantMeta.gearOverlayLabel})
                           </span>
@@ -1286,7 +1286,7 @@ const CommandCenterContent: React.FC = () => {
                         className="min-h-[32px] px-2.5 py-1 font-mono-tabular text-xs bg-[#1a1410] text-[#e59838] border border-[#785732] hover:bg-[#281e14] cursor-pointer"
                         title="Configure custom system prompt, role, assigned tools, and memory log"
                       >
-                        [ΓÜÖ∩╕Å Configure]
+                        [⚙️ Configure]
                       </button>
                       {crewMember.isRecruited && (
                         <button
@@ -1420,7 +1420,7 @@ const CommandCenterContent: React.FC = () => {
           <div className="bg-[#231b12] border-b border-[#4a351d] px-3.5 py-2 flex flex-wrap items-center justify-between gap-2">
             <div>
               <span className="font-mono-tabular text-xs sm:text-sm font-bold tracking-wider text-[#e59838] uppercase">
-                ≡ƒ¢í∩╕Å VISUAL SPRITE DESIGN ARMORY ({SPRITE_VARIANT_LIST.length} PIXEL-ART OPERATIVES)
+                🛡️ VISUAL SPRITE DESIGN ARMORY ({SPRITE_VARIANT_LIST.length} PIXEL-ART OPERATIVES)
               </span>
               <p className="font-mono-tabular text-[11px] text-[#b8a690]">
                 Browse all tactical operative sprites and equip any design onto your active crew
@@ -1487,7 +1487,7 @@ const CommandCenterContent: React.FC = () => {
                         className="text-[9px] uppercase font-semibold block"
                         style={{ color: spriteMeta.accentHex }}
                       >
-                        {spriteMeta.category} ┬╖ {spriteMeta.gearOverlayLabel}
+                        {spriteMeta.category} · {spriteMeta.gearOverlayLabel}
                       </span>
                       <p className="text-[10px] text-[#9c8265] mt-1 line-clamp-2 leading-snug">
                         {spriteMeta.description}
@@ -1516,7 +1516,7 @@ const CommandCenterContent: React.FC = () => {
                             }`}
                             title={`Equip ${spriteMeta.label} on ${ag.customName}`}
                           >
-                            {isEquipped ? `Γ£ô ${ag.customName}` : ag.customName}
+                            {isEquipped ? `✓ ${ag.customName}` : ag.customName}
                           </button>
                         );
                       })}
@@ -1533,7 +1533,7 @@ const CommandCenterContent: React.FC = () => {
 
   const renderPluginsConsolePanel = () => (
     <div className="w-full max-w-4xl mx-auto px-3 sm:px-0 flex flex-col gap-3">
-      {/* Sub-Navigation Switcher: [ΓÜö∩╕Å Composio Armory Matrix] | [≡ƒöî Custom & Core Connectors] */}
+      {/* Sub-Navigation Switcher: [⚔️ Composio Armory Matrix] | [🔌 Custom & Core Connectors] */}
       <div className="flex flex-wrap items-center justify-between bg-[#121110] border border-[#4a351d] p-1.5 rounded-sm gap-2">
         <div className="flex items-center gap-1.5">
           <button
@@ -1702,7 +1702,7 @@ const CommandCenterContent: React.FC = () => {
                           className="min-h-[28px] px-2 py-0.5 font-mono-tabular text-[11px] bg-[#1a1410] text-[#e59838] border border-[#785732] hover:bg-[#281e14] cursor-pointer"
                           title="Configure BYOK Key / OAuth Secret locally"
                         >
-                          [BYOK ≡ƒöæ]
+                          [BYOK 🔑]
                         </button>
                         <button
                           type="button"
@@ -1747,7 +1747,7 @@ const CommandCenterContent: React.FC = () => {
               textShadow: '0 0 8px var(--theme-glow-color)',
             }}
           >
-            ≡ƒÄ¿ OVERWORLD THEME & RGB FILTER ENGINE
+            🎨 OVERWORLD THEME & RGB FILTER ENGINE
           </span>
           <button
             type="button"
@@ -1817,7 +1817,7 @@ const CommandCenterContent: React.FC = () => {
           boxShadow: '0 0 50px rgba(0,0,0,0.9), 0 0 24px var(--theme-glow-soft)',
         }}
       >
-        {/* Top Console Telemetry Bar: [ΓÜÖ] SAFEHOUSE v1.0 | v1.0 | [≡ƒöï 100%] Γû«≡ƒ¢£ */}
+        {/* Top Console Telemetry Bar: [⚙️] SAFEHOUSE v1.0 | v1.0 | [🔋 100%] ▶⚡ */}
         <header
           className="bg-[#232634] border-b-2 border-[#161822] px-2.5 sm:px-5 py-1.5 sm:py-2 flex items-center justify-between gap-2 sm:gap-4 select-none shrink-0 overflow-x-auto no-scrollbar w-full z-20"
           style={{
@@ -1826,7 +1826,7 @@ const CommandCenterContent: React.FC = () => {
             paddingRight: 'max(10px, env(safe-area-inset-right, 10px))',
           }}
         >
-          {/* Left Zone: [ΓÜÖ] SAFEHOUSE v1.0 + [≡ƒù║∩╕Å RADAR] Minimap Toggle */}
+          {/* Left Zone: [⚙️] SAFEHOUSE v1.0 + [🗺️ RADAR] Minimap Toggle */}
           <div className="flex items-center gap-2.5 shrink-0">
             <button
               type="button"
@@ -1837,7 +1837,7 @@ const CommandCenterContent: React.FC = () => {
               className="font-mono-tabular text-sm sm:text-base font-bold text-[#e2e4ed] hover:text-[#4ade80] transition-colors flex items-center gap-1.5 cursor-pointer"
               title="Open Command Telemetry & Vault Settings"
             >
-              <span>[ΓÜÖ]</span>
+              <span>[⚙️]</span>
               <span className="uppercase">{theme.shortLabel} v1.0</span>
             </button>
 
@@ -1854,7 +1854,7 @@ const CommandCenterContent: React.FC = () => {
               }`}
               title="Toggle Overworld Minimap Radar"
             >
-              <span>[≡ƒù║∩╕Å RADAR]</span>
+              <span>[🗺️ RADAR]</span>
             </button>
 
             <button
@@ -1929,12 +1929,12 @@ const CommandCenterContent: React.FC = () => {
                       ? 'bg-[#13221a] text-[#4ade80] border-[#4ade80]'
                       : 'bg-[#1c1a17] text-[#94a3b8] border-[#383633] hover:border-[#e59838]'
                   }`}
-                  title={`Ambient Synth Loop: ${activeSound.title} ΓÇö ${activeSound.description} (Click to toggle)`}
+                  title={`Ambient Synth Loop: ${activeSound.title} — ${activeSound.description} (Click to toggle)`}
                 >
                   <span>
                     {soundEnabled
-                      ? `[≡ƒöè SYNTH: ${activeSound.shortTag}]`
-                      : '[≡ƒöç SYNTH: OFF]'}
+                      ? `[🔊 SYNTH: ${activeSound.shortTag}]`
+                      : '[🔇 SYNTH: OFF]'}
                   </span>
                 </button>
                 {decryptionBoost > 0 && (
@@ -1960,7 +1960,7 @@ const CommandCenterContent: React.FC = () => {
             );
           })()}
 
-          {/* Right Zone: [≡ƒöï 100%] Γû«≡ƒ¢£ + Tactical HUD Controls + Optional PWA Install */}
+          {/* Right Zone: [🔋 100%] ▶⚡ + Tactical HUD Controls + Optional PWA Install */}
           <div className="flex items-center gap-2 shrink-0 font-mono-tabular text-xs">
             <button
               type="button"
@@ -2091,7 +2091,7 @@ const CommandCenterContent: React.FC = () => {
                     <div className="p-2.5 bg-[#1b150e] border border-[#e59838] flex flex-wrap items-center justify-between gap-2 font-mono-tabular text-xs">
                       <div className="min-w-0">
                         <span className="text-[#4ade80] font-bold">
-                          [SESSION RESTORED ┬╖ PENDING DIRECTIVE]
+                          [SESSION RESTORED · PENDING DIRECTIVE]
                         </span>{' '}
                         <span className="text-[#f3ead8] truncate">
                           &ldquo;{pendingTask.prompt}&rdquo;
@@ -2108,7 +2108,7 @@ const CommandCenterContent: React.FC = () => {
                           }
                           className="px-2.5 py-1 bg-[#e59838] text-[#121110] font-bold border border-[#e59838] cursor-pointer"
                         >
-                          [Γû╢ RESUME TASK]
+                          [▶ RESUME TASK]
                         </button>
                         <button
                           type="button"
@@ -2122,7 +2122,7 @@ const CommandCenterContent: React.FC = () => {
                   </div>
                 )}
 
-                {/* HQ Sub-Screen Switcher: [≡ƒôƒ BRIEFING TERMINAL] vs [≡ƒÅ¢∩╕Å TOWN HALL] vs [≡ƒô£ COMMAND LOG (50)] */}
+                {/* HQ Sub-Screen Switcher: [📟 BRIEFING TERMINAL] vs [🏛️ TOWN HALL] vs [📜 COMMAND LOG (50)] */}
                 <div className="w-full max-w-2xl mx-auto px-3 sm:px-0 flex flex-wrap items-center justify-between gap-2">
                   <div className="inline-flex flex-wrap bg-[#16130f] border border-[#5e4326] p-0.5">
                     <button
@@ -2198,8 +2198,8 @@ const CommandCenterContent: React.FC = () => {
                   </div>
                   <span className="hidden sm:inline font-mono-tabular text-[11px] text-[#9c8265]">
                     {hqSubView === 'town_hall'
-                      ? 'MULTI-AGENT ROUNDTABLE ┬╖ WAR ROOM'
-                      : 'DEXIE INDEXEDDB ┬╖ APPEND-ONLY LEDGER'}
+                      ? 'MULTI-AGENT ROUNDTABLE · WAR ROOM'
+                      : 'DEXIE INDEXEDDB · APPEND-ONLY LEDGER'}
                   </span>
                 </div>
 
@@ -2281,7 +2281,7 @@ const CommandCenterContent: React.FC = () => {
           </div>
         </main>
 
-        {/* Bottom Console Navigation Footer: [≡ƒÅá HQ] [≡ƒò╡∩╕Å Crew] [≡ƒöî Plugins] [≡ƒÄ¿ Themes] */}
+        {/* Bottom Console Navigation Footer: [🏠 HQ] [🕵️ Crew] [🔌 Plugins] [🎨 Themes] */}
         <footer
           className="bg-[#1b1e29] border-t-2 border-[#282c3d] px-2 py-1.5 sm:py-2 flex items-center justify-center shrink-0 overflow-x-auto no-scrollbar w-full z-20"
           style={{
@@ -2372,7 +2372,7 @@ const CommandCenterContent: React.FC = () => {
               }`}
               title="Toggle Tactical CLI Terminal Console (~)"
             >
-              <span className="text-base" aria-hidden="true">≡ƒÆ╗</span>
+              <span className="text-base" aria-hidden="true">💻</span>
               <span className="hidden sm:inline">CLI (~)</span>
               <span className="sm:hidden">CLI</span>
             </button>
@@ -2390,7 +2390,7 @@ const CommandCenterContent: React.FC = () => {
               }`}
               title="Open Workspace File Explorer (IndexedDB Markdown Reports & Logs)"
             >
-              <span className="text-base" aria-hidden="true">≡ƒôü</span>
+              <span className="text-base" aria-hidden="true">📁</span>
               <span className="hidden sm:inline">Files</span>
             </button>
           </nav>
@@ -2568,7 +2568,7 @@ const CommandCenterContent: React.FC = () => {
             <Smartphone className="w-8 h-8 text-[#4ade80] rotate-90" />
           </div>
           <div className="text-[11px] font-mono font-bold text-[#4ade80] tracking-widest uppercase mb-1">
-            [SPY SAFEHOUSE ┬╖ ORIENTATION DIRECTIVE]
+            [SPY SAFEHOUSE · ORIENTATION DIRECTIVE]
           </div>
           <h2 className="text-base font-bold font-pixel text-[#f3ead8] mb-2">
             Rotate Device to Landscape
@@ -2581,7 +2581,7 @@ const CommandCenterContent: React.FC = () => {
             onClick={() => setDismissPortraitGuard(true)}
             className="px-3 py-1.5 bg-[#1e2330] hover:bg-[#2d3748] border border-[#3b4252] text-[11px] font-mono text-[#a0aec0] rounded cursor-pointer transition-colors"
           >
-            [Override ┬╖ Continue in Portrait]
+            [Override · Continue in Portrait]
           </button>
         </div>
       )}

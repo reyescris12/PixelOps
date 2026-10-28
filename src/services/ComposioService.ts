@@ -9,6 +9,8 @@
  * - Routes via Cloudflare Pages Function proxy (/api/composio).
  */
 
+import { get, set } from 'idb-keyval';
+
 export interface ComposioConnectedAccount {
   id: string;
   appName: string;
@@ -28,14 +30,23 @@ export interface ComposioActionExecutionResult {
 const STORAGE_ENTITY_ID_KEY = 'pixelops_composio_entity_id';
 const STORAGE_CUSTOM_KEY_KEY = 'pixelops_composio_custom_api_key';
 
+let cachedEntityId: string | null = null;
+
 /**
  * 1. Multi-User Isolation: Get or generate a persistent local entityId
+ * Persisted in IndexedDB (idb-keyval) and localStorage.
  */
 export function getOrCreateEntityId(): string {
+  if (cachedEntityId && cachedEntityId.trim().length > 0) {
+    return cachedEntityId;
+  }
+
   try {
-    const existing = localStorage.getItem(STORAGE_ENTITY_ID_KEY);
+    const existing = typeof localStorage !== 'undefined' ? localStorage.getItem(STORAGE_ENTITY_ID_KEY) : null;
     if (existing && existing.trim().length > 0) {
-      return existing.trim();
+      cachedEntityId = existing.trim();
+      set(STORAGE_ENTITY_ID_KEY, cachedEntityId).catch(() => {});
+      return cachedEntityId;
     }
   } catch {
     // Fallback if storage access is restricted
@@ -46,13 +57,37 @@ export function getOrCreateEntityId(): string {
       ? `commander_${crypto.randomUUID()}`
       : `commander_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
 
+  cachedEntityId = generated;
+
   try {
-    localStorage.setItem(STORAGE_ENTITY_ID_KEY, generated);
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(STORAGE_ENTITY_ID_KEY, generated);
+    }
   } catch {
     // Ignore quota errors
   }
 
+  try {
+    set(STORAGE_ENTITY_ID_KEY, generated).catch(() => {});
+  } catch {
+    // Ignore
+  }
+
   return generated;
+}
+
+// Background async hydration from idb-keyval in case localStorage was cleared
+if (typeof window !== 'undefined') {
+  get<string>(STORAGE_ENTITY_ID_KEY)
+    .then((val) => {
+      if (val && val.trim().length > 0) {
+        cachedEntityId = val.trim();
+        try {
+          localStorage.setItem(STORAGE_ENTITY_ID_KEY, cachedEntityId);
+        } catch {}
+      }
+    })
+    .catch(() => {});
 }
 
 /**
@@ -60,7 +95,9 @@ export function getOrCreateEntityId(): string {
  */
 export function getComposioApiKey(): string {
   try {
-    return localStorage.getItem(STORAGE_CUSTOM_KEY_KEY)?.trim() || '';
+    return typeof localStorage !== 'undefined'
+      ? localStorage.getItem(STORAGE_CUSTOM_KEY_KEY)?.trim() || ''
+      : '';
   } catch {
     return '';
   }
@@ -68,13 +105,69 @@ export function getComposioApiKey(): string {
 
 export function setComposioApiKey(key: string): void {
   try {
-    if (!key || !key.trim()) {
-      localStorage.removeItem(STORAGE_CUSTOM_KEY_KEY);
-    } else {
-      localStorage.setItem(STORAGE_CUSTOM_KEY_KEY, key.trim());
+    if (typeof localStorage !== 'undefined') {
+      if (!key || !key.trim()) {
+        localStorage.removeItem(STORAGE_CUSTOM_KEY_KEY);
+      } else {
+        localStorage.setItem(STORAGE_CUSTOM_KEY_KEY, key.trim());
+      }
     }
   } catch {
     // Ignore
+  }
+}
+
+/**
+ * Live connection ping to backend.composio.dev or Cloudflare proxy
+ */
+export async function pingComposio(): Promise<{ ok: boolean; status: number; latencyMs: number; error?: string }> {
+  const start = performance.now();
+  try {
+    const entityId = getOrCreateEntityId();
+    const customKey = getComposioApiKey();
+
+    if (customKey) {
+      const controller = new AbortController();
+      const tid = setTimeout(() => controller.abort(), 6000);
+      try {
+        const res = await fetch(
+          `https://backend.composio.dev/api/v2/connectedAccounts?user_uuid=${encodeURIComponent(entityId)}`,
+          {
+            method: 'GET',
+            headers: {
+              'x-api-key': customKey,
+              Accept: 'application/json',
+            },
+            signal: controller.signal,
+          }
+        );
+        const latencyMs = Math.round(performance.now() - start);
+        return {
+          ok: res.ok,
+          status: res.status,
+          latencyMs,
+          error: res.ok ? undefined : `HTTP ${res.status}`,
+        };
+      } finally {
+        clearTimeout(tid);
+      }
+    } else {
+      await callComposioProxy(`/connectedAccounts?user_uuid=${encodeURIComponent(entityId)}`, 'GET');
+      const latencyMs = Math.round(performance.now() - start);
+      return {
+        ok: true,
+        status: 200,
+        latencyMs,
+      };
+    }
+  } catch (err: any) {
+    const latencyMs = Math.round(performance.now() - start);
+    return {
+      ok: false,
+      status: 0,
+      latencyMs,
+      error: err?.message || String(err),
+    };
   }
 }
 
@@ -132,7 +225,21 @@ async function callComposioProxy(
 ): Promise<any> {
   const entityId = getOrCreateEntityId();
   const customKey = getComposioApiKey();
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
 
+  // 1. Direct browser REST execution if user configured their own COMPOSIO_API_KEY
+  // Bypasses any SPA fallback or Vite dev server proxy issues
+  if (customKey) {
+    return await callComposioDirect(
+      `https://backend.composio.dev/api/v2${cleanEndpoint}`,
+      method,
+      body,
+      customKey,
+      entityId
+    );
+  }
+
+  // 2. Otherwise route via Cloudflare Pages Function proxy (/api/composio) with 8s circuit breaker
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 8000);
 
@@ -142,10 +249,6 @@ async function callComposioProxy(
       'x-entity-id': entityId,
     };
 
-    if (customKey) {
-      headers['x-composio-api-key'] = customKey;
-    }
-
     const proxyUrl = '/api/composio';
     let res: Response;
 
@@ -154,7 +257,7 @@ async function callComposioProxy(
         method: 'POST',
         headers,
         body: JSON.stringify({
-          endpoint,
+          endpoint: cleanEndpoint,
           method,
           body: body || null,
           entityId,
@@ -164,16 +267,6 @@ async function callComposioProxy(
     } catch (fetchErr: any) {
       if (controller.signal.aborted) {
         throw new Error('Composio proxy request timed out (8s limit).');
-      }
-      if (customKey) {
-        const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-        return await callComposioDirect(
-          `https://backend.composio.dev/api/v2${cleanEndpoint}`,
-          method,
-          body,
-          customKey,
-          entityId
-        );
       }
       throw new Error(`Composio proxy unreachable: ${fetchErr?.message || fetchErr}`);
     }
@@ -192,17 +285,7 @@ async function callComposioProxy(
     }
 
     if (!contentType.includes('application/json')) {
-      if (customKey) {
-        const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-        return await callComposioDirect(
-          `https://backend.composio.dev/api/v2${cleanEndpoint}`,
-          method,
-          body,
-          customKey,
-          entityId
-        );
-      }
-      throw new Error('Composio proxy endpoint returned non-JSON response.');
+      throw new Error('Composio proxy returned non-JSON response (SPA HTML fallback). Configure your Composio API key via "composio key <key>" to enable direct REST communication.');
     }
 
     return await res.json();

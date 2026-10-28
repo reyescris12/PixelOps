@@ -26,6 +26,7 @@ import {
   executeComposioAction,
   getComposioApiKey,
   setComposioApiKey,
+  pingComposio,
 } from '../services/ComposioService';
 
 export interface CLICommandContext {
@@ -504,15 +505,21 @@ export async function executeCLICommand(
         // Handled below
       }
 
+      const ping = await pingComposio();
+      const pingStatus = ping.ok
+        ? `🟢 ONLINE (${ping.latencyMs}ms · HTTP ${ping.status})`
+        : `🔴 OFFLINE (${ping.error || 'Unreachable'} in ${ping.latencyMs}ms)`;
+
       const rows = [
         '╔════════════════════════════════════════════════════════════════════════════════╗',
         '║ COMPOSIO MULTI-USER PLUGIN ENGINE STATUS                                       ║',
         '╠════════════════════════════════════════════════════════════════════════════════╣',
         `  ISOLATED ENTITY ID : ${entityId}`,
-        `  API KEY SOURCE     : ${customKey ? 'Custom BYOK Override (client)' : 'Cloudflare Pages Proxy (server)'}`,
-        `  PROXY ENDPOINT     : /api/composio (Cloudflare Pages Function)`,
+        `  API KEY SOURCE     : ${customKey ? 'Custom BYOK Key (Direct Browser REST active)' : 'Cloudflare Server Proxy (/api/composio)'}`,
+        `  LIVE CONNECTION    : ${pingStatus}`,
+        `  PROXY ENDPOINT     : ${customKey ? 'https://backend.composio.dev/api/v2 (Direct)' : '/api/composio (Cloudflare Function)'}`,
         '--------------------------------------------------------------------------------',
-        '  CONNECTED ACCOUNTS:',
+        `  CONNECTED ACCOUNTS (${accounts.length}):`,
         accounts.length === 0
           ? '  (No third-party accounts connected yet. Run "pixelops composio connect <app>")'
           : accounts
@@ -523,13 +530,13 @@ export async function executeCLICommand(
               .join('\n'),
         '╚════════════════════════════════════════════════════════════════════════════════╝',
         'Supported apps: github, slack, gmail, notion, linear',
-        'Run "pixelops composio connect <app>" to authorize a new app connection.',
+        'Commands: composio connect <app> | composio key <api_key> | composio run <action> <json>',
       ];
 
       return {
         command: trimmed,
         output: rows.join('\n'),
-        status: 'ok',
+        status: ping.ok ? 'ok' : 'warning',
         timestamp,
       };
     }
@@ -576,14 +583,32 @@ export async function executeCLICommand(
     if (subAction === 'key' || subAction === 'setkey') {
       const key = args.slice(1).join(' ').trim();
       setComposioApiKey(key);
-      return {
-        command: trimmed,
-        output: key
-          ? `[KEY STORED] Custom Composio BYOK key configured locally.`
-          : `[KEY CLEARED] Switched back to Cloudflare Pages Functions server-side key proxy.`,
-        status: 'ok',
-        timestamp,
-      };
+      if (!key) {
+        return {
+          command: trimmed,
+          output: '[KEY CLEARED] Switched back to Cloudflare Pages Functions server-side key proxy.',
+          status: 'ok',
+          timestamp,
+        };
+      }
+
+      // Run immediate live connection test
+      const ping = await pingComposio();
+      if (ping.ok) {
+        return {
+          command: trimmed,
+          output: `[KEY STORED & VERIFIED] Live connection to backend.composio.dev successful (HTTP ${ping.status} in ${ping.latencyMs}ms).\nDirect browser REST execution active.`,
+          status: 'ok',
+          timestamp,
+        };
+      } else {
+        return {
+          command: trimmed,
+          output: `[KEY STORED, WARNING] Connection ping returned error (${ping.error || 'Failed'} in ${ping.latencyMs}ms).\nVerify your API key from dashboard.composio.dev (Platform -> Settings -> API Keys).`,
+          status: 'warning',
+          timestamp,
+        };
+      }
     }
 
     // composio run <actionName> <jsonInput>

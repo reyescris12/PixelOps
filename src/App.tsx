@@ -915,9 +915,9 @@ const CommandCenterContent: React.FC = () => {
     const agentId = matchedTask?.assignedAgentId || targetAgentId;
 
     const agent =
-      crewAgents.find((a) => a.id === agentId) ||
-      theme.agents.find((a) => a.id === agentId) ||
-      activeAgent;
+      crewAgents.find((a) => a.id === agentId || a.customName?.toLowerCase() === agentId?.toLowerCase()) ||
+      theme.agents.find((a) => a.id === agentId || a.name?.toLowerCase() === agentId?.toLowerCase()) ||
+      (targetAgentId ? crewAgents.find((a) => a.id === targetAgentId) : undefined);
 
     if (!directive || !agent || !isValidRealTask(directive)) return;
 

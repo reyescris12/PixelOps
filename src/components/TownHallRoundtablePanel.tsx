@@ -366,7 +366,7 @@ export const TownHallRoundtablePanel: React.FC<TownHallRoundtablePanelProps> = (
           {isExecutingMeeting ? (
             <div className="py-8 flex flex-col items-center justify-center gap-2 font-mono-tabular text-center">
               <div className="flex items-center gap-2.5 flex-wrap justify-center">
-                {activeParticipants.slice(0, 8).map((c, idx) => {
+                {activeParticipants.map((c, idx) => {
                   return (
                     <div
                       key={c.id}

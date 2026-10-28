@@ -786,8 +786,8 @@ export async function executeFunctionCallHandler(fc: {
       const topTitle = results[0]?.title || query;
       const summary =
         results.length > 0
-          ? `Live Web Search ("${query}"): Found ${results.length} nodes [Top: ${topTitle}]`
-          : `Live Web Search ("${query}"): Indexed web knowledge nodes`;
+          ? `Live Web Search ("${query}"): Found ${results.length} real source records [Top: ${topTitle}]`
+          : `Live Web Search ("${query}"): No matching public sources found for query "${query}"`;
 
       return {
         id: fc.id,

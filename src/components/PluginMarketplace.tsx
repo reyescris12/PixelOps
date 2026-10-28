@@ -64,14 +64,24 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
   useEffect(() => {
     refreshIntegrations();
 
-    // Re-check connections when user re-focuses the tab (e.g. returns from OAuth popup)
-    const handleWindowFocus = () => {
+    // Re-check connections when window re-focuses or when OAuth handshake dispatches events
+    const handleSync = () => {
       refreshIntegrations();
     };
 
-    window.addEventListener('focus', handleWindowFocus);
+    window.addEventListener('focus', handleSync);
+    window.addEventListener('composio:connection-updated', handleSync);
+    window.addEventListener('composio:session-synced', handleSync);
+
+    const unsubscribe = ComposioService.subscribeToConnectionChanges?.(() => {
+      refreshIntegrations();
+    });
+
     return () => {
-      window.removeEventListener('focus', handleWindowFocus);
+      window.removeEventListener('focus', handleSync);
+      window.removeEventListener('composio:connection-updated', handleSync);
+      window.removeEventListener('composio:session-synced', handleSync);
+      unsubscribe?.();
     };
   }, [refreshIntegrations]);
 
@@ -87,8 +97,8 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
       const res = await ComposioService.initiateAppConnection(app.appName);
       if (res.redirectUrl || res.connectionUrl) {
         setFeedbackMessage({
-          text: `[CONNECT LINK READY] Opened authorization window for ${app.name}. Complete authentication in popup.`,
-          type: 'success',
+          text: `[OAUTH POPUP OPENED] Authorization window opened for ${app.name}. Complete sign-in in popup to link account.`,
+          type: 'info',
         });
       } else {
         setFeedbackMessage({
@@ -97,11 +107,29 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
         });
       }
 
-      // Check after 6 seconds to see if connection became active
+      // Automatically sync as soon as popup closes or completion is reported
+      if (typeof res.waitForCompletion === 'function') {
+        res.waitForCompletion().then((completed: boolean) => {
+          refreshIntegrations();
+          onPluginStatusChange?.();
+          if (completed) {
+            setFeedbackMessage({
+              text: `[CONNECTION ACTIVE] ${app.name} connected successfully! Live tool schemas calibrated for agents.`,
+              type: 'success',
+            });
+          }
+        });
+      }
+
+      // Immediate staggered polling backup
       setTimeout(() => {
         refreshIntegrations();
         onPluginStatusChange?.();
-      }, 6000);
+      }, 3000);
+      setTimeout(() => {
+        refreshIntegrations();
+        onPluginStatusChange?.();
+      }, 6500);
     } catch (err: any) {
       const errStr = String(err?.message || err);
       const isMissingKey =

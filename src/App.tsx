@@ -100,6 +100,7 @@ import { TaskBriefModal, TaskBrief } from './components/TaskBriefModal';
 import { TerminalConsole } from './components/TerminalConsole';
 import { WorkspaceFileViewer } from './components/WorkspaceFileViewer';
 import { PluginMarketplace } from './components/PluginMarketplace';
+import { ComposioService } from './services/ComposioService';
 import { PluginAuthModal, PluginAuthTarget } from './components/PluginAuthModal';
 import {
   isPluginAuthenticated,
@@ -242,6 +243,43 @@ const CommandCenterContent: React.FC = () => {
   const [isPluginAuthModalOpen, setIsPluginAuthModalOpen] = useState(false);
   const [activeAuthPlugin, setActiveAuthPlugin] = useState<PluginAuthTarget | null>(null);
   const [pluginsSubTab, setPluginsSubTab] = useState<'composio' | 'custom'>('composio');
+  const [composioConnectedCount, setComposioConnectedCount] = useState<number>(0);
+
+  const syncComposioAccounts = useCallback(async () => {
+    try {
+      const accounts = await ComposioService.getConnectedAccounts();
+      const active = accounts.filter(
+        (a) => a.status === 'ACTIVE' || a.status === 'INITIATED'
+      );
+      setComposioConnectedCount(active.length);
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    syncComposioAccounts();
+
+    const handleSync = () => {
+      syncComposioAccounts();
+    };
+
+    window.addEventListener('focus', handleSync);
+    window.addEventListener('composio:connection-updated', handleSync);
+    window.addEventListener('composio:session-synced', handleSync);
+
+    const unsubscribe = ComposioService.subscribeToConnectionChanges?.((accounts) => {
+      const active = accounts.filter(
+        (a) => a.status === 'ACTIVE' || a.status === 'INITIATED'
+      );
+      setComposioConnectedCount(active.length);
+    });
+
+    return () => {
+      window.removeEventListener('focus', handleSync);
+      window.removeEventListener('composio:connection-updated', handleSync);
+      window.removeEventListener('composio:session-synced', handleSync);
+      unsubscribe?.();
+    };
+  }, [syncComposioAccounts]);
 
   // Town Hall Meeting & Multi-Agent Roundtable States
   const [roundtableSessions, setRoundtableSessions] = useState<RoundtableMeetingSession[]>(
@@ -1510,7 +1548,7 @@ const CommandCenterContent: React.FC = () => {
                 : 'text-[#b8a690] hover:text-[#f3ead8] hover:bg-[#1f1914]'
             }`}
           >
-            ⚔️ Composio Armory Matrix
+            ⚔️ Composio Armory Matrix ({composioConnectedCount})
           </button>
           <button
             type="button"
@@ -1541,6 +1579,7 @@ const CommandCenterContent: React.FC = () => {
         <PluginMarketplace
           onPluginStatusChange={() => {
             setPlugins((prev) => [...prev]);
+            syncComposioAccounts();
           }}
           onClose={() => setActiveTab('hq')}
         />
@@ -1861,7 +1900,7 @@ const CommandCenterContent: React.FC = () => {
               }`}
               title="Open Armory Toolkit Marketplace & Composio Integrations"
             >
-              <span>[⚔️ TOOLKITS (21)]</span>
+              <span>[⚔️ TOOLKITS ({composioConnectedCount})]</span>
             </button>
           </div>
 
@@ -2115,7 +2154,7 @@ const CommandCenterContent: React.FC = () => {
                       }`}
                       title="Open Composio Armory Toolkit Marketplace (GitHub, Slack, Gmail, Notion, Linear)"
                     >
-                      <span>⚔️ Armory Toolkits (21)</span>
+                      <span>⚔️ Armory Toolkits ({composioConnectedCount})</span>
                     </button>
                     <button
                       type="button"
@@ -2223,6 +2262,7 @@ const CommandCenterContent: React.FC = () => {
                   <PluginMarketplace
                     onPluginStatusChange={() => {
                       setPlugins((prev) => [...prev]);
+                      syncComposioAccounts();
                     }}
                     onClose={() => setHqSubView('terminal')}
                   />

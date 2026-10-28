@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Cloudflare Pages Function Proxy for Multi-User Composio API
  * Route: /api/composio
  *
@@ -102,10 +102,6 @@ export const onRequest = async (context: {
     let cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
     // Strip leading /api/v2 or /api/v3 if present in endpoint
     cleanEndpoint = cleanEndpoint.replace(/^\/api\/v2/, '').replace(/^\/api\/v3/, '');
-    // Normalize v2 paths to v3
-    if (cleanEndpoint.startsWith('/connectedAccounts')) {
-      cleanEndpoint = cleanEndpoint.replace('/connectedAccounts', '/connected_accounts');
-    }
 
     const baseUrl = 'https://backend.composio.dev/api/v3';
     
@@ -113,10 +109,14 @@ export const onRequest = async (context: {
     let targetUrl = `${baseUrl}${cleanEndpoint}`;
     let modifiedBody = body ? { ...body } : undefined;
 
-    if (cleanEndpoint.startsWith('/connected_accounts')) {
+    const isConnectedAccounts =
+      cleanEndpoint.startsWith('/connected_accounts') ||
+      cleanEndpoint.startsWith('/connectedAccounts');
+
+    if (isConnectedAccounts) {
       if (method.toUpperCase() === 'GET') {
         const separator = targetUrl.includes('?') ? '&' : '?';
-        targetUrl = `${targetUrl}${separator}user_uuid=${encodeURIComponent(entityId)}&user_id=${encodeURIComponent(entityId)}`;
+        targetUrl = `${targetUrl}${separator}entityId=${encodeURIComponent(entityId)}&user_uuid=${encodeURIComponent(entityId)}&user_id=${encodeURIComponent(entityId)}`;
       } else if (method.toUpperCase() === 'POST' && modifiedBody) {
         modifiedBody.user_uuid = entityId;
         modifiedBody.user_id = entityId;
@@ -143,7 +143,27 @@ export const onRequest = async (context: {
       fetchOptions.body = JSON.stringify(modifiedBody);
     }
 
-    const composioResponse = await fetch(targetUrl, fetchOptions);
+    let composioResponse = await fetch(targetUrl, fetchOptions);
+
+    // If 404 on connected_accounts, try alternative connectedAccounts route
+    if (composioResponse.status === 404 && targetUrl.includes('/connected_accounts')) {
+      const altUrl = targetUrl.replace('/connected_accounts', '/connectedAccounts');
+      try {
+        const retryRes = await fetch(altUrl, fetchOptions);
+        if (retryRes.status !== 404) {
+          composioResponse = retryRes;
+        }
+      } catch {}
+    } else if (composioResponse.status === 404 && targetUrl.includes('/connectedAccounts')) {
+      const altUrl = targetUrl.replace('/connectedAccounts', '/connected_accounts');
+      try {
+        const retryRes = await fetch(altUrl, fetchOptions);
+        if (retryRes.status !== 404) {
+          composioResponse = retryRes;
+        }
+      } catch {}
+    }
+
     const responseData = await composioResponse.text();
 
     return new Response(responseData, {

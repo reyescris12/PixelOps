@@ -1352,18 +1352,19 @@ ROUNDTABLE RULES:
 
       let cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
       cleanEndpoint = cleanEndpoint.replace(/^\/api\/v2/, '').replace(/^\/api\/v3/, '');
-      if (cleanEndpoint.startsWith('/connectedAccounts')) {
-        cleanEndpoint = cleanEndpoint.replace('/connectedAccounts', '/connected_accounts');
-      }
 
       const baseUrl = 'https://backend.composio.dev/api/v3';
       let targetUrl = `${baseUrl}${cleanEndpoint}`;
       let modifiedBody = body ? { ...body } : undefined;
 
-      if (cleanEndpoint.startsWith('/connected_accounts')) {
+      const isConnectedAccounts =
+        cleanEndpoint.startsWith('/connected_accounts') ||
+        cleanEndpoint.startsWith('/connectedAccounts');
+
+      if (isConnectedAccounts) {
         if (method.toUpperCase() === 'GET') {
           const separator = targetUrl.includes('?') ? '&' : '?';
-          targetUrl = `${targetUrl}${separator}user_uuid=${encodeURIComponent(entityId)}&user_id=${encodeURIComponent(entityId)}`;
+          targetUrl = `${targetUrl}${separator}entityId=${encodeURIComponent(entityId)}&user_uuid=${encodeURIComponent(entityId)}&user_id=${encodeURIComponent(entityId)}`;
         } else if (method.toUpperCase() === 'POST' && modifiedBody) {
           modifiedBody.user_uuid = entityId;
           modifiedBody.user_id = entityId;
@@ -1390,7 +1391,27 @@ ROUNDTABLE RULES:
         fetchOptions.body = JSON.stringify(modifiedBody);
       }
 
-      const composioRes = await fetch(targetUrl, fetchOptions);
+      let composioRes = await fetch(targetUrl, fetchOptions);
+
+      // If 404 on connected_accounts, try alternative connectedAccounts route
+      if (composioRes.status === 404 && targetUrl.includes('/connected_accounts')) {
+        const altUrl = targetUrl.replace('/connected_accounts', '/connectedAccounts');
+        try {
+          const retryRes = await fetch(altUrl, fetchOptions);
+          if (retryRes.status !== 404) {
+            composioRes = retryRes;
+          }
+        } catch {}
+      } else if (composioRes.status === 404 && targetUrl.includes('/connectedAccounts')) {
+        const altUrl = targetUrl.replace('/connectedAccounts', '/connected_accounts');
+        try {
+          const retryRes = await fetch(altUrl, fetchOptions);
+          if (retryRes.status !== 404) {
+            composioRes = retryRes;
+          }
+        } catch {}
+      }
+
       const data = await composioRes.text();
       res.status(composioRes.status);
       res.setHeader('Content-Type', composioRes.headers.get('Content-Type') || 'application/json');

@@ -378,6 +378,41 @@ export async function pingComposio(): Promise<{ ok: boolean; status: number; lat
   }
 }
 
+export interface InitiateConnectionOptions {
+  redirectUri?: string;
+  onSuccess?: (account: ComposioConnectedAccount) => void;
+  onError?: (err: Error) => void;
+  onClose?: () => void;
+}
+
+export interface InitiateConnectionResult {
+  connectionUrl?: string;
+  redirectUrl?: string;
+  connectionId?: string;
+  popup?: Window | null;
+  waitForCompletion: () => Promise<boolean>;
+}
+
+export type ConnectionSyncListener = (accounts: ComposioConnectedAccount[]) => void;
+const connectionSyncListeners = new Set<ConnectionSyncListener>();
+
+export function subscribeToConnectionChanges(listener: ConnectionSyncListener): () => void {
+  connectionSyncListeners.add(listener);
+  return () => {
+    connectionSyncListeners.delete(listener);
+  };
+}
+
+export function notifyConnectionSync(accounts: ComposioConnectedAccount[]): void {
+  for (const listener of connectionSyncListeners) {
+    try {
+      listener(accounts);
+    } catch (err) {
+      console.warn('[COMPOSIO LISTENER ERROR]', err);
+    }
+  }
+}
+
 /**
  * Direct call fallback to backend.composio.dev/api/v3 when on local dev or when proxy is unreachable
  */
@@ -388,18 +423,18 @@ async function callComposioDirect(
   apiKey: string,
   entityId: string
 ): Promise<any> {
-  // Enforce v3 base URL and snake_case route structure
+  // Normalize target URL to v3
   let targetUrl = url.replace('https://backend.composio.dev/api/v2', COMPOSIO_BASE_URL);
-  if (targetUrl.includes('/connectedAccounts')) {
-    targetUrl = targetUrl.replace('/connectedAccounts', '/connected_accounts');
-  }
 
   let modifiedBody = body ? { ...body } : undefined;
 
-  if (targetUrl.includes('/connected_accounts')) {
+  const isConnectedAccounts =
+    targetUrl.includes('/connectedAccounts') || targetUrl.includes('/connected_accounts');
+
+  if (isConnectedAccounts) {
     if (method.toUpperCase() === 'GET') {
       const sep = targetUrl.includes('?') ? '&' : '?';
-      targetUrl = `${targetUrl}${sep}user_uuid=${encodeURIComponent(entityId)}&user_id=${encodeURIComponent(entityId)}`;
+      targetUrl = `${targetUrl}${sep}entityId=${encodeURIComponent(entityId)}&user_uuid=${encodeURIComponent(entityId)}&user_id=${encodeURIComponent(entityId)}`;
     } else if (method.toUpperCase() === 'POST' && modifiedBody) {
       modifiedBody.user_uuid = entityId;
       modifiedBody.user_id = entityId;
@@ -411,7 +446,7 @@ async function callComposioDirect(
     modifiedBody.user_uuid = entityId;
   }
 
-  const directRes = await fetch(targetUrl, {
+  let directRes = await fetch(targetUrl, {
     method: method.toUpperCase(),
     headers: {
       'x-api-key': apiKey,
@@ -420,6 +455,41 @@ async function callComposioDirect(
     },
     body: modifiedBody && method.toUpperCase() !== 'GET' ? JSON.stringify(modifiedBody) : undefined,
   });
+
+  // If 404, fall back between camelCase and snake_case endpoint variants
+  if (directRes.status === 404 && targetUrl.includes('/connectedAccounts')) {
+    const altUrl = targetUrl.replace('/connectedAccounts', '/connected_accounts');
+    try {
+      const altRes = await fetch(altUrl, {
+        method: method.toUpperCase(),
+        headers: {
+          'x-api-key': apiKey,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: modifiedBody && method.toUpperCase() !== 'GET' ? JSON.stringify(modifiedBody) : undefined,
+      });
+      if (altRes.ok || altRes.status !== 404) {
+        directRes = altRes;
+      }
+    } catch {}
+  } else if (directRes.status === 404 && targetUrl.includes('/connected_accounts')) {
+    const altUrl = targetUrl.replace('/connected_accounts', '/connectedAccounts');
+    try {
+      const altRes = await fetch(altUrl, {
+        method: method.toUpperCase(),
+        headers: {
+          'x-api-key': apiKey,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        body: modifiedBody && method.toUpperCase() !== 'GET' ? JSON.stringify(modifiedBody) : undefined,
+      });
+      if (altRes.ok || altRes.status !== 404) {
+        directRes = altRes;
+      }
+    } catch {}
+  }
 
   if (!directRes.ok) {
     const txt = await directRes.text();
@@ -440,11 +510,6 @@ async function callComposioProxy(
   const entityId = getOrCreateEntityId();
   const customKey = getComposioApiKey();
   let cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-
-  // Normalize legacy v2 / camelCase paths to v3
-  if (cleanEndpoint.startsWith('/connectedAccounts')) {
-    cleanEndpoint = cleanEndpoint.replace('/connectedAccounts', '/connected_accounts');
-  }
 
   // 1. Direct browser REST execution if user configured their own COMPOSIO_API_KEY
   // Bypasses any SPA fallback or Vite dev server proxy issues
@@ -521,27 +586,58 @@ async function callComposioProxy(
 }
 
 /**
- * 2. Get user's personal connected accounts via v3 connected_accounts endpoint
+ * 2. Get user's personal connected accounts via v3 connectedAccounts endpoint
+ * Scoped strictly to the caller's entityId to update UI counters from (0) to active count.
  */
 export async function getConnectedAccounts(): Promise<ComposioConnectedAccount[]> {
   const entityId = getOrCreateEntityId();
   try {
-    const data = await callComposioProxy(
-      `/connected_accounts?user_uuid=${encodeURIComponent(entityId)}&user_id=${encodeURIComponent(entityId)}`,
-      'GET'
-    );
+    let data: any;
+    try {
+      data = await callComposioProxy(
+        `/api/v3/connectedAccounts?entityId=${encodeURIComponent(entityId)}`,
+        'GET'
+      );
+    } catch {
+      data = await callComposioProxy(
+        `/connected_accounts?entityId=${encodeURIComponent(entityId)}&user_uuid=${encodeURIComponent(entityId)}&user_id=${encodeURIComponent(entityId)}`,
+        'GET'
+      );
+    }
+
     const items = Array.isArray(data)
       ? data
-      : data?.items || data?.connected_accounts || data?.connectedAccounts || data?.data || [];
-    return items.map((item: any) => ({
-      id: item.id || item.connectionId || item.connected_account_id,
-      appName: (item.appName || item.app || item.toolkit_slug || item.toolkitSlug || '').toLowerCase(),
-      status: item.status || 'ACTIVE',
-      createdAt: item.createdAt || item.created_at,
-      userUuid: item.user_uuid || item.user_id || item.entityId || entityId,
-    }));
-  } catch {
-    // Return empty list if backend unconfigured
+      : data?.items ||
+        data?.connectedAccounts ||
+        data?.connected_accounts ||
+        data?.connections ||
+        data?.data ||
+        [];
+
+    const normalized: ComposioConnectedAccount[] = items.map((item: any) => {
+      const rawStatus = String(item.status || item.connection_status || 'ACTIVE').toUpperCase();
+      const status: 'ACTIVE' | 'INITIATED' | 'FAILED' | 'EXPIRED' =
+        rawStatus.includes('FAIL')
+          ? 'FAILED'
+          : rawStatus.includes('INIT')
+          ? 'INITIATED'
+          : rawStatus.includes('EXPIR')
+          ? 'EXPIRED'
+          : 'ACTIVE';
+
+      return {
+        id: String(item.id || item.connectionId || item.connected_account_id || item.connection_id || ''),
+        appName: String(item.appName || item.app || item.toolkit_slug || item.toolkitSlug || item.integrationId || item.app_name || '').toLowerCase().trim(),
+        status,
+        createdAt: item.createdAt || item.created_at || new Date().toISOString(),
+        userUuid: item.userUuid || item.user_uuid || item.user_id || item.entityId || entityId,
+      };
+    });
+
+    notifyConnectionSync(normalized);
+    return normalized;
+  } catch (err) {
+    console.warn('[COMPOSIO GET CONNECTED ACCOUNTS ERROR]', err);
     return [];
   }
 }
@@ -590,14 +686,23 @@ export async function getOrCreateAuthConfig(toolkitSlug: string): Promise<string
 }
 
 /**
- * 3. Initiate OAuth App Connection via v3.1 link endpoint (e.g. GitHub, Slack, Gmail, Notion)
+ * 3. Initiate OAuth App Connection via v3 OAuth redirection URL with popup bridge & closure polling
  */
 export async function initiateAppConnection(
   appName: string,
-  redirectUri: string = typeof window !== 'undefined' ? window.location.origin : ''
-): Promise<{ connectionUrl?: string; redirectUrl?: string; connectionId?: string }> {
+  options?: string | InitiateConnectionOptions
+): Promise<InitiateConnectionResult> {
   const entityId = getOrCreateEntityId();
   const normalizedApp = appName.toLowerCase().trim();
+
+  const opts: InitiateConnectionOptions =
+    typeof options === 'string'
+      ? { redirectUri: options }
+      : options || {};
+
+  const redirectUri =
+    opts.redirectUri ||
+    (typeof window !== 'undefined' ? window.location.origin : '');
 
   // Resolve or create auth_config_id (e.g. ac_...)
   let authConfigId = normalizedApp;
@@ -608,19 +713,41 @@ export async function initiateAppConnection(
   let response: any;
   let linkError: any = null;
 
-  // Attempt 1: Modern Composio v3.1 /connected_accounts/link
+  // Attempt 1: Fetch v3 OAuth redirection URL from /api/v3/connectedAccounts
   try {
-    response = await callComposioProxy('/connected_accounts/link', 'POST', {
+    response = await callComposioProxy('/api/v3/connectedAccounts', 'POST', {
+      appName: normalizedApp,
+      app: normalizedApp,
+      integrationId: normalizedApp,
+      toolkit: { slug: normalizedApp },
+      toolkit_slug: normalizedApp,
       auth_config_id: authConfigId,
+      entityId,
       user_id: entityId,
+      user_uuid: entityId,
+      redirectUri,
+      redirect_url: redirectUri,
       callback_url: redirectUri,
     });
   } catch (err1: any) {
     linkError = err1;
   }
 
-  // Attempt 2: If auth_config_id format failed, try with toolkit slug directly
-  if (!response?.redirect_url && !response?.connectionUrl && !response?.url && !response?.data?.redirect_url) {
+  // Attempt 2: Modern Composio v3.1 /connected_accounts/link
+  if (!response?.redirect_url && !response?.redirectUrl && !response?.connectionUrl && !response?.url && !response?.data?.redirect_url && !response?.data?.redirectUrl) {
+    try {
+      response = await callComposioProxy('/connected_accounts/link', 'POST', {
+        auth_config_id: authConfigId,
+        user_id: entityId,
+        callback_url: redirectUri,
+      });
+    } catch (err2: any) {
+      linkError = linkError || err2;
+    }
+  }
+
+  // Attempt 3: Direct slug link
+  if (!response?.redirect_url && !response?.redirectUrl && !response?.connectionUrl && !response?.url && !response?.data?.redirect_url && !response?.data?.redirectUrl) {
     try {
       response = await callComposioProxy('/connected_accounts/link', 'POST', {
         toolkit: { slug: normalizedApp },
@@ -631,8 +758,8 @@ export async function initiateAppConnection(
     } catch {}
   }
 
-  // Attempt 3: Fallback to /connected_accounts creation
-  if (!response?.redirect_url && !response?.connectionUrl && !response?.url && !response?.data?.redirect_url) {
+  // Attempt 4: Fallback to /connected_accounts creation
+  if (!response?.redirect_url && !response?.redirectUrl && !response?.connectionUrl && !response?.url && !response?.data?.redirect_url && !response?.data?.redirectUrl) {
     try {
       response = await callComposioProxy('/connected_accounts', 'POST', {
         appName: normalizedApp,
@@ -646,8 +773,8 @@ export async function initiateAppConnection(
         redirect_url: redirectUri,
         callback_url: redirectUri,
       });
-    } catch (err3: any) {
-      throw linkError || err3;
+    } catch (err4: any) {
+      throw linkError || err4;
     }
   }
 
@@ -669,18 +796,145 @@ export async function initiateAppConnection(
     );
   }
 
-  if (targetUrl && typeof window !== 'undefined') {
-    // Open OAuth link in a clean popup or redirect window
+  let popup: Window | null = null;
+  if (typeof window !== 'undefined') {
+    // Open OAuth link in a clean centered popup window
     const width = 640;
     const height = 720;
-    const left = window.screenX + (window.outerWidth - width) / 2;
-    const top = window.screenY + (window.outerHeight - height) / 2;
-    window.open(
-      targetUrl,
-      `composio_auth_${normalizedApp}`,
-      `width=${width},height=${height},left=${left},top=${top},status=no,menubar=no`
-    );
+    const left = window.screenX + Math.max(0, (window.outerWidth - width) / 2);
+    const top = window.screenY + Math.max(0, (window.outerHeight - height) / 2);
+    const popupFeatures = [
+      `width=${width}`,
+      `height=${height}`,
+      `left=${left}`,
+      `top=${top}`,
+      'status=no',
+      'menubar=no',
+      'toolbar=no',
+      'resizable=yes',
+      'scrollbars=yes',
+    ].join(',');
+
+    try {
+      popup = window.open(targetUrl, `composio_oauth_${normalizedApp}`, popupFeatures);
+      if (popup && typeof popup.focus === 'function') {
+        popup.focus();
+      }
+    } catch (popupErr) {
+      console.warn('[COMPOSIO POPUP BLOCKED WARNING]', popupErr);
+    }
   }
+
+  // Monitor popup window closure and listen for cross-origin completion messages
+  let cleanupTimer: any = null;
+  let isResolved = false;
+
+  const waitForCompletion = (): Promise<boolean> => {
+    return new Promise<boolean>((resolve) => {
+      const finishHandshake = async () => {
+        if (isResolved) return;
+        isResolved = true;
+
+        if (cleanupTimer) {
+          clearInterval(cleanupTimer);
+          cleanupTimer = null;
+        }
+
+        if (typeof window !== 'undefined') {
+          window.removeEventListener('message', handleWindowMessage);
+        }
+
+        // Poll connected accounts immediately, then retry after delays to guarantee sync
+        let latest = await getConnectedAccounts();
+        let connectedAccount = latest.find(
+          (a) => a.appName === normalizedApp && (a.status === 'ACTIVE' || a.status === 'INITIATED')
+        );
+
+        if (!connectedAccount) {
+          await new Promise((r) => setTimeout(r, 1200));
+          latest = await getConnectedAccounts();
+          connectedAccount = latest.find(
+            (a) => a.appName === normalizedApp && (a.status === 'ACTIVE' || a.status === 'INITIATED')
+          );
+        }
+
+        if (!connectedAccount) {
+          await new Promise((r) => setTimeout(r, 2200));
+          latest = await getConnectedAccounts();
+          connectedAccount = latest.find(
+            (a) => a.appName === normalizedApp && (a.status === 'ACTIVE' || a.status === 'INITIATED')
+          );
+        }
+
+        // Dispatch global sync events across the entire application
+        if (typeof window !== 'undefined') {
+          window.dispatchEvent(
+            new CustomEvent('composio:connection-updated', {
+              detail: {
+                appName: normalizedApp,
+                entityId,
+                accounts: latest,
+                connected: !!connectedAccount,
+              },
+            })
+          );
+          window.dispatchEvent(
+            new CustomEvent('composio:session-synced', {
+              detail: {
+                appName: normalizedApp,
+                entityId,
+                accounts: latest,
+              },
+            })
+          );
+        }
+
+        if (connectedAccount) {
+          opts.onSuccess?.(connectedAccount);
+        } else {
+          opts.onClose?.();
+        }
+
+        resolve(!!connectedAccount);
+      };
+
+      const handleWindowMessage = (event: MessageEvent) => {
+        if (
+          event.data &&
+          (event.data.type === 'COMPOSIO_AUTH_SUCCESS' ||
+            event.data.composioAuthSuccess ||
+            event.data.status === 'SUCCESS' ||
+            event.data.connectedAccountId)
+        ) {
+          finishHandshake();
+        }
+      };
+
+      if (typeof window !== 'undefined') {
+        window.addEventListener('message', handleWindowMessage);
+      }
+
+      if (popup) {
+        cleanupTimer = setInterval(() => {
+          try {
+            if (popup.closed) {
+              finishHandshake();
+            }
+          } catch {
+            // Cross-origin access restriction on closed property
+          }
+        }, 600);
+      } else {
+        // Fallback if popup was blocked: resolve after 15 seconds
+        setTimeout(() => {
+          finishHandshake();
+        }, 15000);
+      }
+    });
+  };
+
+  // Start background closure monitoring immediately so main app syncs automatically
+  waitForCompletion().catch(() => {});
 
   return {
     connectionUrl: targetUrl,
@@ -690,6 +944,8 @@ export async function initiateAppConnection(
       response?.connectionId ||
       response?.id ||
       response?.link_token,
+    popup,
+    waitForCompletion,
   };
 }
 
@@ -1209,6 +1465,8 @@ export const ComposioService = {
   getGeminiTools,
   executeComposioAction,
   runAgentWithTools,
+  subscribeToConnectionChanges,
+  notifyConnectionSync,
   COMPOSIO_GEMINI_TOOL_SCHEMAS,
   CURATED_COMPOSIO_INTEGRATIONS,
 };

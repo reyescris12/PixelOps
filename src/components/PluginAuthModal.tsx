@@ -220,12 +220,30 @@ export const PluginAuthModal: React.FC<PluginAuthModalProps> = ({
           ? `[Composio OAuth] Authorization popup opened for ${app.toUpperCase()}. Complete sign-in to authorize.`
           : `[Composio OAuth] Connection active for ${app.toUpperCase()}.`,
       });
-      const saved = savePluginCredential(plugin.id, {
-        apiKey: 'composio-oauth-linked',
-        accountHandle: accountHandle || `${app}_user`,
-      });
-      setExistingCred(saved);
-      onAuthorized?.(plugin.id, saved);
+
+      if (typeof res.waitForCompletion === 'function') {
+        res.waitForCompletion().then((completed: boolean) => {
+          if (completed) {
+            const saved = savePluginCredential(plugin.id, {
+              apiKey: 'composio-oauth-linked',
+              accountHandle: accountHandle || `${app}_user`,
+            });
+            setExistingCred(saved);
+            onAuthorized?.(plugin.id, saved);
+            setStatusMessage({
+              type: 'success',
+              text: `[Composio OAuth] ${app.toUpperCase()} authorized and synced successfully!`,
+            });
+          }
+        });
+      } else {
+        const saved = savePluginCredential(plugin.id, {
+          apiKey: 'composio-oauth-linked',
+          accountHandle: accountHandle || `${app}_user`,
+        });
+        setExistingCred(saved);
+        onAuthorized?.(plugin.id, saved);
+      }
     } catch (err: any) {
       setStatusMessage({
         type: 'error',

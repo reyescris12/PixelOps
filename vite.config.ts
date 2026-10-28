@@ -1,8 +1,8 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import {defineConfig} from 'vite';
-import {VitePWA} from 'vite-plugin-pwa';
+import { defineConfig } from 'vite';
+import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig(() => {
   return {
@@ -11,15 +11,23 @@ export default defineConfig(() => {
       tailwindcss(),
       VitePWA({
         registerType: 'autoUpdate',
-        includeAssets: ['icon.svg', 'apple-touch-icon.png', 'pwa-192x192.png', 'pwa-512x512.png', 'pwa-maskable-512x512.png'],
+        includeAssets: [
+          'icon.svg',
+          'apple-touch-icon.png',
+          'pwa-192x192.png',
+          'pwa-512x512.png',
+          'pwa-maskable-512x512.png',
+        ],
         manifest: {
           id: '/',
           name: 'PixelOps Agent Command Center',
           short_name: 'PixelOps',
-          description: 'Retro pixel-art Mobile Agent Command Center PWA powered by Gemini with swappable theme engines and multi-tool agent execution.',
+          description:
+            'Retro pixel-art Mobile Agent Command Center PWA powered by Gemini with swappable theme engines and multi-tool agent execution.',
           theme_color: '#0a0a0c',
           background_color: '#0a0a0c',
           display: 'standalone',
+          orientation: 'landscape',
           start_url: '/',
           scope: '/',
           icons: [
@@ -44,12 +52,26 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
-          // Increase precache size limit to 5MB (default is 2MB)
-          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
-          // Exclude massive sprite sheets or media from strict precaching if needed
-          globIgnores: ['**/assets/large-sprites/**', '**/scratch/**'],
-          globPatterns: ['**/*.{js,css,html,ico,png,svg,woff,woff2}'],
+          // Precache only core application shell files (keeps initial precache payload tiny)
+          maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
+          globPatterns: ['**/*.{js,css,html,svg,ico}'],
+          globIgnores: ['**/assets/rooms/**', '**/assets/large-sprites/**', '**/scratch/**'],
           runtimeCaching: [
+            {
+              // On-demand caching for 16-bit room backgrounds & sprite assets
+              urlPattern: /\/assets\/(rooms|agents)\/.*\.(?:png|jpg|jpeg|svg|webp)/i,
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'pixelops-room-assets-cache',
+                expiration: {
+                  maxEntries: 100,
+                  maxAgeSeconds: 60 * 60 * 24 * 30, // 30 days
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
             {
               urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,
               handler: 'CacheFirst',
@@ -87,8 +109,31 @@ export default defineConfig(() => {
       }),
     ],
     resolve: {
+      extensions: ['.tsx', '.ts', '.jsx', '.js', '.json'],
       alias: {
-        '@': path.resolve(__dirname, '.'),
+        '@': path.resolve(import.meta.dirname, '.'),
+      },
+    },
+    build: {
+      target: 'esnext',
+      cssCodeSplit: true,
+      rollupOptions: {
+        output: {
+          manualChunks(id) {
+            if (id.includes('node_modules')) {
+              if (id.includes('react') || id.includes('scheduler')) {
+                return 'vendor-react';
+              }
+              if (id.includes('lucide-react')) {
+                return 'vendor-lucide';
+              }
+              if (id.includes('dexie')) {
+                return 'vendor-dexie';
+              }
+              return 'vendor';
+            }
+          },
+        },
       },
     },
     server: {

@@ -4,7 +4,7 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Check, RotateCcw } from 'lucide-react';
+import { Check, RotateCcw, Smartphone } from 'lucide-react';
 import { ThemeProvider, useTheme, THEMES, ThemeId } from './context/ThemeContext';
 import {
   CrewProvider,
@@ -222,6 +222,7 @@ const CommandCenterContent: React.FC = () => {
   const [isAgentFactoryOpen, setIsAgentFactoryOpen] = useState(false);
   const [isTerminalConsoleOpen, setIsTerminalConsoleOpen] = useState(false);
   const [isWorkspaceFilesOpen, setIsWorkspaceFilesOpen] = useState(false);
+  const [dismissPortraitGuard, setDismissPortraitGuard] = useState(false);
   const [taskBriefState, setTaskBriefState] = useState<{
     isOpen: boolean;
     brief: TaskBrief | null;
@@ -2409,6 +2410,31 @@ const CommandCenterContent: React.FC = () => {
         onAuthorized={handlePluginAuthorized}
         onRevoked={handlePluginRevoked}
       />
+
+      {/* Mobile Portrait Orientation Lock Prompt */}
+      {!dismissPortraitGuard && (
+        <div className="portrait-orientation-guard fixed inset-0 z-[9999] bg-[#0c0e14]/98 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center text-[#f3ead8]">
+          <div className="w-16 h-16 rounded-full bg-[#1e293b] border-2 border-[#4ade80] flex items-center justify-center mb-4 animate-pulse">
+            <Smartphone className="w-8 h-8 text-[#4ade80] rotate-90" />
+          </div>
+          <div className="text-[11px] font-mono font-bold text-[#4ade80] tracking-widest uppercase mb-1">
+            [SPY SAFEHOUSE · ORIENTATION DIRECTIVE]
+          </div>
+          <h2 className="text-base font-bold font-pixel text-[#f3ead8] mb-2">
+            Rotate Device to Landscape
+          </h2>
+          <p className="text-xs text-[#94a3b8] max-w-xs mb-6 leading-relaxed">
+            PixelOps Agent Command Center is engineered for widescreen tactical operations. Rotate your device sideways to initialize the live multi-room safehouse link.
+          </p>
+          <button
+            type="button"
+            onClick={() => setDismissPortraitGuard(true)}
+            className="px-3 py-1.5 bg-[#1e2330] hover:bg-[#2d3748] border border-[#3b4252] text-[11px] font-mono text-[#a0aec0] rounded cursor-pointer transition-colors"
+          >
+            [Override · Continue in Portrait]
+          </button>
+        </div>
+      )}
     </div>
   );
 };

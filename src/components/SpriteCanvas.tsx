@@ -1862,9 +1862,10 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
     };
   }, []);
 
-  // Global animation clock for progress bars & 4-phase walking leg stride cycle
+  // Global animation clock for progress bars & 4-phase walking leg stride cycle (visibility-aware)
   useEffect(() => {
     const interval = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       setTick((t) => (t + 1) % 12);
       setWalkFrame((f) => ((f + 1) % 4) as 0 | 1 | 2 | 3);
     }, 135);
@@ -2070,9 +2071,31 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
     });
   }, [townHallSummonNonce]);
 
-  // 60ms autonomous coordinate waypoint interpolation loop
+  // 60ms autonomous coordinate waypoint interpolation loop with visibility throttling protection
   useEffect(() => {
+    let lastTick = Date.now();
+
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        lastTick = Date.now();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     const moveTimer = setInterval(() => {
+      // Pause pathfinding ticks while tab is backgrounded to prevent warp teleport bursts
+      if (typeof document !== 'undefined' && document.hidden) {
+        lastTick = Date.now();
+        return;
+      }
+      const now = Date.now();
+      const delta = now - lastTick;
+      lastTick = now;
+      if (delta > 600) {
+        // If tab was paused or throttled across a freeze, skip delta accumulator burst
+        return;
+      }
+
       setLiveAgents((prev) => {
         let changed = false;
         const next: Record<number, LiveAgentState> = { ...prev };
@@ -2205,7 +2228,10 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
       });
     }, 60);
 
-    return () => clearInterval(moveTimer);
+    return () => {
+      clearInterval(moveTimer);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
   }, [isExecuting, isMeetingActive]);
 
   // Casual Ambient Wandering & Zone-Based Crowd Control Loop
@@ -2213,6 +2239,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
     if (!autoRoam || isExecuting || isMeetingActive) return;
 
     const roamTimer = setInterval(() => {
+      if (typeof document !== 'undefined' && document.hidden) return;
       setLiveAgents((prev) => {
         const idleCandidates = Object.values(prev).filter((a) => !a.isMoving);
         if (idleCandidates.length === 0) return prev;

@@ -7,20 +7,26 @@
 
 const SIDECAR_DEFAULT_URL = 'http://127.0.0.1:31416';
 
-let isSidecarOnline = null; // null = untracked, true = online, false = offline
+let isSidecarOnline: boolean | null = null; // null = untracked, true = online, false = offline
 let lastCheckTime = 0;
 const CHECK_INTERVAL_MS = 10000;
+
+export interface SidecarOptions {
+  cwd?: string;
+  encoding?: string;
+  sidecarBaseUrl?: string;
+}
 
 /**
  * Checks if the local PixelOps sidecar bridge is online and responding.
  */
-export async function checkSidecarHealth(sidecarBaseUrl = SIDECAR_DEFAULT_URL) {
+export async function checkSidecarHealth(sidecarBaseUrl: string = SIDECAR_DEFAULT_URL): Promise<boolean> {
   const now = Date.now();
   if (isSidecarOnline !== null && now - lastCheckTime < CHECK_INTERVAL_MS) {
     return isSidecarOnline;
   }
 
-  // Fast check: on HTTPS or mobile/remote hosting (like Netlify), local 127.0.0.1 sidecar is unreachable
+  // Fast check: on HTTPS or mobile/remote hosting (like Netlify or Cloudflare Pages), local 127.0.0.1 sidecar is unreachable
   if (typeof window !== 'undefined' && window.location) {
     if (
       window.location.protocol === 'https:' ||
@@ -34,17 +40,16 @@ export async function checkSidecarHealth(sidecarBaseUrl = SIDECAR_DEFAULT_URL) {
 
   try {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 300);
+    const timeoutId = setTimeout(() => controller.abort(), 1200);
 
     const res = await fetch(`${sidecarBaseUrl}/api/health`, {
       method: 'GET',
       signal: controller.signal,
     });
-    clearTimeout(timeout);
+    clearTimeout(timeoutId);
 
     if (res.ok) {
-      const data = await res.json();
-      isSidecarOnline = data.status === 'online';
+      isSidecarOnline = true;
       lastCheckTime = now;
       return true;
     }
@@ -61,7 +66,7 @@ export async function checkSidecarHealth(sidecarBaseUrl = SIDECAR_DEFAULT_URL) {
  * Executes a whitelisted shell command via the local sidecar.
  * Falls back to in-browser mock telemetry if the sidecar is offline.
  */
-export async function executeSidecarShell(command, options = {}) {
+export async function executeSidecarShell(command: string, options: SidecarOptions = {}): Promise<any> {
   const { cwd, sidecarBaseUrl = SIDECAR_DEFAULT_URL } = options;
   const online = await checkSidecarHealth(sidecarBaseUrl);
 
@@ -80,8 +85,8 @@ export async function executeSidecarShell(command, options = {}) {
         ...data,
         isLocalSidecar: true,
       };
-    } catch (err) {
-      console.warn('[Sidecar Client] Remote command execution failed, using fallback:', err.message);
+    } catch (err: any) {
+      console.warn('[Sidecar Client] Remote command execution failed, using fallback:', err?.message || err);
     }
   }
 
@@ -100,7 +105,7 @@ export async function executeSidecarShell(command, options = {}) {
 /**
  * Reads a file via the local sidecar bridge.
  */
-export async function readSidecarFile(filePath, options = {}) {
+export async function readSidecarFile(filePath: string, options: SidecarOptions = {}): Promise<any> {
   const { encoding = 'utf8', sidecarBaseUrl = SIDECAR_DEFAULT_URL } = options;
   const online = await checkSidecarHealth(sidecarBaseUrl);
 
@@ -119,8 +124,8 @@ export async function readSidecarFile(filePath, options = {}) {
         ...data,
         isLocalSidecar: true,
       };
-    } catch (err) {
-      console.warn('[Sidecar Client] Local file read failed, falling back:', err.message);
+    } catch (err: any) {
+      console.warn('[Sidecar Client] Local file read failed, falling back:', err?.message || err);
     }
   }
 
@@ -137,7 +142,7 @@ export async function readSidecarFile(filePath, options = {}) {
 /**
  * Writes a file via the local sidecar bridge.
  */
-export async function writeSidecarFile(filePath, content, options = {}) {
+export async function writeSidecarFile(filePath: string, content: string, options: SidecarOptions = {}): Promise<any> {
   const { encoding = 'utf8', sidecarBaseUrl = SIDECAR_DEFAULT_URL } = options;
   const online = await checkSidecarHealth(sidecarBaseUrl);
 
@@ -156,8 +161,8 @@ export async function writeSidecarFile(filePath, content, options = {}) {
         ...data,
         isLocalSidecar: true,
       };
-    } catch (err) {
-      console.warn('[Sidecar Client] Local file write failed:', err.message);
+    } catch (err: any) {
+      console.warn('[Sidecar Client] Local file write failed:', err?.message || err);
     }
   }
 
@@ -174,7 +179,7 @@ export async function writeSidecarFile(filePath, content, options = {}) {
 /**
  * Lists directory entries via the local sidecar.
  */
-export async function listSidecarDirectory(directory = '.', options = {}) {
+export async function listSidecarDirectory(directory: string = '.', options: SidecarOptions = {}): Promise<any> {
   const { sidecarBaseUrl = SIDECAR_DEFAULT_URL } = options;
   const online = await checkSidecarHealth(sidecarBaseUrl);
 
@@ -193,8 +198,8 @@ export async function listSidecarDirectory(directory = '.', options = {}) {
         ...data,
         isLocalSidecar: true,
       };
-    } catch (err) {
-      console.warn('[Sidecar Client] Local directory listing failed:', err.message);
+    } catch (err: any) {
+      console.warn('[Sidecar Client] Local directory listing failed:', err?.message || err);
     }
   }
 
@@ -214,7 +219,7 @@ export async function listSidecarDirectory(directory = '.', options = {}) {
 /**
  * Fetches real-time system execution telemetry from the local sidecar.
  */
-export async function fetchSidecarTelemetry(sidecarBaseUrl = SIDECAR_DEFAULT_URL) {
+export async function fetchSidecarTelemetry(sidecarBaseUrl: string = SIDECAR_DEFAULT_URL): Promise<any> {
   const online = await checkSidecarHealth(sidecarBaseUrl);
   if (!online) {
     return {

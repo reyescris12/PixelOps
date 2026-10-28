@@ -1306,12 +1306,107 @@ ROUNDTABLE RULES:
     }
   });
 
-  if (process.env.NODE_ENV !== 'production') {
+    // Composio v3 Multi-User Proxy Route for local development & preview
+  app.all('/api/composio', async (req, res) => {
+    try {
+      const apiKey =
+        (req.headers['x-composio-api-key'] as string)?.trim() ||
+        process.env.COMPOSIO_API_KEY?.trim();
+
+      if (!apiKey) {
+        return res.status(401).json({
+          error: 'COMPOSIO_API_KEY_MISSING',
+          message:
+            'No Composio API key configured. Provide COMPOSIO_API_KEY in environment variables or pass x-composio-api-key header.',
+        });
+      }
+
+      let endpoint = '';
+      let method = req.method;
+      let body: any = null;
+      let entityId = (req.headers['x-entity-id'] as string) || '';
+
+      if (req.method === 'POST') {
+        endpoint = req.body?.endpoint || '';
+        method = req.body?.method || 'POST';
+        body = req.body?.body;
+        entityId = req.body?.entityId || entityId;
+      } else {
+        endpoint = (req.query.endpoint as string) || '';
+        entityId = (req.query.entityId as string) || entityId;
+      }
+
+      if (!endpoint) {
+        return res.status(400).json({
+          error: 'ENDPOINT_REQUIRED',
+          message: 'Missing target endpoint parameter.',
+        });
+      }
+
+      if (!entityId || !entityId.trim()) {
+        return res.status(400).json({
+          error: 'ENTITY_ID_REQUIRED',
+          message: 'Caller unique entityId is mandatory for multi-user isolation.',
+        });
+      }
+
+      let cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+      cleanEndpoint = cleanEndpoint.replace(/^\/api\/v2/, '').replace(/^\/api\/v3/, '');
+      if (cleanEndpoint.startsWith('/connectedAccounts')) {
+        cleanEndpoint = cleanEndpoint.replace('/connectedAccounts', '/connected_accounts');
+      }
+
+      const baseUrl = 'https://backend.composio.dev/api/v3';
+      let targetUrl = `${baseUrl}${cleanEndpoint}`;
+      let modifiedBody = body ? { ...body } : undefined;
+
+      if (cleanEndpoint.startsWith('/connected_accounts')) {
+        if (method.toUpperCase() === 'GET') {
+          const separator = targetUrl.includes('?') ? '&' : '?';
+          targetUrl = `${targetUrl}${separator}user_uuid=${encodeURIComponent(entityId)}&user_id=${encodeURIComponent(entityId)}`;
+        } else if (method.toUpperCase() === 'POST' && modifiedBody) {
+          modifiedBody.user_uuid = entityId;
+          modifiedBody.user_id = entityId;
+          modifiedBody.entityId = entityId;
+        }
+      } else if ((cleanEndpoint.includes('/execute') || cleanEndpoint.includes('/tools/')) && modifiedBody) {
+        modifiedBody.entityId = entityId;
+        modifiedBody.user_uuid = entityId;
+        modifiedBody.user_id = entityId;
+      }
+
+      const composioHeaders: Record<string, string> = {
+        'x-api-key': apiKey,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      };
+
+      const fetchOptions: RequestInit = {
+        method: method.toUpperCase(),
+        headers: composioHeaders,
+      };
+
+      if (modifiedBody && method.toUpperCase() !== 'GET' && method.toUpperCase() !== 'HEAD') {
+        fetchOptions.body = JSON.stringify(modifiedBody);
+      }
+
+      const composioRes = await fetch(targetUrl, fetchOptions);
+      const data = await composioRes.text();
+      res.status(composioRes.status);
+      res.setHeader('Content-Type', composioRes.headers.get('Content-Type') || 'application/json');
+      res.send(data);
+    } catch (err: any) {
+      res.status(502).json({
+        error: 'COMPOSIO_PROXY_FAULT',
+        message: err?.message || 'Failed to proxy request to Composio backend.',
+      });
+    }
+  });
+
+if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        hmr: false,
-        watch: null,
       },
       appType: 'spa',
     });

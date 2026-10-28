@@ -1594,11 +1594,23 @@ export function getTownHallSeat(idx: number, total: number = 3): WorkstationDef 
   };
 }
 
-export const TOWN_HALL_SEATS: Record<number, WorkstationDef> = {
-  0: TOWN_HALL_PRESET_SEATS[0],
-  1: TOWN_HALL_PRESET_SEATS[1],
-  2: TOWN_HALL_PRESET_SEATS[2],
-};
+export const TOWN_HALL_SEATS: Record<number, WorkstationDef> = new Proxy(
+  {
+    0: TOWN_HALL_PRESET_SEATS[0],
+    1: TOWN_HALL_PRESET_SEATS[1],
+    2: TOWN_HALL_PRESET_SEATS[2],
+  },
+  {
+    get(target, prop) {
+      const idx = Number(prop);
+      if (!isNaN(idx)) {
+        if (idx in target) return (target as Record<number, WorkstationDef>)[idx];
+        return getTownHallSeat(idx, Math.max(idx + 1, 3));
+      }
+      return (target as any)[prop];
+    },
+  }
+);
 
 const AMBIENT_IDLE_TAGS = [
   'PATROL',
@@ -1681,26 +1693,12 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
   // Initialize individual autonomous state for the operatives across distinct sectors
   const [liveAgents, setLiveAgents] = useState<Record<number, LiveAgentState>>(() => {
     const saved = loadLiveAgentsSnapshot();
-    if (
-      saved &&
-      saved.liveAgents &&
-      saved.liveAgents[0] &&
-      saved.liveAgents[1] &&
-      saved.liveAgents[2]
-    ) {
-      const a0 = saved.liveAgents[0];
-      const a1 = saved.liveAgents[1];
-      const a2 = saved.liveAgents[2];
-      const allValidRooms =
-        Boolean(getRoomMeta(a0.room) && getRoomMeta(a1.room) && getRoomMeta(a2.room));
-      const allCrowdedInOneRoom = a0.room === a1.room && a1.room === a2.room;
-
-      const allOnWalkableFloor =
-        isWalkablePoint(a0.room, a0.xPct, a0.yPct) &&
-        isWalkablePoint(a1.room, a1.xPct, a1.yPct) &&
-        isWalkablePoint(a2.room, a2.xPct, a2.yPct);
-
-      if (allValidRooms && !allCrowdedInOneRoom && allOnWalkableFloor) {
+    if (saved && saved.liveAgents && Object.keys(saved.liveAgents).length > 0) {
+      const agentEntries = Object.values(saved.liveAgents);
+      const allValid = agentEntries.every(
+        (a) => a && getRoomMeta(a.room) && isWalkablePoint(a.room, a.xPct, a.yPct)
+      );
+      if (allValid && agentEntries.length >= 3) {
         return saved.liveAgents;
       }
     }
@@ -2163,7 +2161,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
               };
             } else {
               if (isMeetingActive && ag.room === 'war_room') {
-                const seat = getTownHallSeat(idx, liveAgentCount);
+                const seat = getTownHallSeat(idx, Object.keys(next).length);
                 next[idx] = {
                   ...ag,
                   stationId: seat.id,

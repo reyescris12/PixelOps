@@ -201,7 +201,7 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
   };
 
   const handleDelete = async (path: string) => {
-    playBeep('alert');
+    playBeep('error');
     await deleteWorkspaceFile(path);
     setDeleteConfirmPath(null);
     await loadFiles(false);
@@ -291,7 +291,7 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
         glow: 'shadow-[0_0_15px_rgba(245,158,11,0.25)]',
       };
     }
-    if (themeId === 'blue') {
+    if ((themeId as string) === 'blue' || (themeId as string) === 'cyan') {
       return {
         accent: '#38bdf8',
         accentBg: '#082f49',

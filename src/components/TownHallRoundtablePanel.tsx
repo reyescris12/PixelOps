@@ -221,9 +221,9 @@ export const TownHallRoundtablePanel: React.FC<TownHallRoundtablePanelProps> = (
         <div className="bg-[#0d1017] border-b border-[#1f293a] px-3.5 py-2.5 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 max-h-72 overflow-y-auto no-scrollbar">
           {activeParticipants.map((crewMember, idx) => {
             const variantMeta =
-              SPRITE_VARIANTS[crewMember.spriteVariant] ||
+              (SPRITE_VARIANTS as Record<string, any>)[crewMember.spriteVariant] ||
               SPRITE_VARIANTS.trenchcoat;
-            const participantMeta = participantsWithNotes[idx] || participantsWithNotes.find((p) => p.name === crewMember.customName);
+            const participantMeta = participantsWithNotes[idx] || participantsWithNotes.find((p) => p.customName === crewMember.customName);
             const latestNote =
               participantMeta?.recentNotes?.[0] || crewMember.specialty;
             const isSpeakingNow = activeSpeakerAgentIndex === idx;

@@ -11,6 +11,9 @@ import {
   getOrCreateEntityId,
   runAgentWithTools,
   ComposioService,
+  getAvailableIntegrations,
+  disconnectAccount,
+  ComposioIntegration,
 } from './ComposioService';
 import {
   executeSafeOperation,
@@ -32,7 +35,11 @@ export {
   executeCodeSandboxEval,
   runAgentWithTools,
   ComposioService,
+  getAvailableIntegrations,
+  disconnectAccount,
 };
+
+export type { ComposioIntegration };
 
 export interface ExecutionStep {
   label: string;
@@ -460,12 +467,36 @@ export function resolveToolWorkflowDestination(toolName: string): {
         taskTag: 'NOTION',
       };
     }
-    if (lower.includes('linear')) {
+    if (lower.includes('linear') || lower.includes('jira') || lower.includes('asana') || lower.includes('trello') || lower.includes('clickup')) {
       return {
         pluginId: 'linear',
         targetRoom: 'briefing_lounge',
         targetStationId: 'lounge_holo_table',
-        taskTag: 'LINEAR',
+        taskTag: 'PROJECT',
+      };
+    }
+    if (lower.includes('discord') || lower.includes('twitter')) {
+      return {
+        pluginId: 'discord',
+        targetRoom: 'comms_tower',
+        targetStationId: 'comms_dish_console',
+        taskTag: 'COMMS',
+      };
+    }
+    if (lower.includes('calendar')) {
+      return {
+        pluginId: 'calendar',
+        targetRoom: 'library',
+        targetStationId: 'lib_front_desk',
+        taskTag: 'CALENDAR',
+      };
+    }
+    if (lower.includes('sheet') || lower.includes('airtable')) {
+      return {
+        pluginId: 'sheets',
+        targetRoom: 'library',
+        targetStationId: 'lib_reading_nook',
+        taskTag: 'DATABASE',
       };
     }
     return {

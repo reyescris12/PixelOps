@@ -20,6 +20,210 @@ export interface ComposioConnectedAccount {
   userUuid?: string;
 }
 
+export interface ComposioIntegration {
+  appName: string;
+  name: string;
+  description: string;
+  logoUrl?: string;
+  category: string;
+  isToolkit: boolean;
+  authSchemes?: string[];
+  connected?: boolean;
+  connectionId?: string;
+}
+
+export const CURATED_COMPOSIO_INTEGRATIONS: ComposioIntegration[] = [
+  {
+    appName: 'github',
+    name: 'GitHub',
+    description: 'Manage repositories, create and track issues, inspect pull requests, and trigger CI workflows.',
+    logoUrl: 'https://cdn.simpleicons.org/github/f3ead8',
+    category: 'Developer',
+    isToolkit: true,
+    authSchemes: ['oauth2', 'api_key'],
+  },
+  {
+    appName: 'slack',
+    name: 'Slack',
+    description: 'Dispatch operational channel broadcasts, monitor security alerts, and send automated direct messages.',
+    logoUrl: 'https://cdn.simpleicons.org/slack/4A154B',
+    category: 'Communication',
+    isToolkit: true,
+    authSchemes: ['oauth2'],
+  },
+  {
+    appName: 'gmail',
+    name: 'Gmail',
+    description: 'Compose mission briefs, analyze inbound messages, and dispatch cryptographically secure emails.',
+    logoUrl: 'https://cdn.simpleicons.org/gmail/EA4335',
+    category: 'Communication',
+    isToolkit: true,
+    authSchemes: ['oauth2'],
+  },
+  {
+    appName: 'googlecalendar',
+    name: 'Google Calendar',
+    description: 'Coordinate synchronized team schedules, track deployment events, and book briefing slots.',
+    logoUrl: 'https://cdn.simpleicons.org/googlecalendar/4285F4',
+    category: 'Productivity',
+    isToolkit: true,
+    authSchemes: ['oauth2'],
+  },
+  {
+    appName: 'notion',
+    name: 'Notion',
+    description: 'Create tactical battle documentation, update operational roadmaps, and sync knowledge bases.',
+    logoUrl: 'https://cdn.simpleicons.org/notion/f3ead8',
+    category: 'Productivity',
+    isToolkit: true,
+    authSchemes: ['oauth2'],
+  },
+  {
+    appName: 'linear',
+    name: 'Linear',
+    description: 'Manage engineering sprints, track bug reports, and prioritize rapid security patches.',
+    logoUrl: 'https://cdn.simpleicons.org/linear/5E6AD2',
+    category: 'Project Management',
+    isToolkit: true,
+    authSchemes: ['oauth2'],
+  },
+  {
+    appName: 'discord',
+    name: 'Discord',
+    description: 'Relay telemetry broadcasts to operative guild servers, announce releases, and ping channel webhooks.',
+    logoUrl: 'https://cdn.simpleicons.org/discord/5865F2',
+    category: 'Communication',
+    isToolkit: true,
+    authSchemes: ['oauth2', 'bot_token'],
+  },
+  {
+    appName: 'jira',
+    name: 'Jira Software',
+    description: 'Enterprise issue tracking, agile backlog management, and vulnerability resolution tracking.',
+    logoUrl: 'https://cdn.simpleicons.org/jira/0052CC',
+    category: 'Project Management',
+    isToolkit: true,
+    authSchemes: ['oauth2'],
+  },
+  {
+    appName: 'asana',
+    name: 'Asana',
+    description: 'Organize team operational workflows, manage milestone dependencies, and allocate field resources.',
+    logoUrl: 'https://cdn.simpleicons.org/asana/F06A6A',
+    category: 'Project Management',
+    isToolkit: true,
+    authSchemes: ['oauth2'],
+  },
+  {
+    appName: 'trello',
+    name: 'Trello',
+    description: 'Visual kanban board manipulation, operative card movements, and checklist verifications.',
+    logoUrl: 'https://cdn.simpleicons.org/trello/0052CC',
+    category: 'Project Management',
+    isToolkit: true,
+    authSchemes: ['oauth2'],
+  },
+  {
+    appName: 'twitter',
+    name: 'Twitter / X',
+    description: 'Broadcast high-priority public bulletins, monitor keyword chatter, and engage community nodes.',
+    logoUrl: 'https://cdn.simpleicons.org/x/f3ead8',
+    category: 'Communication',
+    isToolkit: true,
+    authSchemes: ['oauth2'],
+  },
+  {
+    appName: 'googlesheets',
+    name: 'Google Sheets',
+    description: 'Tabular intelligence logging, automated metric appending, and ledger spreadsheet analysis.',
+    logoUrl: 'https://cdn.simpleicons.org/googlesheets/34A853',
+    category: 'Productivity',
+    isToolkit: true,
+    authSchemes: ['oauth2'],
+  },
+  {
+    appName: 'googledrive',
+    name: 'Google Drive',
+    description: 'Cloud document retrieval, surveillance asset staging, and secure folder structure maintenance.',
+    logoUrl: 'https://cdn.simpleicons.org/googledrive/4285F4',
+    category: 'Productivity',
+    isToolkit: true,
+    authSchemes: ['oauth2'],
+  },
+  {
+    appName: 'airtable',
+    name: 'Airtable',
+    description: 'Relational intelligence store, operative asset rosters, and automated field record updating.',
+    logoUrl: 'https://cdn.simpleicons.org/airtable/18BFFF',
+    category: 'Productivity',
+    isToolkit: true,
+    authSchemes: ['oauth2', 'api_key'],
+  },
+  {
+    appName: 'figma',
+    name: 'Figma',
+    description: 'Extract visual component tokens, inspect operative interface specs, and post design review comments.',
+    logoUrl: 'https://cdn.simpleicons.org/figma/F24E1E',
+    category: 'Developer',
+    isToolkit: true,
+    authSchemes: ['oauth2'],
+  },
+  {
+    appName: 'zoom',
+    name: 'Zoom',
+    description: 'Provision encrypted video briefing rooms, generate conference links, and fetch meeting recordings.',
+    logoUrl: 'https://cdn.simpleicons.org/zoom/2D8CFF',
+    category: 'Communication',
+    isToolkit: true,
+    authSchemes: ['oauth2'],
+  },
+  {
+    appName: 'gitlab',
+    name: 'GitLab',
+    description: 'Self-hosted and cloud git repo governance, pipeline dispatching, and merge request validations.',
+    logoUrl: 'https://cdn.simpleicons.org/gitlab/FC6D26',
+    category: 'Developer',
+    isToolkit: true,
+    authSchemes: ['oauth2', 'api_key'],
+  },
+  {
+    appName: 'clickup',
+    name: 'ClickUp',
+    description: 'All-in-one mission task assignment, status updates, and operative time allocation tracking.',
+    logoUrl: 'https://cdn.simpleicons.org/clickup/7B68EE',
+    category: 'Project Management',
+    isToolkit: true,
+    authSchemes: ['oauth2'],
+  },
+  {
+    appName: 'hubspot',
+    name: 'HubSpot',
+    description: 'CRM lead intelligence, customer contact tracking, and marketing automation dispatching.',
+    logoUrl: 'https://cdn.simpleicons.org/hubspot/FF7A59',
+    category: 'Finance',
+    isToolkit: true,
+    authSchemes: ['oauth2'],
+  },
+  {
+    appName: 'stripe',
+    name: 'Stripe',
+    description: 'Financial transaction querying, subscription ledger auditing, and invoice status confirmation.',
+    logoUrl: 'https://cdn.simpleicons.org/stripe/635BFF',
+    category: 'Finance',
+    isToolkit: true,
+    authSchemes: ['api_key'],
+  },
+  {
+    appName: 'spotify',
+    name: 'Spotify',
+    description: 'Safehouse audio ambience controls, operative focus playlists, and tactical background music.',
+    logoUrl: 'https://cdn.simpleicons.org/spotify/1DB954',
+    category: 'Productivity',
+    isToolkit: true,
+    authSchemes: ['oauth2'],
+  },
+];
+
 export interface ComposioActionExecutionResult {
   successful: boolean;
   data?: any;
@@ -392,6 +596,108 @@ export async function initiateAppConnection(
 }
 
 /**
+ * Disconnect/Revoke a connected third-party account
+ */
+export async function disconnectAccount(connectionId: string): Promise<boolean> {
+  try {
+    await callComposioProxy(`/connected_accounts/${encodeURIComponent(connectionId)}`, 'DELETE');
+    return true;
+  } catch (err: any) {
+    console.warn(`[COMPOSIO DISCONNECT WARNING] ${err?.message || err}`);
+    return false;
+  }
+}
+
+function normalizeCategory(cat: string): string {
+  const lower = cat.toLowerCase();
+  if (lower.includes('dev') || lower.includes('code') || lower.includes('git')) return 'Developer';
+  if (lower.includes('comm') || lower.includes('chat') || lower.includes('mail') || lower.includes('social')) return 'Communication';
+  if (lower.includes('project') || lower.includes('task') || lower.includes('issue') || lower.includes('agile')) return 'Project Management';
+  if (lower.includes('fin') || lower.includes('pay') || lower.includes('crm') || lower.includes('sales')) return 'Finance';
+  return 'Productivity';
+}
+
+/**
+ * Fetch all available Composio toolkits/integrations for the Armory marketplace
+ */
+export async function getAvailableIntegrations(): Promise<ComposioIntegration[]> {
+  // 1. Fetch live connected accounts
+  let connectedAccounts: ComposioConnectedAccount[] = [];
+  try {
+    connectedAccounts = await getConnectedAccounts();
+  } catch {}
+
+  const connectedMap = new Map<string, ComposioConnectedAccount>();
+  for (const acc of connectedAccounts) {
+    if (acc.appName) {
+      connectedMap.set(acc.appName.toLowerCase().trim(), acc);
+    }
+  }
+
+  // 2. Fetch live toolkits from backend if API key or proxy is available
+  let liveToolkits: any[] = [];
+  try {
+    const data = await callComposioProxy('/toolkits', 'GET');
+    liveToolkits = Array.isArray(data)
+      ? data
+      : data?.items || data?.toolkits || data?.data || [];
+  } catch {
+    try {
+      const data2 = await callComposioProxy('/integrations', 'GET');
+      liveToolkits = Array.isArray(data2)
+        ? data2
+        : data2?.items || data2?.integrations || data2?.data || [];
+    } catch {}
+  }
+
+  // 3. Assemble catalog
+  const resultMap = new Map<string, ComposioIntegration>();
+
+  for (const item of CURATED_COMPOSIO_INTEGRATIONS) {
+    const slug = item.appName.toLowerCase().trim();
+    const activeConn = connectedMap.get(slug);
+    resultMap.set(slug, {
+      ...item,
+      connected: Boolean(activeConn && activeConn.status === 'ACTIVE'),
+      connectionId: activeConn?.id,
+    });
+  }
+
+  if (Array.isArray(liveToolkits) && liveToolkits.length > 0) {
+    for (const tk of liveToolkits) {
+      const slug = (tk.slug || tk.appName || tk.name || '').toLowerCase().trim();
+      if (!slug) continue;
+
+      const activeConn = connectedMap.get(slug);
+      const existing = resultMap.get(slug);
+      const categories = Array.isArray(tk.meta?.categories)
+        ? tk.meta.categories
+        : typeof tk.meta?.category === 'string'
+        ? [tk.meta.category]
+        : [];
+      const cat = categories[0] ? normalizeCategory(categories[0]) : existing?.category || 'Productivity';
+
+      resultMap.set(slug, {
+        appName: slug,
+        name: tk.name || existing?.name || slug.toUpperCase(),
+        description:
+          tk.meta?.description ||
+          existing?.description ||
+          `Interact with ${tk.name || slug} via user-authenticated Composio OAuth connection.`,
+        logoUrl: tk.meta?.logo || existing?.logoUrl,
+        category: cat,
+        isToolkit: true,
+        authSchemes: tk.auth_schemes || existing?.authSchemes || ['oauth2'],
+        connected: Boolean(activeConn && activeConn.status === 'ACTIVE'),
+        connectionId: activeConn?.id,
+      });
+    }
+  }
+
+  return Array.from(resultMap.values());
+}
+
+/**
  * Pre-defined, production-ready Gemini FunctionDeclaration schemas for Composio integrations
  */
 export const COMPOSIO_GEMINI_TOOL_SCHEMAS: Record<string, any> = {
@@ -481,21 +787,170 @@ export const COMPOSIO_GEMINI_TOOL_SCHEMAS: Record<string, any> = {
       required: ['title'],
     },
   },
+
+  // GOOGLE CALENDAR
+  composio_googlecalendar_create_event: {
+    name: 'composio_googlecalendar_create_event',
+    description: 'Schedule a new calendar event, briefing, or meeting on Google Calendar.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        summary: { type: 'STRING', description: 'Event title or mission name.' },
+        description: { type: 'STRING', description: 'Detailed event description or mission brief.' },
+        start_time: { type: 'STRING', description: 'ISO 8601 start timestamp (e.g., 2026-10-29T10:00:00Z).' },
+        end_time: { type: 'STRING', description: 'ISO 8601 end timestamp (e.g., 2026-10-29T11:00:00Z).' },
+      },
+      required: ['summary'],
+    },
+  },
+
+  // DISCORD
+  composio_discord_send_message: {
+    name: 'composio_discord_send_message',
+    description: 'Dispatch a broadcast or alert message to a connected Discord channel.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        channel_id: { type: 'STRING', description: 'Discord text channel ID or guild target.' },
+        content: { type: 'STRING', description: 'Message content to broadcast.' },
+      },
+      required: ['content'],
+    },
+  },
+
+  // JIRA
+  composio_jira_create_issue: {
+    name: 'composio_jira_create_issue',
+    description: 'File an agile ticket, story, or bug in Jira project management.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        project_key: { type: 'STRING', description: 'Jira project key (e.g., "SEC", "OPS").' },
+        summary: { type: 'STRING', description: 'Issue summary title.' },
+        description: { type: 'STRING', description: 'Detailed ticket description.' },
+        issue_type: { type: 'STRING', description: 'Type: "Task", "Bug", or "Story".' },
+      },
+      required: ['summary'],
+    },
+  },
+
+  // ASANA
+  composio_asana_create_task: {
+    name: 'composio_asana_create_task',
+    description: 'Create an operational task item in an Asana project or workspace.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        workspace_id: { type: 'STRING', description: 'Asana workspace identifier.' },
+        name: { type: 'STRING', description: 'Task name or operative directive.' },
+        notes: { type: 'STRING', description: 'Detailed task notes or checklist.' },
+      },
+      required: ['name'],
+    },
+  },
+
+  // TRELLO
+  composio_trello_create_card: {
+    name: 'composio_trello_create_card',
+    description: 'Add a new mission card to a Trello kanban board list.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        list_id: { type: 'STRING', description: 'Target Trello list ID.' },
+        name: { type: 'STRING', description: 'Card title or objective.' },
+        desc: { type: 'STRING', description: 'Card description and telemetry details.' },
+      },
+      required: ['name'],
+    },
+  },
+
+  // TWITTER / X
+  composio_twitter_post_tweet: {
+    name: 'composio_twitter_post_tweet',
+    description: 'Publish a public mission bulletin or status update to Twitter / X.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        text: { type: 'STRING', description: 'Tweet content up to 280 characters.' },
+      },
+      required: ['text'],
+    },
+  },
+
+  // GOOGLE SHEETS
+  composio_googlesheets_append_row: {
+    name: 'composio_googlesheets_append_row',
+    description: 'Append a row of intelligence data or tactical metrics into a Google Sheet spreadsheet.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        spreadsheet_id: { type: 'STRING', description: 'Google Spreadsheet document ID.' },
+        range: { type: 'STRING', description: 'Target sheet or range (e.g., "Sheet1!A:E").' },
+        values: {
+          type: 'ARRAY',
+          description: 'Row values to append.',
+          items: { type: 'STRING' },
+        },
+      },
+      required: ['spreadsheet_id', 'values'],
+    },
+  },
 };
 
 /**
- * 4. Get Gemini FunctionDeclaration tools for all connected apps
+ * 4. Get Gemini FunctionDeclaration tools for all connected apps.
+ * Automatically inspects the current user's live connected accounts if no specific list is passed,
+ * ensuring newly connected Armory toolkits are instantly available to Vance, Cipher, Nyx, etc.
  */
-export async function getGeminiTools(connectedAppNames: string[] = []): Promise<any[]> {
+export async function getGeminiTools(connectedAppNames?: string[]): Promise<any[]> {
   const tools: any[] = [];
-  const normalized = connectedAppNames.map((a) => a.toLowerCase().trim());
+  let apps = connectedAppNames;
 
-  // Match connected apps to their Gemini function declarations
+  // Auto-detect connected accounts for this user if not explicitly passed
+  if (!apps || apps.length === 0) {
+    try {
+      const activeAccounts = await getConnectedAccounts();
+      if (activeAccounts && activeAccounts.length > 0) {
+        apps = activeAccounts.map((a) => a.appName);
+      }
+    } catch {}
+  }
+
+  const normalized = (apps || []).map((a) => a.toLowerCase().trim());
+
+  // 1. Match known schemas from COMPOSIO_GEMINI_TOOL_SCHEMAS
   for (const [toolKey, schema] of Object.entries(COMPOSIO_GEMINI_TOOL_SCHEMAS)) {
     const isAppMatch = normalized.some((app) => toolKey.toLowerCase().includes(app));
     // Include if user explicitly connected the app, or if all core tools are requested
     if (normalized.length === 0 || isAppMatch) {
       tools.push(schema);
+    }
+  }
+
+  // 2. Synthesize dynamic tools for any connected apps that lack a dedicated static declaration
+  if (normalized.length > 0) {
+    for (const app of normalized) {
+      const hasSpecificTool = tools.some((t) => t.name.toLowerCase().includes(app));
+      if (!hasSpecificTool) {
+        tools.push({
+          name: `composio_${app}_execute_action`,
+          description: `Execute an action or query on authenticated ${app.toUpperCase()} integration via Composio.`,
+          parameters: {
+            type: 'OBJECT',
+            properties: {
+              action_slug: {
+                type: 'STRING',
+                description: `Specific ${app.toUpperCase()} action slug to execute (e.g. ${app.toUpperCase()}_GET_INFO).`,
+              },
+              parameters: {
+                type: 'OBJECT',
+                description: 'Arguments and configuration dictionary for the action.',
+              },
+            },
+            required: ['action_slug'],
+          },
+        });
+      }
     }
   }
 
@@ -510,18 +965,24 @@ export async function executeComposioAction(
   params: Record<string, any>
 ): Promise<ComposioActionExecutionResult> {
   const entityId = getOrCreateEntityId();
-  // Map internal function name back to standard Composio action identifier if prefixed
-  const normalizedAction = actionName
+  let normalizedAction = actionName
     .replace(/^composio_/i, '')
     .toUpperCase();
+  let actionParams = params;
+
+  // Handle generic dynamic tool invocation: composio_${app}_execute_action
+  if (normalizedAction.endsWith('_EXECUTE_ACTION') && params?.action_slug) {
+    normalizedAction = String(params.action_slug).toUpperCase();
+    actionParams = (params.parameters as Record<string, any>) || {};
+  }
 
   const payload = {
     entityId,
     user_id: entityId,
     user_uuid: entityId,
-    input: params,
-    arguments: params,
-    parameters: params,
+    input: actionParams,
+    arguments: actionParams,
+    parameters: actionParams,
   };
 
   try {
@@ -619,10 +1080,13 @@ export const ComposioService = {
   pingComposio,
   getConnectedAccounts,
   initiateAppConnection,
+  disconnectAccount,
+  getAvailableIntegrations,
   getGeminiTools,
   executeComposioAction,
   runAgentWithTools,
   COMPOSIO_GEMINI_TOOL_SCHEMAS,
+  CURATED_COMPOSIO_INTEGRATIONS,
 };
 
 export default ComposioService;

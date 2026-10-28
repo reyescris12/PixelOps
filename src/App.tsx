@@ -99,6 +99,7 @@ import { analyzePromptAmbiguity } from './engine/taskBriefEngine';
 import { TaskBriefModal, TaskBrief } from './components/TaskBriefModal';
 import { TerminalConsole } from './components/TerminalConsole';
 import { WorkspaceFileViewer } from './components/WorkspaceFileViewer';
+import { PluginMarketplace } from './components/PluginMarketplace';
 import { PluginAuthModal, PluginAuthTarget } from './components/PluginAuthModal';
 import {
   isPluginAuthenticated,
@@ -240,6 +241,7 @@ const CommandCenterContent: React.FC = () => {
   const [editingCustomPlugin, setEditingCustomPlugin] = useState<CustomPluginConnector | null>(null);
   const [isPluginAuthModalOpen, setIsPluginAuthModalOpen] = useState(false);
   const [activeAuthPlugin, setActiveAuthPlugin] = useState<PluginAuthTarget | null>(null);
+  const [pluginsSubTab, setPluginsSubTab] = useState<'composio' | 'custom'>('composio');
 
   // Town Hall Meeting & Multi-Agent Roundtable States
   const [roundtableSessions, setRoundtableSessions] = useState<RoundtableMeetingSession[]>(
@@ -1488,153 +1490,197 @@ const CommandCenterContent: React.FC = () => {
   };
 
   const renderPluginsConsolePanel = () => (
-    <div className="w-full max-w-xl mx-auto px-3 sm:px-0">
-      <div className="rounded-sm bg-[#121110] border border-[#b47b38] shadow-[0_0_20px_rgba(0,0,0,0.65)] overflow-hidden">
-        <div className="bg-[#231b12] border-b border-[#4a351d] px-3.5 py-2 flex items-center justify-between">
-          <span className="font-mono-tabular text-xs sm:text-sm font-bold tracking-wider text-[#e59838] uppercase">
-            🔌 PLUGIN & CONNECTOR MARKETPLACE
-          </span>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setEditingCustomPlugin(null);
-                setIsCustomPluginModalOpen(true);
-                playBeep('tap');
-              }}
-              className="px-2.5 py-1 bg-[#e59838] text-[#121110] font-bold font-mono-tabular text-xs cursor-pointer"
-            >
-              + Add Custom Connector
-            </button>
-            <button
-              type="button"
-              onClick={() => setActiveTab('hq')}
-              className="font-mono-tabular text-xs text-[#c89d66] hover:text-[#f3ead8] cursor-pointer"
-            >
-              [Back to HQ]
-            </button>
-          </div>
+    <div className="w-full max-w-4xl mx-auto px-3 sm:px-0 flex flex-col gap-3">
+      {/* Sub-Navigation Switcher: [⚔️ Composio Armory Matrix] | [🔌 Custom & Core Connectors] */}
+      <div className="flex flex-wrap items-center justify-between bg-[#121110] border border-[#4a351d] p-1.5 rounded-sm gap-2">
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={() => {
+              setPluginsSubTab('composio');
+              playBeep('tap');
+            }}
+            className={`px-3 py-1 font-mono-tabular text-xs cursor-pointer rounded-xs transition-colors ${
+              pluginsSubTab === 'composio'
+                ? 'bg-[#e59838] text-[#121110] font-bold shadow-[0_0_8px_rgba(229,152,56,0.4)]'
+                : 'text-[#b8a690] hover:text-[#f3ead8] hover:bg-[#1f1914]'
+            }`}
+          >
+            ⚔️ Composio Armory Matrix
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setPluginsSubTab('custom');
+              playBeep('tap');
+            }}
+            className={`px-3 py-1 font-mono-tabular text-xs cursor-pointer rounded-xs transition-colors ${
+              pluginsSubTab === 'custom'
+                ? 'bg-[#e59838] text-[#121110] font-bold shadow-[0_0_8px_rgba(229,152,56,0.4)]'
+                : 'text-[#b8a690] hover:text-[#f3ead8] hover:bg-[#1f1914]'
+            }`}
+          >
+            🔌 Custom & Core Connectors ({customPlugins.length + plugins.length})
+          </button>
         </div>
 
-        <div className="p-3.5 flex flex-col gap-3">
-          {/* Custom User Connectors */}
-          <div className="text-[11px] font-mono-tabular font-bold text-[#e59838] uppercase tracking-wider">
-            Custom Extensible Connectors ({customPlugins.length})
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-            {customPlugins.map((cp) => (
-              <div
-                key={cp.id}
-                className="p-3 bg-[#0d0c0b] border border-[#382917] flex flex-col justify-between gap-2.5"
+        <button
+          type="button"
+          onClick={() => setActiveTab('hq')}
+          className="px-2.5 py-1 text-xs font-mono-tabular text-[#c89d66] hover:text-[#f3ead8] cursor-pointer"
+        >
+          [Back to HQ]
+        </button>
+      </div>
+
+      {pluginsSubTab === 'composio' ? (
+        <PluginMarketplace
+          onPluginStatusChange={() => {
+            setPlugins((prev) => [...prev]);
+          }}
+          onClose={() => setActiveTab('hq')}
+        />
+      ) : (
+        <div className="rounded-sm bg-[#121110] border border-[#b47b38] shadow-[0_0_20px_rgba(0,0,0,0.65)] overflow-hidden">
+          <div className="bg-[#231b12] border-b border-[#4a351d] px-3.5 py-2 flex items-center justify-between">
+            <span className="font-mono-tabular text-xs sm:text-sm font-bold tracking-wider text-[#e59838] uppercase">
+              🔌 CUSTOM & CORE CONNECTOR MATRIX
+            </span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingCustomPlugin(null);
+                  setIsCustomPluginModalOpen(true);
+                  playBeep('tap');
+                }}
+                className="px-2.5 py-1 bg-[#e59838] text-[#121110] font-bold font-mono-tabular text-xs cursor-pointer"
               >
-                <div>
-                  <div className="flex items-center justify-between font-mono-tabular text-xs">
-                    <span className="font-bold text-[#f3ead8]">{cp.name}</span>
-                    <span className={cp.enabled ? 'text-[#4ade80]' : 'text-[#8c7a65]'}>
-                      {cp.enabled ? '[ACTIVE]' : '[INACTIVE]'}
-                    </span>
-                  </div>
-                  <p className="font-mono-tabular text-[11px] text-[#b8a690] mt-1 leading-snug">
-                    {cp.description || cp.endpointUrl}
-                  </p>
-                </div>
-
-                <div className="flex items-center justify-between gap-1.5 pt-2 border-t border-[#261d12]">
-                  <span className="font-mono-tabular text-[10px] text-[#8c7a65] truncate">
-                    {cp.toolFunctionName}
-                  </span>
-                  <div className="flex items-center gap-1.5 shrink-0">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingCustomPlugin(cp);
-                        setIsCustomPluginModalOpen(true);
-                        playBeep('tap');
-                      }}
-                      className="px-2 py-0.5 font-mono-tabular text-[10px] bg-[#1a1410] text-[#e59838] border border-[#785732] cursor-pointer"
-                    >
-                      Configure
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        playBeep('tap');
-                        const next = customPlugins.map((x) =>
-                          x.id === cp.id ? { ...x, enabled: !x.enabled } : x
-                        );
-                        setCustomPlugins(next);
-                        saveCustomPlugins(next);
-                      }}
-                      className={`px-2 py-0.5 font-mono-tabular text-[10px] border cursor-pointer ${
-                        cp.enabled
-                          ? 'bg-[#2b2116] text-[#e8dcc4] border-[#6e5233]'
-                          : 'bg-[#e59838] text-[#121110] border-[#e59838] font-bold'
-                      }`}
-                    >
-                      {cp.enabled ? 'Disable' : 'Enable'}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            ))}
+                + Add Custom Connector
+              </button>
+            </div>
           </div>
 
-          {/* Built-in Core Agent Capability Plugins */}
-          <div className="text-[11px] font-mono-tabular font-bold text-[#e59838] uppercase tracking-wider pt-2 border-t border-[#3a2917]">
-            Core Agent Capability Plugins ({plugins.length})
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-            {plugins.map((plugin) => {
-              const tokenMeta = vaultReport?.providerValidations[plugin.id];
-              return (
+          <div className="p-3.5 flex flex-col gap-3">
+            {/* Custom User Connectors */}
+            <div className="text-[11px] font-mono-tabular font-bold text-[#e59838] uppercase tracking-wider">
+              Custom Extensible Connectors ({customPlugins.length})
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {customPlugins.map((cp) => (
                 <div
-                  key={plugin.id}
+                  key={cp.id}
                   className="p-3 bg-[#0d0c0b] border border-[#382917] flex flex-col justify-between gap-2.5"
                 >
                   <div>
                     <div className="flex items-center justify-between font-mono-tabular text-xs">
-                      <span className="font-bold text-[#f3ead8]">{plugin.name}</span>
-                      <span className={plugin.connected ? 'text-[#4ade80]' : 'text-[#8c7a65]'}>
-                        {plugin.connected ? '[AES-GCM VALID]' : '[REVOKED]'}
+                      <span className="font-bold text-[#f3ead8]">{cp.name}</span>
+                      <span className={cp.enabled ? 'text-[#4ade80]' : 'text-[#8c7a65]'}>
+                        {cp.enabled ? '[ACTIVE]' : '[INACTIVE]'}
                       </span>
                     </div>
                     <p className="font-mono-tabular text-[11px] text-[#b8a690] mt-1 leading-snug">
-                      {plugin.description}
+                      {cp.description || cp.endpointUrl}
                     </p>
                   </div>
 
                   <div className="flex items-center justify-between gap-1.5 pt-2 border-t border-[#261d12]">
                     <span className="font-mono-tabular text-[10px] text-[#8c7a65] truncate">
-                      {plugin.toolFunctionName}
+                      {cp.toolFunctionName}
                     </span>
                     <div className="flex items-center gap-1.5 shrink-0">
                       <button
                         type="button"
-                        onClick={() => handleOpenPluginAuth(plugin)}
-                        className="min-h-[28px] px-2 py-0.5 font-mono-tabular text-[11px] bg-[#1a1410] text-[#e59838] border border-[#785732] hover:bg-[#281e14] cursor-pointer"
-                        title="Configure BYOK Key / OAuth Secret locally"
+                        onClick={() => {
+                          setEditingCustomPlugin(cp);
+                          setIsCustomPluginModalOpen(true);
+                          playBeep('tap');
+                        }}
+                        className="px-2 py-0.5 font-mono-tabular text-[10px] bg-[#1a1410] text-[#e59838] border border-[#785732] cursor-pointer"
                       >
-                        [BYOK 🔑]
+                        Configure
                       </button>
                       <button
                         type="button"
-                        onClick={() => handleTogglePlugin(plugin.id)}
-                        className={`min-h-[28px] px-2.5 py-0.5 font-mono-tabular text-xs border cursor-pointer ${
-                          plugin.connected
-                            ? 'bg-[#261f18] text-[#e8dcc4] border-[#6e5233]'
+                        onClick={() => {
+                          playBeep('tap');
+                          const next = customPlugins.map((x) =>
+                            x.id === cp.id ? { ...x, enabled: !x.enabled } : x
+                          );
+                          setCustomPlugins(next);
+                          saveCustomPlugins(next);
+                        }}
+                        className={`px-2 py-0.5 font-mono-tabular text-[10px] border cursor-pointer ${
+                          cp.enabled
+                            ? 'bg-[#2b2116] text-[#e8dcc4] border-[#6e5233]'
                             : 'bg-[#e59838] text-[#121110] border-[#e59838] font-bold'
                         }`}
                       >
-                        {plugin.connected ? 'Revoke]' : 'Mint OAuth]'}
+                        {cp.enabled ? 'Disable' : 'Enable'}
                       </button>
                     </div>
                   </div>
                 </div>
-              );
-            })}
+              ))}
+            </div>
+
+            {/* Built-in Core Agent Capability Plugins */}
+            <div className="text-[11px] font-mono-tabular font-bold text-[#e59838] uppercase tracking-wider pt-2 border-t border-[#3a2917]">
+              Core Agent Capability Plugins ({plugins.length})
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+              {plugins.map((plugin) => {
+                const tokenMeta = vaultReport?.providerValidations[plugin.id];
+                return (
+                  <div
+                    key={plugin.id}
+                    className="p-3 bg-[#0d0c0b] border border-[#382917] flex flex-col justify-between gap-2.5"
+                  >
+                    <div>
+                      <div className="flex items-center justify-between font-mono-tabular text-xs">
+                        <span className="font-bold text-[#f3ead8]">{plugin.name}</span>
+                        <span className={plugin.connected ? 'text-[#4ade80]' : 'text-[#8c7a65]'}>
+                          {plugin.connected ? '[AES-GCM VALID]' : '[REVOKED]'}
+                        </span>
+                      </div>
+                      <p className="font-mono-tabular text-[11px] text-[#b8a690] mt-1 leading-snug">
+                        {plugin.description}
+                      </p>
+                    </div>
+
+                    <div className="flex items-center justify-between gap-1.5 pt-2 border-t border-[#261d12]">
+                      <span className="font-mono-tabular text-[10px] text-[#8c7a65] truncate">
+                        {plugin.toolFunctionName}
+                      </span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleOpenPluginAuth(plugin)}
+                          className="min-h-[28px] px-2 py-0.5 font-mono-tabular text-[11px] bg-[#1a1410] text-[#e59838] border border-[#785732] hover:bg-[#281e14] cursor-pointer"
+                          title="Configure BYOK Key / OAuth Secret locally"
+                        >
+                          [BYOK 🔑]
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleTogglePlugin(plugin.id)}
+                          className={`min-h-[28px] px-2.5 py-0.5 font-mono-tabular text-xs border cursor-pointer ${
+                            plugin.connected
+                              ? 'bg-[#261f18] text-[#e8dcc4] border-[#6e5233]'
+                              : 'bg-[#e59838] text-[#121110] border-[#e59838] font-bold'
+                          }`}
+                        >
+                          {plugin.connected ? 'Revoke]' : 'Mint OAuth]'}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 
@@ -1835,6 +1881,20 @@ const CommandCenterContent: React.FC = () => {
                   <span className="text-xs text-[#4ade80]">
                     [BOOST +{decryptionBoost}%]
                   </span>
+                )}
+                {currentRoom === 'armory' && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveTab('plugins');
+                      setPluginsSubTab('composio');
+                      playBeep('tap');
+                    }}
+                    className="px-2 py-0.5 bg-[#e59838] text-[#121110] font-bold text-[10px] border border-[#e59838] hover:bg-[#d48828] cursor-pointer transition-colors"
+                    title="Open Armory Composio Toolkit Matrix"
+                  >
+                    [⚔️ ARMORY TOOLKITS]
+                  </button>
                 )}
               </div>
             );

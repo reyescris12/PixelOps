@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @license
  * SPDX-License-Identifier: Apache-2.0
  */
@@ -108,7 +108,7 @@ import {
 } from './engine/pluginAuthManager';
 
 type NavTab = 'hq' | 'crew' | 'plugins' | 'themes';
-type HqSubView = 'terminal' | 'town_hall' | 'command_log';
+type HqSubView = 'terminal' | 'town_hall' | 'command_log' | 'toolkits';
 
 const CommandCenterContent: React.FC = () => {
   const {
@@ -604,6 +604,10 @@ const CommandCenterContent: React.FC = () => {
 
   const handleRoomChange = (nextRoom: RoomId) => {
     setCurrentRoom(nextRoom);
+    if (nextRoom === 'armory') {
+      setActiveTab('hq');
+      setHqSubView('toolkits');
+    }
     if (!isExecuting) {
       setDialogueText(getRoomMetadata(nextRoom).defaultBriefing);
     }
@@ -1506,7 +1510,7 @@ const CommandCenterContent: React.FC = () => {
                 : 'text-[#b8a690] hover:text-[#f3ead8] hover:bg-[#1f1914]'
             }`}
           >
-            ΓÜö∩╕Å Composio Armory Matrix
+            ⚔️ Composio Armory Matrix
           </button>
           <button
             type="button"
@@ -1520,7 +1524,7 @@ const CommandCenterContent: React.FC = () => {
                 : 'text-[#b8a690] hover:text-[#f3ead8] hover:bg-[#1f1914]'
             }`}
           >
-            ≡ƒöî Custom & Core Connectors ({customPlugins.length + plugins.length})
+            🔌 Custom & Core Connectors ({customPlugins.length + plugins.length})
           </button>
         </div>
 
@@ -1544,7 +1548,7 @@ const CommandCenterContent: React.FC = () => {
         <div className="rounded-sm bg-[#121110] border border-[#b47b38] shadow-[0_0_20px_rgba(0,0,0,0.65)] overflow-hidden">
           <div className="bg-[#231b12] border-b border-[#4a351d] px-3.5 py-2 flex items-center justify-between">
             <span className="font-mono-tabular text-xs sm:text-sm font-bold tracking-wider text-[#e59838] uppercase">
-              ≡ƒöî CUSTOM & CORE CONNECTOR MATRIX
+              🔌 CUSTOM & CORE CONNECTOR MATRIX
             </span>
             <div className="flex items-center gap-2">
               <button
@@ -1840,7 +1844,24 @@ const CommandCenterContent: React.FC = () => {
               }`}
               title="Call Town Hall Meeting: Summon all active agents to the War Room for a roundtable discussion"
             >
-              <span>[≡ƒôú CALL MEETING]</span>
+              <span>[📣 CALL MEETING]</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTab('hq');
+                setHqSubView('toolkits');
+                playBeep('tap');
+              }}
+              className={`px-2.5 py-0.5 font-mono-tabular text-xs border transition-colors cursor-pointer flex items-center gap-1 ${
+                activeTab === 'hq' && hqSubView === 'toolkits'
+                  ? 'bg-[#e59838] text-[#121110] border-[#fde047] font-bold shadow-[0_0_12px_rgba(229,152,56,0.45)]'
+                  : 'bg-[#1f1a14] text-[#e59838] border-[#b47b38] hover:bg-[#e59838] hover:text-[#121110] font-semibold'
+              }`}
+              title="Open Armory Toolkit Marketplace & Composio Integrations"
+            >
+              <span>[⚔️ TOOLKITS (21)]</span>
             </button>
           </div>
 
@@ -1886,14 +1907,14 @@ const CommandCenterContent: React.FC = () => {
                   <button
                     type="button"
                     onClick={() => {
-                      setActiveTab('plugins');
-                      setPluginsSubTab('composio');
+                      setActiveTab('hq');
+                      setHqSubView('toolkits');
                       playBeep('tap');
                     }}
                     className="px-2 py-0.5 bg-[#e59838] text-[#121110] font-bold text-[10px] border border-[#e59838] hover:bg-[#d48828] cursor-pointer transition-colors"
                     title="Open Armory Composio Toolkit Matrix"
                   >
-                    [ΓÜö∩╕Å ARMORY TOOLKITS]
+                    [⚔️ ARMORY TOOLKITS]
                   </button>
                 )}
               </div>
@@ -2078,7 +2099,23 @@ const CommandCenterContent: React.FC = () => {
                           : 'text-[#c89d66] hover:text-[#f3ead8]'
                       }`}
                     >
-                      ≡ƒôƒ Briefing Terminal
+                      📟 Briefing Terminal
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHqSubView('toolkits');
+                        setActiveSpeakerAgentIndex(null);
+                        playBeep('tap');
+                      }}
+                      className={`px-3 py-1 font-mono-tabular text-xs cursor-pointer transition-colors flex items-center gap-1.5 ${
+                        hqSubView === 'toolkits'
+                          ? 'bg-[#e59838] text-[#121110] font-bold shadow-[0_0_8px_rgba(229,152,56,0.4)]'
+                          : 'text-[#e59838] hover:text-[#f3ead8]'
+                      }`}
+                      title="Open Composio Armory Toolkit Marketplace (GitHub, Slack, Gmail, Notion, Linear)"
+                    >
+                      <span>⚔️ Armory Toolkits (21)</span>
                     </button>
                     <button
                       type="button"
@@ -2090,7 +2127,7 @@ const CommandCenterContent: React.FC = () => {
                       }`}
                       title={`Summon all ${crewAgents.length} active agents to the War Room for a Town Hall Roundtable`}
                     >
-                      <span>≡ƒôú Call Meeting ({roundtableSessions.length})</span>
+                      <span>📣 Call Meeting ({roundtableSessions.length})</span>
                     </button>
                     <button
                       type="button"
@@ -2106,7 +2143,7 @@ const CommandCenterContent: React.FC = () => {
                           : 'text-[#c89d66] hover:text-[#f3ead8]'
                       }`}
                     >
-                      ≡ƒô£ Command Log ({commandLedger.length})
+                      📜 Command Log ({commandLedger.length})
                     </button>
                     <button
                       type="button"
@@ -2117,7 +2154,7 @@ const CommandCenterContent: React.FC = () => {
                       className="px-3 py-1 font-mono-tabular text-xs cursor-pointer transition-colors text-[#38bdf8] hover:text-[#f3ead8]"
                       title="Open Workspace File Explorer & Markdown Reports (IndexedDB)"
                     >
-                      ≡ƒôü Files
+                      📁 Files
                     </button>
                   </div>
                   <span className="hidden sm:inline font-mono-tabular text-[11px] text-[#9c8265]">
@@ -2182,6 +2219,13 @@ const CommandCenterContent: React.FC = () => {
                     onSelectSpeakerAgentIndex={setActiveSpeakerAgentIndex}
                     participantsWithNotes={participantsWithNotes}
                   />
+                ) : hqSubView === 'toolkits' ? (
+                  <PluginMarketplace
+                    onPluginStatusChange={() => {
+                      setPlugins((prev) => [...prev]);
+                    }}
+                    onClose={() => setHqSubView('terminal')}
+                  />
                 ) : (
                   <CommandLogScreen
                     entries={commandLedger}
@@ -2222,7 +2266,7 @@ const CommandCenterContent: React.FC = () => {
                   : 'text-[#d0d4e0] hover:bg-[#292d3e]'
               }`}
             >
-              <span className="text-base" aria-hidden="true">≡ƒÅá</span>
+              <span className="text-base" aria-hidden="true">🏠</span>
               <span>HQ</span>
             </button>
 
@@ -2238,7 +2282,7 @@ const CommandCenterContent: React.FC = () => {
                   : 'text-[#d0d4e0] hover:bg-[#292d3e]'
               }`}
             >
-              <span className="text-base" aria-hidden="true">≡ƒò╡∩╕Å</span>
+              <span className="text-base" aria-hidden="true">🕵️</span>
               <span>Crew</span>
             </button>
 
@@ -2246,16 +2290,17 @@ const CommandCenterContent: React.FC = () => {
               type="button"
               onClick={() => {
                 setActiveTab('plugins');
+                setPluginsSubTab('composio');
                 playBeep('tap');
               }}
               className={`min-h-[42px] px-4 sm:px-6 py-1.5 font-mono-tabular text-sm sm:text-base flex items-center gap-2.5 transition-colors cursor-pointer ${
                 activeTab === 'plugins'
-                  ? 'bg-[#2e3346] text-[#ffffff] font-semibold'
+                  ? 'bg-[#e59838] text-[#121110] font-bold shadow-[0_0_10px_rgba(229,152,56,0.5)]'
                   : 'text-[#d0d4e0] hover:bg-[#292d3e]'
               }`}
             >
-              <span className="text-base" aria-hidden="true">≡ƒöî</span>
-              <span>Plugins</span>
+              <span className="text-base" aria-hidden="true">⚔️</span>
+              <span>Plugins & Toolkits</span>
             </button>
 
             <button
@@ -2270,7 +2315,7 @@ const CommandCenterContent: React.FC = () => {
                   : 'text-[#d0d4e0] hover:bg-[#292d3e]'
               }`}
             >
-              <span className="text-base" aria-hidden="true">≡ƒÄ¿</span>
+              <span className="text-base" aria-hidden="true">🎨</span>
               <span>Themes</span>
             </button>
 

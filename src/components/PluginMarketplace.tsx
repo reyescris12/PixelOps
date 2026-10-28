@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   ComposioService,
   ComposioIntegration,
+  CURATED_COMPOSIO_INTEGRATIONS,
   getOrCreateEntityId,
 } from '../services/ComposioService';
 
@@ -25,8 +26,8 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
   onPluginStatusChange,
   onClose,
 }) => {
-  const [integrations, setIntegrations] = useState<ComposioIntegration[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [integrations, setIntegrations] = useState<ComposioIntegration[]>(() => CURATED_COMPOSIO_INTEGRATIONS);
+  const [loading, setLoading] = useState(false);
   const [connectingApp, setConnectingApp] = useState<string | null>(null);
   const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -40,7 +41,9 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
     try {
       setLoading(true);
       const items = await ComposioService.getAvailableIntegrations();
-      setIntegrations(items);
+      if (items && items.length > 0) {
+        setIntegrations(items);
+      }
     } catch (err: any) {
       console.error('[ARMORY MARKETPLACE FETCH ERROR]', err);
     } finally {

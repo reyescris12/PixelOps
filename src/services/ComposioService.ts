@@ -633,10 +633,25 @@ function normalizeCategory(cat: string): string {
  * Fetch all available Composio toolkits/integrations for the Armory marketplace
  */
 export async function getAvailableIntegrations(): Promise<ComposioIntegration[]> {
-  // 1. Fetch live connected accounts
+  // 1. Initialize catalog with 21 curated integrations immediately
+  const resultMap = new Map<string, ComposioIntegration>();
+  for (const item of CURATED_COMPOSIO_INTEGRATIONS) {
+    const slug = item.appName.toLowerCase().trim();
+    resultMap.set(slug, {
+      ...item,
+      connected: false,
+    });
+  }
+
+  // 2. Fetch live connected accounts with 2.5s circuit breaker to prevent UI stalls
   let connectedAccounts: ComposioConnectedAccount[] = [];
   try {
-    connectedAccounts = await getConnectedAccounts();
+    connectedAccounts = await Promise.race([
+      getConnectedAccounts(),
+      new Promise<ComposioConnectedAccount[]>((_, reject) =>
+        setTimeout(() => reject(new Error('timeout')), 2500)
+      ),
+    ]);
   } catch {}
 
   const connectedMap = new Map<string, ComposioConnectedAccount>();
@@ -646,33 +661,42 @@ export async function getAvailableIntegrations(): Promise<ComposioIntegration[]>
     }
   }
 
-  // 2. Fetch live toolkits from backend if API key or proxy is available
+  // Annotate curated items with connected status
+  for (const [slug, item] of resultMap.entries()) {
+    const activeConn = connectedMap.get(slug);
+    if (activeConn) {
+      resultMap.set(slug, {
+        ...item,
+        connected: Boolean(activeConn.status === 'ACTIVE'),
+        connectionId: activeConn.id,
+      });
+    }
+  }
+
+  // 3. Fetch optional live toolkits from backend in background with short timeout
   let liveToolkits: any[] = [];
   try {
-    const data = await callComposioProxy('/toolkits', 'GET');
+    const data = await Promise.race([
+      callComposioProxy('/toolkits', 'GET'),
+      new Promise<any>((_, reject) =>
+        setTimeout(() => reject(new Error('timeout')), 2500)
+      ),
+    ]);
     liveToolkits = Array.isArray(data)
       ? data
       : data?.items || data?.toolkits || data?.data || [];
   } catch {
     try {
-      const data2 = await callComposioProxy('/integrations', 'GET');
+      const data2 = await Promise.race([
+        callComposioProxy('/integrations', 'GET'),
+        new Promise<any>((_, reject) =>
+          setTimeout(() => reject(new Error('timeout')), 2000)
+        ),
+      ]);
       liveToolkits = Array.isArray(data2)
         ? data2
         : data2?.items || data2?.integrations || data2?.data || [];
     } catch {}
-  }
-
-  // 3. Assemble catalog
-  const resultMap = new Map<string, ComposioIntegration>();
-
-  for (const item of CURATED_COMPOSIO_INTEGRATIONS) {
-    const slug = item.appName.toLowerCase().trim();
-    const activeConn = connectedMap.get(slug);
-    resultMap.set(slug, {
-      ...item,
-      connected: Boolean(activeConn && activeConn.status === 'ACTIVE'),
-      connectionId: activeConn?.id,
-    });
   }
 
   if (Array.isArray(liveToolkits) && liveToolkits.length > 0) {

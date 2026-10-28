@@ -1840,7 +1840,13 @@ export const ROUNDTABLE_SCHEMA = {
         properties: {
           agentIndex: {
             type: 'INTEGER',
-            description: 'Assigned agent index (0, 1, or 2).',
+            description:
+              'Assigned agent index corresponding to their position in the crew roster (0, 1, 2, ...).',
+          },
+          assignedAgentId: {
+            type: 'STRING',
+            description:
+              'Unique ID of the assigned agent (e.g. rec_vance or agent ID).',
           },
           ownerName: {
             type: 'STRING',
@@ -3268,7 +3274,9 @@ export interface RoundtableDialogueTurn {
 }
 
 export interface RoundtableActionItem {
+  id?: string;
   agentIndex: number;
+  assignedAgentId?: string;
   ownerName: string;
   directive: string;
   targetSector: RoomId;
@@ -3363,7 +3371,9 @@ export function generateLocalRoundtableMeeting(params: {
   });
 
   const actionItems: RoundtableActionItem[] = participants.map((p, idx) => ({
+    id: `action-task-${Date.now()}-${idx}`,
     agentIndex: p.agentIndex ?? idx,
+    assignedAgentId: p.id || (p as any).agentId || `agent_${p.agentIndex ?? idx}`,
     ownerName: p.customName || p.name || `Operative ${idx + 1}`,
     directive: `Execute task for "${params.topic.slice(0, 30)}" (${p.role || 'Sector Operations'})`,
     targetSector: targetSectors[idx % targetSectors.length],
@@ -3559,13 +3569,22 @@ ROUNDTABLE RULES:
           Array.isArray(parsed.actionItems) ? parsed.actionItems : []
         ).map((item: any, idx: number) => {
           const slotIdx =
-            typeof item.agentIndex === 'number' && item.agentIndex >= 0 && item.agentIndex <= 2
+            typeof item.agentIndex === 'number' &&
+            item.agentIndex >= 0 &&
+            item.agentIndex < params.participants.length
               ? item.agentIndex
-              : idx % 3;
+              : idx % Math.max(1, params.participants.length);
           const participant = params.participants[slotIdx] || params.participants[0];
           const rawSector = String(item.targetSector || 'war_room') as RoomId;
+          const assignedId =
+            item.assignedAgentId ||
+            participant?.id ||
+            (participant as any)?.agentId ||
+            `agent_${slotIdx}`;
           return {
+            id: item.id || `action-task-${Date.now()}-${idx}`,
             agentIndex: slotIdx,
+            assignedAgentId: assignedId,
             ownerName: participant?.customName || item.ownerName || `Operative ${slotIdx + 1}`,
             directive: String(item.directive || 'Execute sector follow-up protocol'),
             targetSector: validSectors.has(rawSector) ? rawSector : 'war_room',

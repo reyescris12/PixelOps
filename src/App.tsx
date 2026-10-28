@@ -58,6 +58,7 @@ import {
   executeAgentDirective,
   executeRoundtableMeeting,
   auditStorageHealth,
+  RoundtableActionItem,
 } from './services/ApiService';
 import {
   VaultStartupReport,
@@ -607,7 +608,9 @@ const CommandCenterContent: React.FC = () => {
   const handleExecuteDirective = async (
     prompt: string,
     attachment?: { data: string; mimeType: string; name: string } | null,
-    skipAmbiguityCheck: boolean = false
+    skipAmbiguityCheck: boolean = false,
+    explicitAgentId?: string,
+    explicitTargetRoom?: RoomId
   ) => {
     // 0. Automated Ambiguity Detection & Task Brief Interception (StarNet pattern)
     if (!skipAmbiguityCheck && !attachment) {
@@ -625,27 +628,50 @@ const CommandCenterContent: React.FC = () => {
     }
 
     // Automatically route viewport camera & specialist agent to the relevant room and workstation based on task given
-    const assignment = resolveTaskAssignment(prompt, Boolean(attachment));
-    const targetRoom = assignment.room;
-    const routedCrewMember = getCrewAgentByIndex(assignment.agentIndex);
-    const routedAgent = theme.agents[assignment.agentIndex] || {
-      ...activeAgent,
-      id: routedCrewMember?.id || activeAgent.id,
-      name: routedCrewMember?.customName || activeAgent.name,
-      role: routedCrewMember?.role || activeAgent.role,
-    };
+    // If explicitAgentId is provided, strictly deploy the designated agent and sector rather than guessing from prompt text
+    let targetRoom: RoomId;
+    let routedCrewMember: any;
+    let routedAgent: any;
+    let assignmentStationId: string | undefined;
+    let assignmentTaskTag: string;
+
+    if (explicitAgentId) {
+      routedCrewMember = crewAgents.find((a) => a.id === explicitAgentId);
+      const presetMatch = theme.agents.find((a) => a.id === explicitAgentId);
+      routedAgent = presetMatch || (routedCrewMember ? {
+        ...activeAgent,
+        id: routedCrewMember.id,
+        name: routedCrewMember.customName || (routedCrewMember as any).name,
+        role: routedCrewMember.role,
+      } : activeAgent);
+      targetRoom = explicitTargetRoom || (routedCrewMember?.currentRoom as RoomId) || 'war_room';
+      assignmentStationId = routedCrewMember?.preferredStationId;
+      assignmentTaskTag = (routedCrewMember?.role || 'EXECUTING').toUpperCase().slice(0, 12);
+    } else {
+      const assignment = resolveTaskAssignment(prompt, Boolean(attachment));
+      targetRoom = assignment.room;
+      routedCrewMember = getCrewAgentByIndex(assignment.agentIndex);
+      routedAgent = theme.agents[assignment.agentIndex] || {
+        ...activeAgent,
+        id: routedCrewMember?.id || activeAgent.id,
+        name: routedCrewMember?.customName || activeAgent.name,
+        role: routedCrewMember?.role || activeAgent.role,
+      };
+      assignmentStationId = assignment.stationId;
+      assignmentTaskTag = assignment.taskTag;
+    }
     const routedDisplayName = routedCrewMember?.customName || routedAgent.name;
 
     handleMoveAgentToRoom(
       routedAgent.id,
       targetRoom,
-      assignment.stationId,
-      assignment.taskTag
+      assignmentStationId,
+      assignmentTaskTag
     );
     setIsRoutingCamera(true);
     setTimeout(() => setIsRoutingCamera(false), 2400);
 
-    setDialogueText(`[DIRECTIVE INGESTED] Dispatching ${routedDisplayName} to ${getRoomMetadata(targetRoom)?.shortBadge || String(targetRoom).toUpperCase()} (${assignment.taskTag})...`);
+    setDialogueText(`[DIRECTIVE INGESTED] Dispatching ${routedDisplayName} to ${getRoomMetadata(targetRoom)?.shortBadge || String(targetRoom).toUpperCase()} (${assignmentTaskTag})...`);
     setIsExecuting(true);
     setIsGameActive(false);
     setIsGameClosing(false);
@@ -822,6 +848,77 @@ const CommandCenterContent: React.FC = () => {
     } finally {
       setIsExecuting(false);
     }
+  };
+
+  /**
+   * Dispatches a directive strictly to the designated agent, bypassing global selection state
+   */
+  const dispatchDirectiveToAgent = (
+    agentId: string,
+    directive: string,
+    targetSector?: RoomId
+  ) => {
+    const targetCrew = crewAgents.find((a) => a.id === agentId);
+    const targetPreset = theme.agents.find((a) => a.id === agentId);
+    const resolvedAgent = targetCrew || targetPreset || activeAgent;
+
+    if (!resolvedAgent) return;
+
+    // Synchronize UI dropdown state so there is zero mismatch
+    setActiveAgentId(resolvedAgent.id);
+    setHqSubView('terminal');
+    setActiveSpeakerAgentIndex(null);
+
+    const room =
+      targetSector ||
+      ((targetCrew?.currentRoom || (resolvedAgent as any).currentRoom) as RoomId) ||
+      'war_room';
+
+    handleMoveAgentToRoom(
+      resolvedAgent.id,
+      room,
+      undefined,
+      'EXECUTING'
+    );
+
+    handleExecuteDirective(directive, null, false, resolvedAgent.id, room);
+  };
+
+  /**
+   * Deploys a task reading assignedAgentId and metadata strictly from the task item
+   */
+  const handleDeployTask = (
+    taskId: string,
+    targetAgentId: string,
+    fallbackDirective?: string,
+    fallbackSector?: RoomId
+  ) => {
+    let matchedTask: RoundtableActionItem | undefined;
+    for (const session of roundtableSessions) {
+      if (session.actionItems) {
+        const found = session.actionItems.find(
+          (t, i) => (t.id || `task_${session.id}_${i}`) === taskId
+        );
+        if (found) {
+          matchedTask = found;
+          break;
+        }
+      }
+    }
+
+    const directive = matchedTask?.directive || fallbackDirective;
+    const targetSector = matchedTask?.targetSector || fallbackSector;
+    const agentId = matchedTask?.assignedAgentId || targetAgentId;
+
+    const agent =
+      crewAgents.find((a) => a.id === agentId) ||
+      theme.agents.find((a) => a.id === agentId) ||
+      activeAgent;
+
+    if (!directive || !agent) return;
+
+    // Dispatch directive strictly to the designated agent
+    dispatchDirectiveToAgent(agent.id, directive, targetSector);
   };
 
   const handleTriggerErrorDrill = (code: RetroErrorCode) => {
@@ -1998,17 +2095,24 @@ const CommandCenterContent: React.FC = () => {
                       setHqSubView('terminal');
                       setActiveSpeakerAgentIndex(null);
                     }}
-                    onDispatchActionItem={(agentIdx, directive, targetSector) => {
-                      const targetAgent = theme.agents[agentIdx] || activeAgent;
-                      setHqSubView('terminal');
-                      setActiveSpeakerAgentIndex(null);
-                      handleMoveAgentToRoom(
-                        targetAgent.id,
-                        targetSector,
-                        undefined,
-                        'EXECUTING'
+                    onDispatchActionItem={(
+                      agentIdx,
+                      directive,
+                      targetSector,
+                      assignedAgentId,
+                      taskId
+                    ) => {
+                      const fallbackId =
+                        assignedAgentId ||
+                        crewAgents[agentIdx]?.id ||
+                        theme.agents[agentIdx]?.id ||
+                        activeAgent.id;
+                      handleDeployTask(
+                        taskId || `task_${agentIdx}`,
+                        fallbackId,
+                        directive,
+                        targetSector
                       );
-                      handleExecuteDirective(directive, null);
                     }}
                     activeSpeakerAgentIndex={activeSpeakerAgentIndex}
                     onSelectSpeakerAgentIndex={setActiveSpeakerAgentIndex}
@@ -2274,8 +2378,8 @@ const CommandCenterContent: React.FC = () => {
             statusTag: isExecuting && activeAgent.id === a.id ? 'EXECUTING' : 'IDLE',
           })),
           commandLedger,
-          onDispatchTask: (_agentId, taskPrompt) => {
-            handleExecuteDirective(taskPrompt);
+          onDispatchTask: (agentId, taskPrompt) => {
+            dispatchDirectiveToAgent(agentId, taskPrompt);
           },
           onApproveTask: (_taskId) => {
             if (taskBriefState.isOpen && taskBriefState.brief) {

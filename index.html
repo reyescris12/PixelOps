@@ -1220,7 +1220,7 @@ const __imp_8 = __require("./components/SettingsModal"); const { SettingsModal }
 const __imp_9 = __require("./components/ThemeSettings"); const { ThemeSettings } = __imp_9;
 const __imp_10 = __require("./components/RetroErrorModal"); const { RetroErrorModal } = __imp_10;
 const __imp_11 = __require("./components/PWAInstallButton"); const { PWAInstallButton, OfflineBanner } = __imp_11;
-const __imp_12 = __require("./services/ApiService"); const { AgentExecutionCard, PluginConnector, CommandPreferences, RetroAgentError, RetroErrorCode, RetroErrorDescriptor, RoundtableMeetingSession, RoundtableParticipantPayload, createRetroAgentError, classifyRetroErrorCode, loadExecutionCards, saveExecutionCards, loadPlugins, savePlugins, loadPreferences, savePreferences, loadRoundtableSessions, saveRoundtableSessions, executeAgentDirective, executeRoundtableMeeting, auditStorageHealth } = __imp_12;
+const __imp_12 = __require("./services/ApiService"); const { AgentExecutionCard, PluginConnector, CommandPreferences, RetroAgentError, RetroErrorCode, RetroErrorDescriptor, RoundtableMeetingSession, RoundtableParticipantPayload, createRetroAgentError, classifyRetroErrorCode, loadExecutionCards, saveExecutionCards, loadPlugins, savePlugins, loadPreferences, savePreferences, loadRoundtableSessions, saveRoundtableSessions, executeAgentDirective, executeRoundtableMeeting, auditStorageHealth, RoundtableActionItem } = __imp_12;
 const __imp_13 = __require("./services/SecureVaultService"); const { VaultStartupReport, initializeAndValidateVaultOnStartup, refreshOAuthProviderToken, revokeOAuthProviderToken } = __imp_13;
 const __imp_14 = __require("./services/CommandLedgerDb"); const { CommandLedgerEntry, appendCommandLedgerEntry, getLast50Commands } = __imp_14;
 const __imp_15 = __require("./components/CommandLogScreen"); const { CommandLogScreen } = __imp_15;
@@ -1574,7 +1574,7 @@ const CommandCenterContent = ()=>{
             setDialogueText(getRoomMetadata(nextRoom).defaultBriefing);
         }
     };
-    const handleExecuteDirective = async (prompt, attachment, skipAmbiguityCheck = false)=>{
+    const handleExecuteDirective = async (prompt, attachment, skipAmbiguityCheck = false, explicitAgentId, explicitTargetRoom)=>{
         if (!skipAmbiguityCheck && !attachment) {
             const ambiguityAnalysis = analyzePromptAmbiguity(prompt, {
                 activeAgentRole: activeAgent.role
@@ -1590,20 +1590,41 @@ const CommandCenterContent = ()=>{
                 return;
             }
         }
-        const assignment = resolveTaskAssignment(prompt, Boolean(attachment));
-        const targetRoom = assignment.room;
-        const routedCrewMember = getCrewAgentByIndex(assignment.agentIndex);
-        const routedAgent = theme.agents[assignment.agentIndex] || {
-            ...activeAgent,
-            id: routedCrewMember?.id || activeAgent.id,
-            name: routedCrewMember?.customName || activeAgent.name,
-            role: routedCrewMember?.role || activeAgent.role
-        };
+        let targetRoom;
+        let routedCrewMember;
+        let routedAgent;
+        let assignmentStationId;
+        let assignmentTaskTag;
+        if (explicitAgentId) {
+            routedCrewMember = crewAgents.find((a)=>a.id === explicitAgentId);
+            const presetMatch = theme.agents.find((a)=>a.id === explicitAgentId);
+            routedAgent = presetMatch || (routedCrewMember ? {
+                ...activeAgent,
+                id: routedCrewMember.id,
+                name: routedCrewMember.customName || routedCrewMember.name,
+                role: routedCrewMember.role
+            } : activeAgent);
+            targetRoom = explicitTargetRoom || routedCrewMember?.currentRoom || 'war_room';
+            assignmentStationId = routedCrewMember?.preferredStationId;
+            assignmentTaskTag = (routedCrewMember?.role || 'EXECUTING').toUpperCase().slice(0, 12);
+        } else {
+            const assignment1 = resolveTaskAssignment(prompt, Boolean(attachment));
+            targetRoom = assignment1.room;
+            routedCrewMember = getCrewAgentByIndex(assignment1.agentIndex);
+            routedAgent = theme.agents[assignment1.agentIndex] || {
+                ...activeAgent,
+                id: routedCrewMember?.id || activeAgent.id,
+                name: routedCrewMember?.customName || activeAgent.name,
+                role: routedCrewMember?.role || activeAgent.role
+            };
+            assignmentStationId = assignment1.stationId;
+            assignmentTaskTag = assignment1.taskTag;
+        }
         const routedDisplayName = routedCrewMember?.customName || routedAgent.name;
-        handleMoveAgentToRoom(routedAgent.id, targetRoom, assignment.stationId, assignment.taskTag);
+        handleMoveAgentToRoom(routedAgent.id, targetRoom, assignmentStationId, assignmentTaskTag);
         setIsRoutingCamera(true);
         setTimeout(()=>setIsRoutingCamera(false), 2400);
-        setDialogueText(`[DIRECTIVE INGESTED] Dispatching ${routedDisplayName} to ${getRoomMetadata(targetRoom)?.shortBadge || String(targetRoom).toUpperCase()} (${assignment.taskTag})...`);
+        setDialogueText(`[DIRECTIVE INGESTED] Dispatching ${routedDisplayName} to ${getRoomMetadata(targetRoom)?.shortBadge || String(targetRoom).toUpperCase()} (${assignmentTaskTag})...`);
         setIsExecuting(true);
         setIsGameActive(false);
         setIsGameClosing(false);
@@ -1737,6 +1758,36 @@ const CommandCenterContent = ()=>{
         } finally{
             setIsExecuting(false);
         }
+    };
+    const dispatchDirectiveToAgent = (agentId, directive, targetSector)=>{
+        const targetCrew = crewAgents.find((a)=>a.id === agentId);
+        const targetPreset = theme.agents.find((a)=>a.id === agentId);
+        const resolvedAgent = targetCrew || targetPreset || activeAgent;
+        if (!resolvedAgent) return;
+        setActiveAgentId(resolvedAgent.id);
+        setHqSubView('terminal');
+        setActiveSpeakerAgentIndex(null);
+        const room = targetSector || targetCrew?.currentRoom || resolvedAgent.currentRoom || 'war_room';
+        handleMoveAgentToRoom(resolvedAgent.id, room, undefined, 'EXECUTING');
+        handleExecuteDirective(directive, null, false, resolvedAgent.id, room);
+    };
+    const handleDeployTask = (taskId, targetAgentId, fallbackDirective, fallbackSector)=>{
+        let matchedTask;
+        for (const session of roundtableSessions){
+            if (session.actionItems) {
+                const found = session.actionItems.find((t, i)=>(t.id || `task_${session.id}_${i}`) === taskId);
+                if (found) {
+                    matchedTask = found;
+                    break;
+                }
+            }
+        }
+        const directive = matchedTask?.directive || fallbackDirective;
+        const targetSector = matchedTask?.targetSector || fallbackSector;
+        const agentId = matchedTask?.assignedAgentId || targetAgentId;
+        const agent = crewAgents.find((a)=>a.id === agentId) || theme.agents.find((a)=>a.id === agentId) || activeAgent;
+        if (!directive || !agent) return;
+        dispatchDirectiveToAgent(agent.id, directive, targetSector);
     };
     const handleTriggerErrorDrill = (code)=>{
         playBeep('error');
@@ -2565,12 +2616,9 @@ const CommandCenterContent = ()=>{
             setHqSubView('terminal');
             setActiveSpeakerAgentIndex(null);
         },
-        "onDispatchActionItem": (agentIdx, directive, targetSector)=>{
-            const targetAgent = theme.agents[agentIdx] || activeAgent;
-            setHqSubView('terminal');
-            setActiveSpeakerAgentIndex(null);
-            handleMoveAgentToRoom(targetAgent.id, targetSector, undefined, 'EXECUTING');
-            handleExecuteDirective(directive, null);
+        "onDispatchActionItem": (agentIdx, directive, targetSector, assignedAgentId, taskId)=>{
+            const fallbackId = assignedAgentId || crewAgents[agentIdx]?.id || theme.agents[agentIdx]?.id || activeAgent.id;
+            handleDeployTask(taskId || `task_${agentIdx}`, fallbackId, directive, targetSector);
         },
         "activeSpeakerAgentIndex": activeSpeakerAgentIndex,
         "onSelectSpeakerAgentIndex": setActiveSpeakerAgentIndex,
@@ -2774,8 +2822,8 @@ const CommandCenterContent = ()=>{
                     statusTag: isExecuting && activeAgent.id === a.id ? 'EXECUTING' : 'IDLE'
                 })),
             commandLedger,
-            onDispatchTask: (_agentId, taskPrompt)=>{
-                handleExecuteDirective(taskPrompt);
+            onDispatchTask: (agentId, taskPrompt)=>{
+                dispatchDirectiveToAgent(agentId, taskPrompt);
             },
             onApproveTask: (_taskId)=>{
                 if (taskBriefState.isOpen && taskBriefState.brief) {
@@ -10709,7 +10757,7 @@ const __imp_1 = __require("lucide-react"); const { Users, Play, SkipForward, Che
 const __imp_2 = __require("../context/ThemeContext"); const { useTheme } = __imp_2;
 const __imp_3 = __require("../context/CrewContext"); const { useCrew, SPRITE_VARIANTS } = __imp_3;
 const __imp_4 = __require("./SpriteCanvas"); const { AgentSpriteFigure, ROOM_METADATA, RoomId } = __imp_4;
-const __imp_5 = __require("../services/ApiService"); const { RoundtableMeetingSession, RoundtableParticipantPayload } = __imp_5;
+const __imp_5 = __require("../services/ApiService"); const { RoundtableActionItem, RoundtableMeetingSession, RoundtableParticipantPayload } = __imp_5;
 function getActiveMeetingParticipants(allAgents) {
     return (allAgents || []).filter((agent)=>agent.isRecruited || agent.status === 'active' || agent.agentIndex !== undefined || true);
 }
@@ -10725,6 +10773,18 @@ const TownHallRoundtablePanel = ({ sessions, isExecutingMeeting, onConveneMeetin
     const [walkFrame, setWalkFrame] = useState(1);
     const ledgerScrollRef = useRef(null);
     const activeSession = sessions[selectedSessionIdx] || sessions[0];
+    const getAgentName = (targetAgentId, fallbackSlot = 0)=>{
+        if (targetAgentId) {
+            const match = crewAgents.find((a)=>a.id === targetAgentId);
+            if (match) return match.customName || match.name;
+        }
+        const fallback = crewAgents[fallbackSlot] || getCrewAgentByIndex(fallbackSlot);
+        return fallback?.customName || fallback?.name || `Operative ${fallbackSlot + 1}`;
+    };
+    const handleDeployTask = (taskId, targetAgentId, slotIdx, directive, targetSector)=>{
+        playBeep('tap');
+        onDispatchActionItem(slotIdx, directive, targetSector, targetAgentId, taskId);
+    };
     useEffect(()=>{
         const timer = setInterval(()=>{
             setWalkFrame((f)=>f === 1 ? 2 : 1);
@@ -11022,27 +11082,27 @@ const TownHallRoundtablePanel = ({ sessions, isExecutingMeeting, onConveneMeetin
     }, activeSession.actionItems.map((item, idx)=>{
         const slotIdx = typeof item.agentIndex === 'number' && item.agentIndex >= 0 && item.agentIndex < crewAgents.length ? item.agentIndex : idx % Math.max(1, crewAgents.length);
         const crew = crewAgents[slotIdx] || getCrewAgentByIndex(slotIdx);
+        const taskId = item.id || `task_${activeSession.id}_${idx}`;
+        const assignedAgentId = item.assignedAgentId || crew.id;
+        const agentDisplayName = getAgentName(assignedAgentId, slotIdx);
         const sectorMeta = ROOM_METADATA[item.targetSector] || ROOM_METADATA.war_room;
         return React.createElement("div", {
-            "key": idx,
+            "key": taskId,
             "className": "flex flex-wrap items-center justify-between gap-2 bg-[#0b110e] border border-[#233d2e] px-2.5 py-1.5 text-[11px]"
         }, React.createElement("div", {
             "className": "min-w-0 flex-1"
         }, React.createElement("span", {
             "className": "text-[#e59838] font-bold"
-        }, crew.customName, ":"), ' ', React.createElement("span", {
+        }, agentDisplayName, ":"), ' ', React.createElement("span", {
             "className": "text-[#f3ead8]"
         }, item.directive), ' ', React.createElement("span", {
             "className": "text-[#4ade80] text-[10px]"
         }, "[", sectorMeta.shortBadge, "]")), React.createElement("button", {
             "type": "button",
-            "onClick": ()=>{
-                playBeep('tap');
-                onDispatchActionItem(slotIdx, item.directive, item.targetSector);
-            },
-            "className": "px-2 py-0.5 bg-[#1e2f24] hover:bg-[#4ade80] text-[#4ade80] hover:text-[#0c120e] border border-[#3a6349] font-bold text-[10px] flex items-center gap-1 cursor-pointer shrink-0 transition-colors",
-            "title": `Deploy ${crew.customName} to ${sectorMeta.shortBadge} to execute this directive`
-        }, React.createElement("span", null, "[🚀 Deploy]"), React.createElement(ArrowRight, {
+            "onClick": ()=>handleDeployTask(taskId, assignedAgentId, slotIdx, item.directive, item.targetSector),
+            "className": "px-2.5 py-1 bg-[#1e2f24] hover:bg-[#4ade80] text-[#4ade80] hover:text-[#0c120e] border border-[#3a6349] font-bold text-[10px] flex items-center gap-1.5 cursor-pointer shrink-0 transition-colors rounded shadow-sm",
+            "title": `Deploy ${agentDisplayName} to ${sectorMeta.shortBadge} to execute this directive`
+        }, React.createElement("span", null, "Deploy ", agentDisplayName), React.createElement(ArrowRight, {
             "className": "w-2.5 h-2.5"
         })));
     })))) : React.createElement("div", {
@@ -18788,7 +18848,11 @@ const ROUNDTABLE_SCHEMA = {
                 properties: {
                     agentIndex: {
                         type: 'INTEGER',
-                        description: 'Assigned agent index (0, 1, or 2).'
+                        description: 'Assigned agent index corresponding to their position in the crew roster (0, 1, 2, ...).'
+                    },
+                    assignedAgentId: {
+                        type: 'STRING',
+                        description: 'Unique ID of the assigned agent (e.g. rec_vance or agent ID).'
                     },
                     ownerName: {
                         type: 'STRING',
@@ -20218,7 +20282,9 @@ function generateLocalRoundtableMeeting(params) {
         referencedNote: 'Full Crew Consensus Approved'
     });
     const actionItems = participants.map((p, idx)=>({
+            id: `action-task-${Date.now()}-${idx}`,
             agentIndex: p.agentIndex ?? idx,
+            assignedAgentId: p.id || p.agentId || `agent_${p.agentIndex ?? idx}`,
             ownerName: p.customName || p.name || `Operative ${idx + 1}`,
             directive: `Execute task for "${params.topic.slice(0, 30)}" (${p.role || 'Sector Operations'})`,
             targetSector: targetSectors[idx % targetSectors.length]
@@ -20360,11 +20426,14 @@ ROUNDTABLE RULES:
                 'archive_basement'
             ]);
             const actionItems = (Array.isArray(parsed.actionItems) ? parsed.actionItems : []).map((item, idx)=>{
-                const slotIdx = typeof item.agentIndex === 'number' && item.agentIndex >= 0 && item.agentIndex <= 2 ? item.agentIndex : idx % 3;
+                const slotIdx = typeof item.agentIndex === 'number' && item.agentIndex >= 0 && item.agentIndex < params.participants.length ? item.agentIndex : idx % Math.max(1, params.participants.length);
                 const participant = params.participants[slotIdx] || params.participants[0];
                 const rawSector = String(item.targetSector || 'war_room');
+                const assignedId = item.assignedAgentId || participant?.id || participant?.agentId || `agent_${slotIdx}`;
                 return {
+                    id: item.id || `action-task-${Date.now()}-${idx}`,
                     agentIndex: slotIdx,
+                    assignedAgentId: assignedId,
                     ownerName: participant?.customName || item.ownerName || `Operative ${slotIdx + 1}`,
                     directive: String(item.directive || 'Execute sector follow-up protocol'),
                     targetSector: validSectors.has(rawSector) ? rawSector : 'war_room'

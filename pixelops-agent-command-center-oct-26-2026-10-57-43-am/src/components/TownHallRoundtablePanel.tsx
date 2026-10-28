@@ -14,6 +14,7 @@ import { useTheme } from '../context/ThemeContext';
 import { useCrew, SPRITE_VARIANTS } from '../context/CrewContext';
 import { AgentSpriteFigure, ROOM_METADATA, RoomId } from './SpriteCanvas';
 import {
+  RoundtableActionItem,
   RoundtableMeetingSession,
   RoundtableParticipantPayload,
 } from '../services/ApiService';
@@ -27,7 +28,9 @@ interface TownHallRoundtablePanelProps {
   onDispatchActionItem: (
     agentIndex: number,
     directive: string,
-    targetSector: RoomId
+    targetSector: RoomId,
+    assignedAgentId?: string,
+    taskId?: string
   ) => void;
   activeSpeakerAgentIndex: number | null;
   onSelectSpeakerAgentIndex: (agentIndex: number | null) => void;
@@ -69,6 +72,32 @@ export const TownHallRoundtablePanel: React.FC<TownHallRoundtablePanelProps> = (
 
   const activeSession: RoundtableMeetingSession | undefined =
     sessions[selectedSessionIdx] || sessions[0];
+
+  const getAgentName = (targetAgentId?: string, fallbackSlot: number = 0): string => {
+    if (targetAgentId) {
+      const match = crewAgents.find((a) => a.id === targetAgentId);
+      if (match) return match.customName || (match as any).name;
+    }
+    const fallback = crewAgents[fallbackSlot] || getCrewAgentByIndex(fallbackSlot);
+    return fallback?.customName || (fallback as any)?.name || `Operative ${fallbackSlot + 1}`;
+  };
+
+  const handleDeployTask = (
+    taskId: string,
+    targetAgentId: string,
+    slotIdx: number,
+    directive: string,
+    targetSector: RoomId
+  ) => {
+    playBeep('tap');
+    onDispatchActionItem(
+      slotIdx,
+      directive,
+      targetSector,
+      targetAgentId,
+      taskId
+    );
+  };
 
   // Subtle sprite animation frame toggle for speaking avatars
   useEffect(() => {
@@ -484,18 +513,21 @@ export const TownHallRoundtablePanel: React.FC<TownHallRoundtablePanelProps> = (
                               : idx % Math.max(1, crewAgents.length);
                           const crew =
                             crewAgents[slotIdx] || getCrewAgentByIndex(slotIdx);
+                          const taskId = item.id || `task_${activeSession.id}_${idx}`;
+                          const assignedAgentId = item.assignedAgentId || crew.id;
+                          const agentDisplayName = getAgentName(assignedAgentId, slotIdx);
                           const sectorMeta =
                             ROOM_METADATA[item.targetSector] ||
                             ROOM_METADATA.war_room;
 
                           return (
                             <div
-                              key={idx}
+                              key={taskId}
                               className="flex flex-wrap items-center justify-between gap-2 bg-[#0b110e] border border-[#233d2e] px-2.5 py-1.5 text-[11px]"
                             >
                               <div className="min-w-0 flex-1">
                                 <span className="text-[#e59838] font-bold">
-                                  {crew.customName}:
+                                  {agentDisplayName}:
                                 </span>{' '}
                                 <span className="text-[#f3ead8]">
                                   {item.directive}
@@ -506,18 +538,19 @@ export const TownHallRoundtablePanel: React.FC<TownHallRoundtablePanelProps> = (
                               </div>
                               <button
                                 type="button"
-                                onClick={() => {
-                                  playBeep('tap');
-                                  onDispatchActionItem(
+                                onClick={() =>
+                                  handleDeployTask(
+                                    taskId,
+                                    assignedAgentId,
                                     slotIdx,
                                     item.directive,
                                     item.targetSector
-                                  );
-                                }}
-                                className="px-2 py-0.5 bg-[#1e2f24] hover:bg-[#4ade80] text-[#4ade80] hover:text-[#0c120e] border border-[#3a6349] font-bold text-[10px] flex items-center gap-1 cursor-pointer shrink-0 transition-colors"
-                                title={`Deploy ${crew.customName} to ${sectorMeta.shortBadge} to execute this directive`}
+                                  )
+                                }
+                                className="px-2.5 py-1 bg-[#1e2f24] hover:bg-[#4ade80] text-[#4ade80] hover:text-[#0c120e] border border-[#3a6349] font-bold text-[10px] flex items-center gap-1.5 cursor-pointer shrink-0 transition-colors rounded shadow-sm"
+                                title={`Deploy ${agentDisplayName} to ${sectorMeta.shortBadge} to execute this directive`}
                               >
-                                <span>[🚀 Deploy]</span>
+                                <span>Deploy {agentDisplayName}</span>
                                 <ArrowRight className="w-2.5 h-2.5" />
                               </button>
                             </div>

@@ -10,6 +10,7 @@
  */
 
 import { get, set } from 'idb-keyval';
+import { GoogleGenAI } from '@google/genai';
 
 export interface ComposioConnectedAccount {
   id: string;
@@ -502,3 +503,76 @@ export async function executeComposioAction(
     };
   }
 }
+
+/**
+ * 6. High-Level Agent Runner with Dynamic Composio Tools via @google/genai SDK
+ * Fetches active Composio function declarations for the current user and passes
+ * them directly into ai.models.generateContent(), automatically executing any
+ * triggered functionCalls through ComposioService.
+ */
+export async function runAgentWithTools(
+  prompt: string,
+  selectedModel: string = 'gemini-2.5-flash',
+  apiKey?: string
+): Promise<any> {
+  let effectiveKey = (apiKey || '').trim();
+  if (!effectiveKey) {
+    try {
+      const stored =
+        localStorage.getItem('pixelops_gemini_api_key') ||
+        localStorage.getItem('gemini_api_key') ||
+        '';
+      effectiveKey = stored.trim();
+    } catch {}
+  }
+
+  const ai = new GoogleGenAI({ apiKey: effectiveKey });
+
+  // 1. Fetch active tool declarations from Composio for this user
+  const composioTools = await getGeminiTools();
+
+  // 2. Pass them directly into the config.tools array
+  const response = await ai.models.generateContent({
+    model: selectedModel,
+    contents: prompt,
+    config: {
+      systemInstruction: 'You are an elite tactical agent. Use your assigned tools when requested.',
+      tools: composioTools.length > 0 ? [{ functionDeclarations: composioTools }] : undefined,
+    },
+  });
+
+  // 3. Check if Gemini triggered a function call
+  if (response.functionCalls && response.functionCalls.length > 0) {
+    for (const call of response.functionCalls) {
+      console.log(`Executing Composio Action: ${call.name}`, call.args);
+
+      // Execute the action through Composio
+      const result = await executeComposioAction(
+        call.name,
+        (call.args as Record<string, any>) || {}
+      );
+      return result;
+    }
+  }
+
+  return response.text;
+}
+
+/**
+ * ComposioService object export providing both namespace and object invocation:
+ * e.g., ComposioService.getGeminiTools(), ComposioService.executeComposioAction()
+ */
+export const ComposioService = {
+  getOrCreateEntityId,
+  getComposioApiKey,
+  setComposioApiKey,
+  pingComposio,
+  getConnectedAccounts,
+  initiateAppConnection,
+  getGeminiTools,
+  executeComposioAction,
+  runAgentWithTools,
+  COMPOSIO_GEMINI_TOOL_SCHEMAS,
+};
+
+export default ComposioService;

@@ -27,6 +27,7 @@ import {
   getComposioApiKey,
   setComposioApiKey,
   pingComposio,
+  runAgentWithTools,
 } from '../services/ComposioService';
 
 export interface CLICommandContext {
@@ -667,10 +668,48 @@ export async function executeCLICommand(
       }
     }
 
+    // composio agent <prompt> | composio prompt <prompt>
+    if (subAction === 'agent' || subAction === 'prompt') {
+      const userPrompt = args.slice(1).join(' ').trim();
+      if (!userPrompt) {
+        return {
+          command: trimmed,
+          output:
+            'USAGE: pixelops composio agent <prompt>\nExample: pixelops composio agent "List open pull requests on repo owner/repo"',
+          status: 'warning',
+          timestamp,
+        };
+      }
+
+      try {
+        const result = await runAgentWithTools(userPrompt);
+        const outputLines = [
+          `[COMPOSIO AGENT WITH GEMINI EXECUTION]`,
+          `PROMPT: ${userPrompt}`,
+          '--------------------------------------------------------------------------------',
+          typeof result === 'object' ? JSON.stringify(result, null, 2) : String(result),
+        ];
+
+        return {
+          command: trimmed,
+          output: outputLines.join('\n'),
+          status: 'ok',
+          timestamp,
+        };
+      } catch (err: any) {
+        return {
+          command: trimmed,
+          output: `Composio agent execution error: ${err?.message || err}`,
+          status: 'error',
+          timestamp,
+        };
+      }
+    }
+
     return {
       command: trimmed,
       output:
-        'USAGE: pixelops composio <status|connect|run|key>\n  composio status               Inspect isolated entityId and connected apps\n  composio connect <app>        Initiate OAuth connect for github, slack, gmail, notion\n  composio run <action> <json>  Dispatch an action with JSON payload\n  composio key <customKey>      Set or clear a custom Composio BYOK API key',
+        'USAGE: pixelops composio <status|connect|run|agent|key>\n  composio status               Inspect isolated entityId and connected apps\n  composio connect <app>        Initiate OAuth connect for github, slack, gmail, notion\n  composio run <action> <json>  Dispatch an action with JSON payload\n  composio agent <prompt>       Run Gemini agent with active Composio tools\n  composio key <customKey>      Set or clear a custom Composio BYOK API key',
       status: 'warning',
       timestamp,
     };
@@ -693,6 +732,7 @@ export async function executeCLICommand(
       '  pixelops composio [status]         Inspect multi-user Composio entityId and apps',
       '  pixelops composio connect <app>    Initiate OAuth connect (github, slack, gmail, notion)',
       '  pixelops composio run <act> <json> Execute a Composio action via proxy',
+      '  pixelops composio agent <prompt>   Run Gemini agent with Composio function tools',
       '  pixelops rooms                     List registered safehouse sectors',
       '  pixelops spawn <templateId>        Spawn sector (cyber_lab, quantum_vault, etc)',
       '  pixelops skills                    List available capability plugins & bindings',

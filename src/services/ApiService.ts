@@ -9,6 +9,8 @@ import {
   COMPOSIO_GEMINI_TOOL_SCHEMAS,
   executeComposioAction,
   getOrCreateEntityId,
+  runAgentWithTools,
+  ComposioService,
 } from './ComposioService';
 import {
   executeSafeOperation,
@@ -28,6 +30,8 @@ export {
   estimateLocalStorageBytes,
   getLatestStorageHealthReport,
   executeCodeSandboxEval,
+  runAgentWithTools,
+  ComposioService,
 };
 
 export interface ExecutionStep {

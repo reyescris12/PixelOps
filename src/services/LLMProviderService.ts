@@ -14,7 +14,7 @@ const STORAGE_KEY = 'pixelops_llm_provider_config_v2';
 export const DEFAULT_PROVIDER_CONFIGS: Record<LLMProviderType, { defaultModel: string; defaultEndpoint: string; label: string; placeholderKey: string }> = {
   gemini: {
     label: 'Google Gemini',
-    defaultModel: 'gemini-2.5-flash',
+    defaultModel: 'gemini-3.1-flash-lite',
     defaultEndpoint: 'https://generativelanguage.googleapis.com',
     placeholderKey: 'AIzaSy...',
   },
@@ -77,7 +77,7 @@ export function loadLLMProviderConfig(): LLMProviderConfig {
       modelName:
         parsed?.modelName ||
         DEFAULT_PROVIDER_CONFIGS[pId]?.defaultModel ||
-        'gemini-2.5-flash',
+        'gemini-3.1-flash-lite',
     };
   } catch {
     return {
@@ -112,7 +112,7 @@ export async function testLLMProviderConnection(
           error: 'Gemini API key is missing. Enter your Google Gemini API key above.',
         };
       }
-      const model = config.modelName || 'gemini-2.5-flash';
+      const model = config.modelName || 'gemini-3.1-flash-lite';
       const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(key)}`;
       const res = await fetch(endpoint, {
         method: 'POST',

@@ -3110,7 +3110,7 @@ export async function checkServerStatus(
   return {
     online: true,
     configured: hasKey,
-    model: config.modelName || 'gemini-2.5-flash',
+    model: config.modelName || 'gemini-3.1-flash-lite',
   };
 }
 
@@ -3130,7 +3130,7 @@ export async function pingGeminiConnection(
   try {
     const res = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-        config.modelName || 'gemini-2.5-flash'
+        config.modelName || 'gemini-3.1-flash-lite'
       )}:generateContent?key=${encodeURIComponent(key)}`,
       {
         method: 'POST',
@@ -3153,7 +3153,7 @@ export async function pingGeminiConnection(
       return {
         ok: false,
         error: `Gemini link degraded: ${msg}`,
-        model: config.modelName || 'gemini-2.5-flash',
+        model: config.modelName || 'gemini-3.1-flash-lite',
       };
     }
 
@@ -3164,7 +3164,7 @@ export async function pingGeminiConnection(
     return {
       ok: true,
       message: replyText,
-      model: config.modelName || 'gemini-2.5-flash',
+      model: config.modelName || 'gemini-3.1-flash-lite',
     };
   } catch (err: any) {
     return {
@@ -3685,7 +3685,7 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
       }
 
       // Google Gemini Direct Client-Side Execution
-      const modelName = llmConfig.modelName || 'gemini-2.5-flash';
+      const modelName = llmConfig.modelName || 'gemini-3.1-flash-lite';
       const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
         modelName
       )}:generateContent?key=${encodeURIComponent(apiKey)}`;
@@ -4189,7 +4189,7 @@ export async function executeRoundtableMeeting(params: {
       }
 
       try {
-        const modelName = llmConfig.modelName || 'gemini-2.5-flash';
+        const modelName = llmConfig.modelName || 'gemini-3.1-flash-lite';
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
           modelName
         )}:generateContent?key=${encodeURIComponent(apiKey)}`;

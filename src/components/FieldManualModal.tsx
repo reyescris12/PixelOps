@@ -5,9 +5,10 @@
  * - Safehouse Grid & 7 Sectors
  * - Managing Operatives & Memory Clearance Progression
  * - Night Shift Background Worker Configuration
- * - Transparent API Keys (BYOK) vs. Hosted Pro Pass Guide
- * - Complete Command Encyclopedia with copyable examples & CLI cheat-sheet
- * - Performance & Pro-Tips
+ * - Transparent API Keys (BYOK: Gemini 3.1 Flash Lite) vs. Hosted Pro Pass Guide
+ * - Complete Command Encyclopedia for Briefing Terminal & Headless CLI
+ * - Exhaustive Composio Integrations Guide (Gmail, GitHub, Slack, Calendar, Notion, Linear)
+ * - Performance Secrets & Pro-Tips
  */
 
 import React, { useState, useMemo } from 'react';
@@ -30,6 +31,14 @@ import {
   Clock,
   Sparkles,
   ExternalLink,
+  Code2,
+  Mail,
+  Send,
+  CloudSun,
+  Database,
+  Calendar,
+  Layers,
+  AlertTriangle,
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 
@@ -39,61 +48,94 @@ export interface FieldManualModalProps {
   onSelectPrompt?: (samplePrompt: string) => void;
 }
 
-type ManualSectionId = 'grid' | 'operatives' | 'nightshift' | 'auth' | 'commands' | 'protips';
+type ManualSectionId = 'grid' | 'operatives' | 'nightshift' | 'auth' | 'commands' | 'composio' | 'protips';
+type CommandCategoryFilter = 'all' | 'terminal' | 'composio' | 'chaining' | 'reports' | 'code' | 'cli' | 'diagnostics';
 
 interface CommandExample {
   title: string;
-  category: 'Task Chaining' | 'Report Generation' | 'Composio & External' | 'CLI Console' | 'Code & Eval' | 'Diagnostics';
+  category: 'Task Chaining' | 'Report Generation' | 'Composio & External' | 'CLI Console' | 'Code & Eval' | 'Diagnostics' | 'Research & Tools';
   prompt: string;
   description: string;
   leadOperative: 'Vance' | 'Cipher' | 'Nyx' | 'Any Operative';
   targetSector: string;
+  channel: 'terminal' | 'cli' | 'both';
 }
 
 const COMMAND_CATALOG: CommandExample[] = [
+  // ==========================================
+  // 1. TASK CHAINING & MULTI-AGENT WORKFLOWS
+  // ==========================================
   {
-    title: 'Autonomous Multi-Agent Task Chain',
+    title: 'Autonomous Multi-Agent Task Chain (Compound Prompt)',
     category: 'Task Chaining',
+    channel: 'terminal',
     prompt: 'Vance, search for modern zero-trust architecture guidelines and compile the key principles. Then Cipher, write this out into a security report file zero_trust_brief.md. Finally Nyx, verify and prepare a mission summary.',
-    description: 'Decomposes compound directive into 3 sequential phases, routes operatives to War Room, Library, and Comms Tower, and seamlessly transfers findings.',
+    description: 'Decomposes prompt into 3 sequential phases, moves operatives to War Room, Library, and Comms Tower, transfers intermediate findings, and auto-uploads the report.',
     leadOperative: 'Vance',
     targetSector: 'War Room ➔ Library ➔ Comms Tower',
   },
   {
-    title: 'Automated Report Generation & Workspace Upload',
+    title: 'Numbered Multi-Phase Operational Pipeline',
+    category: 'Task Chaining',
+    channel: 'terminal',
+    prompt: '1. Vance research GitHub Actions CI/CD security best practices. 2. Cipher write a hardened workflow template and audit summary to reports/ci_cd_security.md. 3. Nyx dispatch notice to ops-lead@pixelops.app.',
+    description: 'Executes numbered steps sequentially with zero user intervention between phases, passing file paths and research context forward.',
+    leadOperative: 'Vance',
+    targetSector: 'War Room ➔ Server Vault ➔ Comms Tower',
+  },
+  {
+    title: 'Explicit Workflow Directive Prefix',
+    category: 'Task Chaining',
+    channel: 'terminal',
+    prompt: 'workflow: Vance audit token bucket algorithm, after that have Cipher patch the rate limiter utility, and then have Nyx broadcast completion on Slack #alerts',
+    description: 'Uses the "workflow:" or "chain:" prefix to force multi-agent orchestration across safehouse sectors.',
+    leadOperative: 'Vance',
+    targetSector: 'War Room ➔ Server Vault ➔ Comms Tower',
+  },
+  {
+    title: 'Headless Task Chain via CLI Console',
+    category: 'CLI Console',
+    channel: 'cli',
+    prompt: 'pixelops chain Vance research memory isolation in WASM, then Cipher draft benchmark script, then Nyx log summary',
+    description: 'Triggers the autonomous multi-agent task chain engine directly from the tactical CLI terminal (~).',
+    leadOperative: 'Vance',
+    targetSector: 'Safehouse Multi-Sector Grid',
+  },
+
+  // ==========================================
+  // 2. REPORT GENERATION & WORKSPACE FILES (VFS)
+  // ==========================================
+  {
+    title: 'Automated Report Generation & IndexedDB Upload',
     category: 'Report Generation',
+    channel: 'terminal',
     prompt: 'Cipher, write a comprehensive security report on zero-trust architecture guidelines and save to reports/zero_trust_brief.md',
     description: 'Synthesizes executive summary, defensive principles, verification matrix, and auto-uploads the file to Dexie IndexedDB workspace files.',
     leadOperative: 'Cipher',
     targetSector: 'Library Archives (library_archive_terminal)',
   },
   {
-    title: 'GitHub Issue Creation (Composio)',
-    category: 'Composio & External',
-    prompt: 'Cipher, create an issue in reyescris12/PixelOps titled "Implement token bucket rate limiter for external webhooks" saying "Priority high. Enforce 100 req/min."',
-    description: 'Parses repository, title, and body parameters and executes live via user connected GitHub account.',
+    title: 'Safehouse Perimeter Defense Audit Brief',
+    category: 'Report Generation',
+    channel: 'terminal',
+    prompt: 'generate an audit brief for safehouse perimeter defenses with threat matrix and action items',
+    description: 'Compiles technical defense audit, evaluates physical/cryptographic boundaries, and commits to reports/safehouse_perimeter_defenses_audit.md.',
     leadOperative: 'Cipher',
-    targetSector: 'Server Vault (vault_core_rack)',
+    targetSector: 'Library Archives',
   },
   {
-    title: 'Gmail Outbound Dispatch (Composio)',
-    category: 'Composio & External',
-    prompt: 'Nyx, send an email to ops-lead@pixelops.app with subject "Mission Alpha Clearance" saying "All safehouse perimeter sectors verified green."',
-    description: 'Extracts recipient, subject, and body, checks OAuth credentials in Armory, and dispatches email live via Google Workspace / Gmail.',
-    leadOperative: 'Nyx',
-    targetSector: 'Comms Tower (comms_broadcast_desk)',
-  },
-  {
-    title: 'Headless Task Chain via CLI',
-    category: 'CLI Console',
-    prompt: 'pixelops chain Vance research CI/CD security best practices, then Cipher write a template workflow file, then Nyx notify on Slack',
-    description: 'Triggers multi-phase pipeline directly from tactical CLI terminal (~).',
-    leadOperative: 'Vance',
-    targetSector: 'Multi-Sector Grid',
+    title: 'Incident Postmortem Report',
+    category: 'Report Generation',
+    channel: 'terminal',
+    prompt: 'create an incident postmortem report titled "Q3 API Latency Spike & Gateway Recovery" and upload to workspace',
+    description: 'Generates structured postmortem with root cause analysis, timeline, remediation steps, and commits to IndexedDB.',
+    leadOperative: 'Cipher',
+    targetSector: 'Library Archives',
   },
   {
     title: 'List Workspace Files via CLI',
     category: 'CLI Console',
+    channel: 'cli',
     prompt: 'pixelops files reports',
     description: 'Queries Dexie IndexedDB and displays all agent-generated markdown reports, logs, and configs.',
     leadOperative: 'Any Operative',
@@ -102,30 +144,234 @@ const COMMAND_CATALOG: CommandExample[] = [
   {
     title: 'Inspect Workspace Report Content via CLI',
     category: 'CLI Console',
+    channel: 'cli',
     prompt: 'pixelops cat reports/zero_trust_brief.md',
     description: 'Reads and outputs the exact Markdown content of a workspace report in the console.',
     leadOperative: 'Any Operative',
     targetSector: 'Library Archives',
   },
+
+  // ==========================================
+  // 3. COMPOSIO EXTERNAL ACTIONS (BRIEFING TERMINAL)
+  // ==========================================
+  {
+    title: 'Gmail: Outbound Email Dispatch',
+    category: 'Composio & External',
+    channel: 'terminal',
+    prompt: 'Nyx, send an email to ops-lead@pixelops.app with subject "Mission Alpha Clearance" saying "All safehouse perimeter sectors verified green."',
+    description: 'Extracts recipient, subject, and body, checks OAuth credentials in Armory, and dispatches email live via Google Workspace / Gmail.',
+    leadOperative: 'Nyx',
+    targetSector: 'Comms Tower (comms_broadcast_desk)',
+  },
+  {
+    title: 'Gmail: Inbox Sweeps & Unread Emails',
+    category: 'Composio & External',
+    channel: 'terminal',
+    prompt: 'Nyx, check my emails and fetch latest unread messages from inbox',
+    description: 'Executes GMAIL_FETCH_EMAILS on the user connected Gmail account and summarizes latest message senders and snippets.',
+    leadOperative: 'Nyx',
+    targetSector: 'Comms Tower',
+  },
+  {
+    title: 'GitHub: Create Repository Issue',
+    category: 'Composio & External',
+    channel: 'terminal',
+    prompt: 'Cipher, create an issue in reyescris12/PixelOps titled "Implement token bucket rate limiter for external webhooks" saying "Priority high. Enforce 100 req/min."',
+    description: 'Parses repository owner/name, title, and body parameters and files an issue live via user connected GitHub account.',
+    leadOperative: 'Cipher',
+    targetSector: 'Server Vault (vault_core_rack)',
+  },
+  {
+    title: 'GitHub: Star Repository',
+    category: 'Composio & External',
+    channel: 'terminal',
+    prompt: 'star repo reyescris12/PixelOps',
+    description: 'Executes GITHUB_STAR_A_REPOSITORY_FOR_THE_AUTHENTICATED_USER on the authenticated GitHub account.',
+    leadOperative: 'Cipher',
+    targetSector: 'Server Vault',
+  },
+  {
+    title: 'Slack: Post Channel Broadcast',
+    category: 'Composio & External',
+    channel: 'terminal',
+    prompt: 'Nyx, send a slack message to #operations saying "Night Shift automated security scan completed with zero detected anomalies."',
+    description: 'Parses channel and text, executes SLACK_CHAT_POST_MESSAGE on user connected Slack workspace.',
+    leadOperative: 'Nyx',
+    targetSector: 'Comms Tower',
+  },
+  {
+    title: 'Google Calendar: Schedule Tactical Briefing',
+    category: 'Composio & External',
+    channel: 'terminal',
+    prompt: 'schedule calendar event titled "Safehouse Strategic Alignment" at "Tomorrow 14:00 UTC" with attendees team@pixelops.app',
+    description: 'Parses title, datetime, and attendees, and creates an event on Google Calendar via Composio.',
+    leadOperative: 'Nyx',
+    targetSector: 'Comms Tower',
+  },
+  {
+    title: 'Notion: Create Workspace Documentation Page',
+    category: 'Composio & External',
+    channel: 'terminal',
+    prompt: 'create notion page titled "Safehouse Zero-Trust Protocol" in workspace with content "Operational rules and key rotation policies."',
+    description: 'Formats content into Notion blocks and creates a new document page in the user authorized Notion workspace.',
+    leadOperative: 'Cipher',
+    targetSector: 'Server Vault',
+  },
+  {
+    title: 'Linear: Create Engineering Ticket',
+    category: 'Composio & External',
+    channel: 'terminal',
+    prompt: 'create linear issue titled "Audit VFS Storage Quotas" with description "Implement automatic LRU eviction for files older than 30 days."',
+    description: 'Creates a prioritized ticket in the user connected Linear workspace via Composio API.',
+    leadOperative: 'Cipher',
+    targetSector: 'Server Vault',
+  },
+
+  // ==========================================
+  // 4. COMPOSIO CLI COMMANDS
+  // ==========================================
+  {
+    title: 'CLI: Inspect Composio Engine & Accounts',
+    category: 'CLI Console',
+    channel: 'cli',
+    prompt: 'pixelops composio status',
+    description: 'Inspects user entityId isolation, BYOK API key source, ping connectivity, and online third-party account states.',
+    leadOperative: 'Any Operative',
+    targetSector: 'Armory',
+  },
+  {
+    title: 'CLI: Initiate OAuth App Connection',
+    category: 'CLI Console',
+    channel: 'cli',
+    prompt: 'pixelops composio connect github',
+    description: 'Opens centered browser OAuth popup bridge to connect GitHub, Gmail, Slack, Notion, or Linear with polling callback.',
+    leadOperative: 'Any Operative',
+    targetSector: 'Armory',
+  },
+  {
+    title: 'CLI: List Available Toolkits',
+    category: 'CLI Console',
+    channel: 'cli',
+    prompt: 'pixelops composio list',
+    description: 'Displays full catalog of available Composio integrations, action schemas, and connection statuses.',
+    leadOperative: 'Any Operative',
+    targetSector: 'Armory',
+  },
+  {
+    title: 'CLI: Set Custom Composio API Key',
+    category: 'CLI Console',
+    channel: 'cli',
+    prompt: 'pixelops composio key comp_live_xxxxxxxxxxxx',
+    description: 'Saves and persists a custom Composio BYOK API key for direct browser REST execution.',
+    leadOperative: 'Any Operative',
+    targetSector: 'Master Vault',
+  },
+  {
+    title: 'CLI: Execute Raw Tool Action',
+    category: 'CLI Console',
+    channel: 'cli',
+    prompt: 'pixelops composio run GMAIL_SEND_EMAIL \'{"recipient_email":"team@pixelops.app","subject":"Alert","body":"Perimeter clear"}\'',
+    description: 'Executes a raw action directly against the connected third-party app with JSON parameters.',
+    leadOperative: 'Any Operative',
+    targetSector: 'Comms Tower',
+  },
+  {
+    title: 'CLI: Run Autonomous Agent with Tool Tools',
+    category: 'CLI Console',
+    channel: 'cli',
+    prompt: 'pixelops composio agent "Check my unread emails and star the PixelOps repo on GitHub"',
+    description: 'Deploys an autonomous Gemini agent with dynamic tool bindings across all connected accounts.',
+    leadOperative: 'Vance',
+    targetSector: 'War Room',
+  },
+
+  // ==========================================
+  // 5. CODE DRAFTING & JS/TS SANDBOX EVALUATION
+  // ==========================================
+  {
+    title: 'TypeScript Debounce Utility with Verification',
+    category: 'Code & Eval',
+    channel: 'terminal',
+    prompt: 'Cipher, write a typescript debounce utility with immediate execution flag and run verification tests',
+    description: 'Architects TypeScript logic and executes verification client-side in the Web Worker code sandbox.',
+    leadOperative: 'Cipher',
+    targetSector: 'Server Vault',
+  },
+  {
+    title: 'Binary Search Algorithm Implementation',
+    category: 'Code & Eval',
+    channel: 'terminal',
+    prompt: 'Cipher, write a binary search algorithm in python with time complexity analysis and test cases',
+    description: 'Produces clean, commented Python algorithm with O(log n) efficiency proofs.',
+    leadOperative: 'Cipher',
+    targetSector: 'Server Vault',
+  },
+  {
+    title: 'String Reversal & Palindrome Checker',
+    category: 'Code & Eval',
+    channel: 'terminal',
+    prompt: 'write a function to test if a string is a palindrome in javascript',
+    description: 'Implements alphanumeric normalization and palindrome verification with test suite.',
+    leadOperative: 'Cipher',
+    targetSector: 'Server Vault',
+  },
+  {
+    title: 'Array Sorting by Custom Object Property',
+    category: 'Code & Eval',
+    channel: 'terminal',
+    prompt: 'Cipher, implement an array sort function for object lists with asc/desc toggle in javascript',
+    description: 'Generates non-mutating sort logic with comparator functions.',
+    leadOperative: 'Cipher',
+    targetSector: 'Server Vault',
+  },
+
+  // ==========================================
+  // 6. RESEARCH, MATH & ATMOSPHERIC TOOLS
+  // ==========================================
   {
     title: 'Live Web Intel Ingestion',
-    category: 'Composio & External',
+    category: 'Research & Tools',
+    channel: 'terminal',
     prompt: 'Vance, search the web for latest quantum computing encryption standards and compile top takeaways',
     description: 'Executes verified live web search tool, extracts knowledge snippets, and summarizes findings into mission brief.',
     leadOperative: 'Vance',
     targetSector: 'Comms Tower',
   },
   {
-    title: 'In-Browser JavaScript Sandbox Execution',
-    category: 'Code & Eval',
-    prompt: 'Cipher, write a typescript debounce utility with immediate execution flag and run verification tests',
-    description: 'Architects TypeScript logic and verifies execution client-side in the Web Worker code sandbox.',
+    title: 'Atmospheric / Weather Radar Query',
+    category: 'Research & Tools',
+    channel: 'terminal',
+    prompt: 'check the weather and 3-day forecast in Tokyo',
+    description: 'Queries Open-Meteo API for real-time temperature, wind speed, precipitation, and conditions.',
+    leadOperative: 'Nyx',
+    targetSector: 'Comms Tower',
+  },
+  {
+    title: 'Mathematical Computation & Precision Eval',
+    category: 'Research & Tools',
+    channel: 'terminal',
+    prompt: 'calculate (144 * 12) / 3.14159',
+    description: 'Evaluates arithmetic expression with precision checks client-side.',
     leadOperative: 'Cipher',
     targetSector: 'Server Vault',
   },
   {
+    title: 'Operative Memory Vector Recall',
+    category: 'Research & Tools',
+    channel: 'terminal',
+    prompt: 'recall previous findings on zero-trust architecture guidelines from your memory log',
+    description: 'Scans the operative append-only memory bank and returns historical task summaries.',
+    leadOperative: 'Vance',
+    targetSector: 'War Room',
+  },
+
+  // ==========================================
+  // 7. DIAGNOSTICS & SYSTEM DRILLS
+  // ==========================================
+  {
     title: 'Diagnostic Overheat Circuit Breaker Drill',
     category: 'Diagnostics',
+    channel: 'terminal',
     prompt: '[DRILL:429]',
     description: 'Simulates HTTP 429 Rate Limit error to test retro circuit-breaker modal and cooldown countdown timer.',
     leadOperative: 'Any Operative',
@@ -134,10 +380,29 @@ const COMMAND_CATALOG: CommandExample[] = [
   {
     title: 'Diagnostic Auth Failure Drill',
     category: 'Diagnostics',
+    channel: 'terminal',
     prompt: '[DRILL:401]',
     description: 'Simulates HTTP 401 Invalid Key error to verify Vault error handling and recovery prompt.',
     leadOperative: 'Any Operative',
     targetSector: 'Master Vault',
+  },
+  {
+    title: 'Diagnostic Network Sever Drill',
+    category: 'Diagnostics',
+    channel: 'terminal',
+    prompt: '[DRILL:NET]',
+    description: 'Simulates network drop (TypeError: Failed to fetch) to test offline fallback handling.',
+    leadOperative: 'Any Operative',
+    targetSector: 'Comms Tower',
+  },
+  {
+    title: 'Diagnostic Malformed JSON Drill',
+    category: 'Diagnostics',
+    channel: 'terminal',
+    prompt: '[DRILL:JSON]',
+    description: 'Simulates SyntaxError: Unexpected token < in JSON at position 0 to test JSON repair guards.',
+    leadOperative: 'Any Operative',
+    targetSector: 'Server Vault',
   },
 ];
 
@@ -149,6 +414,7 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
   const { playBeep } = useTheme();
   const [activeSection, setActiveSection] = useState<ManualSectionId>('grid');
   const [searchQuery, setSearchQuery] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState<CommandCategoryFilter>('all');
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
 
   if (!isOpen) return null;
@@ -160,17 +426,30 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
     setTimeout(() => setCopiedIndex(null), 2000);
   };
 
-  const filteredCommands = COMMAND_CATALOG.filter((cmd) => {
-    if (!searchQuery.trim()) return true;
-    const q = searchQuery.toLowerCase();
-    return (
-      cmd.title.toLowerCase().includes(q) ||
-      cmd.prompt.toLowerCase().includes(q) ||
-      cmd.category.toLowerCase().includes(q) ||
-      cmd.description.toLowerCase().includes(q) ||
-      cmd.leadOperative.toLowerCase().includes(q)
-    );
-  });
+  const filteredCommands = useMemo(() => {
+    return COMMAND_CATALOG.filter((cmd) => {
+      // Category filter
+      if (categoryFilter === 'terminal' && cmd.channel === 'cli') return false;
+      if (categoryFilter === 'cli' && cmd.channel === 'terminal') return false;
+      if (categoryFilter === 'composio' && !cmd.category.includes('Composio')) return false;
+      if (categoryFilter === 'chaining' && cmd.category !== 'Task Chaining') return false;
+      if (categoryFilter === 'reports' && cmd.category !== 'Report Generation') return false;
+      if (categoryFilter === 'code' && cmd.category !== 'Code & Eval') return false;
+      if (categoryFilter === 'diagnostics' && cmd.category !== 'Diagnostics') return false;
+
+      // Text search query
+      if (!searchQuery.trim()) return true;
+      const q = searchQuery.toLowerCase();
+      return (
+        cmd.title.toLowerCase().includes(q) ||
+        cmd.prompt.toLowerCase().includes(q) ||
+        cmd.category.toLowerCase().includes(q) ||
+        cmd.description.toLowerCase().includes(q) ||
+        cmd.leadOperative.toLowerCase().includes(q) ||
+        cmd.targetSector.toLowerCase().includes(q)
+      );
+    });
+  }, [categoryFilter, searchQuery]);
 
   return (
     <div
@@ -178,7 +457,7 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-4xl max-h-[92vh] flex flex-col bg-[#0f1118] border-2 border-[#e59838] shadow-[0_0_35px_rgba(229,152,56,0.35)] text-[#f3ead8] font-mono-tabular overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+        className="w-full max-w-5xl max-h-[92vh] flex flex-col bg-[#0f1118] border-2 border-[#e59838] shadow-[0_0_35px_rgba(229,152,56,0.35)] text-[#f3ead8] font-mono-tabular overflow-hidden animate-in fade-in zoom-in-95 duration-150"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Top Classified Header Bar */}
@@ -193,9 +472,12 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
                 <span className="hidden sm:inline px-1.5 py-0.2 bg-[#e59838]/20 border border-[#e59838]/60 text-[#fde047] text-[10px] font-bold">
                   SEC-LEVEL: OMEGA
                 </span>
+                <span className="hidden md:inline px-1.5 py-0.2 bg-[#38bdf8]/20 border border-[#38bdf8]/60 text-[#38bdf8] text-[10px] font-bold">
+                  ENGINE: GEMINI 3.1 FLASH LITE
+                </span>
               </div>
               <p className="text-[10px] text-[#9c8265]">
-                PixelOps Agent Command Center v3.4 · Operative Tactical Handbook
+                PixelOps Agent Command Center v3.4 · Operative Tactical Handbook & Directive Guide
               </p>
             </div>
           </div>
@@ -213,7 +495,7 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
         </div>
 
         {/* Tactical Sub-Navigation Ribbon */}
-        <div className="bg-[#12131c] border-b border-[#2d3246] px-3 py-1.5 flex flex-wrap items-center justify-between gap-2 shrink-0">
+        <div className="bg-[#12131c] border-b border-[#2d3246] px-3 py-1.5 flex flex-wrap items-center justify-between gap-1.5 shrink-0">
           <div className="flex flex-wrap items-center gap-1 text-xs">
             <button
               type="button"
@@ -276,7 +558,7 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
               }`}
             >
               <KeyRound className="w-3.5 h-3.5" />
-              <span>4. Keys vs. Pro Pass</span>
+              <span>4. Keys (Gemini 3.1) vs. Pro</span>
             </button>
 
             <button
@@ -292,7 +574,23 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
               }`}
             >
               <Terminal className="w-3.5 h-3.5" />
-              <span>5. Command Encyclopedia</span>
+              <span>5. Command Encyclopedia ({COMMAND_CATALOG.length})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setActiveSection('composio');
+                playBeep('tap');
+              }}
+              className={`px-2.5 py-1 border transition-colors cursor-pointer flex items-center gap-1.5 ${
+                activeSection === 'composio'
+                  ? 'bg-[#e59838] text-[#121110] border-[#fde047] font-bold shadow-[0_0_10px_rgba(229,152,56,0.4)]'
+                  : 'bg-[#181a24] text-[#cbd5e1] border-[#363d54] hover:border-[#e59838]'
+              }`}
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span>6. Composio Guide</span>
             </button>
 
             <button
@@ -308,7 +606,7 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
               }`}
             >
               <Zap className="w-3.5 h-3.5" />
-              <span>6. Pro-Tips</span>
+              <span>7. Pro-Tips</span>
             </button>
           </div>
         </div>
@@ -610,14 +908,14 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
           )}
 
           {/* ========================================================= */}
-          {/* SECTION 4: API KEYS VS PRO PASS */}
+          {/* SECTION 4: API KEYS (GEMINI 3.1 FLASH LITE) VS PRO PASS */}
           {/* ========================================================= */}
           {activeSection === 'auth' && (
             <div className="space-y-6">
               <div>
                 <h3 className="text-base sm:text-lg font-bold text-[#e59838] flex items-center gap-2">
                   <KeyRound className="w-5 h-5 text-[#e59838]" />
-                  <span>SECTION 04 // API KEYS (BYOK) VS. HOSTED PRO PASS</span>
+                  <span>SECTION 04 // API KEYS (BYOK: GEMINI 3.1 FLASH LITE) VS. HOSTED PRO PASS</span>
                 </h3>
                 <p className="text-xs text-[#9c8265] mt-1">
                   PixelOps is built with a 100% transparent execution model. You can run completely offline for free, connect your own API keys, or use the hosted Pro Pass.
@@ -640,12 +938,18 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
                   </p>
                   <div className="space-y-2 text-xs text-[#94a3b8]">
                     <div className="p-2 bg-[#0c0e17] border border-[#1e2438]">
-                      <strong className="text-[#f3ead8]">Supported Providers:</strong>
-                      <ul className="list-disc list-inside mt-1 space-y-0.5 text-[11px]">
-                        <li><strong>Google Gemini:</strong> gemini-2.5-flash (recommended), gemini-1.5-pro</li>
+                      <strong className="text-[#f3ead8]">Active Recommended Engine:</strong>
+                      <div className="mt-1 p-2 bg-[#172554] border border-[#3b82f6] text-[#93c5fd]">
+                        <span className="font-bold text-[#60a5fa]">gemini-3.1-flash-lite</span>
+                        <p className="text-[11px] text-[#bfdbfe] mt-0.5">
+                          Ultra-low latency, blazing fast time-to-first-token, full function calling tool integration, and high accuracy for code, markdown reports, and web search synthesis.
+                        </p>
+                      </div>
+                      <ul className="list-disc list-inside mt-2 space-y-0.5 text-[11px]">
+                        <li><strong>Google Gemini:</strong> <span className="text-[#4ade80] font-semibold">gemini-3.1-flash-lite</span> (Active Default), gemini-1.5-pro</li>
                         <li><strong>OpenAI:</strong> gpt-4o, gpt-4o-mini</li>
-                        <li><strong>Anthropic:</strong> claude-3-5-sonnet</li>
-                        <li><strong>Local Ollama:</strong> llama3, mistral (runs locally on localhost:11434)</li>
+                        <li><strong>Anthropic:</strong> claude-3-5-sonnet-20241022</li>
+                        <li><strong>Local Ollama:</strong> llama3, mistral (localhost:11434, air-gapped)</li>
                       </ul>
                     </div>
                     <div className="p-2 bg-[#0c0e17] border border-[#1e2438]">
@@ -659,7 +963,6 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
                     type="button"
                     onClick={() => {
                       onClose();
-                      // Trigger Settings Modal in parent
                     }}
                     className="w-full py-1.5 bg-[#1e293b] hover:bg-[#334155] text-[#38bdf8] text-xs font-bold border border-[#38bdf8]/50 cursor-pointer transition-colors"
                   >
@@ -684,7 +987,7 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
                     <div className="p-2 bg-[#120e09] border border-[#3b2b1a]">
                       <strong className="text-[#fde047]">What&apos;s Included:</strong>
                       <ul className="list-disc list-inside mt-1 space-y-0.5 text-[11px]">
-                        <li><strong>Hosted Token Allowance:</strong> 500,000 monthly high-speed inference tokens.</li>
+                        <li><strong>Hosted Token Allowance:</strong> 500,000 monthly high-speed inference tokens powered by Gemini 3.1 Flash Lite.</li>
                         <li><strong>Multi-Model Redundancy:</strong> Automatic failover if Google or OpenAI experiences an outage.</li>
                         <li><strong>Unlimited Composio Connectors:</strong> Direct Gmail, GitHub, Slack, Notion relays.</li>
                         <li><strong>Exclusive Soundscapes:</strong> Unlocks all safehouse retro synth audio profiles.</li>
@@ -698,7 +1001,7 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
                     </div>
                   </div>
                   <div className="p-2 text-center text-xs text-[#fde047] font-semibold border border-dashed border-[#e59838]/60 bg-[#e59838]/10">
-                    Pro Pass Fleet status: Hosted Inference Ready
+                    Pro Pass Fleet status: Hosted Inference Ready (Gemini 3.1 Flash Lite)
                   </div>
                 </div>
               </div>
@@ -728,7 +1031,7 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
                     <span>SECTION 05 // COMMAND ENCYCLOPEDIA & EXAMPLES</span>
                   </h3>
                   <p className="text-xs text-[#9c8265] mt-0.5">
-                    Every directive command syntax, capability, and copyable example. Click &ldquo;Try Directive&rdquo; to load into the terminal.
+                    Exhaustive catalog of every briefing terminal directive, task chain, code eval, and CLI command. Click &ldquo;Try Directive ▶&rdquo; to load directly into the prompt box.
                   </p>
                 </div>
 
@@ -739,7 +1042,7 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Filter commands (e.g. report, email, cli)..."
+                    placeholder="Search directives (e.g. report, email, git)..."
                     className="w-full bg-[#141724] border border-[#363d54] focus:border-[#e59838] pl-8 pr-3 py-1.5 text-xs text-[#f3ead8] placeholder-[#64748b] outline-none"
                   />
                   {searchQuery && (
@@ -754,11 +1057,43 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
                 </div>
               </div>
 
+              {/* Channel / Category Filter Pills */}
+              <div className="flex flex-wrap items-center gap-1.5 pt-1 border-b border-[#2b354f] pb-3 text-xs">
+                {(
+                  [
+                    { id: 'all', label: `All Commands (${COMMAND_CATALOG.length})` },
+                    { id: 'terminal', label: 'Briefing Terminal' },
+                    { id: 'composio', label: 'Composio External' },
+                    { id: 'chaining', label: 'Task Chaining' },
+                    { id: 'reports', label: 'Reports & VFS' },
+                    { id: 'code', label: 'Code & Eval' },
+                    { id: 'cli', label: 'CLI Console' },
+                    { id: 'diagnostics', label: 'Diagnostic Drills' },
+                  ] as const
+                ).map((cat) => (
+                  <button
+                    key={cat.id}
+                    type="button"
+                    onClick={() => {
+                      setCategoryFilter(cat.id);
+                      playBeep('tap');
+                    }}
+                    className={`px-2 py-0.5 border text-[11px] transition-colors cursor-pointer ${
+                      categoryFilter === cat.id
+                        ? 'bg-[#e59838] text-[#121110] border-[#fde047] font-bold'
+                        : 'bg-[#141824] text-[#94a3b8] border-[#2b354f] hover:text-[#f3ead8]'
+                    }`}
+                  >
+                    {cat.label}
+                  </button>
+                ))}
+              </div>
+
               {/* Commands List */}
               <div className="space-y-3">
                 {filteredCommands.length === 0 ? (
                   <div className="p-8 text-center bg-[#131520] border border-[#2b354f] text-[#94a3b8] text-xs">
-                    No commands matching &ldquo;{searchQuery}&rdquo;. Try searching for <em>report</em>, <em>chain</em>, <em>github</em>, or <em>cli</em>.
+                    No commands matching &ldquo;{searchQuery}&rdquo;. Try searching for <em>report</em>, <em>chain</em>, <em>email</em>, or <em>cli</em>.
                   </div>
                 ) : (
                   filteredCommands.map((cmd, idx) => (
@@ -773,6 +1108,9 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
                           </span>
                           <span className="text-[10px] bg-[#1e2438] text-[#38bdf8] px-1.5 py-0.5 border border-[#38bdf8]/30 font-semibold">
                             {cmd.category}
+                          </span>
+                          <span className="text-[10px] bg-[#1b150e] text-[#e59838] px-1 py-0.5 border border-[#e59838]/30">
+                            {cmd.channel === 'both' ? 'Terminal + CLI' : cmd.channel.toUpperCase()}
                           </span>
                         </div>
                         <div className="text-[10px] text-[#94a3b8] flex items-center gap-3">
@@ -809,7 +1147,7 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
                             )}
                           </button>
 
-                          {onSelectPrompt && (
+                          {onSelectPrompt && cmd.channel !== 'cli' && (
                             <button
                               type="button"
                               onClick={() => {
@@ -829,55 +1167,141 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
                   ))
                 )}
               </div>
+            </div>
+          )}
 
-              {/* Headless CLI Quick Reference */}
-              <div className="p-4 bg-[#0d0f17] border border-[#23293d] space-y-2.5">
+          {/* ========================================================= */}
+          {/* SECTION 6: COMPOSIO FULL INTEGRATIONS GUIDE */}
+          {/* ========================================================= */}
+          {activeSection === 'composio' && (
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-base sm:text-lg font-bold text-[#e59838] flex items-center gap-2">
+                  <Layers className="w-5 h-5 text-[#e59838]" />
+                  <span>SECTION 06 // COMPOSIO INTEGRATIONS GUIDE (BRIEFING TERMINAL & CLI)</span>
+                </h3>
+                <p className="text-xs text-[#9c8265] mt-1">
+                  Connect third-party developer and operational toolkits (Gmail, GitHub, Slack, Notion, Linear, Calendar) via OAuth and execute actions live from both the Briefing Terminal and CLI.
+                </p>
+              </div>
+
+              {/* Supported Apps Matrix */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                <div className="p-3 bg-[#131624] border border-[#2b354f] space-y-1.5">
+                  <span className="font-bold text-[#38bdf8] flex items-center gap-1.5 text-xs">
+                    <Mail className="w-4 h-4" /> Google Workspace / Gmail
+                  </span>
+                  <p className="text-xs text-[#94a3b8]">
+                    Send emails, fetch unread emails, search threads, and parse message bodies.
+                  </p>
+                  <div className="bg-[#0c0e17] p-2 text-[11px] text-[#cbd5e1] space-y-1">
+                    <div><strong>Terminal:</strong> <code>Nyx, send an email to user@test.com subject &quot;Update&quot; body &quot;Alert&quot;</code></div>
+                    <div><strong>CLI Action:</strong> <code>pixelops composio run GMAIL_SEND_EMAIL &apos;{JSON.stringify({ to: "user@test.com", subject: "Hi", body: "Hello" })}&apos;</code></div>
+                  </div>
+                </div>
+
+                <div className="p-3 bg-[#131624] border border-[#2b354f] space-y-1.5">
+                  <span className="font-bold text-[#4ade80] flex items-center gap-1.5 text-xs">
+                    <Code2 className="w-4 h-4" /> GitHub Repositories
+                  </span>
+                  <p className="text-xs text-[#94a3b8]">
+                    Star repositories, create issues, inspect pull requests, and list commits.
+                  </p>
+                  <div className="bg-[#0c0e17] p-2 text-[11px] text-[#cbd5e1] space-y-1">
+                    <div><strong>Terminal:</strong> <code>Cipher, create an issue in owner/repo titled &quot;Bug&quot; saying &quot;Fix&quot;</code></div>
+                    <div><strong>CLI Action:</strong> <code>pixelops composio run GITHUB_STAR_A_REPOSITORY_FOR_THE_AUTHENTICATED_USER &apos;{JSON.stringify({ owner: "reyescris12", repo: "PixelOps" })}&apos;</code></div>
+                  </div>
+                </div>
+
+                <div className="p-3 bg-[#131624] border border-[#2b354f] space-y-1.5">
+                  <span className="font-bold text-[#e59838] flex items-center gap-1.5 text-xs">
+                    <Send className="w-4 h-4" /> Slack Channels & DMs
+                  </span>
+                  <p className="text-xs text-[#94a3b8]">
+                    Post announcements, broadcast alerts, and notify channels from task chains.
+                  </p>
+                  <div className="bg-[#0c0e17] p-2 text-[11px] text-[#cbd5e1] space-y-1">
+                    <div><strong>Terminal:</strong> <code>Nyx, send a slack message to #general saying &quot;Online&quot;</code></div>
+                    <div><strong>CLI Action:</strong> <code>pixelops composio run SLACK_CHAT_POST_MESSAGE &apos;{JSON.stringify({ channel: "C123", text: "Alert" })}&apos;</code></div>
+                  </div>
+                </div>
+
+                <div className="p-3 bg-[#131624] border border-[#2b354f] space-y-1.5">
+                  <span className="font-bold text-[#a855f7] flex items-center gap-1.5 text-xs">
+                    <Calendar className="w-4 h-4" /> Google Calendar & Notion
+                  </span>
+                  <p className="text-xs text-[#94a3b8]">
+                    Schedule meetings, create documentation pages, and file Linear project issues.
+                  </p>
+                  <div className="bg-[#0c0e17] p-2 text-[11px] text-[#cbd5e1] space-y-1">
+                    <div><strong>Terminal:</strong> <code>schedule calendar event titled &quot;Review&quot; at &quot;15:00 UTC&quot;</code></div>
+                    <div><strong>Terminal:</strong> <code>create notion page titled &quot;Zero-Trust Guide&quot; in workspace</code></div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Complete CLI Composio Subcommands Table */}
+              <div className="p-4 bg-[#0d0f17] border border-[#23293d] space-y-3">
                 <h4 className="text-xs font-bold text-[#fde047] uppercase tracking-wider flex items-center gap-1.5">
                   <Terminal className="w-4 h-4 text-[#fde047]" />
-                  Headless Tactical CLI Console Cheat-Sheet
+                  Complete Composio CLI Command Matrix
                 </h4>
-                <p className="text-xs text-[#cbd5e1]">
-                  Press <kbd className="bg-[#1f2438] border border-[#475569] text-[#e59838] px-1.5 py-0.5 rounded-none text-[11px]">~</kbd> or click <code className="text-[#4ade80]">[&gt;_ CLI]</code> in the header to open the terminal overlay anytime:
-                </p>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px] font-mono-tabular">
-                  <div className="p-2 bg-[#131624] border border-[#2b354f]">
-                    <span className="text-[#38bdf8] font-bold">pixelops chain &lt;workflow&gt;</span>
-                    <p className="text-[#94a3b8]">Run autonomous multi-agent task chain</p>
-                  </div>
-                  <div className="p-2 bg-[#131624] border border-[#2b354f]">
-                    <span className="text-[#38bdf8] font-bold">pixelops dispatch &lt;agent&gt; &lt;task&gt;</span>
-                    <p className="text-[#94a3b8]">Queue task directly to Vance, Cipher, or Nyx</p>
-                  </div>
-                  <div className="p-2 bg-[#131624] border border-[#2b354f]">
-                    <span className="text-[#38bdf8] font-bold">pixelops files [reports|logs|config]</span>
-                    <p className="text-[#94a3b8]">List all IndexedDB workspace files</p>
-                  </div>
-                  <div className="p-2 bg-[#131624] border border-[#2b354f]">
-                    <span className="text-[#38bdf8] font-bold">pixelops cat &lt;filePath&gt;</span>
-                    <p className="text-[#94a3b8]">Print full content of any workspace file</p>
-                  </div>
-                  <div className="p-2 bg-[#131624] border border-[#2b354f]">
-                    <span className="text-[#38bdf8] font-bold">pixelops ledger [limit]</span>
-                    <p className="text-[#94a3b8]">Inspect append-only Dexie command ledger</p>
-                  </div>
-                  <div className="p-2 bg-[#131624] border border-[#2b354f]">
-                    <span className="text-[#38bdf8] font-bold">pixelops townhall</span>
-                    <p className="text-[#94a3b8]">Summon all agents to the War Room roundtable</p>
-                  </div>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-[11px] text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-[#2b354f] text-[#94a3b8]">
+                        <th className="py-2 pr-4 font-bold text-[#38bdf8]">CLI Command Syntax</th>
+                        <th className="py-2 pr-4 font-bold text-[#e59838]">Description & Operation</th>
+                        <th className="py-2 font-bold text-[#4ade80]">Example</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#1e2438] text-[#cbd5e1]">
+                      <tr>
+                        <td className="py-2 pr-4 font-mono-tabular text-[#38bdf8]">pixelops composio status</td>
+                        <td className="py-2 pr-4 text-[#94a3b8]">Check entity authentication, ping API, list connected accounts</td>
+                        <td className="py-2 font-mono-tabular text-[#4ade80]">pixelops composio status</td>
+                      </tr>
+                      <tr>
+                        <td className="py-2 pr-4 font-mono-tabular text-[#38bdf8]">pixelops composio list</td>
+                        <td className="py-2 pr-4 text-[#94a3b8]">Display catalog of available apps and connection states</td>
+                        <td className="py-2 font-mono-tabular text-[#4ade80]">pixelops composio list</td>
+                      </tr>
+                      <tr>
+                        <td className="py-2 pr-4 font-mono-tabular text-[#38bdf8]">pixelops composio connect &lt;app&gt;</td>
+                        <td className="py-2 pr-4 text-[#94a3b8]">Open centered OAuth popup bridge to connect third-party app</td>
+                        <td className="py-2 font-mono-tabular text-[#4ade80]">pixelops composio connect github</td>
+                      </tr>
+                      <tr>
+                        <td className="py-2 pr-4 font-mono-tabular text-[#38bdf8]">pixelops composio key &lt;apiKey&gt;</td>
+                        <td className="py-2 pr-4 text-[#94a3b8]">Save and persist custom Composio API key locally</td>
+                        <td className="py-2 font-mono-tabular text-[#4ade80]">pixelops composio key comp_live_xxx</td>
+                      </tr>
+                      <tr>
+                        <td className="py-2 pr-4 font-mono-tabular text-[#38bdf8]">pixelops composio run &lt;act&gt; &lt;json&gt;</td>
+                        <td className="py-2 pr-4 text-[#94a3b8]">Execute direct tool action live on user connected account</td>
+                        <td className="py-2 font-mono-tabular text-[#4ade80]">pixelops composio run GMAIL_FETCH_EMAILS &apos;{`{"max_results":5}`}&apos;</td>
+                      </tr>
+                      <tr>
+                        <td className="py-2 pr-4 font-mono-tabular text-[#38bdf8]">pixelops composio agent &lt;prompt&gt;</td>
+                        <td className="py-2 pr-4 text-[#94a3b8]">Execute dynamic Gemini agent with all active Composio tools</td>
+                        <td className="py-2 font-mono-tabular text-[#4ade80]">pixelops composio agent &quot;List PRs&quot;</td>
+                      </tr>
+                    </tbody>
+                  </table>
                 </div>
               </div>
             </div>
           )}
 
           {/* ========================================================= */}
-          {/* SECTION 6: PRO-TIPS & MAXIMUM PERFORMANCE */}
+          {/* SECTION 7: PRO-TIPS & MAXIMUM PERFORMANCE */}
           {/* ========================================================= */}
           {activeSection === 'protips' && (
             <div className="space-y-6">
               <div>
                 <h3 className="text-base sm:text-lg font-bold text-[#e59838] flex items-center gap-2">
                   <Zap className="w-5 h-5 text-[#e59838]" />
-                  <span>SECTION 06 // PRO-TIPS & MAXIMUM PERFORMANCE SECRETS</span>
+                  <span>SECTION 07 // PRO-TIPS & MAXIMUM PERFORMANCE SECRETS</span>
                 </h3>
                 <p className="text-xs text-[#9c8265] mt-1">
                   How to extract maximum efficiency, battery optimization, and tactical fluency from the PixelOps Command Center.
@@ -887,10 +1311,10 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
               <div className="space-y-3">
                 <div className="p-3.5 bg-[#121520] border border-[#2b354f] space-y-1.5">
                   <h4 className="text-xs font-bold text-[#38bdf8] uppercase">
-                    1. Use Google Gemini 2.5 Flash for Sub-Second Responses
+                    1. Use Google Gemini 3.1 Flash Lite for Sub-Second Responses
                   </h4>
                   <p className="text-xs text-[#cbd5e1]">
-                    If using BYOK, <code className="text-[#4ade80]">gemini-2.5-flash</code> offers the fastest time-to-first-token while retaining full tool calling capabilities and high accuracy for code, markdown reports, and web search synthesis.
+                    When using BYOK or the Pro Pass, <code className="text-[#4ade80]">gemini-3.1-flash-lite</code> is the default active engine. It offers the fastest time-to-first-token while retaining full tool calling capabilities and high accuracy for code, markdown reports, and web search synthesis.
                   </p>
                 </div>
 
@@ -920,7 +1344,7 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
                     4. Sector Ambient Synth Audio Loops
                   </h4>
                   <p className="text-xs text-[#cbd5e1]">
-                    Click <code className="text-[#4ade80]">[🔊 SYNTH: ...]</code> in the center header to engage generative Web Audio ambient synth loops tailored to each sector (War Room strategic hum, Server Vault fan drones, Comms Tower radio static).
+                    Click <code className="text-[#4ade80]">[🔊 SYNTH: ...]</code> in the center header to engage generative Web Audio ambient synth loops tailored to each sector (War Room hum, Server Vault server fans, Comms Tower radio static).
                   </p>
                 </div>
               </div>
@@ -931,7 +1355,7 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
         {/* Footer Bar */}
         <div className="bg-[#14120e] border-t border-[#4a351e] px-4 py-2.5 flex items-center justify-between text-xs shrink-0">
           <span className="text-[11px] text-[#9c8265]">
-            CLASSIFICATION: <strong>OMEGA-RESTRICTED</strong> · PROPERTY OF PIXELOPS COMMAND
+            CLASSIFICATION: <strong>OMEGA-RESTRICTED</strong> · ENGINE: <strong>GEMINI-3.1-FLASH-LITE</strong> · PROPERTY OF PIXELOPS COMMAND
           </span>
           <button
             type="button"

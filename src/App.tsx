@@ -88,8 +88,7 @@ import { AgentEditorModal } from './components/AgentEditorModal';
 import { NightShiftModal } from './components/NightShiftModal';
 import { loadNightShiftNotifications, runPendingNightShiftTasks } from './services/NightShiftService';
 import { backgroundWorkerEngine } from './services/WorkerService';
-import { InboxProvider, useInbox } from './context/InboxContext';
-import { NotificationInboxModal } from './components/NotificationInboxModal';
+import { InboxProvider } from './context/InboxContext';
 import { CustomPluginConnector, loadCustomPlugins, saveCustomPlugins } from './services/PluginMarketplaceService';
 import { CustomPluginModal } from './components/CustomPluginModal';
 import { TelemetryModal } from './components/TelemetryModal';
@@ -230,7 +229,6 @@ const CommandCenterContent: React.FC = () => {
   const [isFieldManualOpen, setIsFieldManualOpen] = useState(false);
   const [isNightShiftOpen, setIsNightShiftOpen] = useState(false);
   const [nightShiftUnreadCount, setNightShiftUnreadCount] = useState<number>(() => loadNightShiftNotifications().filter((n) => !n.read).length);
-  const [isInboxOpen, setIsInboxOpen] = useState(false);
   const [isTelemetryOpen, setIsTelemetryOpen] = useState(false);
   const [isAgentFactoryOpen, setIsAgentFactoryOpen] = useState(false);
   const [isTerminalConsoleOpen, setIsTerminalConsoleOpen] = useState(false);
@@ -247,7 +245,6 @@ const CommandCenterContent: React.FC = () => {
     rawPrompt: '',
     attachment: null,
   });
-  const { unreadCount } = useInbox();
   const [customPlugins, setCustomPlugins] = useState<CustomPluginConnector[]>(loadCustomPlugins);
   const [isCustomPluginModalOpen, setIsCustomPluginModalOpen] = useState(false);
   const [editingCustomPlugin, setEditingCustomPlugin] = useState<CustomPluginConnector | null>(null);
@@ -2225,7 +2222,7 @@ const CommandCenterContent: React.FC = () => {
                 playBeep('tap');
               }}
               className="px-2 py-0.5 bg-[#151822] hover:bg-[#1e2330] border border-[#363d54] hover:border-[#e59838] text-[#e59838] flex items-center gap-1 cursor-pointer transition-colors"
-              title="Open Night Shift scheduler and notification inbox"
+              title="Open Night Shift scheduler, routine briefings, and webhook connectors"
             >
               <span>[NIGHT SHIFT</span>
               {nightShiftUnreadCount > 0 && (
@@ -2235,21 +2232,7 @@ const CommandCenterContent: React.FC = () => {
               )}
               <span>]</span>
             </button>
-            <button
-              type="button"
-              onClick={() => {
-                setIsInboxOpen(true);
-                playBeep('tap');
-              }}
-              className="px-2 py-0.5 bg-[#151822] hover:bg-[#1e2330] border border-[#363d54] hover:border-[#e59838] text-[#cbd5e1] hover:text-[#f3ead8] flex items-center gap-1 cursor-pointer transition-colors"
-              title="Open centralized notification inbox"
-            >
-              <span>[INBOX</span>
-              {unreadCount > 0 && (
-                <span className="text-[#e59838] font-bold">:{unreadCount}</span>
-              )}
-              <span>]</span>
-            </button>
+
             <button
               type="button"
               onClick={() => {
@@ -2726,10 +2709,7 @@ const CommandCenterContent: React.FC = () => {
         enabledPlugins={plugins.filter((p) => p.connected).map((p) => p.id)}
       />
 
-      <NotificationInboxModal
-        isOpen={isInboxOpen}
-        onClose={() => setIsInboxOpen(false)}
-      />
+
 
       <CustomPluginModal
         isOpen={isCustomPluginModalOpen}

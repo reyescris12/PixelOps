@@ -918,9 +918,9 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
                   When a routine completes while you are away:
                 </p>
                 <ul className="list-disc list-inside text-xs text-[#94a3b8] space-y-1">
-                  <li>The <code className="text-[#e59838] bg-[#1a1c26] px-1">[NIGHT SHIFT:X]</code> badge in the header displays unread routine notifications.</li>
-                  <li>The <code className="text-[#e59838] bg-[#1a1c26] px-1">[INBOX:X]</code> badge lights up with outbound alerts dispatched across all connected channels.</li>
-                  <li>Expand any notification in the <strong>Briefing Inbox</strong> tab to see a step-by-step breakdown of each agent&apos;s contributions, token telemetry, and links to generated workspace files.</li>
+                  <li>The <code className="text-[#e59838] bg-[#1a1c26] px-1">[NIGHT SHIFT:X]</code> badge in the header displays unread routine notifications and completion briefings.</li>
+                  <li>Click <code className="text-[#e59838] bg-[#1a1c26] px-1">[NIGHT SHIFT]</code> and navigate to <strong>Routine Briefings</strong> to see a step-by-step breakdown of each agent&apos;s contributions, token telemetry, and links to generated workspace files.</li>
+                  <li>Configure platform-specific payload formats (Slack, Telegram, Discord, or Custom JSON) in the <strong>Channels &amp; Webhooks</strong> tab of Night Shift.</li>
                 </ul>
               </div>
             </div>

@@ -6,7 +6,6 @@ import {
   ShieldAlert,
   Bell,
   CheckCircle2,
-  AlertTriangle,
   Play,
   Plus,
   Trash2,
@@ -17,13 +16,12 @@ import {
   Smartphone,
   Mail,
   MessageSquare,
-  Share2,
   ChevronDown,
   ChevronUp,
   RefreshCw,
-  Sparkles,
   UserCheck,
-  FileText,
+  KeyRound,
+  Code2,
   Check,
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
@@ -42,6 +40,14 @@ import {
   getFrequencyLabel,
   DEFAULT_NOTIFICATION_CONFIG,
 } from '../services/NightShiftService';
+import {
+  WebhookConfig,
+  WebhookServiceType,
+  loadWebhookConfig,
+  saveWebhookConfig,
+  formatWebhookPayload,
+  testWebhookEndpoint,
+} from '../services/NotificationOutboxService';
 import { getLocalConnectedAccounts } from '../services/ComposioService';
 
 interface NightShiftModalProps {
@@ -72,7 +78,7 @@ export const NightShiftModal: React.FC<NightShiftModalProps> = ({
     }));
   }
 
-  const [activeTab, setActiveTab] = useState<'schedules' | 'inbox' | 'channels'>('schedules');
+  const [activeTab, setActiveTab] = useState<'schedules' | 'briefings' | 'channels'>('schedules');
   const [schedules, setSchedules] = useState<NightShiftTaskSchedule[]>(loadNightShiftSchedules);
   const [notifications, setNotifications] = useState<NightShiftNotification[]>(
     loadNightShiftNotifications
@@ -103,6 +109,12 @@ export const NightShiftModal: React.FC<NightShiftModalProps> = ({
   // Expanded notification cards for detailed audit review
   const [expandedNotifId, setExpandedNotifId] = useState<string | null>(null);
 
+  // Global Webhook Connector & Formatters State
+  const [webhookConfig, setWebhookConfig] = useState<WebhookConfig>(loadWebhookConfig);
+  const [webhookTestFeedback, setWebhookTestFeedback] = useState<{ text: string; ok: boolean } | null>(null);
+  const [isTestingWebhook, setIsTestingWebhook] = useState(false);
+  const [webhookSavedFeedback, setWebhookSavedFeedback] = useState(false);
+
   // Push Permission Status
   const [pushPermissionStatus, setPushPermissionStatus] = useState<string>(() => {
     if (typeof window !== 'undefined' && 'Notification' in window) {
@@ -111,7 +123,7 @@ export const NightShiftModal: React.FC<NightShiftModalProps> = ({
     return 'unsupported';
   });
 
-  // Listen for background updates
+  // Listen for background updates and webhook changes
   useEffect(() => {
     const handleSchedulesChanged = () => {
       setSchedules(loadNightShiftSchedules());
@@ -119,14 +131,19 @@ export const NightShiftModal: React.FC<NightShiftModalProps> = ({
     const handleNotifsChanged = () => {
       setNotifications(loadNightShiftNotifications());
     };
+    const handleWebhookChanged = () => {
+      setWebhookConfig(loadWebhookConfig());
+    };
     window.addEventListener('nightshift:schedules-changed', handleSchedulesChanged);
     window.addEventListener('nightshift:notifications-changed', handleNotifsChanged);
     window.addEventListener('nightshift:routine-completed', handleNotifsChanged);
+    window.addEventListener('webhook:config-changed', handleWebhookChanged);
 
     return () => {
       window.removeEventListener('nightshift:schedules-changed', handleSchedulesChanged);
       window.removeEventListener('nightshift:notifications-changed', handleNotifsChanged);
       window.removeEventListener('nightshift:routine-completed', handleNotifsChanged);
+      window.removeEventListener('webhook:config-changed', handleWebhookChanged);
     };
   }, []);
 
@@ -458,6 +475,32 @@ export const NightShiftModal: React.FC<NightShiftModalProps> = ({
     }
   };
 
+  // Webhook Save & Test Handlers
+  const handleSaveWebhook = (e: React.FormEvent) => {
+    e.preventDefault();
+    playBeep('complete');
+    saveWebhookConfig(webhookConfig);
+    setWebhookSavedFeedback(true);
+    setTimeout(() => setWebhookSavedFeedback(false), 2500);
+  };
+
+  const handleTestWebhook = async () => {
+    playBeep('tap');
+    setIsTestingWebhook(true);
+    setWebhookTestFeedback(null);
+    try {
+      const result = await testWebhookEndpoint(webhookConfig);
+      setWebhookTestFeedback({ text: result.message, ok: result.ok });
+      if (result.ok) {
+        playBeep('complete');
+      } else {
+        playBeep('error');
+      }
+    } finally {
+      setIsTestingWebhook(false);
+    }
+  };
+
   const localConnectedAccounts = getLocalConnectedAccounts();
   const hasGmailConnected = localConnectedAccounts.some((a) => a.appName.toLowerCase().includes('gmail'));
   const hasSlackConnected = localConnectedAccounts.some((a) => a.appName.toLowerCase().includes('slack'));
@@ -477,11 +520,11 @@ export const NightShiftModal: React.FC<NightShiftModalProps> = ({
                   Night Shift & Autonomous Routines
                 </h2>
                 <span className="px-2 py-0.5 rounded-full bg-indigo-900/60 text-indigo-300 font-mono text-[10px] uppercase border border-indigo-700/40">
-                  Task Chaining & Alerts v2
+                  Task Chaining & Webhooks
                 </span>
               </div>
               <p className="text-xs text-slate-400">
-                Scheduled cron routines, multi-agent task chains, and multi-channel notification dispatch
+                Scheduled background routines, multi-agent task chains, and outbound webhook formatters
               </p>
             </div>
           </div>
@@ -517,16 +560,16 @@ export const NightShiftModal: React.FC<NightShiftModalProps> = ({
             type="button"
             onClick={() => {
               playBeep('tap');
-              setActiveTab('inbox');
+              setActiveTab('briefings');
             }}
             className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 transition-colors cursor-pointer ${
-              activeTab === 'inbox'
+              activeTab === 'briefings'
                 ? 'bg-indigo-950 text-indigo-300 border border-indigo-700/60'
                 : 'bg-slate-900 text-slate-400 hover:text-slate-200'
             }`}
           >
             <Bell className="w-3.5 h-3.5" />
-            <span>Briefing Inbox</span>
+            <span>Routine Briefings</span>
             {unreadCount > 0 && (
               <span className="px-1.5 py-0.2 rounded-full bg-indigo-600 text-[10px] font-mono-tabular text-white font-bold">
                 {unreadCount}
@@ -547,7 +590,7 @@ export const NightShiftModal: React.FC<NightShiftModalProps> = ({
             }`}
           >
             <Send className="w-3.5 h-3.5" />
-            <span>Notification Channels</span>
+            <span>Channels & Webhooks</span>
           </button>
         </div>
 
@@ -1090,12 +1133,12 @@ export const NightShiftModal: React.FC<NightShiftModalProps> = ({
           </div>
         )}
 
-        {/* Tab 2: Notification Briefing Inbox */}
-        {activeTab === 'inbox' && (
+        {/* Tab 2: Routine Briefings & Logs */}
+        {activeTab === 'briefings' && (
           <div className="flex flex-col gap-3">
             <div className="flex items-center justify-between">
               <span className="text-xs text-slate-400">
-                Completed autonomous routine briefs and multi-agent chain telemetry.
+                Completed autonomous routine briefs, findings, and multi-agent chain telemetry.
               </span>
               <div className="flex items-center gap-2">
                 <button
@@ -1128,7 +1171,7 @@ export const NightShiftModal: React.FC<NightShiftModalProps> = ({
             <div className="flex flex-col gap-2.5 max-h-[55vh] overflow-y-auto pr-1">
               {notifications.length === 0 ? (
                 <div className="p-10 text-center text-xs text-slate-500 bg-[#080a0e] rounded-xl border border-slate-800/80">
-                  Notification tray is currently empty. Completed Night Shift routines will record briefs here.
+                  No routine briefings logged yet. Completed Night Shift routines will record briefs here.
                 </div>
               ) : (
                 notifications.map((n) => {
@@ -1223,13 +1266,164 @@ export const NightShiftModal: React.FC<NightShiftModalProps> = ({
           </div>
         )}
 
-        {/* Tab 3: Notification Channels Configuration & Diagnostics */}
+        {/* Tab 3: Notification Channels & Outbound Webhook Formatters */}
         {activeTab === 'channels' && (
-          <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-4 max-h-[60vh] overflow-y-auto pr-1">
             <span className="text-xs text-slate-400">
-              Configure and test outbound communication channels for mobile notifications, browser push alerts, and Composio integrations.
+              Configure outbound communication channels, mobile notifications, and platform-specific webhook formatters.
             </span>
 
+            {/* Section 1: Outbound Webhook Formatters Suite */}
+            <form
+              onSubmit={handleSaveWebhook}
+              className="p-4 rounded-xl bg-[#090b10] border border-indigo-500/40 flex flex-col gap-3.5 shadow-xl"
+            >
+              <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                <div className="flex items-center gap-2">
+                  <Code2 className="w-4 h-4 text-cyan-400" />
+                  <h4 className="text-xs font-bold text-slate-100 uppercase tracking-wider">
+                    Outbound Webhook Connectors & Formatters
+                  </h4>
+                </div>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={webhookConfig.enabled}
+                    onChange={(e) =>
+                      setWebhookConfig({ ...webhookConfig, enabled: e.target.checked })
+                    }
+                    className="accent-cyan-500 cursor-pointer"
+                  />
+                  <span className="text-[11px] font-mono text-slate-300 font-bold">
+                    {webhookConfig.enabled ? 'ENABLED' : 'DISABLED'}
+                  </span>
+                </label>
+              </div>
+
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                Automatically formats routine execution briefs, anomalies, and multi-agent summaries into platform-compliant payloads and POSTs them to your destination webhook.
+              </p>
+
+              {/* Formatter Selector */}
+              <div>
+                <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block mb-1.5">
+                  Payload Formatter Type
+                </label>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                  {(['slack', 'telegram', 'discord', 'custom'] as const).map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => {
+                        playBeep('tap');
+                        setWebhookConfig({ ...webhookConfig, serviceType: s });
+                      }}
+                      className={`p-2 rounded-lg border text-xs font-mono uppercase transition-all cursor-pointer text-center ${
+                        webhookConfig.serviceType === s
+                          ? 'bg-cyan-950/80 border-cyan-500 text-cyan-200 font-bold shadow'
+                          : 'bg-[#121622] border-slate-800 text-slate-400 hover:text-slate-200 hover:border-slate-700'
+                      }`}
+                    >
+                      {s === 'slack' && '💬 Slack'}
+                      {s === 'telegram' && '✈️ Telegram'}
+                      {s === 'discord' && '🎮 Discord'}
+                      {s === 'custom' && '⚙️ Custom JSON'}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Webhook URL Endpoint */}
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                  {webhookConfig.serviceType.toUpperCase()} Webhook Endpoint URL
+                </label>
+                <input
+                  type="url"
+                  value={webhookConfig.webhookUrl}
+                  onChange={(e) =>
+                    setWebhookConfig({ ...webhookConfig, webhookUrl: e.target.value })
+                  }
+                  placeholder={
+                    webhookConfig.serviceType === 'slack'
+                      ? 'https://hooks.slack.com/services/T00/B00/XXXX'
+                      : webhookConfig.serviceType === 'telegram'
+                      ? 'https://api.telegram.org/bot<TOKEN>/sendMessage?chat_id=<CHAT_ID>'
+                      : webhookConfig.serviceType === 'discord'
+                      ? 'https://discord.com/api/webhooks/XXXX/YYYY'
+                      : 'https://api.mycompany.com/v1/pixelops-webhook'
+                  }
+                  className="w-full bg-[#121622] border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-slate-100 focus:outline-none focus:border-cyan-500"
+                />
+              </div>
+
+              {/* Live Formatted JSON Preview */}
+              <div className="flex flex-col gap-1">
+                <span className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider flex items-center justify-between">
+                  <span>Live Formatted Payload Preview ({webhookConfig.serviceType.toUpperCase()})</span>
+                  <span className="font-mono text-[9px] text-cyan-400">POST application/json</span>
+                </span>
+                <pre className="p-2.5 rounded-lg bg-[#05070a] border border-slate-800/90 text-[10px] font-mono text-cyan-300 overflow-x-auto max-h-28">
+                  {JSON.stringify(
+                    formatWebhookPayload(webhookConfig.serviceType, {
+                      title: 'Zero-Trust Audit Routine Complete',
+                      body: '14 endpoints evaluated. 0 critical CVE exploits detected.',
+                      agentName: 'Agent Nyx',
+                    }),
+                    null,
+                    2
+                  )}
+                </pre>
+              </div>
+
+              {/* Feedback Alert */}
+              {webhookTestFeedback && (
+                <div
+                  className={`p-2 rounded-lg text-xs font-mono flex items-center gap-2 ${
+                    webhookTestFeedback.ok
+                      ? 'bg-emerald-950/80 border border-emerald-700 text-emerald-300'
+                      : 'bg-red-950/80 border border-red-700 text-red-300'
+                  }`}
+                >
+                  <span>{webhookTestFeedback.ok ? '✓' : '⚠️'}</span>
+                  <span>{webhookTestFeedback.text}</span>
+                </div>
+              )}
+
+              {/* Action Buttons */}
+              <div className="flex items-center justify-between pt-1">
+                <button
+                  type="button"
+                  onClick={handleTestWebhook}
+                  disabled={isTestingWebhook || !webhookConfig.webhookUrl.trim()}
+                  className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs text-cyan-300 font-semibold cursor-pointer disabled:opacity-40 flex items-center gap-1.5"
+                >
+                  {isTestingWebhook ? (
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                  ) : (
+                    <Send className="w-3.5 h-3.5" />
+                  )}
+                  <span>{isTestingWebhook ? 'Pinging Endpoint...' : 'Test Webhook Ping'}</span>
+                </button>
+
+                <div className="flex items-center gap-2">
+                  {webhookSavedFeedback && (
+                    <span className="text-xs text-emerald-400 font-bold flex items-center gap-1">
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Settings Saved!</span>
+                    </span>
+                  )}
+                  <button
+                    type="submit"
+                    className="px-4 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-xs font-bold text-slate-950 cursor-pointer shadow-md"
+                  >
+                    Save Webhook Settings
+                  </button>
+                </div>
+              </div>
+            </form>
+
+            {/* Section 2: Device & Connected Channels Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {/* Browser Push Channel */}
               <div className="p-4 rounded-xl bg-[#0b0e14] border border-slate-800 flex flex-col gap-2.5">
@@ -1249,7 +1443,7 @@ export const NightShiftModal: React.FC<NightShiftModalProps> = ({
                     onClick={handleRequestPushPermission}
                     className="px-2.5 py-1 rounded bg-indigo-600 hover:bg-indigo-500 text-xs text-white font-semibold cursor-pointer"
                   >
-                    {pushPermissionStatus === 'granted' ? 'Test Alert' : 'Enable Push'}
+                    {pushPermissionStatus === 'granted' ? 'Test Push Alert' : 'Enable Push'}
                   </button>
                 </div>
               </div>

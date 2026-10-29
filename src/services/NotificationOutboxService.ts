@@ -1,3 +1,5 @@
+export type WebhookServiceType = 'slack' | 'telegram' | 'discord' | 'custom';
+
 export interface OutboxNotification {
   id: string;
   title: string;
@@ -11,7 +13,7 @@ export interface OutboxNotification {
 
 export interface WebhookConfig {
   enabled: boolean;
-  serviceType: 'slack' | 'telegram' | 'custom';
+  serviceType: WebhookServiceType;
   webhookUrl: string;
 }
 
@@ -35,7 +37,7 @@ export function saveOutboxNotifications(notifs: OutboxNotification[]) {
   try {
     localStorage.setItem(STORAGE_OUTBOX_KEY, JSON.stringify(notifs.slice(0, 50)));
   } catch {
-    // Ignore
+    // Ignore storage quota
   }
 }
 
@@ -49,7 +51,12 @@ export function loadWebhookConfig(): WebhookConfig {
         webhookUrl: '',
       };
     }
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    return {
+      enabled: Boolean(parsed.enabled),
+      serviceType: parsed.serviceType || 'slack',
+      webhookUrl: parsed.webhookUrl || '',
+    };
   } catch {
     return {
       enabled: false,
@@ -62,14 +69,83 @@ export function loadWebhookConfig(): WebhookConfig {
 export function saveWebhookConfig(config: WebhookConfig) {
   try {
     localStorage.setItem(STORAGE_WEBHOOK_KEY, JSON.stringify(config));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('webhook:config-changed', { detail: config }));
+    }
   } catch {
-    // Ignore
+    // Ignore storage quota
+  }
+}
+
+/**
+ * Formats notification content into platform-specific webhook payload schemas
+ * (Slack, Telegram, Discord, Custom JSON).
+ */
+export function formatWebhookPayload(
+  serviceType: WebhookServiceType,
+  data: { title: string; body: string; agentName: string; timestamp?: string }
+): any {
+  if (serviceType === 'slack') {
+    return {
+      text: `*[PixelOps Agent Alert]* *${data.title}*\n> ${data.body}\n_Operative: ${data.agentName}_`,
+    };
+  }
+  if (serviceType === 'telegram') {
+    return {
+      text: `🚨 *[PixelOps Agent]* *${data.title}*\n${data.body}\n_Operative: ${data.agentName}_`,
+      parse_mode: 'Markdown',
+    };
+  }
+  if (serviceType === 'discord') {
+    return {
+      content: `🚨 **[PixelOps Agent] ${data.title}**\n>>> ${data.body}\n_Operative: ${data.agentName}_`,
+    };
+  }
+  return {
+    event: 'pixelops.alert',
+    title: data.title,
+    message: data.body,
+    agent: data.agentName,
+    timestamp: data.timestamp || new Date().toISOString(),
+  };
+}
+
+/**
+ * Dispatches a test ping payload to verify webhook endpoint health.
+ */
+export async function testWebhookEndpoint(
+  config: WebhookConfig
+): Promise<{ ok: boolean; message: string }> {
+  if (!config.webhookUrl.trim()) {
+    return { ok: false, message: 'Webhook endpoint URL cannot be empty.' };
+  }
+  try {
+    const testPayload = formatWebhookPayload(config.serviceType, {
+      title: 'Diagnostics Webhook Ping',
+      body: 'Autonomous webhook ping verified from PixelOps Night Shift.',
+      agentName: 'System Diagnostic Handler',
+    });
+    await fetch(config.webhookUrl.trim(), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(testPayload),
+      mode: 'no-cors',
+    });
+    return {
+      ok: true,
+      message: `Successfully transmitted test payload to ${config.serviceType.toUpperCase()} endpoint!`,
+    };
+  } catch (err: any) {
+    return {
+      ok: false,
+      message: err?.message || 'Network error transmitting to webhook endpoint.',
+    };
   }
 }
 
 /**
  * Dispatches a push notification via Web Push API / Local Notifications
- * and pipes to configured Slack/Telegram webhooks.
+ * and pipes to configured Slack/Telegram/Discord/Custom webhooks.
  */
 export async function dispatchOutboxNotification(
   notification: Omit<OutboxNotification, 'id' | 'timestamp' | 'read' | 'webhookSent'>
@@ -101,34 +177,22 @@ export async function dispatchOutboxNotification(
     }
   }
 
-  // 2. Dispatch to Webhook if enabled (Slack/Telegram formatter stub)
+  // 2. Dispatch to Webhook if enabled using service formatters
   const webhook = loadWebhookConfig();
   if (webhook.enabled && webhook.webhookUrl.trim()) {
     try {
-      let payload: any = {};
-      if (webhook.serviceType === 'slack') {
-        payload = {
-          text: `*[PixelOps Agent Alert]* *${fullNotif.title}*\n> ${fullNotif.body}\n_Agent: ${fullNotif.agentName}_`,
-        };
-      } else if (webhook.serviceType === 'telegram') {
-        payload = {
-          text: `🚨 *[PixelOps Agent]* *${fullNotif.title}*\n${fullNotif.body}\n_Agent: ${fullNotif.agentName}_`,
-          parse_mode: 'Markdown',
-        };
-      } else {
-        payload = {
-          title: fullNotif.title,
-          message: fullNotif.body,
-          agent: fullNotif.agentName,
-          timestamp: fullNotif.timestamp,
-        };
-      }
+      const payload = formatWebhookPayload(webhook.serviceType, {
+        title: fullNotif.title,
+        body: fullNotif.body,
+        agentName: fullNotif.agentName,
+        timestamp: fullNotif.timestamp,
+      });
 
       await fetch(webhook.webhookUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
-        mode: 'no-cors', // handle cross-origin webhook stubs safely
+        mode: 'no-cors',
       });
       fullNotif.webhookSent = true;
     } catch {

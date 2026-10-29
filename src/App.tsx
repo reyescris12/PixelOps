@@ -86,7 +86,7 @@ import {
 
 import { AgentEditorModal } from './components/AgentEditorModal';
 import { NightShiftModal } from './components/NightShiftModal';
-import { loadNightShiftNotifications } from './services/NightShiftService';
+import { loadNightShiftNotifications, runPendingNightShiftTasks } from './services/NightShiftService';
 import { backgroundWorkerEngine } from './services/WorkerService';
 import { InboxProvider, useInbox } from './context/InboxContext';
 import { NotificationInboxModal } from './components/NotificationInboxModal';
@@ -229,6 +229,7 @@ const CommandCenterContent: React.FC = () => {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isFieldManualOpen, setIsFieldManualOpen] = useState(false);
   const [isNightShiftOpen, setIsNightShiftOpen] = useState(false);
+  const [nightShiftUnreadCount, setNightShiftUnreadCount] = useState<number>(() => loadNightShiftNotifications().filter((n) => !n.read).length);
   const [isInboxOpen, setIsInboxOpen] = useState(false);
   const [isTelemetryOpen, setIsTelemetryOpen] = useState(false);
   const [isAgentFactoryOpen, setIsAgentFactoryOpen] = useState(false);
@@ -361,6 +362,33 @@ const CommandCenterContent: React.FC = () => {
     auditStorageHealth().catch((e) => console.warn('Storage health audit warning:', e));
     backgroundWorkerEngine.startBackgroundLoop();
   }, []);
+
+  // Autonomous Night Shift Background Routine Ticker & Event Listener
+  useEffect(() => {
+    const handleSyncNotifs = () => {
+      setNightShiftUnreadCount(loadNightShiftNotifications().filter((n) => !n.read).length);
+    };
+
+    window.addEventListener('nightshift:notifications-changed', handleSyncNotifs);
+    window.addEventListener('nightshift:routine-completed', handleSyncNotifs);
+
+    const checkRoutines = () => {
+      const enabledPluginIds = plugins.filter((p) => p.connected).map((p) => p.id);
+      runPendingNightShiftTasks(theme.id, enabledPluginIds).catch((err) =>
+        console.warn('[NightShift] Background worker ticker warning:', err)
+      );
+    };
+
+    const initialTimer = setTimeout(checkRoutines, 4000);
+    const intervalTimer = setInterval(checkRoutines, 30000);
+
+    return () => {
+      clearTimeout(initialTimer);
+      clearInterval(intervalTimer);
+      window.removeEventListener('nightshift:notifications-changed', handleSyncNotifs);
+      window.removeEventListener('nightshift:routine-completed', handleSyncNotifs);
+    };
+  }, [theme.id, plugins]);
 
   const handleUpdatePreferences = (next: CommandPreferences) => {
     setPreferences(next);
@@ -2200,9 +2228,9 @@ const CommandCenterContent: React.FC = () => {
               title="Open Night Shift scheduler and notification inbox"
             >
               <span>[NIGHT SHIFT</span>
-              {loadNightShiftNotifications().filter((n) => !n.read).length > 0 && (
+              {nightShiftUnreadCount > 0 && (
                 <span className="text-[#4ade80] font-bold">
-                  :{loadNightShiftNotifications().filter((n) => !n.read).length}
+                  :{nightShiftUnreadCount}
                 </span>
               )}
               <span>]</span>

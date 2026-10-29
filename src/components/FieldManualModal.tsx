@@ -871,7 +871,7 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
               <div className="p-4 bg-[#12141e] border border-[#2b354f] space-y-3">
                 <h4 className="text-xs font-bold text-[#38bdf8] uppercase tracking-wider flex items-center gap-1.5">
                   <Clock className="w-4 h-4 text-[#38bdf8]" />
-                  Step-by-Step Routine Setup
+                  Step-by-Step Routine & Task Chain Setup
                 </h4>
 
                 <ol className="list-decimal list-inside space-y-2 text-xs text-[#cbd5e1]">
@@ -879,24 +879,32 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
                     <strong>Open Night Shift:</strong> Click the <code className="text-[#e59838] bg-[#1a1c26] px-1">[NIGHT SHIFT]</code> button in the top-right header or press the moon icon.
                   </li>
                   <li>
-                    <strong>Create New Routine:</strong> Click <code className="text-[#4ade80] bg-[#1a1c26] px-1">+ Create Night Shift Routine</code> and give your routine a descriptive title (e.g. <em>&ldquo;Daily Zero-Trust Vulnerability Scan&rdquo;</em>).
+                    <strong>Create New Routine:</strong> Click <code className="text-[#4ade80] bg-[#1a1c26] px-1">+ Create Routine / Task Chain</code> and give your routine a descriptive title (e.g. <em>&ldquo;Daily Zero-Trust Vulnerability Scan&rdquo;</em>).
                   </li>
                   <li>
-                    <strong>Set Interval Schedule:</strong> Select recurrence frequency (Every 1 Hour, Every 6 Hours, Every 12 Hours, or Daily at 0800 UTC).
-                  </li>
-                  <li>
-                    <strong>Assign Operative:</strong> Select the operative best suited for the task:
-                    <ul className="list-disc list-inside ml-4 mt-1 text-[#94a3b8]">
-                      <li><strong>Vance:</strong> Daily industry news summaries and competitive research sweeps.</li>
-                      <li><strong>Cipher:</strong> Code quality audits, security checks, and workspace report compilation.</li>
-                      <li><strong>Nyx:</strong> Email inbox sweeps, unread notification checks, and Slack broadcasts.</li>
+                    <strong>Select Mode & Operatives:</strong>
+                    <ul className="list-disc list-inside ml-4 mt-1 text-[#94a3b8] space-y-1">
+                      <li><strong>Single Operative Routine:</strong> Pick any operative (Vance, Nyx, Cipher, Vector, or custom recruits) to execute a targeted scheduled directive.</li>
+                      <li><strong>Multi-Agent Task Chain:</strong> Chain multiple operatives sequentially! Operative A searches the web/scans intel &rarr; Operative B synthesizes and writes a Markdown report &rarr; Operative C broadcasts findings to Slack or Gmail.</li>
                     </ul>
                   </li>
                   <li>
-                    <strong>Enter Directive Prompt:</strong> Provide specific, clear instructions (e.g. <em>&ldquo;Check top GitHub issues in PixelOps and write a morning audit to reports/morning_scan.md&rdquo;</em>).
+                    <strong>Set Interval Schedule:</strong> Select recurrence frequency (Every 5 Minutes, Every 15 Minutes, Every 1 Hour, Every 6 Hours, Daily Midnight, or Weekly).
                   </li>
                   <li>
-                    <strong>Activate Routine:</strong> Toggle status to <strong>ACTIVE</strong> and save. The client-side Web Worker engine will now monitor and fire schedules automatically!
+                    <strong>Configure Multi-Channel Notifications:</strong>
+                    <ul className="list-disc list-inside ml-4 mt-1 text-[#94a3b8] space-y-1">
+                      <li><strong className="text-slate-200">Browser Desktop Push:</strong> Native OS popup notification on routine completion.</li>
+                      <li><strong className="text-slate-200">Mobile Phone / Haptics:</strong> Pulses vibration and triggers PWA push notifications on mobile devices.</li>
+                      <li><strong className="text-slate-200">Gmail Email Briefings:</strong> Sends full operational email summaries via authenticated Composio connection.</li>
+                      <li><strong className="text-slate-200">Slack & Discord Dispatches:</strong> Dispatches real-time cards to designated team channels or webhooks.</li>
+                    </ul>
+                  </li>
+                  <li>
+                    <strong>Edit Anytime:</strong> Click the <strong>Edit</strong> button on any existing routine card to adjust prompts, swap operatives, reorder chained steps, or modify alert channels without losing execution counts.
+                  </li>
+                  <li>
+                    <strong>Activate & Monitor:</strong> Toggle status to <strong>ACTIVE</strong>. The background scheduler checks every 30 seconds to autonomously fire due tasks!
                   </li>
                 </ol>
               </div>
@@ -910,9 +918,9 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
                   When a routine completes while you are away:
                 </p>
                 <ul className="list-disc list-inside text-xs text-[#94a3b8] space-y-1">
-                  <li>The <code className="text-[#e59838] bg-[#1a1c26] px-1">[INBOX:X]</code> badge in the header will light up with the count of unread routine dispatches.</li>
-                  <li>Click <code className="text-[#e59838] bg-[#1a1c26] px-1">[INBOX]</code> to view full execution summaries, telemetry, and any generated file attachments.</li>
-                  <li>Every run automatically records to the <strong>Command Log</strong> (Dexie IndexedDB) with status timestamps.</li>
+                  <li>The <code className="text-[#e59838] bg-[#1a1c26] px-1">[NIGHT SHIFT:X]</code> badge in the header displays unread routine notifications.</li>
+                  <li>The <code className="text-[#e59838] bg-[#1a1c26] px-1">[INBOX:X]</code> badge lights up with outbound alerts dispatched across all connected channels.</li>
+                  <li>Expand any notification in the <strong>Briefing Inbox</strong> tab to see a step-by-step breakdown of each agent&apos;s contributions, token telemetry, and links to generated workspace files.</li>
                 </ul>
               </div>
             </div>

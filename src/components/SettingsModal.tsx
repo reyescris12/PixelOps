@@ -14,6 +14,7 @@ import {
   Cpu,
   Server,
   FileText,
+  BookOpen,
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { CommandPreferences } from '../services/ApiService';
@@ -50,6 +51,7 @@ interface SettingsModalProps {
   onSelectRoom?: (room: RoomId) => void;
   onOpenWorkspaceFiles?: () => void;
   onOpenPluginAuth?: (plugin: { id: string; name: string }) => void;
+  onOpenFieldManual?: () => void;
 }
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -71,6 +73,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onSelectRoom,
   onOpenWorkspaceFiles,
   onOpenPluginAuth,
+  onOpenFieldManual,
 }) => {
   const { theme, soundEnabled, setSoundEnabled, playBeep } = useTheme();
   const [pingStatus, setPingStatus] = useState<{
@@ -332,6 +335,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <FileText className="w-4 h-4 text-sky-400" />
           <span>📁 Browse Workspace Reports & Logs (IndexedDB)</span>
         </button>
+        {/* Classified Safehouse Field Manual Button */}
+        {onOpenFieldManual && (
+          <button
+            type="button"
+            onClick={() => {
+              playBeep('tap');
+              onClose();
+              onOpenFieldManual();
+            }}
+            className="w-full min-h-[40px] px-3 py-2.5 rounded-xl bg-amber-950/50 hover:bg-amber-900/50 border border-amber-600/60 text-xs font-semibold text-amber-200 flex items-center justify-center gap-2 cursor-pointer transition-colors"
+          >
+            <BookOpen className="w-4 h-4 text-amber-400" />
+            <span>📖 Open Classified Safehouse Field Manual</span>
+          </button>
+        )}
 
         {/* Guardrails & Leashes Button */}
         <button

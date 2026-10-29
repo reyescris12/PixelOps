@@ -50,6 +50,7 @@ export interface CLICommandContext {
   onExecuteChain?: (workflowPrompt: string) => Promise<any> | void;
   onApproveTask?: (taskId: string) => void;
   onClearLogs?: () => void;
+  onOpenFieldManual?: () => void;
 }
 
 export interface CLICommandResult {
@@ -811,6 +812,7 @@ export async function executeCLICommand(
       '  pixelops bind <room> <skill>       Mount a capability to a sector',
       '  pixelops logs                      Stream recent command telemetry records',
       '  pixelops clear                     Clear the terminal screen buffer',
+      '  pixelops manual                    Open Classified Safehouse Field Manual & Command Guide',
       '  pixelops help                      Show this tactical command reference',
       '--------------------------------------------------------------------------------',
       'Tip: Leading "pixelops " prefix is optional (e.g. "status" or "ls" works directly).',

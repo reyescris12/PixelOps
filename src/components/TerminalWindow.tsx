@@ -25,6 +25,7 @@ interface TerminalWindowProps {
   onDismissError?: () => void;
   onOpenCommandLog?: () => void;
   ledgerCount?: number;
+  onOpenFieldManual?: () => void;
 }
 
 export const TerminalWindow: React.FC<TerminalWindowProps> = ({
@@ -40,6 +41,7 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({
   onDismissError,
   onOpenCommandLog,
   ledgerCount = 0,
+  onOpenFieldManual,
 }) => {
   const { activeAgent, playBeep } = useTheme();
   const { getCrewAgent } = useCrew();
@@ -168,6 +170,19 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            {onOpenFieldManual && (
+              <button
+                type="button"
+                onClick={() => {
+                  playBeep('tap');
+                  onOpenFieldManual();
+                }}
+                className="px-2 py-0.5 bg-[#141824] border border-[#2d3a54] text-[11px] font-mono-tabular text-[#38bdf8] hover:text-[#f3ead8] hover:border-[#38bdf8] flex items-center gap-1 cursor-pointer"
+                title="Open Classified Safehouse Field Manual & Command Guide"
+              >
+                <span>📖 Manual</span>
+              </button>
+            )}
             {onOpenCommandLog && (
               <button
                 type="button"

@@ -109,6 +109,7 @@ import {
 } from './services/TaskChainService';
 import { TaskChainHUD } from './components/TaskChainHUD';
 import { PluginAuthModal, PluginAuthTarget } from './components/PluginAuthModal';
+import { FieldManualModal } from './components/FieldManualModal';
 import {
   isPluginAuthenticated,
   clearPluginCredential,
@@ -225,6 +226,7 @@ const CommandCenterContent: React.FC = () => {
   const [serverReady, setServerReady] = useState<boolean>(true);
   const [vaultReport, setVaultReport] = useState<VaultStartupReport | null>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isFieldManualOpen, setIsFieldManualOpen] = useState(false);
   const [isNightShiftOpen, setIsNightShiftOpen] = useState(false);
   const [isInboxOpen, setIsInboxOpen] = useState(false);
   const [isTelemetryOpen, setIsTelemetryOpen] = useState(false);
@@ -1993,6 +1995,17 @@ const CommandCenterContent: React.FC = () => {
             >
               <span>[&gt;_ CLI]</span>
             </button>
+            <button
+              type="button"
+              onClick={() => {
+                setIsFieldManualOpen(true);
+                playBeep('tap');
+              }}
+              className="px-2.5 py-0.5 font-mono-tabular text-xs border transition-colors cursor-pointer flex items-center gap-1 bg-[#181a24] text-[#cbd5e1] border-[#363d54] hover:border-[#e59838] hover:text-[#f3ead8]"
+              title="Open Classified Safehouse Field Manual & Operative Handbook"
+            >
+              <span>[📖 MANUAL]</span>
+            </button>
 
             <button
               type="button"
@@ -2338,6 +2351,7 @@ const CommandCenterContent: React.FC = () => {
 
                 {hqSubView === 'terminal' ? (
                   <TerminalWindow
+                    onOpenFieldManual={() => setIsFieldManualOpen(true)}
                     dialogueText={dialogueText}
                     isExecuting={isExecuting}
                     onExecuteDirective={handleExecuteDirective}
@@ -2546,6 +2560,7 @@ const CommandCenterContent: React.FC = () => {
           playBeep('tap');
         }}
         onOpenWorkspaceFiles={() => setIsWorkspaceFilesOpen(true)}
+        onOpenFieldManual={() => setIsFieldManualOpen(true)}
         onOpenPluginAuth={handleOpenPluginAuth}
       />
 
@@ -2669,6 +2684,7 @@ const CommandCenterContent: React.FC = () => {
           onExecuteChain: (workflowPrompt) => {
             handleExecuteTaskChain(workflowPrompt);
           },
+          onOpenFieldManual: () => setIsFieldManualOpen(true),
           onApproveTask: (_taskId) => {
             if (taskBriefState.isOpen && taskBriefState.brief) {
               const rawOpt = taskBriefState.brief.options[0];
@@ -2695,6 +2711,12 @@ const CommandCenterContent: React.FC = () => {
         plugin={activeAuthPlugin}
         onAuthorized={handlePluginAuthorized}
         onRevoked={handlePluginRevoked}
+      />
+
+      <FieldManualModal
+        isOpen={isFieldManualOpen}
+        onClose={() => setIsFieldManualOpen(false)}
+        onSelectPrompt={(samplePrompt) => handleExecuteDirective(samplePrompt)}
       />
 
       {/* Mobile Portrait Orientation Lock Prompt */}

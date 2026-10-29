@@ -1,0 +1,950 @@
+/**
+ * FieldManualModal.tsx - PixelOps Classified Safehouse Field Manual & Operative Handbook
+ * 
+ * Provides comprehensive operational intelligence:
+ * - Safehouse Grid & 7 Sectors
+ * - Managing Operatives & Memory Clearance Progression
+ * - Night Shift Background Worker Configuration
+ * - Transparent API Keys (BYOK) vs. Hosted Pro Pass Guide
+ * - Complete Command Encyclopedia with copyable examples & CLI cheat-sheet
+ * - Performance & Pro-Tips
+ */
+
+import React, { useState, useMemo } from 'react';
+import {
+  X,
+  BookOpen,
+  Compass,
+  Users,
+  Moon,
+  KeyRound,
+  Terminal,
+  Zap,
+  Check,
+  Copy,
+  Search,
+  Shield,
+  Server,
+  Radio,
+  FileText,
+  Clock,
+  Sparkles,
+  ExternalLink,
+} from 'lucide-react';
+import { useTheme } from '../context/ThemeContext';
+
+export interface FieldManualModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onSelectPrompt?: (samplePrompt: string) => void;
+}
+
+type ManualSectionId = 'grid' | 'operatives' | 'nightshift' | 'auth' | 'commands' | 'protips';
+
+interface CommandExample {
+  title: string;
+  category: 'Task Chaining' | 'Report Generation' | 'Composio & External' | 'CLI Console' | 'Code & Eval' | 'Diagnostics';
+  prompt: string;
+  description: string;
+  leadOperative: 'Vance' | 'Cipher' | 'Nyx' | 'Any Operative';
+  targetSector: string;
+}
+
+const COMMAND_CATALOG: CommandExample[] = [
+  {
+    title: 'Autonomous Multi-Agent Task Chain',
+    category: 'Task Chaining',
+    prompt: 'Vance, search for modern zero-trust architecture guidelines and compile the key principles. Then Cipher, write this out into a security report file zero_trust_brief.md. Finally Nyx, verify and prepare a mission summary.',
+    description: 'Decomposes compound directive into 3 sequential phases, routes operatives to War Room, Library, and Comms Tower, and seamlessly transfers findings.',
+    leadOperative: 'Vance',
+    targetSector: 'War Room ➔ Library ➔ Comms Tower',
+  },
+  {
+    title: 'Automated Report Generation & Workspace Upload',
+    category: 'Report Generation',
+    prompt: 'Cipher, write a comprehensive security report on zero-trust architecture guidelines and save to reports/zero_trust_brief.md',
+    description: 'Synthesizes executive summary, defensive principles, verification matrix, and auto-uploads the file to Dexie IndexedDB workspace files.',
+    leadOperative: 'Cipher',
+    targetSector: 'Library Archives (library_archive_terminal)',
+  },
+  {
+    title: 'GitHub Issue Creation (Composio)',
+    category: 'Composio & External',
+    prompt: 'Cipher, create an issue in reyescris12/PixelOps titled "Implement token bucket rate limiter for external webhooks" saying "Priority high. Enforce 100 req/min."',
+    description: 'Parses repository, title, and body parameters and executes live via user connected GitHub account.',
+    leadOperative: 'Cipher',
+    targetSector: 'Server Vault (vault_core_rack)',
+  },
+  {
+    title: 'Gmail Outbound Dispatch (Composio)',
+    category: 'Composio & External',
+    prompt: 'Nyx, send an email to ops-lead@pixelops.app with subject "Mission Alpha Clearance" saying "All safehouse perimeter sectors verified green."',
+    description: 'Extracts recipient, subject, and body, checks OAuth credentials in Armory, and dispatches email live via Google Workspace / Gmail.',
+    leadOperative: 'Nyx',
+    targetSector: 'Comms Tower (comms_broadcast_desk)',
+  },
+  {
+    title: 'Headless Task Chain via CLI',
+    category: 'CLI Console',
+    prompt: 'pixelops chain Vance research CI/CD security best practices, then Cipher write a template workflow file, then Nyx notify on Slack',
+    description: 'Triggers multi-phase pipeline directly from tactical CLI terminal (~).',
+    leadOperative: 'Vance',
+    targetSector: 'Multi-Sector Grid',
+  },
+  {
+    title: 'List Workspace Files via CLI',
+    category: 'CLI Console',
+    prompt: 'pixelops files reports',
+    description: 'Queries Dexie IndexedDB and displays all agent-generated markdown reports, logs, and configs.',
+    leadOperative: 'Any Operative',
+    targetSector: 'Library Archives',
+  },
+  {
+    title: 'Inspect Workspace Report Content via CLI',
+    category: 'CLI Console',
+    prompt: 'pixelops cat reports/zero_trust_brief.md',
+    description: 'Reads and outputs the exact Markdown content of a workspace report in the console.',
+    leadOperative: 'Any Operative',
+    targetSector: 'Library Archives',
+  },
+  {
+    title: 'Live Web Intel Ingestion',
+    category: 'Composio & External',
+    prompt: 'Vance, search the web for latest quantum computing encryption standards and compile top takeaways',
+    description: 'Executes verified live web search tool, extracts knowledge snippets, and summarizes findings into mission brief.',
+    leadOperative: 'Vance',
+    targetSector: 'Comms Tower',
+  },
+  {
+    title: 'In-Browser JavaScript Sandbox Execution',
+    category: 'Code & Eval',
+    prompt: 'Cipher, write a typescript debounce utility with immediate execution flag and run verification tests',
+    description: 'Architects TypeScript logic and verifies execution client-side in the Web Worker code sandbox.',
+    leadOperative: 'Cipher',
+    targetSector: 'Server Vault',
+  },
+  {
+    title: 'Diagnostic Overheat Circuit Breaker Drill',
+    category: 'Diagnostics',
+    prompt: '[DRILL:429]',
+    description: 'Simulates HTTP 429 Rate Limit error to test retro circuit-breaker modal and cooldown countdown timer.',
+    leadOperative: 'Any Operative',
+    targetSector: 'System Diagnostic',
+  },
+  {
+    title: 'Diagnostic Auth Failure Drill',
+    category: 'Diagnostics',
+    prompt: '[DRILL:401]',
+    description: 'Simulates HTTP 401 Invalid Key error to verify Vault error handling and recovery prompt.',
+    leadOperative: 'Any Operative',
+    targetSector: 'Master Vault',
+  },
+];
+
+export const FieldManualModal: React.FC<FieldManualModalProps> = ({
+  isOpen,
+  onClose,
+  onSelectPrompt,
+}) => {
+  const { playBeep } = useTheme();
+  const [activeSection, setActiveSection] = useState<ManualSectionId>('grid');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+
+  if (!isOpen) return null;
+
+  const handleCopy = (text: string, idx: number) => {
+    navigator.clipboard.writeText(text);
+    setCopiedIndex(idx);
+    playBeep('tap');
+    setTimeout(() => setCopiedIndex(null), 2000);
+  };
+
+  const filteredCommands = COMMAND_CATALOG.filter((cmd) => {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.toLowerCase();
+    return (
+      cmd.title.toLowerCase().includes(q) ||
+      cmd.prompt.toLowerCase().includes(q) ||
+      cmd.category.toLowerCase().includes(q) ||
+      cmd.description.toLowerCase().includes(q) ||
+      cmd.leadOperative.toLowerCase().includes(q)
+    );
+  });
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/80 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="w-full max-w-4xl max-h-[92vh] flex flex-col bg-[#0f1118] border-2 border-[#e59838] shadow-[0_0_35px_rgba(229,152,56,0.35)] text-[#f3ead8] font-mono-tabular overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Top Classified Header Bar */}
+        <div className="bg-[#181510] border-b border-[#e59838] px-4 py-2.5 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-2.5">
+            <BookOpen className="w-5 h-5 text-[#e59838]" />
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-xs sm:text-sm font-bold text-[#e59838] tracking-wider uppercase">
+                  CLASSIFIED // SAFEHOUSE FIELD MANUAL
+                </span>
+                <span className="hidden sm:inline px-1.5 py-0.2 bg-[#e59838]/20 border border-[#e59838]/60 text-[#fde047] text-[10px] font-bold">
+                  SEC-LEVEL: OMEGA
+                </span>
+              </div>
+              <p className="text-[10px] text-[#9c8265]">
+                PixelOps Agent Command Center v3.4 · Operative Tactical Handbook
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              playBeep('tap');
+              onClose();
+            }}
+            className="p-1 hover:bg-[#2a2217] text-[#c5c9d6] hover:text-[#f3ead8] border border-transparent hover:border-[#e59838] cursor-pointer transition-colors"
+            title="Close Field Manual (ESC)"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Tactical Sub-Navigation Ribbon */}
+        <div className="bg-[#12131c] border-b border-[#2d3246] px-3 py-1.5 flex flex-wrap items-center justify-between gap-2 shrink-0">
+          <div className="flex flex-wrap items-center gap-1 text-xs">
+            <button
+              type="button"
+              onClick={() => {
+                setActiveSection('grid');
+                playBeep('tap');
+              }}
+              className={`px-2.5 py-1 border transition-colors cursor-pointer flex items-center gap-1.5 ${
+                activeSection === 'grid'
+                  ? 'bg-[#e59838] text-[#121110] border-[#fde047] font-bold shadow-[0_0_10px_rgba(229,152,56,0.4)]'
+                  : 'bg-[#181a24] text-[#cbd5e1] border-[#363d54] hover:border-[#e59838]'
+              }`}
+            >
+              <Compass className="w-3.5 h-3.5" />
+              <span>1. Safehouse Grid</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setActiveSection('operatives');
+                playBeep('tap');
+              }}
+              className={`px-2.5 py-1 border transition-colors cursor-pointer flex items-center gap-1.5 ${
+                activeSection === 'operatives'
+                  ? 'bg-[#e59838] text-[#121110] border-[#fde047] font-bold shadow-[0_0_10px_rgba(229,152,56,0.4)]'
+                  : 'bg-[#181a24] text-[#cbd5e1] border-[#363d54] hover:border-[#e59838]'
+              }`}
+            >
+              <Users className="w-3.5 h-3.5" />
+              <span>2. Operatives & Memory</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setActiveSection('nightshift');
+                playBeep('tap');
+              }}
+              className={`px-2.5 py-1 border transition-colors cursor-pointer flex items-center gap-1.5 ${
+                activeSection === 'nightshift'
+                  ? 'bg-[#e59838] text-[#121110] border-[#fde047] font-bold shadow-[0_0_10px_rgba(229,152,56,0.4)]'
+                  : 'bg-[#181a24] text-[#cbd5e1] border-[#363d54] hover:border-[#e59838]'
+              }`}
+            >
+              <Moon className="w-3.5 h-3.5" />
+              <span>3. Night Shift</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setActiveSection('auth');
+                playBeep('tap');
+              }}
+              className={`px-2.5 py-1 border transition-colors cursor-pointer flex items-center gap-1.5 ${
+                activeSection === 'auth'
+                  ? 'bg-[#e59838] text-[#121110] border-[#fde047] font-bold shadow-[0_0_10px_rgba(229,152,56,0.4)]'
+                  : 'bg-[#181a24] text-[#cbd5e1] border-[#363d54] hover:border-[#e59838]'
+              }`}
+            >
+              <KeyRound className="w-3.5 h-3.5" />
+              <span>4. Keys vs. Pro Pass</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setActiveSection('commands');
+                playBeep('tap');
+              }}
+              className={`px-2.5 py-1 border transition-colors cursor-pointer flex items-center gap-1.5 ${
+                activeSection === 'commands'
+                  ? 'bg-[#e59838] text-[#121110] border-[#fde047] font-bold shadow-[0_0_10px_rgba(229,152,56,0.4)]'
+                  : 'bg-[#181a24] text-[#cbd5e1] border-[#363d54] hover:border-[#e59838]'
+              }`}
+            >
+              <Terminal className="w-3.5 h-3.5" />
+              <span>5. Command Encyclopedia</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setActiveSection('protips');
+                playBeep('tap');
+              }}
+              className={`px-2.5 py-1 border transition-colors cursor-pointer flex items-center gap-1.5 ${
+                activeSection === 'protips'
+                  ? 'bg-[#e59838] text-[#121110] border-[#fde047] font-bold shadow-[0_0_10px_rgba(229,152,56,0.4)]'
+                  : 'bg-[#181a24] text-[#cbd5e1] border-[#363d54] hover:border-[#e59838]'
+              }`}
+            >
+              <Zap className="w-3.5 h-3.5" />
+              <span>6. Pro-Tips</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Scrollable Manual Body */}
+        <div className="flex-1 p-4 sm:p-6 overflow-y-auto space-y-6 text-sm text-[#cbd5e1] leading-relaxed">
+          {/* ========================================================= */}
+          {/* SECTION 1: THE SAFEHOUSE GRID */}
+          {/* ========================================================= */}
+          {activeSection === 'grid' && (
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-base sm:text-lg font-bold text-[#e59838] flex items-center gap-2">
+                  <Compass className="w-5 h-5 text-[#e59838]" />
+                  <span>SECTION 01 // THE SAFEHOUSE SECTOR GRID</span>
+                </h3>
+                <p className="text-xs text-[#9c8265] mt-1">
+                  PixelOps safehouse is divided into 7 specialized isometric sectors. Each sector houses distinct workstation rigs, local runtime tools, and specialized operative capabilities.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+                {/* Comms Tower */}
+                <div className="p-3 bg-[#131622] border border-[#2b354f] rounded-none hover:border-[#38bdf8] transition-colors">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="font-bold text-[#38bdf8] flex items-center gap-1.5">
+                      <Radio className="w-4 h-4" /> Comms Tower [SEC-03]
+                    </span>
+                    <span className="text-[10px] bg-[#38bdf8]/10 text-[#38bdf8] px-1.5 py-0.5 border border-[#38bdf8]/30">
+                      External Data & APIs
+                    </span>
+                  </div>
+                  <p className="text-xs text-[#94a3b8] mb-2">
+                    Primary broadcast uplink for external web lookups, weather forecasts, outgoing Gmail/Slack dispatches, and webhook relays.
+                  </p>
+                  <div className="text-[11px] text-[#cbd5e1] bg-[#0c0e17] p-2 border border-[#1e2438]">
+                    <strong>Primary Station:</strong> Comms Broadcast Desk<br />
+                    <strong>Lead Operative:</strong> Nyx (Signal Specialist)<br />
+                    <strong>Active Tools:</strong> live_web_search, weather_lookup, composio_gmail, composio_slack
+                  </div>
+                </div>
+
+                {/* Server Vault */}
+                <div className="p-3 bg-[#131622] border border-[#2b354f] rounded-none hover:border-[#4ade80] transition-colors">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="font-bold text-[#4ade80] flex items-center gap-1.5">
+                      <Server className="w-4 h-4" /> Server Vault [SEC-02]
+                    </span>
+                    <span className="text-[10px] bg-[#4ade80]/10 text-[#4ade80] px-1.5 py-0.5 border border-[#4ade80]/30">
+                      VFS & Code Sandbox
+                    </span>
+                  </div>
+                  <p className="text-xs text-[#94a3b8] mb-2">
+                    High-security computational core. Executes client-side code sandbox evaluations, GitHub issue creation, and algorithmic tests.
+                  </p>
+                  <div className="text-[11px] text-[#cbd5e1] bg-[#0c0e17] p-2 border border-[#1e2438]">
+                    <strong>Primary Station:</strong> Vault Core Rack<br />
+                    <strong>Lead Operative:</strong> Cipher (Cryptographic Engineer)<br />
+                    <strong>Active Tools:</strong> code_sandbox_eval, github_integration, memory_vector_lookup
+                  </div>
+                </div>
+
+                {/* War Room */}
+                <div className="p-3 bg-[#131622] border border-[#2b354f] rounded-none hover:border-[#e59838] transition-colors">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="font-bold text-[#e59838] flex items-center gap-1.5">
+                      <Shield className="w-4 h-4" /> War Room [SEC-01]
+                    </span>
+                    <span className="text-[10px] bg-[#e59838]/10 text-[#e59838] px-1.5 py-0.5 border border-[#e59838]/30">
+                      Strategy & Town Hall
+                    </span>
+                  </div>
+                  <p className="text-xs text-[#94a3b8] mb-2">
+                    Central command operations. Coordinates multi-agent task chains, high-level intelligence synthesis, and Town Hall roundtable meetings.
+                  </p>
+                  <div className="text-[11px] text-[#cbd5e1] bg-[#0c0e17] p-2 border border-[#1e2438]">
+                    <strong>Primary Station:</strong> War Center Desk<br />
+                    <strong>Lead Operative:</strong> Vance (Tactical Strategist)<br />
+                    <strong>Active Tools:</strong> town_hall_roundtable, task_chain_orchestrator, executive_synthesis
+                  </div>
+                </div>
+
+                {/* Library Archives */}
+                <div className="p-3 bg-[#131622] border border-[#2b354f] rounded-none hover:border-[#a855f7] transition-colors">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="font-bold text-[#a855f7] flex items-center gap-1.5">
+                      <FileText className="w-4 h-4" /> Library Archives [SEC-05]
+                    </span>
+                    <span className="text-[10px] bg-[#a855f7]/10 text-[#a855f7] px-1.5 py-0.5 border border-[#a855f7]/30">
+                      Workspace Reports & VFS
+                    </span>
+                  </div>
+                  <p className="text-xs text-[#94a3b8] mb-2">
+                    Repository of agent-generated markdown reports, intelligence briefs, and permanent workspace records stored in IndexedDB.
+                  </p>
+                  <div className="text-[11px] text-[#cbd5e1] bg-[#0c0e17] p-2 border border-[#1e2438]">
+                    <strong>Primary Station:</strong> Library Archive Terminal<br />
+                    <strong>Lead Operative:</strong> Cipher / Research Squad<br />
+                    <strong>Active Tools:</strong> fs_storage_manager, workspace_report_generator
+                  </div>
+                </div>
+
+                {/* Armory */}
+                <div className="p-3 bg-[#131622] border border-[#2b354f] rounded-none hover:border-[#f97316] transition-colors">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="font-bold text-[#f97316] flex items-center gap-1.5">
+                      ⚔️ Armory [SEC-04]
+                    </span>
+                    <span className="text-[10px] bg-[#f97316]/10 text-[#f97316] px-1.5 py-0.5 border border-[#f97316]/30">
+                      Composio Toolkits & Gear
+                    </span>
+                  </div>
+                  <p className="text-xs text-[#94a3b8] mb-2">
+                    Connect external app integrations (Gmail, GitHub, Slack, Notion, Linear, Calendar) via OAuth and inspect active gear configurations.
+                  </p>
+                  <div className="text-[11px] text-[#cbd5e1] bg-[#0c0e17] p-2 border border-[#1e2438]">
+                    <strong>Primary Station:</strong> Armory Tactical Workbench<br />
+                    <strong>Capabilities:</strong> OAuth popup bridge, account verification, token status
+                  </div>
+                </div>
+
+                {/* Archive Basement & Lounge */}
+                <div className="p-3 bg-[#131622] border border-[#2b354f] rounded-none hover:border-[#94a3b8] transition-colors">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="font-bold text-[#cbd5e1] flex items-center gap-1.5">
+                      🛋️ Lounge [SEC-06] & Archive [SEC-07]
+                    </span>
+                    <span className="text-[10px] bg-[#94a3b8]/10 text-[#94a3b8] px-1.5 py-0.5 border border-[#94a3b8]/30">
+                      Ledger & Downtime
+                    </span>
+                  </div>
+                  <p className="text-xs text-[#94a3b8] mb-2">
+                    Lounge maintains operative morale and memory consolidation. Archive Basement houses the immutable Dexie.js audit ledger.
+                  </p>
+                  <div className="text-[11px] text-[#cbd5e1] bg-[#0c0e17] p-2 border border-[#1e2438]">
+                    <strong>Primary Stations:</strong> Lounge Station, Archive Filing Array<br />
+                    <strong>Capabilities:</strong> 50-command rolling history, backup exports, storage audits
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ========================================================= */}
+          {/* SECTION 2: MANAGING OPERATIVES & CLEARANCE */}
+          {/* ========================================================= */}
+          {activeSection === 'operatives' && (
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-base sm:text-lg font-bold text-[#e59838] flex items-center gap-2">
+                  <Users className="w-5 h-5 text-[#e59838]" />
+                  <span>SECTION 02 // MANAGING OPERATIVES & MEMORY LEDGERS</span>
+                </h3>
+                <p className="text-xs text-[#9c8265] mt-1">
+                  Safehouse agents operate as autonomous persistent intelligence units with independent memory banks, custom prompt overrides, and clearance progression.
+                </p>
+              </div>
+
+              {/* The Core Triumvirate */}
+              <div className="space-y-3">
+                <h4 className="text-xs font-bold text-[#fde047] uppercase tracking-wider">
+                  The Core Triumvirate:
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="p-3 bg-[#16130f] border border-[#5e4326]">
+                    <div className="font-bold text-[#e59838] text-sm mb-1">VANCE</div>
+                    <div className="text-[10px] text-[#9c8265] uppercase mb-2">Lead Strategist & Commander</div>
+                    <p className="text-xs text-[#cbd5e1]">
+                      Specializes in high-level directive decomposition, live web research, tactical planning, and synthesizing multi-agent findings.
+                    </p>
+                  </div>
+                  <div className="p-3 bg-[#0f1712] border border-[#2b4c3b]">
+                    <div className="font-bold text-[#4ade80] text-sm mb-1">CIPHER</div>
+                    <div className="text-[10px] text-[#2b4c3b] uppercase mb-2">Cryptographic & Code Specialist</div>
+                    <p className="text-xs text-[#cbd5e1]">
+                      Executes JavaScript sandbox evaluations, security audits, technical markdown report compilation, and GitHub operations.
+                    </p>
+                  </div>
+                  <div className="p-3 bg-[#0e1620] border border-[#1e3a5f]">
+                    <div className="font-bold text-[#38bdf8] text-sm mb-1">NYX</div>
+                    <div className="text-[10px] text-[#1e3a5f] uppercase mb-2">Cyber Signal & Infiltration</div>
+                    <p className="text-xs text-[#cbd5e1]">
+                      Handles communications relay, Gmail dispatches, Slack notifications, stealth API lookups, and morning briefing broadcasts.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Agent Memory Ledgers */}
+              <div className="p-3.5 bg-[#12141f] border border-[#2b354f] space-y-2.5">
+                <h4 className="text-xs font-bold text-[#38bdf8] uppercase tracking-wider flex items-center gap-1.5">
+                  <Sparkles className="w-4 h-4 text-[#38bdf8]" />
+                  Independent Agent Memory Banks
+                </h4>
+                <p className="text-xs text-[#cbd5e1]">
+                  Every operative maintains an append-only memory ledger. When Vance, Cipher, or Nyx complete directives, the result summary is committed to their local memory store:
+                </p>
+                <ul className="list-disc list-inside text-xs text-[#94a3b8] space-y-1">
+                  <li><strong>Prompt Context Injection:</strong> The agent&apos;s 5 most recent memory items are automatically embedded into future prompts.</li>
+                  <li><strong>Session Persistence:</strong> Memory ledgers survive page reloads and browser restarts in LocalStorage.</li>
+                  <li><strong>Memory Inspection:</strong> Open the <strong>Crew</strong> tab and click an operative&apos;s name to view, edit, or purge their memory log.</li>
+                </ul>
+              </div>
+
+              {/* Clearance & Progression System */}
+              <div className="p-3.5 bg-[#17140f] border border-[#5e4326] space-y-2.5">
+                <h4 className="text-xs font-bold text-[#e59838] uppercase tracking-wider flex items-center gap-1.5">
+                  <Shield className="w-4 h-4 text-[#e59838]" />
+                  Clearance Progression & Decryption Boost
+                </h4>
+                <p className="text-xs text-[#cbd5e1]">
+                  Operatives begin at <strong>Tier 1 (Recruit)</strong> and advance as they execute missions:
+                </p>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+                  <div className="p-2 bg-[#0e0f17] border border-[#2b354f]">
+                    <strong className="text-[#fde047]">Tier 1 · Operative</strong>
+                    <p className="text-[11px] text-[#94a3b8] mt-0.5">Basic tool access, local file storage, and standard token limits.</p>
+                  </div>
+                  <div className="p-2 bg-[#0e0f17] border border-[#2b354f]">
+                    <strong className="text-[#4ade80]">Tier 2 · Specialist</strong>
+                    <p className="text-[11px] text-[#94a3b8] mt-0.5">Unlocks Composio external tools (Gmail, GitHub) and code sandbox eval.</p>
+                  </div>
+                  <div className="p-2 bg-[#0e0f17] border border-[#2b354f]">
+                    <strong className="text-[#38bdf8]">Tier 3 · Commander</strong>
+                    <p className="text-[11px] text-[#94a3b8] mt-0.5">Autonomous task chain orchestration and cross-sector delegation.</p>
+                  </div>
+                </div>
+                <p className="text-[11px] text-[#9c8265]">
+                  💡 <em>Tip: Successfully solving the manual bypass puzzle on the canvas gives a temporary +35% to +100% Decryption Boost for high-speed inferences!</em>
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* ========================================================= */}
+          {/* SECTION 3: CONFIGURING NIGHT SHIFT */}
+          {/* ========================================================= */}
+          {activeSection === 'nightshift' && (
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-base sm:text-lg font-bold text-[#e59838] flex items-center gap-2">
+                  <Moon className="w-5 h-5 text-[#e59838]" />
+                  <span>SECTION 03 // CONFIGURING NIGHT SHIFT (BACKGROUND CRON)</span>
+                </h3>
+                <p className="text-xs text-[#9c8265] mt-1">
+                  Night Shift allows operatives to execute automated maintenance, security scans, research sweeps, and inbox summaries while the command center is idle or running in the background.
+                </p>
+              </div>
+
+              {/* Step-by-Step Guide */}
+              <div className="p-4 bg-[#12141e] border border-[#2b354f] space-y-3">
+                <h4 className="text-xs font-bold text-[#38bdf8] uppercase tracking-wider flex items-center gap-1.5">
+                  <Clock className="w-4 h-4 text-[#38bdf8]" />
+                  Step-by-Step Routine Setup
+                </h4>
+
+                <ol className="list-decimal list-inside space-y-2 text-xs text-[#cbd5e1]">
+                  <li>
+                    <strong>Open Night Shift:</strong> Click the <code className="text-[#e59838] bg-[#1a1c26] px-1">[NIGHT SHIFT]</code> button in the top-right header or press the moon icon.
+                  </li>
+                  <li>
+                    <strong>Create New Routine:</strong> Click <code className="text-[#4ade80] bg-[#1a1c26] px-1">+ Create Night Shift Routine</code> and give your routine a descriptive title (e.g. <em>&ldquo;Daily Zero-Trust Vulnerability Scan&rdquo;</em>).
+                  </li>
+                  <li>
+                    <strong>Set Interval Schedule:</strong> Select recurrence frequency (Every 1 Hour, Every 6 Hours, Every 12 Hours, or Daily at 0800 UTC).
+                  </li>
+                  <li>
+                    <strong>Assign Operative:</strong> Select the operative best suited for the task:
+                    <ul className="list-disc list-inside ml-4 mt-1 text-[#94a3b8]">
+                      <li><strong>Vance:</strong> Daily industry news summaries and competitive research sweeps.</li>
+                      <li><strong>Cipher:</strong> Code quality audits, security checks, and workspace report compilation.</li>
+                      <li><strong>Nyx:</strong> Email inbox sweeps, unread notification checks, and Slack broadcasts.</li>
+                    </ul>
+                  </li>
+                  <li>
+                    <strong>Enter Directive Prompt:</strong> Provide specific, clear instructions (e.g. <em>&ldquo;Check top GitHub issues in PixelOps and write a morning audit to reports/morning_scan.md&rdquo;</em>).
+                  </li>
+                  <li>
+                    <strong>Activate Routine:</strong> Toggle status to <strong>ACTIVE</strong> and save. The client-side Web Worker engine will now monitor and fire schedules automatically!
+                  </li>
+                </ol>
+              </div>
+
+              {/* Morning Briefing Logs */}
+              <div className="p-3.5 bg-[#17140f] border border-[#5e4326] space-y-2">
+                <h4 className="text-xs font-bold text-[#e59838] uppercase tracking-wider">
+                  Reading Morning Briefing Logs & Notifications
+                </h4>
+                <p className="text-xs text-[#cbd5e1]">
+                  When a routine completes while you are away:
+                </p>
+                <ul className="list-disc list-inside text-xs text-[#94a3b8] space-y-1">
+                  <li>The <code className="text-[#e59838] bg-[#1a1c26] px-1">[INBOX:X]</code> badge in the header will light up with the count of unread routine dispatches.</li>
+                  <li>Click <code className="text-[#e59838] bg-[#1a1c26] px-1">[INBOX]</code> to view full execution summaries, telemetry, and any generated file attachments.</li>
+                  <li>Every run automatically records to the <strong>Command Log</strong> (Dexie IndexedDB) with status timestamps.</li>
+                </ul>
+              </div>
+            </div>
+          )}
+
+          {/* ========================================================= */}
+          {/* SECTION 4: API KEYS VS PRO PASS */}
+          {/* ========================================================= */}
+          {activeSection === 'auth' && (
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-base sm:text-lg font-bold text-[#e59838] flex items-center gap-2">
+                  <KeyRound className="w-5 h-5 text-[#e59838]" />
+                  <span>SECTION 04 // API KEYS (BYOK) VS. HOSTED PRO PASS</span>
+                </h3>
+                <p className="text-xs text-[#9c8265] mt-1">
+                  PixelOps is built with a 100% transparent execution model. You can run completely offline for free, connect your own API keys, or use the hosted Pro Pass.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* BYOK */}
+                <div className="p-4 bg-[#12151f] border-2 border-[#38bdf8] space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-base text-[#38bdf8] flex items-center gap-1.5">
+                      <KeyRound className="w-5 h-5" /> BYOK (Custom Keys)
+                    </span>
+                    <span className="text-[10px] bg-[#38bdf8]/10 text-[#38bdf8] px-2 py-0.5 border border-[#38bdf8]/40 font-bold">
+                      100% FREE & PRIVATE
+                    </span>
+                  </div>
+                  <p className="text-xs text-[#cbd5e1]">
+                    Bring Your Own Key directly from Google, OpenAI, Anthropic, or run a local Ollama model.
+                  </p>
+                  <div className="space-y-2 text-xs text-[#94a3b8]">
+                    <div className="p-2 bg-[#0c0e17] border border-[#1e2438]">
+                      <strong className="text-[#f3ead8]">Supported Providers:</strong>
+                      <ul className="list-disc list-inside mt-1 space-y-0.5 text-[11px]">
+                        <li><strong>Google Gemini:</strong> gemini-2.5-flash (recommended), gemini-1.5-pro</li>
+                        <li><strong>OpenAI:</strong> gpt-4o, gpt-4o-mini</li>
+                        <li><strong>Anthropic:</strong> claude-3-5-sonnet</li>
+                        <li><strong>Local Ollama:</strong> llama3, mistral (runs locally on localhost:11434)</li>
+                      </ul>
+                    </div>
+                    <div className="p-2 bg-[#0c0e17] border border-[#1e2438]">
+                      <strong className="text-[#f3ead8]">Privacy Guarantee:</strong>
+                      <p className="text-[11px] mt-0.5">
+                        Your API key is encrypted client-side in browser storage using the Master Vault. Inferences travel directly from your browser to Google/OpenAI with zero middleman servers.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      onClose();
+                      // Trigger Settings Modal in parent
+                    }}
+                    className="w-full py-1.5 bg-[#1e293b] hover:bg-[#334155] text-[#38bdf8] text-xs font-bold border border-[#38bdf8]/50 cursor-pointer transition-colors"
+                  >
+                    Configure Custom Key in Settings (⚙️)
+                  </button>
+                </div>
+
+                {/* Pro Pass */}
+                <div className="p-4 bg-[#1a140d] border-2 border-[#e59838] space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-base text-[#e59838] flex items-center gap-1.5">
+                      <Sparkles className="w-5 h-5 text-[#fde047]" /> PixelOps Pro Pass
+                    </span>
+                    <span className="text-[10px] bg-[#e59838]/10 text-[#fde047] px-2 py-0.5 border border-[#e59838]/40 font-bold">
+                      TURNKEY FLEET
+                    </span>
+                  </div>
+                  <p className="text-xs text-[#cbd5e1]">
+                    Ideal for users who don&apos;t want to manage API keys, cloud billings, or model rate limits.
+                  </p>
+                  <div className="space-y-2 text-xs text-[#94a3b8]">
+                    <div className="p-2 bg-[#120e09] border border-[#3b2b1a]">
+                      <strong className="text-[#fde047]">What&apos;s Included:</strong>
+                      <ul className="list-disc list-inside mt-1 space-y-0.5 text-[11px]">
+                        <li><strong>Hosted Token Allowance:</strong> 500,000 monthly high-speed inference tokens.</li>
+                        <li><strong>Multi-Model Redundancy:</strong> Automatic failover if Google or OpenAI experiences an outage.</li>
+                        <li><strong>Unlimited Composio Connectors:</strong> Direct Gmail, GitHub, Slack, Notion relays.</li>
+                        <li><strong>Exclusive Soundscapes:</strong> Unlocks all safehouse retro synth audio profiles.</li>
+                      </ul>
+                    </div>
+                    <div className="p-2 bg-[#120e09] border border-[#3b2b1a]">
+                      <strong className="text-[#fde047]">Zero-Configuration:</strong>
+                      <p className="text-[11px] mt-0.5">
+                        Start instantly without opening cloud accounts or copying raw API tokens.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="p-2 text-center text-xs text-[#fde047] font-semibold border border-dashed border-[#e59838]/60 bg-[#e59838]/10">
+                    Pro Pass Fleet status: Hosted Inference Ready
+                  </div>
+                </div>
+              </div>
+
+              {/* Free Offline Heuristic Mode */}
+              <div className="p-3.5 bg-[#0f1412] border border-[#2b4c3b] space-y-1.5">
+                <h4 className="text-xs font-bold text-[#4ade80] uppercase tracking-wider flex items-center gap-1.5">
+                  <Shield className="w-4 h-4 text-[#4ade80]" />
+                  100% Free Offline Mode (Zero Keys Needed)
+                </h4>
+                <p className="text-xs text-[#cbd5e1]">
+                  If no API key is provided, PixelOps seamlessly engages its <strong>Local Heuristic Engine</strong>. You can compute math, execute code in the sandbox, generate full formatted Markdown reports, save files to IndexedDB, and test safehouse workflows completely free with zero internet access!
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* ========================================================= */}
+          {/* SECTION 5: COMMAND ENCYCLOPEDIA */}
+          {/* ========================================================= */}
+          {activeSection === 'commands' && (
+            <div className="space-y-5">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h3 className="text-base sm:text-lg font-bold text-[#e59838] flex items-center gap-2">
+                    <Terminal className="w-5 h-5 text-[#e59838]" />
+                    <span>SECTION 05 // COMMAND ENCYCLOPEDIA & EXAMPLES</span>
+                  </h3>
+                  <p className="text-xs text-[#9c8265] mt-0.5">
+                    Every directive command syntax, capability, and copyable example. Click &ldquo;Try Directive&rdquo; to load into the terminal.
+                  </p>
+                </div>
+
+                {/* Search Bar */}
+                <div className="relative w-full sm:w-64">
+                  <Search className="w-4 h-4 text-[#9c8265] absolute left-2.5 top-2.5" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Filter commands (e.g. report, email, cli)..."
+                    className="w-full bg-[#141724] border border-[#363d54] focus:border-[#e59838] pl-8 pr-3 py-1.5 text-xs text-[#f3ead8] placeholder-[#64748b] outline-none"
+                  />
+                  {searchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setSearchQuery('')}
+                      className="absolute right-2.5 top-2.5 text-[#94a3b8] hover:text-[#f3ead8]"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Commands List */}
+              <div className="space-y-3">
+                {filteredCommands.length === 0 ? (
+                  <div className="p-8 text-center bg-[#131520] border border-[#2b354f] text-[#94a3b8] text-xs">
+                    No commands matching &ldquo;{searchQuery}&rdquo;. Try searching for <em>report</em>, <em>chain</em>, <em>github</em>, or <em>cli</em>.
+                  </div>
+                ) : (
+                  filteredCommands.map((cmd, idx) => (
+                    <div
+                      key={idx}
+                      className="p-3 bg-[#131622] border border-[#2b354f] hover:border-[#e59838] transition-colors space-y-2"
+                    >
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-xs text-[#f3ead8]">
+                            {cmd.title}
+                          </span>
+                          <span className="text-[10px] bg-[#1e2438] text-[#38bdf8] px-1.5 py-0.5 border border-[#38bdf8]/30 font-semibold">
+                            {cmd.category}
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-[#94a3b8] flex items-center gap-3">
+                          <span>Operative: <strong className="text-[#e59838]">{cmd.leadOperative}</strong></span>
+                          <span>Sector: <strong className="text-[#4ade80]">{cmd.targetSector}</strong></span>
+                        </div>
+                      </div>
+
+                      <p className="text-xs text-[#94a3b8]">
+                        {cmd.description}
+                      </p>
+
+                      <div className="flex items-center justify-between gap-2 bg-[#0a0c14] border border-[#1c2236] p-2">
+                        <code className="text-xs text-[#4ade80] break-all select-all font-mono-tabular">
+                          {cmd.prompt}
+                        </code>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => handleCopy(cmd.prompt, idx)}
+                            className="px-2 py-1 bg-[#1e2438] hover:bg-[#2a334d] text-[#cbd5e1] hover:text-[#f3ead8] text-[10px] border border-[#363d54] cursor-pointer flex items-center gap-1 transition-colors"
+                            title="Copy command to clipboard"
+                          >
+                            {copiedIndex === idx ? (
+                              <>
+                                <Check className="w-3 h-3 text-[#4ade80]" />
+                                <span className="text-[#4ade80]">Copied</span>
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="w-3 h-3" />
+                                <span>Copy</span>
+                              </>
+                            )}
+                          </button>
+
+                          {onSelectPrompt && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                onSelectPrompt(cmd.prompt);
+                                playBeep('complete');
+                                onClose();
+                              }}
+                              className="px-2.5 py-1 bg-[#e59838] hover:bg-[#d48828] text-[#121110] text-[10px] font-bold border border-[#e59838] cursor-pointer flex items-center gap-1 transition-colors"
+                              title="Paste directly into terminal and close manual"
+                            >
+                              <span>Try Directive ▶</span>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              {/* Headless CLI Quick Reference */}
+              <div className="p-4 bg-[#0d0f17] border border-[#23293d] space-y-2.5">
+                <h4 className="text-xs font-bold text-[#fde047] uppercase tracking-wider flex items-center gap-1.5">
+                  <Terminal className="w-4 h-4 text-[#fde047]" />
+                  Headless Tactical CLI Console Cheat-Sheet
+                </h4>
+                <p className="text-xs text-[#cbd5e1]">
+                  Press <kbd className="bg-[#1f2438] border border-[#475569] text-[#e59838] px-1.5 py-0.5 rounded-none text-[11px]">~</kbd> or click <code className="text-[#4ade80]">[&gt;_ CLI]</code> in the header to open the terminal overlay anytime:
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-[11px] font-mono-tabular">
+                  <div className="p-2 bg-[#131624] border border-[#2b354f]">
+                    <span className="text-[#38bdf8] font-bold">pixelops chain &lt;workflow&gt;</span>
+                    <p className="text-[#94a3b8]">Run autonomous multi-agent task chain</p>
+                  </div>
+                  <div className="p-2 bg-[#131624] border border-[#2b354f]">
+                    <span className="text-[#38bdf8] font-bold">pixelops dispatch &lt;agent&gt; &lt;task&gt;</span>
+                    <p className="text-[#94a3b8]">Queue task directly to Vance, Cipher, or Nyx</p>
+                  </div>
+                  <div className="p-2 bg-[#131624] border border-[#2b354f]">
+                    <span className="text-[#38bdf8] font-bold">pixelops files [reports|logs|config]</span>
+                    <p className="text-[#94a3b8]">List all IndexedDB workspace files</p>
+                  </div>
+                  <div className="p-2 bg-[#131624] border border-[#2b354f]">
+                    <span className="text-[#38bdf8] font-bold">pixelops cat &lt;filePath&gt;</span>
+                    <p className="text-[#94a3b8]">Print full content of any workspace file</p>
+                  </div>
+                  <div className="p-2 bg-[#131624] border border-[#2b354f]">
+                    <span className="text-[#38bdf8] font-bold">pixelops ledger [limit]</span>
+                    <p className="text-[#94a3b8]">Inspect append-only Dexie command ledger</p>
+                  </div>
+                  <div className="p-2 bg-[#131624] border border-[#2b354f]">
+                    <span className="text-[#38bdf8] font-bold">pixelops townhall</span>
+                    <p className="text-[#94a3b8]">Summon all agents to the War Room roundtable</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ========================================================= */}
+          {/* SECTION 6: PRO-TIPS & MAXIMUM PERFORMANCE */}
+          {/* ========================================================= */}
+          {activeSection === 'protips' && (
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-base sm:text-lg font-bold text-[#e59838] flex items-center gap-2">
+                  <Zap className="w-5 h-5 text-[#e59838]" />
+                  <span>SECTION 06 // PRO-TIPS & MAXIMUM PERFORMANCE SECRETS</span>
+                </h3>
+                <p className="text-xs text-[#9c8265] mt-1">
+                  How to extract maximum efficiency, battery optimization, and tactical fluency from the PixelOps Command Center.
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                <div className="p-3.5 bg-[#121520] border border-[#2b354f] space-y-1.5">
+                  <h4 className="text-xs font-bold text-[#38bdf8] uppercase">
+                    1. Use Google Gemini 2.5 Flash for Sub-Second Responses
+                  </h4>
+                  <p className="text-xs text-[#cbd5e1]">
+                    If using BYOK, <code className="text-[#4ade80]">gemini-2.5-flash</code> offers the fastest time-to-first-token while retaining full tool calling capabilities and high accuracy for code, markdown reports, and web search synthesis.
+                  </p>
+                </div>
+
+                <div className="p-3.5 bg-[#121520] border border-[#2b354f] space-y-1.5">
+                  <h4 className="text-xs font-bold text-[#4ade80] uppercase">
+                    2. Install as a Progressive Web App (PWA)
+                  </h4>
+                  <p className="text-xs text-[#cbd5e1]">
+                    Click <code className="text-[#e59838]">[INSTALL APP]</code> in the header to install PixelOps as a native desktop or mobile application. The service worker precaches all pixel art assets and UI bundles, allowing full offline boot even during internet outages!
+                  </p>
+                </div>
+
+                <div className="p-3.5 bg-[#121520] border border-[#2b354f] space-y-1.5">
+                  <h4 className="text-xs font-bold text-[#e59838] uppercase">
+                    3. Keyboard Shortcuts for Rapid Ops
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-[#94a3b8] mt-1">
+                    <div><kbd className="bg-[#1f2438] text-[#fde047] px-1 border border-[#363d54]">~</kbd> or <kbd className="bg-[#1f2438] text-[#fde047] px-1 border border-[#363d54]">`</kbd> : Toggle CLI Console</div>
+                    <div><kbd className="bg-[#1f2438] text-[#fde047] px-1 border border-[#363d54]">ESC</kbd> : Close open modal / manual</div>
+                    <div><kbd className="bg-[#1f2438] text-[#fde047] px-1 border border-[#363d54]">ENTER</kbd> : Dispatch terminal prompt</div>
+                    <div><kbd className="bg-[#1f2438] text-[#fde047] px-1 border border-[#363d54]">UP / DOWN</kbd> : Cycle CLI command history</div>
+                  </div>
+                </div>
+
+                <div className="p-3.5 bg-[#121520] border border-[#2b354f] space-y-1.5">
+                  <h4 className="text-xs font-bold text-[#fde047] uppercase">
+                    4. Sector Ambient Synth Audio Loops
+                  </h4>
+                  <p className="text-xs text-[#cbd5e1]">
+                    Click <code className="text-[#4ade80]">[🔊 SYNTH: ...]</code> in the center header to engage generative Web Audio ambient synth loops tailored to each sector (War Room strategic hum, Server Vault fan drones, Comms Tower radio static).
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Footer Bar */}
+        <div className="bg-[#14120e] border-t border-[#4a351e] px-4 py-2.5 flex items-center justify-between text-xs shrink-0">
+          <span className="text-[11px] text-[#9c8265]">
+            CLASSIFICATION: <strong>OMEGA-RESTRICTED</strong> · PROPERTY OF PIXELOPS COMMAND
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              playBeep('tap');
+              onClose();
+            }}
+            className="px-4 py-1 bg-[#e59838] hover:bg-[#d48828] text-[#121110] font-bold border border-[#e59838] cursor-pointer transition-colors"
+          >
+            [CLOSE FIELD MANUAL]
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};

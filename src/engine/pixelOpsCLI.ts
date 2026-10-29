@@ -47,6 +47,7 @@ export interface CLICommandContext {
     category?: string;
   }>;
   onDispatchTask?: (agentId: string, taskPrompt: string) => Promise<any> | void;
+  onExecuteChain?: (workflowPrompt: string) => Promise<any> | void;
   onApproveTask?: (taskId: string) => void;
   onClearLogs?: () => void;
 }
@@ -118,7 +119,42 @@ export async function executeCLICommand(
     };
   }
 
-  // 2. DISPATCH <agentId> <task...>
+  // 2. CHAIN / WORKFLOW <multi-step directive...>
+  if (action === 'chain' || action === 'workflow' || action === 'pipeline') {
+    const workflowPrompt = args.join(' ').replace(/^["']|["']$/g, '');
+    if (!workflowPrompt || workflowPrompt.trim().length === 0) {
+      return {
+        command: trimmed,
+        output: 'USAGE: pixelops chain <multi-step prompt>\nExample: pixelops chain "Research latest CVEs, have Cipher write an advisory to cve.md, and have Nyx post an alert to Slack #security"',
+        status: 'warning',
+        timestamp,
+      };
+    }
+
+    if (context.onExecuteChain) {
+      context.onExecuteChain(workflowPrompt);
+    } else if (context.onDispatchTask) {
+      context.onDispatchTask('rec_vance', workflowPrompt);
+    }
+
+    return {
+      command: trimmed,
+      output: [
+        '+------------------------------------------------------------------------------+',
+        '| AUTONOMOUS MULTI-AGENT TASK CHAIN DEPLOYED                                    |',
+        '+------------------------------------------------------------------------------+',
+        `  WORKFLOW: "${workflowPrompt}"`,
+        '  STATUS  : Choreographing sequential phases across Vance, Cipher, and Nyx',
+        '  HANDOFF : Intelligence and artifacts will be passed autonomously between steps',
+        '+------------------------------------------------------------------------------+',
+        'Inspect live operative handoffs in the Task Chain HUD & Safehouse Canvas.',
+      ].join('\n'),
+      status: 'ok',
+      timestamp,
+    };
+  }
+
+  // 3. DISPATCH <agentId> <task...>
   if (action === 'dispatch') {
     if (args.length < 2) {
       return {
@@ -756,6 +792,7 @@ export async function executeCLICommand(
       '--------------------------------------------------------------------------------',
       'Commands:',
       '  pixelops status | ls               List active operatives, rooms & assignments',
+      '  pixelops chain <workflow>          Execute an autonomous multi-agent task chain across operatives',
       '  pixelops dispatch <agent> <task>   Queue a tactical directive to an operative',
       '  pixelops approve <taskId>          Approve pending human-in-the-loop task briefs',
       '  pixelops files [category]          List IndexedDB workspace files (reports, logs, config)',

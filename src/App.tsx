@@ -101,6 +101,13 @@ import { TerminalConsole } from './components/TerminalConsole';
 import { WorkspaceFileViewer } from './components/WorkspaceFileViewer';
 import { PluginMarketplace } from './components/PluginMarketplace';
 import { ComposioService } from './services/ComposioService';
+import {
+  TaskChain,
+  isDirectiveTaskChain,
+  deconstructDirectiveIntoChain,
+  executeTaskChain,
+} from './services/TaskChainService';
+import { TaskChainHUD } from './components/TaskChainHUD';
 import { PluginAuthModal, PluginAuthTarget } from './components/PluginAuthModal';
 import {
   isPluginAuthenticated,
@@ -244,6 +251,8 @@ const CommandCenterContent: React.FC = () => {
   const [activeAuthPlugin, setActiveAuthPlugin] = useState<PluginAuthTarget | null>(null);
   const [pluginsSubTab, setPluginsSubTab] = useState<'composio' | 'custom'>('composio');
   const [composioConnectedCount, setComposioConnectedCount] = useState<number>(0);
+  const [activeTaskChain, setActiveTaskChain] = useState<TaskChain | null>(null);
+  const [taskChainProgressText, setTaskChainProgressText] = useState<string>('');
 
   const syncComposioAccounts = useCallback(async () => {
     try {
@@ -651,6 +660,112 @@ const CommandCenterContent: React.FC = () => {
     }
   };
 
+  /**
+   * Autonomous Task Chain Orchestrator:
+   * Sequentially deploys operatives across sectors, transferring intelligence
+   * and intermediate findings without requiring manual user re-prompting.
+   */
+  const handleExecuteTaskChain = async (prompt: string, customChain?: TaskChain) => {
+    const availableAgents = crewAgents.map((a) => ({
+      id: a.id,
+      name: a.customName || a.defaultName,
+      role: a.role,
+      functionalRole: a.functionalRole,
+    }));
+
+    const chain = customChain || deconstructDirectiveIntoChain(prompt, availableAgents);
+    if (!chain || chain.steps.length === 0) {
+      handleExecuteDirective(prompt, null, true);
+      return;
+    }
+
+    setActiveTaskChain(chain);
+    setIsExecuting(true);
+    setDialogueText(`[AUTONOMOUS TASK CHAIN INITIALIZED] "${chain.title}". Preparing ${chain.steps.length} sequential operative phases...`);
+    playBeep('tap');
+
+    const enabledPlugins = plugins.filter((p) => p.connected).map((p) => p.id);
+
+    try {
+      await executeTaskChain(
+        chain,
+        {
+          onStepStart: (step) => {
+            const crewMember = crewAgents.find((a) => a.id === step.assignedAgentId);
+            setActiveAgentId(step.assignedAgentId);
+            handleMoveAgentToRoom(
+              step.assignedAgentId,
+              step.targetSector,
+              step.targetStationId || crewMember?.preferredStationId,
+              `CHAIN P${step.stepIndex + 1}`
+            );
+            setIsRoutingCamera(true);
+            setTimeout(() => setIsRoutingCamera(false), 2400);
+            setDialogueText(
+              `[CHAIN PHASE ${step.stepIndex + 1}/${chain.steps.length}] Deploying ${step.assignedAgentName} to ${getRoomMetadata(step.targetSector)?.shortBadge || step.targetSector.toUpperCase()}...`
+            );
+          },
+          onStepProgress: (_step, progressText) => {
+            setTaskChainProgressText(progressText);
+            setDialogueText(progressText);
+          },
+          onStepComplete: (step, card) => {
+            if (step.assignedAgentId) {
+              addAgentMemory(step.assignedAgentId, {
+                prompt: step.directive,
+                summary: card.dialogue,
+              });
+            }
+            setExecutionCards((prev) => [card, ...prev]);
+            saveExecutionCards([card, ...executionCards]);
+            playBeep('complete');
+          },
+          onStepHandoff: (fromStep, toStep, handoffData) => {
+            setTaskChainProgressText(handoffData);
+            setDialogueText(`[SEAMLESS HANDOFF] ${fromStep.assignedAgentName} ➔ ${toStep.assignedAgentName}: Intelligence transferred. Advancing to Phase ${toStep.stepIndex + 1}...`);
+            playBeep('tap');
+          },
+          onChainComplete: (_chain, summaryCard) => {
+            setExecutionCards((prev) => [summaryCard, ...prev]);
+            saveExecutionCards([summaryCard, ...executionCards]);
+            setDialogueText(`[MISSION CHAIN COMPLETE] All ${chain.steps.length} autonomous phases executed successfully. Telemetry verified in Command Log.`);
+            setLastActionSummary(summaryCard.cardTitle);
+            playBeep('complete');
+            setIsExecuting(false);
+
+            appendCommandLedgerEntry({
+              timestamp: summaryCard.timestamp,
+              command_input: summaryCard.prompt,
+              involved_agent: summaryCard.agentName,
+              tool_used: 'autonomous_task_chain_orchestrator',
+              result_summary: summaryCard.cardTitle,
+              success_boost_achieved: 100,
+            });
+            refreshCommandLedger();
+
+            setTimeout(() => {
+              setActiveTaskChain((prev) => (prev?.id === chain.id && prev.status === 'completed' ? null : prev));
+            }, 8000);
+          },
+          onChainError: (_chain, err, failingStep) => {
+            setIsExecuting(false);
+            playBeep('error');
+            setDialogueText(`[CHAIN ABORTED] Phase ${failingStep.stepIndex + 1} (${failingStep.assignedAgentName}) encountered an execution error: ${err?.message || err}`);
+          },
+          onFunctionCallTriggered: () => {
+            setIsRoutingCamera(true);
+            setTimeout(() => setIsRoutingCamera(false), 2400);
+          },
+        },
+        themeId,
+        enabledPlugins
+      );
+    } catch (err: any) {
+      console.warn('[TASK CHAIN ERROR]', err);
+      setIsExecuting(false);
+    }
+  };
+
   const handleExecuteDirective = async (
     prompt: string,
     attachment?: { data: string; mimeType: string; name: string } | null,
@@ -658,7 +773,13 @@ const CommandCenterContent: React.FC = () => {
     explicitAgentId?: string,
     explicitTargetRoom?: RoomId
   ) => {
-    // 0. Automated Ambiguity Detection & Task Brief Interception (StarNet pattern)
+    // 0. Autonomous Multi-Step Task Chain Detection
+    if (!skipAmbiguityCheck && !attachment && !explicitAgentId && isDirectiveTaskChain(prompt)) {
+      handleExecuteTaskChain(prompt);
+      return;
+    }
+
+    // 1. Automated Ambiguity Detection & Task Brief Interception (StarNet pattern)
     if (!skipAmbiguityCheck && !attachment) {
       const ambiguityAnalysis = analyzePromptAmbiguity(prompt, { activeAgentRole: activeAgent.role });
       if (ambiguityAnalysis.requiresClarification && ambiguityAnalysis.brief) {
@@ -2203,6 +2324,18 @@ const CommandCenterContent: React.FC = () => {
                   </span>
                 </div>
 
+                {activeTaskChain && (
+                  <TaskChainHUD
+                    chain={activeTaskChain}
+                    currentProgressText={taskChainProgressText}
+                    onCancel={() => {
+                      setActiveTaskChain(null);
+                      setTaskChainProgressText('');
+                      setDialogueText('[TASK CHAIN] Chained mission aborted by Commander.');
+                    }}
+                  />
+                )}
+
                 {hqSubView === 'terminal' ? (
                   <TerminalWindow
                     dialogueText={dialogueText}
@@ -2532,6 +2665,9 @@ const CommandCenterContent: React.FC = () => {
           })),
           onDispatchTask: (agentId, taskPrompt) => {
             dispatchDirectiveToAgent(agentId, taskPrompt);
+          },
+          onExecuteChain: (workflowPrompt) => {
+            handleExecuteTaskChain(workflowPrompt);
           },
           onApproveTask: (_taskId) => {
             if (taskBriefState.isOpen && taskBriefState.brief) {

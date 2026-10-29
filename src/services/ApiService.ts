@@ -361,6 +361,29 @@ export const GEMINI_TOOL_DECLARATIONS: Record<string, GeminiFunctionDeclarationS
       required: ['query'],
     },
   },
+  delegate_task_to_operative: {
+    name: 'delegate_task_to_operative',
+    description:
+      'Autonomously delegate the next phase of a task chain to another specialist operative in the safehouse (Vance for strategy/planning, Cipher for code/files/crypto, Nyx for signals/email/Slack). Seamlessly passes your intermediate findings forward without user re-prompting.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        target_agent: {
+          type: 'STRING',
+          description: "Target operative: 'vance', 'cipher', or 'nyx' (or recruited operative name/id).",
+        },
+        directive: {
+          type: 'STRING',
+          description: 'Concrete operational directive for the next operative to execute.',
+        },
+        findings_to_pass: {
+          type: 'STRING',
+          description: 'Synthesized findings, code, files, or intelligence to hand off.',
+        },
+      },
+      required: ['target_agent', 'directive'],
+    },
+  },
 };
 
 /**
@@ -377,6 +400,7 @@ export function buildDynamicToolDeclarations(
     GEMINI_TOOL_DECLARATIONS.api_fetch_gateway,
     GEMINI_TOOL_DECLARATIONS.memory_vector_lookup,
     GEMINI_TOOL_DECLARATIONS.weather_lookup,
+    GEMINI_TOOL_DECLARATIONS.delegate_task_to_operative,
   ];
 
   const pluginMap: Record<string, GeminiFunctionDeclarationSchema> = {
@@ -566,6 +590,13 @@ export function resolveToolWorkflowDestination(toolName: string): {
         targetStationId: 'comms_dish_console',
         taskTag: 'DISPATCHING',
       };
+    case 'delegate_task_to_operative':
+      return {
+        pluginId: 'task_chain',
+        targetRoom: 'war_room',
+        targetStationId: 'war_center_desk',
+        taskTag: 'CHAIN HANDOFF',
+      };
     case 'weather_lookup':
       return {
         pluginId: 'weather',
@@ -680,6 +711,35 @@ export async function executeFunctionCallHandler(fc: {
           args,
           resultSummary: summary,
           livePayload: customRes,
+          targetRoom: dest.targetRoom,
+          targetStationId: dest.targetStationId,
+        },
+      };
+    }
+
+    // Autonomous Task Chain Handoff
+    if (name === 'delegate_task_to_operative') {
+      const targetAgent = String(args.target_agent || 'Cipher');
+      const directive = String(args.directive || 'Continue operational workflow.');
+      const findings = String(args.findings_to_pass || '');
+
+      const summary = `Task chained and handed off to Operative ${targetAgent.toUpperCase()}: "${directive.slice(0, 50)}..."`;
+      return {
+        id: fc.id,
+        name,
+        response: {
+          status: 'DELEGATED',
+          target_agent: targetAgent,
+          directive,
+          findings,
+          dispatchedAt: new Date().toISOString(),
+        },
+        executedToolMeta: {
+          pluginId: 'task_chain',
+          toolName: name,
+          args,
+          resultSummary: summary,
+          livePayload: { target_agent: targetAgent, directive, findings },
           targetRoom: dest.targetRoom,
           targetStationId: dest.targetStationId,
         },

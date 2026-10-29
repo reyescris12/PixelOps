@@ -27,6 +27,13 @@ import {
   getLatestStorageHealthReport,
   executeCodeSandboxEval,
 } from './SafetyService';
+import {
+  isReportDirective,
+  extractReportFilePath,
+  deriveReportTitle,
+  synthesizeComprehensiveReport,
+  uploadReportToWorkspaceFiles,
+} from './ReportService';
 
 export {
   executeSafeOperation,
@@ -2165,11 +2172,15 @@ function tryGenerateCode(prompt: string): {
   explanation: string;
   testCode: string;
 } | null {
+  // If this is a report, brief, summary, or document directive, never treat as a code generation request
+  if (isReportDirective(prompt)) return null;
+
   const p = prompt.toLowerCase();
   const isCodeRequest =
-    /\b(write|create|implement|code|generate|build|script|function|algorithm|class)\b/i.test(p) ||
+    (/\b(code|script|function|algorithm|class|method|snippet|implement\s+(?:a|an)?\s*(?:function|class|method|algorithm))\b/i.test(p) ||
     /\b(python|javascript|typescript|js|ts|py|react|html|css|sql)\b/i.test(p) ||
-    /\b(reverse|linked\s+list|debounce|throttle|binary\s+search|quicksort|fibonacci|palindrome|sort\s+array|fetch\s+wrapper)\b/i.test(p);
+    /\b(reverse|linked\s+list|debounce|throttle|binary\s+search|quicksort|fibonacci|palindrome|sort\s+array|fetch\s+wrapper)\b/i.test(p)) &&
+    !/\b(report|brief|summary|audit|dossier|analysis|overview|document|documentation)\b/i.test(p);
 
   if (!isCodeRequest) return null;
 
@@ -2712,6 +2723,78 @@ export async function generateLocalHeuristicCard(params: {
   // ==========================================
   // 1. MATHEMATICAL CALCULATION & ARITHMETIC
   // ==========================================
+  // ==========================================
+  // 1. WORKSPACE REPORT GENERATION & AUTO-UPLOAD
+  // ==========================================
+  if (isReportDirective(rawPrompt)) {
+    const targetPath = extractReportFilePath(rawPrompt);
+    const report = synthesizeComprehensiveReport({
+      prompt: rawPrompt,
+      agentName: params.activeAgentName,
+      agentRole: params.activeAgentRole,
+      explicitFilePath: targetPath,
+      targetSector: 'library',
+    });
+
+    params.onFunctionCallTriggered?.({
+      toolName: 'fs_storage_manager',
+      args: { action: 'write', path: report.filePath },
+      targetRoom: 'library',
+      targetStationId: 'library_archive_terminal',
+      taskTag: 'STORAGE',
+    });
+
+    let fileRecord: any = null;
+    try {
+      fileRecord = await uploadReportToWorkspaceFiles({
+        path: report.filePath,
+        content: report.markdown,
+        agentName: params.activeAgentName,
+        agentRole: params.activeAgentRole,
+      });
+    } catch (writeErr) {
+      console.warn('[ApiService] Failed to write workspace report:', writeErr);
+      fileRecord = { path: report.filePath, sizeBytes: report.markdown.length, updatedAt: new Date().toISOString() };
+    }
+
+    const toolMeta: ExecutedToolCall = {
+      pluginId: 'workspace_vfs',
+      toolName: 'fs_storage_manager',
+      args: { action: 'write', path: report.filePath, format: 'markdown' },
+      resultSummary: `Auto-uploaded "${report.filePath}" (${fileRecord.sizeBytes} bytes) to IndexedDB workspace`,
+      livePayload: {
+        path: report.filePath,
+        sizeBytes: fileRecord.sizeBytes,
+        status: 'SAVED_INDEXEDDB',
+        updatedAt: fileRecord.updatedAt,
+      },
+      targetRoom: 'library',
+      targetStationId: 'library_archive_terminal',
+    };
+    executedTools.push(toolMeta);
+
+    const dialogue = `${params.activeAgentName} (${params.activeAgentRole}): Operational report compiled and committed to the safehouse workspace!\n\n${report.markdown}\n\n📁 **[WORKSPACE REPORT UPLOADED]**\nSuccessfully written to **\`${report.filePath}\`** (${fileRecord.sizeBytes} bytes) in browser IndexedDB. Available anytime in the **Files** drawer (📁 Files) or via CLI (\`pixelops cat ${report.filePath}\`).`;
+
+    return {
+      id: `card-${Date.now()}`,
+      prompt: rawPrompt,
+      dialogue,
+      cardTitle: `Workspace Report Uploaded: ${report.title}`,
+      actionCategory: 'Workspace Storage',
+      steps: [
+        { label: 'Synthesized Report', detail: `Authored comprehensive markdown brief (${report.markdown.length} chars)`, status: 'completed' },
+        { label: 'Uploaded to Workspace Files', detail: `Saved to "${report.filePath}" in IndexedDB`, status: 'verified' },
+        { label: 'Files Drawer Synchronized', detail: 'Ready for viewing, editing, or export', status: 'completed' },
+      ],
+      toolCalls: executedTools,
+      tokenEstimate: Math.max(90, Math.round(report.markdown.length / 4) + 60),
+      agentName: params.activeAgentName,
+      themeId: params.themeId,
+      timestamp: new Date().toISOString(),
+      hasAttachment: Boolean(params.attachment),
+    };
+  }
+
   const mathResult = trySolveMath(rawPrompt);
   if (mathResult) {
     const dest = resolveToolWorkflowDestination('code_sandbox_eval');
@@ -3828,19 +3911,58 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
           };
         }
 
+        let finalDialogue = textContent || 'Directive executed. Standing by for next command.';
+        let finalCardTitle = 'Field Directive Execution';
+        let finalActionCategory = 'Operations';
+        let finalSteps: ExecutionStep[] = [
+          { label: 'Directive Ingested', detail: 'Parsed command parameters', status: 'completed' },
+          { label: 'Action Completed', detail: `${params.activeAgentName} completed assigned task`, status: 'verified' },
+          { label: 'Ledger Synchronized', detail: 'Saved to local mission ledger', status: 'completed' },
+        ];
+        const finalTools: ExecutedToolCall[] = [];
+
+        // Auto-Upload to Workspace Files whenever prompt requests report or response contains markdown brief
+        if (isReportDirective(params.prompt || '') || (finalDialogue.includes('# ') && finalDialogue.length > 200)) {
+          try {
+            const targetPath = extractReportFilePath(params.prompt || '');
+            const fileRec = await uploadReportToWorkspaceFiles({
+              path: targetPath,
+              content: finalDialogue,
+              agentName: params.activeAgentName,
+              agentRole: params.activeAgentRole,
+            });
+            finalCardTitle = `Workspace Report Uploaded: ${fileRec.path}`;
+            finalActionCategory = 'Workspace Storage';
+            finalDialogue = `${finalDialogue}\n\n📁 **[WORKSPACE REPORT UPLOADED]**\nCommitted report to **\`${fileRec.path}\`** (${fileRec.sizeBytes} bytes) in safehouse IndexedDB. View anytime in the **Files** drawer (📁 Files) or via CLI (\`pixelops cat ${fileRec.path}\`).`;
+            finalSteps = [
+              { label: 'Directive Ingested', detail: 'Parsed report specifications', status: 'completed' },
+              { label: 'Report Synthesized', detail: `Authored comprehensive markdown document (${fileRec.sizeBytes} bytes)`, status: 'verified' },
+              { label: 'Workspace File Uploaded', detail: `Saved to "${fileRec.path}" in IndexedDB`, status: 'verified' },
+              { label: 'Ledger Synchronized', detail: 'Persisted to safehouse storage', status: 'completed' },
+            ];
+            finalTools.push({
+              pluginId: 'workspace_vfs',
+              toolName: 'fs_storage_manager',
+              args: { action: 'write', path: fileRec.path },
+              resultSummary: `Auto-uploaded "${fileRec.path}" (${fileRec.sizeBytes} bytes) to IndexedDB`,
+              livePayload: { path: fileRec.path, sizeBytes: fileRec.sizeBytes, status: 'SAVED_INDEXEDDB' },
+              targetRoom: 'library',
+              targetStationId: 'library_archive_terminal',
+            });
+          } catch (uploadErr) {
+            console.warn('[ApiService] Failed to auto-upload report:', uploadErr);
+          }
+        }
+
         return {
           id: `card-${Date.now()}`,
           prompt: params.prompt || `Attached visual intel`,
-          dialogue: textContent || 'Directive executed. Standing by for next command.',
-          cardTitle: 'Field Directive Execution',
-          actionCategory: 'Operations',
-          steps: [
-            { label: 'Directive Ingested', detail: 'Parsed command parameters', status: 'completed' },
-            { label: 'Action Completed', detail: `${params.activeAgentName} completed assigned task`, status: 'verified' },
-            { label: 'Ledger Synchronized', detail: 'Saved to local mission ledger', status: 'completed' },
-          ],
-          toolCalls: [],
-          tokenEstimate: Math.max(48, Math.round(((params.prompt || '').length + textContent.length) / 4)),
+          dialogue: finalDialogue,
+          cardTitle: finalCardTitle,
+          actionCategory: finalActionCategory,
+          steps: finalSteps,
+          toolCalls: finalTools,
+          tokenEstimate: Math.max(48, Math.round(((params.prompt || '').length + finalDialogue.length) / 4)),
           agentName: params.activeAgentName,
           themeId: params.themeId,
           timestamp: new Date().toISOString(),

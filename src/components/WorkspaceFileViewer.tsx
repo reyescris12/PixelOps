@@ -134,6 +134,22 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
     }
   }, [isOpen]);
 
+  useEffect(() => {
+    const handleFileSaved = (e: any) => {
+      loadFiles(true);
+      if (e?.detail?.path) {
+        readWorkspaceFile(e.detail.path).then((f) => {
+          if (f) {
+            setSelectedFile(f);
+            setEditContent(f.content);
+          }
+        });
+      }
+    };
+    window.addEventListener('pixelops:workspace_file_saved', handleFileSaved);
+    return () => window.removeEventListener('pixelops:workspace_file_saved', handleFileSaved);
+  }, []);
+
   // Handle escape key to close
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

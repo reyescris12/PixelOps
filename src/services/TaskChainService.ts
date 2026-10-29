@@ -11,6 +11,12 @@ import {
   AgentExecutionCard,
   ExecutedToolCall,
 } from './ApiService';
+import {
+  isReportDirective,
+  extractReportFilePath,
+  synthesizeComprehensiveReport,
+  uploadReportToWorkspaceFiles,
+} from './ReportService';
 
 export interface TaskChainStep {
   id: string;
@@ -187,6 +193,11 @@ function resolveAgentForStep(
     lower.includes('script') ||
     lower.includes('file') ||
     lower.includes('storage') ||
+    lower.includes('report') ||
+    lower.includes('brief') ||
+    lower.includes('summary') ||
+    lower.includes('audit') ||
+    lower.includes('doc') ||
     lower.includes('github') ||
     lower.includes('issue') ||
     lower.includes('bug') ||
@@ -306,7 +317,8 @@ export function deconstructDirectiveIntoChain(
   const steps: TaskChainStep[] = cappedSegments.map((segment, idx) => {
     const assigned = resolveAgentForStep(segment, idx, availableAgents);
     const cleanDirective = segment
-      .replace(/^(?:have\s+\w+\s+|let\s+\w+\s+|\w+[,:]\s*)/i, '')
+      .replace(/^(?:(?:and\s+then|then|after\s+that|next|finally|subsequently|first|second|third)\s+)?(?:have\s+\w+\s+|let\s+\w+\s+|\w+[,:]\s*)/i, '')
+      .replace(/^(?:(?:and\s+then|then|after\s+that|next|finally|subsequently)\s+)/i, '')
       .trim();
 
     return {
@@ -367,6 +379,11 @@ export function buildStepEnrichedPrompt(
           .join('\n')
       : '';
 
+  const isReportStep = isReportDirective(currentStep.directive);
+  const reportMandate = isReportStep
+    ? `\n\nOPERATIONAL REPORT MANDATE:\nYou must compile and commit this comprehensive report to safehouse workspace files (reports/). Integrate all preceding intelligence findings, architecture principles, and verification matrices.`
+    : '';
+
   return `${currentStep.directive}
 
 ================================================================================
@@ -376,7 +393,7 @@ Preceding Operatives have completed their designated phases and passed you the f
 ${previousFindings}${artifactsSummary}
 
 OPERATIONAL DIRECTIVE:
-Execute your phase immediately using the intelligence above. Do not repeat previous steps—build directly upon their findings.
+Execute your phase immediately using the intelligence above. Do not repeat previous steps—build directly upon their findings.${reportMandate}
 ================================================================================`;
 }
 
@@ -495,6 +512,42 @@ export async function executeTaskChain(
         currentStep.outputPayload = card.toolCalls[0].livePayload;
       }
 
+      // If this step is a report directive, guarantee that a workspace file is persisted
+      if (isReportDirective(currentStep.directive)) {
+        const targetPath = extractReportFilePath(currentStep.directive);
+        // Check if card dialogue already has file or if we need to synthesize one
+        let existingFileArtifact = chain.artifacts.find((a) => a.key === `file_${currentStep.stepIndex}` || a.value === targetPath);
+        if (!existingFileArtifact) {
+          try {
+            const synthesized = synthesizeComprehensiveReport({
+              prompt: currentStep.directive,
+              agentName: currentStep.assignedAgentName,
+              agentRole: currentStep.assignedAgentRole,
+              existingDialogue: card.dialogue,
+              precedingIntelligence: Object.values(chain.accumulatedContext).map((c: any) => c.summary).join('\n'),
+              explicitFilePath: targetPath,
+              targetSector: currentStep.targetSector,
+            });
+            const savedRec = await uploadReportToWorkspaceFiles({
+              path: synthesized.filePath,
+              content: card.dialogue.includes('# ') ? card.dialogue : synthesized.markdown,
+              agentName: currentStep.assignedAgentName,
+              agentRole: currentStep.assignedAgentRole,
+            });
+            chain.artifacts.push({
+              key: `workspace_file_${currentStep.stepIndex}`,
+              label: 'Workspace Report File',
+              value: savedRec.path,
+              producerAgent: currentStep.assignedAgentName,
+              stepIndex: currentStep.stepIndex,
+              timestamp: new Date().toISOString(),
+            });
+          } catch (fileErr) {
+            console.warn('[TaskChainService] Auto-persist report error:', fileErr);
+          }
+        }
+      }
+
       // Extract and accumulate shared artifacts
       const newArtifacts = extractArtifactsFromCard(card, currentStep);
       if (newArtifacts.length > 0) {
@@ -542,7 +595,13 @@ export async function executeTaskChain(
     status: 'completed' as const,
   }));
 
-  const compositeDialogue = `[MISSION WORKFLOW COMPLETE] All ${chain.steps.length} autonomous phases executed successfully across safehouse sectors:\n\n${chain.steps
+  const generatedFiles = chain.artifacts.filter((a) => a.label.includes('File') || a.label.includes('Report') || a.key.includes('file'));
+  const filesSection = generatedFiles.length > 0
+    ? `\n\n📁 **Generated Workspace Reports & Files (Committed to IndexedDB):**\n` +
+      generatedFiles.map((f) => `• \`${f.value}\` (Authored by ${f.producerAgent} · Ready in Files drawer or via \`pixelops cat ${f.value}\`)`).join('\n')
+    : '';
+
+  const compositeDialogue = `[MISSION WORKFLOW COMPLETE] All ${chain.steps.length} autonomous phases executed successfully across safehouse sectors:${filesSection}\n\n${chain.steps
     .map(
       (s, idx) =>
         `**Phase ${idx + 1} (${s.assignedAgentName} · ${s.targetSector.toUpperCase()}):**\n${s.outputSummary}`

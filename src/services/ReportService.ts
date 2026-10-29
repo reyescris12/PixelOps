@@ -17,18 +17,23 @@ export function isReportDirective(prompt: string): boolean {
   const p = prompt.toLowerCase();
 
   // Explicit report or document keywords
-  const hasReportNoun = /\b(report|brief|summary|audit|dossier|analysis|overview|guide|checklist|spec|specification|document|documentation|whitepaper|writeup|notes|intel\s+brief|mission\s+log)\b/i.test(p);
-  const hasReportVerb = /\b(write|generate|create|upload|draft|save|compile|produce|document|publish|prepare|export|output|store|compose)\b/i.test(p);
+  const hasReportNoun = /\b(report|brief|summary|audit|dossier|analysis|overview|guide|checklist|spec|specification|document|documentation|whitepaper|writeup|notes|intel\s+brief|mission\s+log|findings|assessment|takeaways|evaluation)\b/i.test(p);
+  const hasReportVerb = /\b(write|generate|create|upload|draft|save|compile|produce|document|publish|prepare|export|output|store|compose|give|provide|record|build|summarize)\b/i.test(p);
 
   if (hasReportNoun && hasReportVerb) return true;
 
+  // Prompts asking for "report on...", "analysis of...", "summary of...", "findings on..."
+  if (/\b(?:report\s+(?:on|about|for)|analysis\s+(?:on|of|about)|summary\s+(?:of|on)|findings\s+(?:on|of|about)|audit\s+(?:of|on))\b/i.test(p)) {
+    return true;
+  }
+
   // Prompts asking to "write this out" or "save to <file>"
-  if (/\b(write\s+this\s+out|put\s+this\s+in|save\s+(this\s+)?to|export\s+(this\s+)?to|create\s+(a\s+)?file)\b/i.test(p)) {
+  if (/\b(write\s+this\s+out|put\s+this\s+in|save\s+(this\s+)?to|export\s+(this\s+)?to|create\s+(a\s+)?file|log\s+(this\s+)?to)\b/i.test(p)) {
     return true;
   }
 
   // File extension mentions in conjunction with an action
-  if (/[\w\-_\.]+\.(?:md|json|txt|csv)\b/i.test(p) && /\b(write|save|create|upload|generate|put|draft|store)\b/i.test(p)) {
+  if (/[\w\-_\.]+\.(?:md|json|txt|csv)\b/i.test(p) && /\b(write|save|create|upload|generate|put|draft|store|record)\b/i.test(p)) {
     return true;
   }
 

@@ -1028,10 +1028,21 @@ const CommandCenterContent: React.FC = () => {
   const dispatchDirectiveToAgent = (
     agentId: string,
     directive: string,
-    targetSector?: RoomId
+    targetSector?: RoomId,
+    skipAmbiguityCheck: boolean = false
   ) => {
-    const targetCrew = crewAgents.find((a) => a.id === agentId);
-    const targetPreset = theme.agents.find((a) => a.id === agentId);
+    const cleanId = (agentId || '').trim().toLowerCase();
+    const targetCrew = crewAgents.find(
+      (a) =>
+        a.id.toLowerCase() === cleanId ||
+        (a.customName || '').toLowerCase() === cleanId ||
+        (a.defaultName || '').toLowerCase() === cleanId
+    );
+    const targetPreset = theme.agents.find(
+      (a) =>
+        a.id.toLowerCase() === cleanId ||
+        (a.name || '').toLowerCase() === cleanId
+    );
     const resolvedAgent = targetCrew || targetPreset || activeAgent;
 
     if (!resolvedAgent) return;
@@ -1053,7 +1064,7 @@ const CommandCenterContent: React.FC = () => {
       'EXECUTING'
     );
 
-    handleExecuteDirective(directive, null, false, resolvedAgent.id, room);
+    handleExecuteDirective(directive, null, skipAmbiguityCheck, resolvedAgent.id, room);
   };
 
   /**
@@ -1063,13 +1074,17 @@ const CommandCenterContent: React.FC = () => {
     taskId: string,
     targetAgentId: string,
     fallbackDirective?: string,
-    fallbackSector?: RoomId
+    fallbackSector?: RoomId,
+    slotIdx: number = 0
   ) => {
     let matchedTask: RoundtableActionItem | undefined;
     for (const session of roundtableSessions) {
       if (session.actionItems) {
         const found = session.actionItems.find(
-          (t, i) => (t.id || `task_${session.id}_${i}`) === taskId
+          (t, i) =>
+            (t.id && t.id === taskId) ||
+            `task_${session.id}_${i}` === taskId ||
+            `task_${session.id}_${i + 1}` === taskId
         );
         if (found) {
           matchedTask = found;
@@ -1078,19 +1093,97 @@ const CommandCenterContent: React.FC = () => {
       }
     }
 
-    const directive = matchedTask?.directive || fallbackDirective;
-    const targetSector = matchedTask?.targetSector || fallbackSector;
-    const agentId = matchedTask?.assignedAgentId || targetAgentId;
+    const directive = (matchedTask?.directive || fallbackDirective || '').trim();
+    const targetSector = (matchedTask?.targetSector || fallbackSector || 'war_room') as RoomId;
+    const rawAgentIdentifier = matchedTask?.assignedAgentId || targetAgentId;
 
-    const agent =
-      crewAgents.find((a) => a.id === agentId || a.customName?.toLowerCase() === agentId?.toLowerCase()) ||
-      theme.agents.find((a) => a.id === agentId || a.name?.toLowerCase() === agentId?.toLowerCase()) ||
-      (targetAgentId ? crewAgents.find((a) => a.id === targetAgentId) : undefined);
+    if (!directive) {
+      console.warn('[PixelOps] Deploy blocked: empty directive');
+      return;
+    }
 
-    if (!directive || !agent || !isValidRealTask(directive)) return;
+    // Comprehensive case-insensitive & index-aware agent resolution:
+    let resolvedAgent: any = undefined;
+    const cleanId = (rawAgentIdentifier || '').trim().toLowerCase();
 
-    // Dispatch directive strictly to the designated agent
-    dispatchDirectiveToAgent(agent.id, directive, targetSector);
+    // Strategy A: Exact ID match (case-insensitive)
+    resolvedAgent = crewAgents.find(
+      (a) => a.id.toLowerCase() === cleanId
+    );
+
+    // Strategy B: Exact Name / customName / defaultName match (case-insensitive)
+    if (!resolvedAgent) {
+      resolvedAgent = crewAgents.find((a) => {
+        const custom = (a.customName || '').toLowerCase();
+        const def = (a.defaultName || '').toLowerCase();
+        return custom === cleanId || def === cleanId;
+      });
+    }
+
+    // Strategy C: Substring name match (e.g. "Vance" inside "Agent Vance", or "Agent Vance" inside "vance")
+    if (!resolvedAgent && cleanId) {
+      resolvedAgent = crewAgents.find((a) => {
+        const custom = (a.customName || '').toLowerCase();
+        const def = (a.defaultName || '').toLowerCase();
+        const id = a.id.toLowerCase();
+        return (
+          custom.includes(cleanId) ||
+          cleanId.includes(custom) ||
+          def.includes(cleanId) ||
+          cleanId.includes(def) ||
+          id.includes(cleanId) ||
+          cleanId.includes(id)
+        );
+      });
+    }
+
+    // Strategy D: Theme agents match
+    if (!resolvedAgent) {
+      resolvedAgent = theme.agents.find((a) => {
+        const id = (a.id || '').toLowerCase();
+        const name = (a.name || '').toLowerCase();
+        return (
+          id === cleanId ||
+          name === cleanId ||
+          cleanId.includes(id) ||
+          cleanId.includes(name)
+        );
+      });
+    }
+
+    // Strategy E: Extract slot number if identifier is like "agent_0", "operative_1", etc.
+    if (!resolvedAgent && cleanId) {
+      const matchNum = cleanId.match(/\d+/);
+      if (matchNum) {
+        const parsed = parseInt(matchNum[0], 10);
+        const zeroIndex = cleanId.includes('operative') ? parsed - 1 : parsed;
+        if (zeroIndex >= 0 && zeroIndex < crewAgents.length) {
+          resolvedAgent = crewAgents[zeroIndex];
+        }
+      }
+    }
+
+    // Strategy F: Fall back to slotIdx
+    if (!resolvedAgent && typeof slotIdx === 'number' && slotIdx >= 0 && slotIdx < crewAgents.length) {
+      resolvedAgent = crewAgents[slotIdx];
+    }
+
+    // Strategy G: Absolute fallback to activeAgent or first agent
+    if (!resolvedAgent) {
+      resolvedAgent = crewAgents[0] || activeAgent;
+    }
+
+    const agentDisplayName = resolvedAgent.customName || resolvedAgent.name || 'Operative';
+    const sectorBadge = getRoomMetadata(targetSector)?.shortBadge || String(targetSector).toUpperCase();
+
+    // Immediately unblock audio & display HUD notification
+    playBeep('complete');
+    setDialogueText(
+      `[OPERATIVE DISPATCHED] ${agentDisplayName} deploying to ${sectorBadge} for directive: "${directive.slice(0, 48)}..."`
+    );
+
+    // Dispatch directly with skipAmbiguityCheck = true (already confirmed during meeting)
+    dispatchDirectiveToAgent(resolvedAgent.id, directive, targetSector, true);
   };
 
   const handleTriggerErrorDrill = (code: RetroErrorCode) => {
@@ -2399,7 +2492,8 @@ const CommandCenterContent: React.FC = () => {
                         taskId || `task_${agentIdx}`,
                         fallbackId,
                         directive,
-                        targetSector
+                        targetSector,
+                        agentIdx
                       );
                     }}
                     activeSpeakerAgentIndex={activeSpeakerAgentIndex}

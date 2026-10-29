@@ -4,6 +4,7 @@ import {
   Play,
   SkipForward,
   CheckCircle2,
+  Check,
   Sparkles,
   ArrowRight,
   MessageSquare,
@@ -69,6 +70,7 @@ export const TownHallRoundtablePanel: React.FC<TownHallRoundtablePanelProps> = (
   const [visibleTurnCount, setVisibleTurnCount] = useState<number>(99);
   const [isAutoStepping, setIsAutoStepping] = useState<boolean>(false);
   const [walkFrame, setWalkFrame] = useState<1 | 2>(1);
+  const [deployedTaskIds, setDeployedTaskIds] = useState<Set<string>>(new Set());
   const ledgerScrollRef = useRef<HTMLDivElement | null>(null);
 
   const activeSession: RoundtableMeetingSession | undefined =
@@ -76,7 +78,14 @@ export const TownHallRoundtablePanel: React.FC<TownHallRoundtablePanelProps> = (
 
   const getAgentName = (targetAgentId?: string, fallbackSlot: number = 0): string => {
     if (targetAgentId) {
-      const match = crewAgents.find((a) => a.id === targetAgentId);
+      const clean = targetAgentId.toLowerCase().trim();
+      const match = crewAgents.find(
+        (a) =>
+          a.id.toLowerCase() === clean ||
+          a.customName?.toLowerCase() === clean ||
+          (a as any).defaultName?.toLowerCase() === clean ||
+          (a as any).name?.toLowerCase() === clean
+      );
       if (match) return match.customName || (match as any).name;
     }
     const fallback = crewAgents[fallbackSlot] || getCrewAgentByIndex(fallbackSlot);
@@ -90,7 +99,14 @@ export const TownHallRoundtablePanel: React.FC<TownHallRoundtablePanelProps> = (
     directive: string,
     targetSector: RoomId
   ) => {
-    playBeep('tap');
+    // Stop meeting auto-step loop immediately so it does not interfere with directive dispatch
+    setIsAutoStepping(false);
+    onSelectSpeakerAgentIndex(null);
+
+    // Track deployed task for tactile UI confirmation
+    setDeployedTaskIds((prev) => new Set(prev).add(taskId));
+    playBeep('complete');
+
     onDispatchActionItem(
       slotIdx,
       directive,
@@ -507,11 +523,16 @@ export const TownHallRoundtablePanel: React.FC<TownHallRoundtablePanelProps> = (
                       const verifiedTasks = activeSession.actionItems.filter((item) =>
                         isValidRealTask(item.directive)
                       );
-                      if (verifiedTasks.length === 0) return null;
+                      const displayTasks =
+                        verifiedTasks.length > 0
+                          ? verifiedTasks
+                          : activeSession.actionItems;
+
+                      if (displayTasks.length === 0) return null;
 
                       return (
                         <div className="pt-1.5 border-t border-[#1f3b2b] flex flex-col gap-1.5">
-                          {verifiedTasks.map((item, idx) => {
+                          {displayTasks.map((item, idx) => {
                             const slotIdx =
                               typeof item.agentIndex === 'number' &&
                               item.agentIndex >= 0 &&
@@ -521,16 +542,21 @@ export const TownHallRoundtablePanel: React.FC<TownHallRoundtablePanelProps> = (
                             const crew =
                               crewAgents[slotIdx] || getCrewAgentByIndex(slotIdx);
                             const taskId = item.id || `task_${activeSession.id}_${idx}`;
-                            const assignedAgentId = item.assignedAgentId || crew.id;
+                            const assignedAgentId = item.assignedAgentId || crew?.id || `agent_${slotIdx}`;
                             const agentDisplayName = getAgentName(assignedAgentId, slotIdx);
                             const sectorMeta =
                               ROOM_METADATA[item.targetSector] ||
                               ROOM_METADATA.war_room;
+                            const isDeployed = deployedTaskIds.has(taskId);
 
                             return (
                               <div
                                 key={taskId}
-                                className="flex flex-wrap items-center justify-between gap-2 bg-[#0b110e] border border-[#233d2e] px-2.5 py-1.5 text-[11px]"
+                                className={`flex flex-wrap items-center justify-between gap-2 px-2.5 py-1.5 text-[11px] transition-colors ${
+                                  isDeployed
+                                    ? 'bg-[#0f1d14] border border-[#22c55e]/60 shadow-[0_0_12px_rgba(34,197,94,0.15)]'
+                                    : 'bg-[#0b110e] border border-[#233d2e]'
+                                }`}
                               >
                                 <div className="min-w-0 flex-1">
                                   <span className="text-[#e59838] font-bold">
@@ -545,6 +571,7 @@ export const TownHallRoundtablePanel: React.FC<TownHallRoundtablePanelProps> = (
                                 </div>
                                 <button
                                   type="button"
+                                  disabled={isDeployed}
                                   onClick={() =>
                                     handleDeployTask(
                                       taskId,
@@ -554,11 +581,28 @@ export const TownHallRoundtablePanel: React.FC<TownHallRoundtablePanelProps> = (
                                       item.targetSector
                                     )
                                   }
-                                  className="px-2.5 py-1 bg-[#1e2f24] hover:bg-[#4ade80] text-[#4ade80] hover:text-[#0c120e] border border-[#3a6349] font-bold text-[10px] flex items-center gap-1.5 cursor-pointer shrink-0 transition-colors rounded shadow-sm"
-                                  title={`Deploy ${agentDisplayName} to ${sectorMeta.shortBadge} to execute this directive`}
+                                  className={`px-2.5 py-1 font-bold text-[10px] flex items-center gap-1.5 shrink-0 transition-colors rounded shadow-sm ${
+                                    isDeployed
+                                      ? 'bg-[#153422] text-[#4ade80] border border-[#22c55e] cursor-default'
+                                      : 'bg-[#1e2f24] hover:bg-[#4ade80] text-[#4ade80] hover:text-[#0c120e] border border-[#3a6349] cursor-pointer'
+                                  }`}
+                                  title={
+                                    isDeployed
+                                      ? `Operative ${agentDisplayName} dispatched to ${sectorMeta.shortBadge}`
+                                      : `Deploy ${agentDisplayName} to ${sectorMeta.shortBadge} to execute this directive`
+                                  }
                                 >
-                                  <span>Deploy {agentDisplayName}</span>
-                                  <ArrowRight className="w-2.5 h-2.5" />
+                                  {isDeployed ? (
+                                    <>
+                                      <Check className="w-2.5 h-2.5 text-[#4ade80]" />
+                                      <span>Deployed {agentDisplayName}</span>
+                                    </>
+                                  ) : (
+                                    <>
+                                      <span>Deploy {agentDisplayName}</span>
+                                      <ArrowRight className="w-2.5 h-2.5" />
+                                    </>
+                                  )}
                                 </button>
                               </div>
                             );

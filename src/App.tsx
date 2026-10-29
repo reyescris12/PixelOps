@@ -110,6 +110,7 @@ import {
 import { TaskChainHUD } from './components/TaskChainHUD';
 import { PluginAuthModal, PluginAuthTarget } from './components/PluginAuthModal';
 import { FieldManualModal } from './components/FieldManualModal';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import {
   isPluginAuthenticated,
   clearPluginCredential,
@@ -2713,11 +2714,13 @@ const CommandCenterContent: React.FC = () => {
         onRevoked={handlePluginRevoked}
       />
 
-      <FieldManualModal
-        isOpen={isFieldManualOpen}
-        onClose={() => setIsFieldManualOpen(false)}
-        onSelectPrompt={(samplePrompt) => handleExecuteDirective(samplePrompt)}
-      />
+      <ErrorBoundary fallbackTitle="FIELD MANUAL VIEWER RECOVERY">
+        <FieldManualModal
+          isOpen={isFieldManualOpen}
+          onClose={() => setIsFieldManualOpen(false)}
+          onSelectPrompt={(samplePrompt) => handleExecuteDirective(samplePrompt)}
+        />
+      </ErrorBoundary>
 
       {/* Mobile Portrait Orientation Lock Prompt */}
       {!dismissPortraitGuard && (
@@ -2749,12 +2752,14 @@ const CommandCenterContent: React.FC = () => {
 
 export default function App() {
   return (
-    <ThemeProvider>
-      <CrewProvider>
-        <InboxProvider>
-          <CommandCenterContent />
-        </InboxProvider>
-      </CrewProvider>
-    </ThemeProvider>
+    <ErrorBoundary fallbackTitle="PIXELOPS COMMAND CENTER RECOVERY">
+      <ThemeProvider>
+        <CrewProvider>
+          <InboxProvider>
+            <CommandCenterContent />
+          </InboxProvider>
+        </CrewProvider>
+      </ThemeProvider>
+    </ErrorBoundary>
   );
 }

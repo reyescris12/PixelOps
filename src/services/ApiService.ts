@@ -27,6 +27,7 @@ import {
   getLatestStorageHealthReport,
   executeCodeSandboxEval,
 } from './SafetyService';
+import { draftExternalMessageContent } from './ComposioDraftingService';
 import {
   isReportDirective,
   extractReportFilePath,
@@ -2559,9 +2560,9 @@ async function executeAndFormatExternalTool(opts: {
       cardTitle: `${appName.toUpperCase()} DISPATCH SUCCESSFUL`,
       actionCategory: 'Live Telemetry',
       steps: [
-        { label: 'Intent & Parameters Parsed', detail: `Target action: ${actionName}`, status: 'completed' },
-        { label: 'Composio Live Execution', detail: `Dispatched to connected account (${matched.id})`, status: 'verified' },
-        { label: 'External Provider Confirmation', detail: `Live response verified from ${appName}`, status: 'completed' },
+        { label: 'Drafting Phase', detail: `Synthesized outbound message content for ${appName}`, status: 'completed' as const },
+        { label: 'Composio Dispatch Phase', detail: `Transmitted to live account (${matched.id})`, status: 'verified' as const },
+        { label: 'External Provider Confirmation', detail: `Live response verified from ${appName}`, status: 'completed' as const },
       ],
       toolCalls: [executedToolMeta],
       tokenEstimate: Math.max(90, Math.round(dialogue.length / 4)),
@@ -2649,10 +2650,15 @@ export async function tryParseAndExecuteExternalToolDirective(params: {
         ? subjectMatch[1].trim()
         : `Tactical Dispatch: Directive from Operative ${params.activeAgentName}`;
 
-      const bodyMatch = rawPrompt.match(/(?:saying|body|content|message|text)\s*[:"']\s*([^"'\n\r]+)["']?/i);
-      const body = bodyMatch
-        ? bodyMatch[1].trim()
-        : `[PIXELOPS OPERATIVE DISPATCH]\n\nDirective: ${rawPrompt}\n\nOperative: ${params.activeAgentName} (${params.activeAgentRole})\nStatus: Transmitted via connected Gmail account.\nTimestamp: ${new Date().toISOString()}`;
+      // Step 1: Drafting Agent generates full synthesized message body
+      const draftedBody = await draftExternalMessageContent({
+        targetChannel: 'email',
+        prompt: rawPrompt,
+        agentName: params.activeAgentName,
+        agentRole: params.activeAgentRole,
+        themeId: params.themeId,
+      });
+      const body = draftedBody;
 
       actionArgs = {
         recipient_email: recipient,
@@ -2703,10 +2709,15 @@ export async function tryParseAndExecuteExternalToolDirective(params: {
       const titleMatch = rawPrompt.match(/(?:titled?|title|named?|issue)\s*[:"']\s*([^"'\n\r]+)["']?/i);
       const title = titleMatch ? titleMatch[1].trim() : `[Ops Directive] ${rawPrompt.slice(0, 48)}`;
 
-      const bodyMatch = rawPrompt.match(/(?:body|description|content|saying)\s*[:"']\s*([^"'\n\r]+)["']?/i);
-      const body = bodyMatch
-        ? bodyMatch[1].trim()
-        : `### Automated Dispatch\n\n- **Directive:** ${rawPrompt}\n- **Operative:** ${params.activeAgentName} (${params.activeAgentRole})\n- **Safehouse Node:** PixelOps Command Center\n- **Timestamp:** ${new Date().toISOString()}`;
+      // Step 1: Drafting Agent generates full synthesized issue description
+      const draftedBody = await draftExternalMessageContent({
+        targetChannel: 'github',
+        prompt: rawPrompt,
+        agentName: params.activeAgentName,
+        agentRole: params.activeAgentRole,
+        themeId: params.themeId,
+      });
+      const body = draftedBody;
 
       actionArgs = { owner, repo, title, body };
     }
@@ -2742,10 +2753,15 @@ export async function tryParseAndExecuteExternalToolDirective(params: {
     const channelMatch = rawPrompt.match(/#([a-zA-Z0-9_-]+)/i);
     const channel = channelMatch ? `#${channelMatch[1]}` : '#general';
 
-    const textMatch = rawPrompt.match(/(?:saying|message|text|content)\s*[:"']\s*([^"'\n\r]+)["']?/i);
-    const text = textMatch
-      ? textMatch[1].trim()
-      : `[PIXELOPS TACTICAL BROADCAST] Operative ${params.activeAgentName}: "${rawPrompt}"`;
+    // Step 1: Drafting Agent generates synthesized message content
+    const draftedText = await draftExternalMessageContent({
+      targetChannel: 'slack',
+      prompt: rawPrompt,
+      agentName: params.activeAgentName,
+      agentRole: params.activeAgentRole,
+      themeId: params.themeId,
+    });
+    const text = draftedText;
 
     const actionArgs = { channel, text, message: text };
 
@@ -2817,7 +2833,14 @@ export async function tryParseAndExecuteExternalToolDirective(params: {
 
     const titleMatch = rawPrompt.match(/(?:titled?|title|named?|page)\s*[:"']\s*([^"'\n\r]+)["']?/i);
     const title = titleMatch ? titleMatch[1].trim() : `Mission Brief: ${params.activeAgentName}`;
-    const content = `Directive: ${rawPrompt}\n\nOperative: ${params.activeAgentName} (${params.activeAgentRole})\nStatus: Logged into Notion workspace.`;
+    // Step 1: Drafting Agent generates synthesized Notion page content
+    const content = await draftExternalMessageContent({
+      targetChannel: 'notion',
+      prompt: rawPrompt,
+      agentName: params.activeAgentName,
+      agentRole: params.activeAgentRole,
+      themeId: params.themeId,
+    });
 
     const actionArgs = { title, content };
 
@@ -2848,7 +2871,14 @@ export async function tryParseAndExecuteExternalToolDirective(params: {
 
     const titleMatch = rawPrompt.match(/(?:titled?|title|named?|issue)\s*[:"']\s*([^"'\n\r]+)["']?/i);
     const title = titleMatch ? titleMatch[1].trim() : `Engineering Task: ${params.activeAgentName}`;
-    const description = `Directive: ${rawPrompt}\n\nFiled by Operative ${params.activeAgentName} (${params.activeAgentRole}).`;
+    // Step 1: Drafting Agent generates synthesized Linear issue description
+    const description = await draftExternalMessageContent({
+      targetChannel: 'linear',
+      prompt: rawPrompt,
+      agentName: params.activeAgentName,
+      agentRole: params.activeAgentRole,
+      themeId: params.themeId,
+    });
 
     const actionArgs = { title, description };
 
@@ -3670,6 +3700,10 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
         params.agentSystemPrompt,
         memoryContextStr,
         `CRITICAL TOOL & CAPABILITY DIRECTIVES:
+- TWO-STEP DRAFTING ENFORCEMENT FOR EXTERNAL COMMS (GMAIL, SLACK, DISCORD, GITHUB, NOTION, LINEAR):
+  * When communicating via external tools (e.g. composio_gmail_send_email, composio_slack_send_message, composio_discord_send_message, composio_github_create_issue, composio_notion_create_page, composio_linear_create_issue), you MUST execute a mandatory two-step workflow:
+    1. DRAFTING STEP: First synthesize the actual informative message, professional email, report, or issue content in full detail based on your agent knowledge and any previous findings.
+    2. EXECUTION STEP: Pass your drafted synthesis into the body/text/content/description parameter. NEVER pass the user's prompt or directive as the body! The recipient must receive your actual operational work product and response, never the instructions you were given.
 - RESEARCH & WEB SEARCH: When the directive asks to search, look up, research, find facts, gather intelligence, or check documentation, ALWAYS invoke "live_web_search" with the clean topic keywords. Do not answer from stale assumptions when you have live web search access.
 - COMPREHENSIVE REPORTS & WORKSPACE FILES: When asked to write, generate, create, upload, or draft a report, brief, analysis, or audit, ALWAYS author a complete, in-depth technical Markdown report with clear headings (# Title, ## Executive Summary, ## Findings & Analysis, ## Recommendations), and save it via "fs_storage_manager" with action="write" and path="reports/<topic>.md".
 - CODE EVALUATION & COMPUTATION: When asked to test code, evaluate logic, or perform math, ALWAYS call "code_sandbox_eval".

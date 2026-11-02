@@ -1234,8 +1234,8 @@ export const COMPOSIO_GEMINI_TOOL_SCHEMAS: Record<string, any> = {
       properties: {
         owner: { type: 'STRING', description: 'Repository owner or organization name (e.g. "octocat").' },
         repo: { type: 'STRING', description: 'Repository name (e.g. "Hello-World").' },
-        title: { type: 'STRING', description: 'Title of the GitHub issue.' },
-        body: { type: 'STRING', description: 'Markdown body content describing the issue or bug.' },
+        title: { type: 'STRING', description: 'Concise, descriptive title for the GitHub issue drafted by the operative.' },
+        body: { type: 'STRING', description: 'CRITICAL: The fully synthesized, complete issue description drafted by the operative with technical steps, findings, and reproduction details. NEVER pass the user\'s raw prompt or directive.' },
       },
       required: ['owner', 'repo', 'title'],
     },
@@ -1261,7 +1261,7 @@ export const COMPOSIO_GEMINI_TOOL_SCHEMAS: Record<string, any> = {
       type: 'OBJECT',
       properties: {
         channel: { type: 'STRING', description: 'Channel name or ID (e.g. "#general", "C12345").' },
-        text: { type: 'STRING', description: 'Message text to dispatch to the channel.' },
+        text: { type: 'STRING', description: 'CRITICAL: The fully synthesized message text drafted by the operative to post to the Slack channel. MUST contain the actual operational message, report, or findings. NEVER pass the user\'s raw prompt or directive.' },
       },
       required: ['channel', 'text'],
     },
@@ -1275,8 +1275,8 @@ export const COMPOSIO_GEMINI_TOOL_SCHEMAS: Record<string, any> = {
       type: 'OBJECT',
       properties: {
         recipient_email: { type: 'STRING', description: 'Destination email address.' },
-        subject: { type: 'STRING', description: 'Email subject title.' },
-        body: { type: 'STRING', description: 'Email body text or plain content.' },
+        subject: { type: 'STRING', description: 'A concise, professional subject title reflecting the drafted message content.' },
+        body: { type: 'STRING', description: 'CRITICAL: The fully synthesized, complete email body drafted by the operative. MUST contain the actual message, report, or findings with professional greeting and sign-off. NEVER pass the user\'s raw prompt or directive.' },
       },
       required: ['recipient_email', 'subject', 'body'],
     },
@@ -1290,8 +1290,8 @@ export const COMPOSIO_GEMINI_TOOL_SCHEMAS: Record<string, any> = {
       type: 'OBJECT',
       properties: {
         parent_page_id: { type: 'STRING', description: 'Notion parent page or database ID.' },
-        title: { type: 'STRING', description: 'Title of the new page.' },
-        content: { type: 'STRING', description: 'Notes or markdown content for the page.' },
+        title: { type: 'STRING', description: 'Title of the new page drafted by the operative.' },
+        content: { type: 'STRING', description: 'CRITICAL: The complete, structured Markdown document or analysis drafted by the operative. NEVER pass the raw user prompt.' },
       },
       required: ['title'],
     },
@@ -1305,8 +1305,8 @@ export const COMPOSIO_GEMINI_TOOL_SCHEMAS: Record<string, any> = {
       type: 'OBJECT',
       properties: {
         team_id: { type: 'STRING', description: 'Linear team identifier.' },
-        title: { type: 'STRING', description: 'Title of the engineering ticket.' },
-        description: { type: 'STRING', description: 'Detailed problem or task description.' },
+        title: { type: 'STRING', description: 'Actionable, concise engineering issue title drafted by the operative.' },
+        description: { type: 'STRING', description: 'CRITICAL: The fully articulated problem description or technical breakdown drafted by the operative. NEVER pass the raw user prompt.' },
       },
       required: ['title'],
     },
@@ -1320,7 +1320,7 @@ export const COMPOSIO_GEMINI_TOOL_SCHEMAS: Record<string, any> = {
       type: 'OBJECT',
       properties: {
         summary: { type: 'STRING', description: 'Event title or mission name.' },
-        description: { type: 'STRING', description: 'Detailed event description or mission brief.' },
+        description: { type: 'STRING', description: 'CRITICAL: Complete event agenda or briefing notes drafted by the operative. NEVER pass the raw user prompt.' },
         start_time: { type: 'STRING', description: 'ISO 8601 start timestamp (e.g., 2026-10-29T10:00:00Z).' },
         end_time: { type: 'STRING', description: 'ISO 8601 end timestamp (e.g., 2026-10-29T11:00:00Z).' },
       },
@@ -1336,7 +1336,7 @@ export const COMPOSIO_GEMINI_TOOL_SCHEMAS: Record<string, any> = {
       type: 'OBJECT',
       properties: {
         channel_id: { type: 'STRING', description: 'Discord text channel ID or guild target.' },
-        content: { type: 'STRING', description: 'Message content to broadcast.' },
+        content: { type: 'STRING', description: 'CRITICAL: The fully synthesized message content drafted by the operative to post to Discord. NEVER pass the raw user prompt.' },
       },
       required: ['content'],
     },

@@ -444,7 +444,7 @@ async function callComposioDirect(
 
       if (!hasExplicitEntity && !wantsAllAccounts) {
         const sep = targetUrl.includes('?') ? '&' : '?';
-        targetUrl = `${targetUrl}${sep}entityId=${encodeURIComponent(entityId)}&user_uuid=${encodeURIComponent(entityId)}&user_id=${encodeURIComponent(entityId)}`;
+        targetUrl = `${targetUrl}${sep}entityId=${encodeURIComponent(entityId)}`;
       }
     } else if (method.toUpperCase() === 'POST' && modifiedBody) {
       if (!modifiedBody.user_uuid && !modifiedBody.entityId && !modifiedBody.user_id) {
@@ -602,12 +602,88 @@ async function callComposioProxy(
 
 export function normalizeAppSlug(slug: string): string {
   const s = String(slug || '').toLowerCase().replace(/[-_\s]/g, '');
-  if (s === 'x') return 'twitter';
-  if (s === 'calendar' || s === 'gcal') return 'googlecalendar';
-  if (s === 'sheets') return 'googlesheets';
-  if (s === 'drive') return 'googledrive';
-  if (s === 'googlemail' || s === 'email' || s === 'mail') return 'gmail';
+  if (!s) return '';
+  if (s === 'x' || s === 'twittercom' || s === 'twitterapi') return 'twitter';
+  if (s === 'calendar' || s === 'gcal' || s === 'googlecalendar') return 'googlecalendar';
+  if (s === 'sheets' || s === 'gsheets' || s === 'googlesheets') return 'googlesheets';
+  if (s === 'drive' || s === 'gdrive' || s === 'googledrive') return 'googledrive';
+  if (s === 'docs' || s === 'gdocs' || s === 'googledocs') return 'googledocs';
+  if (s === 'googlemail' || s === 'email' || s === 'mail' || s === 'gmail') return 'gmail';
+  if (s === 'github' || s === 'githubapp') return 'github';
+  if (s === 'slack' || s === 'slackbot') return 'slack';
+  if (s === 'discord' || s === 'discordbot') return 'discord';
+  if (s === 'notion' || s === 'notionhq') return 'notion';
+  if (s === 'linear' || s === 'linearapp') return 'linear';
+  if (s === 'jira' || s === 'atlassianjira') return 'jira';
+  if (s === 'trello' || s === 'atlassiantrello') return 'trello';
+  if (s === 'hubspot' || s === 'hubspotcrm') return 'hubspot';
+  if (s === 'zendesk' || s === 'zendesksupport') return 'zendesk';
+  if (s === 'asana') return 'asana';
+  if (s === 'airtable') return 'airtable';
+  if (s === 'clickup') return 'clickup';
+  if (s === 'salesforce' || s === 'salesforcecrm') return 'salesforce';
+  if (s === 'whatsapp' || s === 'whatsappbusiness') return 'whatsapp';
+  if (s === 'zoom') return 'zoom';
+  if (s === 'stripe') return 'stripe';
+  if (s === 'intercom') return 'intercom';
   return s;
+}
+
+export function extractAppNameFromAccount(item: any): string {
+  if (!item || typeof item !== 'object') return '';
+
+  // 1. Direct string properties
+  if (typeof item.appName === 'string' && item.appName.trim()) return item.appName.trim();
+  if (typeof item.app_name === 'string' && item.app_name.trim()) return item.app_name.trim();
+  if (typeof item.appUniqueId === 'string' && item.appUniqueId.trim()) return item.appUniqueId.trim();
+  if (typeof item.toolkit_slug === 'string' && item.toolkit_slug.trim()) return item.toolkit_slug.trim();
+  if (typeof item.toolkitSlug === 'string' && item.toolkitSlug.trim()) return item.toolkitSlug.trim();
+  if (typeof item.integrationId === 'string' && item.integrationId.trim()) return item.integrationId.trim();
+  if (typeof item.integration_id === 'string' && item.integration_id.trim()) return item.integration_id.trim();
+  if (typeof item.provider === 'string' && item.provider.trim()) return item.provider.trim();
+  if (typeof item.slug === 'string' && item.slug.trim()) return item.slug.trim();
+
+  // 2. Object properties: item.app
+  if (item.app && typeof item.app === 'object') {
+    if (typeof item.app.slug === 'string' && item.app.slug.trim()) return item.app.slug.trim();
+    if (typeof item.app.name === 'string' && item.app.name.trim()) return item.app.name.trim();
+    if (typeof item.app.appName === 'string' && item.app.appName.trim()) return item.app.appName.trim();
+  } else if (typeof item.app === 'string' && item.app.trim()) {
+    return item.app.trim();
+  }
+
+  // 3. Object properties: item.toolkit
+  if (item.toolkit && typeof item.toolkit === 'object') {
+    if (typeof item.toolkit.slug === 'string' && item.toolkit.slug.trim()) return item.toolkit.slug.trim();
+    if (typeof item.toolkit.name === 'string' && item.toolkit.name.trim()) return item.toolkit.name.trim();
+  } else if (typeof item.toolkit === 'string' && item.toolkit.trim()) {
+    return item.toolkit.trim();
+  }
+
+  // 4. Object properties: item.integration
+  if (item.integration && typeof item.integration === 'object') {
+    if (typeof item.integration.slug === 'string' && item.integration.slug.trim()) return item.integration.slug.trim();
+    if (typeof item.integration.name === 'string' && item.integration.name.trim()) return item.integration.name.trim();
+  } else if (typeof item.integration === 'string' && item.integration.trim()) {
+    return item.integration.trim();
+  }
+
+  // 5. AuthConfig nested
+  const authConfig = item.authConfig || item.auth_config;
+  if (authConfig && typeof authConfig === 'object') {
+    if (typeof authConfig.toolkitSlug === 'string' && authConfig.toolkitSlug.trim()) return authConfig.toolkitSlug.trim();
+    if (authConfig.toolkit && typeof authConfig.toolkit === 'object') {
+      if (typeof authConfig.toolkit.slug === 'string') return authConfig.toolkit.slug.trim();
+      if (typeof authConfig.toolkit.name === 'string') return authConfig.toolkit.name.trim();
+    }
+  }
+
+  // 6. Name property fallback
+  if (typeof item.name === 'string' && item.name.trim()) {
+    return item.name.trim();
+  }
+
+  return '';
 }
 
 const STORAGE_LOCAL_CONNECTED_ACCOUNTS = 'pixelops_composio_local_connected_accounts';
@@ -657,7 +733,20 @@ export async function getConnectedAccounts(): Promise<ComposioConnectedAccount[]
   try {
     const rawItems: any[] = [];
 
-    // Query 1: Project-wide connected accounts (includes CLI connections linked to this project/API key)
+    // Query 1: Root /connectedAccounts without extra filter (standard Composio v3 REST)
+    try {
+      const dataRoot = await callComposioProxy('/connectedAccounts', 'GET');
+      const list = Array.isArray(dataRoot) ? dataRoot : dataRoot?.items || dataRoot?.connectedAccounts || dataRoot?.data || [];
+      if (Array.isArray(list)) rawItems.push(...list);
+    } catch {
+      try {
+        const dataAltRoot = await callComposioProxy('/connected_accounts', 'GET');
+        const list = Array.isArray(dataAltRoot) ? dataAltRoot : dataAltRoot?.items || dataAltRoot?.connected_accounts || dataAltRoot?.data || [];
+        if (Array.isArray(list)) rawItems.push(...list);
+      } catch {}
+    }
+
+    // Query 2: Project-wide connected accounts (includes CLI connections linked to this project/API key)
     try {
       const dataAll = await callComposioProxy('/connectedAccounts?includeAll=true', 'GET');
       const list = Array.isArray(dataAll) ? dataAll : dataAll?.items || dataAll?.connectedAccounts || dataAll?.data || [];
@@ -670,14 +759,14 @@ export async function getConnectedAccounts(): Promise<ComposioConnectedAccount[]
       } catch {}
     }
 
-    // Query 2: Composio CLI standard 'default' entity
+    // Query 3: Composio CLI standard 'default' entity
     try {
       const dataDef = await callComposioProxy('/connectedAccounts?entityId=default', 'GET');
       const list = Array.isArray(dataDef) ? dataDef : dataDef?.items || dataDef?.connectedAccounts || dataDef?.data || [];
       if (Array.isArray(list)) rawItems.push(...list);
     } catch {}
 
-    // Query 3: Commander isolated entity
+    // Query 4: Commander isolated entity
     try {
       const dataUser = await callComposioProxy(
         `/connectedAccounts?entityId=${encodeURIComponent(entityId)}`,
@@ -690,7 +779,7 @@ export async function getConnectedAccounts(): Promise<ComposioConnectedAccount[]
     const normalized: ComposioConnectedAccount[] = rawItems
       .filter((item) => item && typeof item === 'object')
       .map((item: any) => {
-        const rawStatus = String(item.status || item.connection_status || 'ACTIVE').toUpperCase();
+        const rawStatus = String(item.status || item.connection_status || item.state || 'ACTIVE').toUpperCase();
         const status: 'ACTIVE' | 'INITIATED' | 'FAILED' | 'EXPIRED' =
           rawStatus.includes('FAIL')
             ? 'FAILED'
@@ -700,34 +789,17 @@ export async function getConnectedAccounts(): Promise<ComposioConnectedAccount[]
             ? 'INITIATED'
             : 'ACTIVE';
 
-        const rawAppName = String(
-          item.appName ||
-          item.app ||
-          item.toolkit?.slug ||
-          item.toolkit?.name ||
-          item.toolkit_slug ||
-          item.toolkitSlug ||
-          item.toolkit ||
-          item.integration?.slug ||
-          item.integration?.name ||
-          item.integrationId ||
-          item.integration_id ||
-          item.app_name ||
-          item.authConfig?.toolkit?.slug ||
-          item.auth_config?.toolkit?.slug ||
-          item.authConfig?.toolkitSlug ||
-          item.auth_config?.toolkitSlug ||
-          ''
-        ).toLowerCase().trim();
+        const rawAppName = extractAppNameFromAccount(item);
 
         return {
-          id: String(item.id || item.connectionId || item.connected_account_id || item.connection_id || ''),
+          id: String(item.id || item.connectionId || item.connected_account_id || item.connection_id || `conn_${rawAppName}_${Date.now()}`),
           appName: rawAppName,
           status,
           createdAt: item.createdAt || item.created_at || new Date().toISOString(),
           userUuid: item.userUuid || item.user_uuid || item.user_id || item.entityId || entityId,
         };
-      });
+      })
+      .filter((acc) => Boolean(acc.appName));
 
     // Merge persistent local accounts so live UI always reflects confirmed connections
     const localAccounts = getLocalConnectedAccounts();
@@ -745,10 +817,14 @@ export async function getConnectedAccounts(): Promise<ComposioConnectedAccount[]
       }
     }
 
-    return Array.from(mergedMap.values());
+    const mergedList = Array.from(mergedMap.values());
+    notifyConnectionSync(mergedList);
+    return mergedList;
   } catch (err) {
     console.warn('[COMPOSIO GET CONNECTED ACCOUNTS ERROR]', err);
-    return getLocalConnectedAccounts();
+    const localList = getLocalConnectedAccounts();
+    notifyConnectionSync(localList);
+    return localList;
   }
 }
 
@@ -1128,23 +1204,31 @@ export async function getAvailableIntegrations(): Promise<ComposioIntegration[]>
     });
   }
 
-  // 2. Fetch live connected accounts with 2.5s circuit breaker to prevent UI stalls
+  // 2. Fetch live connected accounts with 4s circuit breaker to prevent UI stalls
   let connectedAccounts: ComposioConnectedAccount[] = [];
   try {
     connectedAccounts = await Promise.race([
       getConnectedAccounts(),
       new Promise<ComposioConnectedAccount[]>((_, reject) =>
-        setTimeout(() => reject(new Error('timeout')), 2500)
+        setTimeout(() => reject(new Error('timeout')), 4000)
       ),
     ]);
   } catch {
     connectedAccounts = getLocalConnectedAccounts();
   }
 
+  // Merge local accounts so confirmed browser connections are always honored
+  const localAccounts = getLocalConnectedAccounts();
+  const allAccounts = [...localAccounts, ...connectedAccounts];
+
   const connectedMap = new Map<string, ComposioConnectedAccount>();
-  for (const acc of connectedAccounts) {
+  for (const acc of allAccounts) {
     if (acc.appName) {
-      connectedMap.set(normalizeAppSlug(acc.appName), acc);
+      const norm = normalizeAppSlug(acc.appName);
+      const isOnline = acc.status !== 'FAILED' && acc.status !== 'EXPIRED';
+      if (!connectedMap.has(norm) || isOnline) {
+        connectedMap.set(norm, acc);
+      }
     }
   }
 
@@ -1189,7 +1273,7 @@ export async function getAvailableIntegrations(): Promise<ComposioIntegration[]>
 
   if (Array.isArray(liveToolkits) && liveToolkits.length > 0) {
     for (const tk of liveToolkits) {
-      const slug = (tk.slug || tk.appName || tk.name || '').toLowerCase().trim();
+      const slug = normalizeAppSlug(tk.slug || tk.appName || tk.name || '');
       if (!slug) continue;
 
       const activeConn = connectedMap.get(slug);
@@ -1200,6 +1284,11 @@ export async function getAvailableIntegrations(): Promise<ComposioIntegration[]>
         ? [tk.meta.category]
         : [];
       const cat = categories[0] ? normalizeCategory(categories[0]) : existing?.category || 'Productivity';
+
+      const isConn = Boolean(
+        (activeConn && activeConn.status !== 'FAILED' && activeConn.status !== 'EXPIRED') ||
+        existing?.connected
+      );
 
       resultMap.set(slug, {
         appName: slug,
@@ -1212,8 +1301,8 @@ export async function getAvailableIntegrations(): Promise<ComposioIntegration[]>
         category: cat,
         isToolkit: true,
         authSchemes: tk.auth_schemes || existing?.authSchemes || ['oauth2'],
-        connected: Boolean(activeConn && activeConn.status === 'ACTIVE'),
-        connectionId: activeConn?.id,
+        connected: isConn,
+        connectionId: activeConn?.id || existing?.connectionId,
       });
     }
   }

@@ -8,6 +8,9 @@ import {
   setComposioApiKey,
   pingComposio,
   normalizeAppSlug,
+  getLocalConnectedAccounts,
+  getConnectedAccounts,
+  ComposioConnectedAccount,
 } from '../services/ComposioService';
 
 interface PluginMarketplaceProps {
@@ -17,6 +20,7 @@ interface PluginMarketplaceProps {
 
 const CATEGORIES = [
   'All',
+  'Connected',
   'Developer',
   'Communication',
   'Productivity',
@@ -30,13 +34,34 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
   onPluginStatusChange,
   onClose,
 }) => {
-  const [integrations, setIntegrations] = useState<ComposioIntegration[]>(() => CURATED_COMPOSIO_INTEGRATIONS);
+  // Initialize catalog immediately hydrated with locally verified active accounts
+  const [integrations, setIntegrations] = useState<ComposioIntegration[]>(() => {
+    const localAccounts = getLocalConnectedAccounts();
+    const localMap = new Map(localAccounts.map((a) => [normalizeAppSlug(a.appName), a]));
+    return CURATED_COMPOSIO_INTEGRATIONS.map((item) => {
+      const acc = localMap.get(normalizeAppSlug(item.appName));
+      const isOnline = acc && acc.status !== 'FAILED' && acc.status !== 'EXPIRED';
+      return {
+        ...item,
+        connected: Boolean(isOnline),
+        connectionId: acc?.id,
+      };
+    });
+  });
   const [loading, setLoading] = useState(false);
   const [connectingApp, setConnectingApp] = useState<string | null>(null);
   const [disconnectingId, setDisconnectingId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<CategoryFilter>('All');
   const [feedbackMessage, setFeedbackMessage] = useState<{ text: string; type: 'success' | 'info' | 'error' } | null>(null);
+
+  // Diagnostics Modal state
+  const [isDiagnosticsOpen, setIsDiagnosticsOpen] = useState(false);
+  const [diagnosticsData, setDiagnosticsData] = useState<{
+    accounts: ComposioConnectedAccount[];
+    ping: { ok: boolean; status?: number; latencyMs?: number; error?: string };
+  } | null>(null);
+  const [isDiagnosing, setIsDiagnosing] = useState(false);
 
   // BYOK Composio API Key state
   const [apiKey, setApiKey] = useState(() => getComposioApiKey());
@@ -149,9 +174,7 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
           if (completed) {
             setIntegrations((prev) =>
               prev.map((item) => {
-                const normA = item.appName.toLowerCase().replace(/[^a-z0-9]/g, '');
-                const normB = app.appName.toLowerCase().replace(/[^a-z0-9]/g, '');
-                if (normA === normB) {
+                if (normalizeAppSlug(item.appName) === normalizeAppSlug(app.appName)) {
                   return {
                     ...item,
                     connected: true,
@@ -222,9 +245,7 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
       if (success) {
         setIntegrations((prev) =>
           prev.map((item) => {
-            const normA = item.appName.toLowerCase().replace(/[^a-z0-9]/g, '');
-            const normB = app.appName.toLowerCase().replace(/[^a-z0-9]/g, '');
-            if (normA === normB) {
+            if (normalizeAppSlug(item.appName) === normalizeAppSlug(app.appName)) {
               return {
                 ...item,
                 connected: false,
@@ -266,7 +287,11 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
         item.description.toLowerCase().includes(searchQuery.toLowerCase());
 
       const matchesCategory =
-        selectedCategory === 'All' || item.category === selectedCategory;
+        selectedCategory === 'All'
+          ? true
+          : selectedCategory === 'Connected'
+          ? item.connected
+          : item.category === selectedCategory;
 
       return matchesSearch && matchesCategory;
     });
@@ -275,6 +300,28 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
   const connectedCount = useMemo(() => {
     return integrations.filter((i) => i.connected).length;
   }, [integrations]);
+
+  const handleOpenDiagnostics = async () => {
+    setIsDiagnosing(true);
+    setIsDiagnosticsOpen(true);
+    try {
+      const [accs, pingRes] = await Promise.all([
+        getConnectedAccounts(),
+        pingComposio(),
+      ]);
+      setDiagnosticsData({
+        accounts: accs,
+        ping: pingRes,
+      });
+    } catch (err: any) {
+      setDiagnosticsData({
+        accounts: getLocalConnectedAccounts(),
+        ping: { ok: false, error: err?.message || 'Check failed' },
+      });
+    } finally {
+      setIsDiagnosing(false);
+    }
+  };
 
   return (
     <div className="w-full max-w-4xl mx-auto px-3 sm:px-0">
@@ -314,6 +361,15 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
               title="Configure custom BYOK Composio API Key from dashboard.composio.dev"
             >
               <span>🔑 {apiKey ? 'BYOK KEY ACTIVE' : 'SET COMPOSIO KEY'}</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleOpenDiagnostics}
+              disabled={isDiagnosing}
+              className="px-2.5 py-1 bg-[#1a1410] hover:bg-[#2c2014] text-[#a8957e] hover:text-[#f3ead8] border border-[#523d26] font-mono-tabular text-xs cursor-pointer flex items-center gap-1.5 transition-colors"
+              title="Inspect raw connection telemetry and diagnose active plugins"
+            >
+              <span>{isDiagnosing ? '🔍 Scanning...' : '🔍 Diagnostics'}</span>
             </button>
             <button
               type="button"
@@ -387,17 +443,118 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
                   key={cat}
                   type="button"
                   onClick={() => setSelectedCategory(cat)}
-                  className={`px-2.5 py-1 font-mono-tabular text-xs rounded-xs border cursor-pointer transition-colors ${
+                  className={`px-2.5 py-1 font-mono-tabular text-xs rounded-xs border cursor-pointer transition-colors flex items-center gap-1.5 ${
                     isSelected
                       ? 'bg-[#e59838] text-[#121110] border-[#e59838] font-bold shadow-[0_0_8px_rgba(229,152,56,0.3)]'
+                      : cat === 'Connected' && connectedCount > 0
+                      ? 'bg-[#0f2416] text-[#4ade80] border-[#2d6a4f] hover:border-[#4ade80]'
                       : 'bg-[#121110] text-[#b8a690] border-[#382917] hover:border-[#6e5233] hover:text-[#f3ead8]'
                   }`}
                 >
-                  {cat}
+                  {cat === 'Connected' && (
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full ${
+                        connectedCount > 0 ? 'bg-[#4ade80] animate-pulse' : 'bg-[#785732]'
+                      }`}
+                    />
+                  )}
+                  <span>{cat}</span>
+                  {cat === 'Connected' && (
+                    <span
+                      className={`text-[10px] px-1 py-0.2 rounded-xs font-bold ${
+                        isSelected
+                          ? 'bg-[#121110] text-[#e59838]'
+                          : connectedCount > 0
+                          ? 'bg-[#1e462b] text-[#4ade80]'
+                          : 'bg-[#291e14] text-[#8c7a65]'
+                      }`}
+                    >
+                      {connectedCount}
+                    </span>
+                  )}
                 </button>
               );
             })}
           </div>
+        </div>
+
+        {/* Dedicated Online Integrations Quick Status HUD */}
+        <div
+          className={`px-4 py-2.5 border-b font-mono-tabular transition-colors ${
+            connectedCount > 0
+              ? 'bg-[#0a180f] border-[#1e462b]'
+              : 'bg-[#100e0c] border-[#2a1e12]'
+          }`}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  connectedCount > 0 ? 'bg-[#4ade80] animate-pulse' : 'bg-[#6b5844]'
+                }`}
+              />
+              <span className="text-xs font-bold tracking-wider uppercase">
+                {connectedCount > 0 ? (
+                  <span className="text-[#4ade80]">
+                    ONLINE PLUGINS ({connectedCount} ACTIVE):
+                  </span>
+                ) : (
+                  <span className="text-[#8c7a65]">
+                    NO PLUGINS ONLINE (0 / {integrations.length})
+                  </span>
+                )}
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2 text-[11px] text-[#8c7a65]">
+              {connectedCount > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setSelectedCategory('Connected')}
+                  className="text-[#4ade80] hover:underline cursor-pointer"
+                >
+                  Filter to Online ({connectedCount}) →
+                </button>
+              ) : (
+                <span>Click "Connect" below to authenticate apps for agent use</span>
+              )}
+            </div>
+          </div>
+
+          {connectedCount > 0 && (
+            <div className="flex flex-wrap items-center gap-2 mt-2 pt-2 border-t border-[#1e462b]/60">
+              {integrations
+                .filter((item) => item.connected)
+                .map((app) => (
+                  <div
+                    key={`online-hud-${app.appName}`}
+                    className="px-2.5 py-1 bg-[#12281a] border border-[#2d6a4f] rounded-xs flex items-center gap-2 text-xs"
+                  >
+                    <span className="w-1.5 h-1.5 rounded-full bg-[#4ade80] animate-pulse" />
+                    {app.logoUrl ? (
+                      <img src={app.logoUrl} alt={app.name} className="w-3.5 h-3.5 object-contain" />
+                    ) : (
+                      <span className="w-3.5 h-3.5 rounded-xs bg-[#1f3a27] text-[#4ade80] text-[9px] flex items-center justify-center font-bold">
+                        {app.name.slice(0, 2).toUpperCase()}
+                      </span>
+                    )}
+                    <span className="font-bold text-[#4ade80]">{app.name}</span>
+                    <span className="text-[10px] text-[#86efac] bg-[#0f2416] px-1 py-0.2 rounded-xs border border-[#1e462b]">
+                      ONLINE
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleDisconnect(app)}
+                      disabled={disconnectingId === app.connectionId}
+                      className="text-[#f87171] hover:text-white text-[10px] ml-1 px-1 py-0.2 hover:bg-[#381a1a] rounded cursor-pointer transition-colors"
+                      title={`Disconnect ${app.name}`}
+                    >
+                      {disconnectingId === app.connectionId ? '...' : '✕'}
+                    </button>
+                  </div>
+                ))}
+            </div>
+          )}
         </div>
 
         {/* Feedback / Alert Notice Banner */}
@@ -455,10 +612,10 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
                 return (
                   <div
                     key={app.appName}
-                    className={`p-3.5 bg-[#121110] border rounded-xs flex flex-col justify-between gap-3 transition-all ${
+                    className={`p-3.5 border rounded-xs flex flex-col justify-between gap-3 transition-all ${
                       app.connected
-                        ? 'border-[#2d6a4f] shadow-[0_0_12px_rgba(74,222,128,0.1)]'
-                        : 'border-[#382917] hover:border-[#785732]'
+                        ? 'border-[#2d6a4f] bg-[#0c1610] shadow-[0_0_12px_rgba(74,222,128,0.12)] ring-1 ring-[#2d6a4f]/50'
+                        : 'bg-[#121110] border-[#382917] hover:border-[#785732]'
                     }`}
                   >
                     {/* Top Row: Icon + Name + Badge */}
@@ -497,15 +654,23 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
                         </div>
 
                         {/* Connection Status Badge */}
-                        <div className="shrink-0">
+                        <div className="shrink-0 flex flex-col items-end gap-1">
                           {app.connected ? (
-                            <span className="px-2 py-0.5 bg-[#0f2416] border border-[#2d6a4f] text-[#4ade80] font-mono-tabular text-[10px] font-bold tracking-wider flex items-center gap-1">
+                            <span className="px-2 py-0.5 bg-[#0f2416] border border-[#2d6a4f] text-[#4ade80] font-mono-tabular text-[10px] font-bold tracking-wider flex items-center gap-1.5 shadow-[0_0_8px_rgba(74,222,128,0.2)]">
                               <span className="w-1.5 h-1.5 rounded-full bg-[#4ade80] animate-pulse" />
-                              CONNECTED
+                              ONLINE
                             </span>
                           ) : (
                             <span className="px-2 py-0.5 bg-[#1c1813] border border-[#4a351d] text-[#8c7a65] font-mono-tabular text-[10px] tracking-wider">
                               OFFLINE
+                            </span>
+                          )}
+                          {app.connected && app.connectionId && (
+                            <span
+                              className="text-[9px] font-mono-tabular text-[#86efac]/70 truncate max-w-[110px]"
+                              title={app.connectionId}
+                            >
+                              ID: {app.connectionId.slice(0, 10)}...
                             </span>
                           )}
                         </div>
@@ -715,6 +880,117 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
                     Save Key
                   </button>
                 </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Composio Live Connection Diagnostics Modal */}
+      {isDiagnosticsOpen && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-xl bg-[#141210] border-2 border-[#2d6a4f] shadow-[0_0_40px_rgba(74,222,128,0.25)] rounded-xs overflow-hidden font-mono-tabular">
+            {/* Modal Header */}
+            <div className="bg-[#0f2416] border-b border-[#1e462b] px-4 py-2.5 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-[#4ade80] animate-pulse" />
+                <span className="font-bold text-xs sm:text-sm text-[#4ade80] tracking-wider uppercase">
+                  COMPOSIO CONNECTION TELEMETRY & DIAGNOSTICS
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsDiagnosticsOpen(false)}
+                className="text-xs text-[#8c7a65] hover:text-[#f3ead8] px-1 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-4 flex flex-col gap-3 text-xs max-h-[75vh] overflow-y-auto">
+              <div className="grid grid-cols-2 gap-2 bg-[#0d0c0b] p-3 border border-[#2a1e12] rounded-xs text-[11px]">
+                <div>
+                  <span className="text-[#8c7a65] block">ENTITY ID:</span>
+                  <span className="text-[#f3ead8] font-bold truncate block">{entityId}</span>
+                </div>
+                <div>
+                  <span className="text-[#8c7a65] block">API KEY SOURCE:</span>
+                  <span className="text-[#e59838] font-bold block">
+                    {apiKey ? 'BYOK Custom Key' : 'Cloudflare Server Proxy'}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[#8c7a65] block">PING STATUS:</span>
+                  <span className={`font-bold block ${diagnosticsData?.ping.ok ? 'text-[#4ade80]' : 'text-[#f87171]'}`}>
+                    {diagnosticsData?.ping.ok
+                      ? `🟢 HTTP ${diagnosticsData.ping.status} (${diagnosticsData.ping.latencyMs}ms)`
+                      : `🔴 ${diagnosticsData?.ping.error || 'Failed'}`}
+                  </span>
+                </div>
+                <div>
+                  <span className="text-[#8c7a65] block">VERIFIED ACCOUNTS:</span>
+                  <span className="text-[#4ade80] font-bold block">
+                    {diagnosticsData?.accounts.length || 0} Connected
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <span className="text-[11px] font-bold text-[#b8a690] uppercase block mb-1.5">
+                  DETECTED CONNECTED ACCOUNTS ({diagnosticsData?.accounts.length || 0}):
+                </span>
+                {(!diagnosticsData?.accounts || diagnosticsData.accounts.length === 0) ? (
+                  <div className="p-4 bg-[#0d0c0b] border border-[#2a1e12] text-center text-[#8c7a65]">
+                    No connected accounts reported by backend or browser storage. Click "Connect" on any toolkit to authenticate via OAuth.
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-1.5">
+                    {diagnosticsData.accounts.map((acc, idx) => (
+                      <div
+                        key={`${acc.id}-${idx}`}
+                        className="p-2.5 bg-[#0b1810] border border-[#1e462b] rounded-xs flex items-center justify-between gap-2"
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#4ade80] animate-pulse" />
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-[#4ade80] uppercase">{acc.appName}</span>
+                              <span className="text-[10px] text-[#86efac] bg-[#0f2416] px-1 py-0.2 rounded-xs border border-[#1e462b]">
+                                {acc.status}
+                              </span>
+                            </div>
+                            <span className="text-[10px] text-[#8c7a65] block truncate max-w-xs">
+                              ID: {acc.id}
+                            </span>
+                          </div>
+                        </div>
+                        <span className="text-[10px] text-[#6b5844]">
+                          {acc.createdAt ? new Date(acc.createdAt).toLocaleDateString() : 'Active'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Action Buttons */}
+              <div className="pt-2 border-t border-[#2d2014] flex items-center justify-between gap-2">
+                <button
+                  type="button"
+                  disabled={isDiagnosing}
+                  onClick={handleOpenDiagnostics}
+                  className="px-3 py-1 bg-[#1a1410] hover:bg-[#2c2014] text-[#e59838] border border-[#785732] cursor-pointer text-xs flex items-center gap-1"
+                >
+                  <span>{isDiagnosing ? 'Scanning...' : '⟳ Re-Scan'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsDiagnosticsOpen(false)}
+                  className="px-3 py-1 bg-[#2b2116] hover:bg-[#3d2f20] text-[#f3ead8] border border-[#6e5233] cursor-pointer text-xs"
+                >
+                  Close
+                </button>
               </div>
             </div>
           </div>

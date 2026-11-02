@@ -126,7 +126,7 @@ export const onRequest = async (context: {
 
         if (!hasExplicitEntity && !wantsAllAccounts) {
           const separator = targetUrl.includes('?') ? '&' : '?';
-          targetUrl = `${targetUrl}${separator}entityId=${encodeURIComponent(entityId)}&user_uuid=${encodeURIComponent(entityId)}&user_id=${encodeURIComponent(entityId)}`;
+          targetUrl = `${targetUrl}${separator}entityId=${encodeURIComponent(entityId)}`;
         }
       } else if (method.toUpperCase() === 'POST' && modifiedBody) {
         if (!modifiedBody.user_uuid && !modifiedBody.entityId && !modifiedBody.user_id) {

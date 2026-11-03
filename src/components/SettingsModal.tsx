@@ -50,6 +50,7 @@ interface SettingsModalProps {
   currentRoom?: RoomId;
   onSelectRoom?: (room: RoomId) => void;
   onOpenWorkspaceFiles?: () => void;
+  onOpenSyncModal?: () => void;
   onOpenPluginAuth?: (plugin: { id: string; name: string }) => void;
   onOpenFieldManual?: () => void;
 }
@@ -72,6 +73,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   currentRoom = 'war_room',
   onSelectRoom,
   onOpenWorkspaceFiles,
+  onOpenSyncModal,
   onOpenPluginAuth,
   onOpenFieldManual,
 }) => {
@@ -334,6 +336,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         >
           <FileText className="w-4 h-4 text-sky-400" />
           <span>📁 Browse Workspace Reports & Logs (IndexedDB)</span>
+        </button>
+
+        {/* SatCom Multi-Device Cloud Sync Button */}
+        <button
+          type="button"
+          onClick={() => {
+            playBeep('tap');
+            onClose();
+            onOpenSyncModal?.();
+          }}
+          className="w-full min-h-[40px] px-3 py-2.5 rounded-xl bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-600/60 text-xs font-semibold text-emerald-200 flex items-center justify-center gap-2 cursor-pointer transition-colors"
+        >
+          <Radio className="w-4 h-4 text-emerald-400" />
+          <span>☁️ SatCom Multi-Device Cloud Sync & Accounts</span>
         </button>
         {/* Classified Safehouse Field Manual Button */}
         {onOpenFieldManual && (

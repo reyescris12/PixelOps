@@ -2,6 +2,7 @@ import express from 'express';
 import path from 'path';
 import fs from 'fs';
 import zlib from 'zlib';
+import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, FunctionDeclaration, Type } from '@google/genai';
@@ -418,11 +419,277 @@ const STRUCTURED_CARD_SCHEMA = {
   required: ['dialogue', 'cardTitle', 'actionCategory', 'steps'],
 };
 
+// --- SatCom Multi-Device Cloud Sync Store ---
+const SYNC_DATA_DIR = path.join(process.cwd(), 'data');
+const SYNC_FILE_PATH = path.join(SYNC_DATA_DIR, 'sync_store.json');
+
+interface SyncDataStore {
+  users: Record<string, any>;
+  tokens: Record<string, any>;
+  vaults: Record<string, any>;
+  devices: Record<string, any[]>;
+}
+
+function loadSyncStore(): SyncDataStore {
+  try {
+    if (!fs.existsSync(SYNC_DATA_DIR)) {
+      fs.mkdirSync(SYNC_DATA_DIR, { recursive: true });
+    }
+    if (fs.existsSync(SYNC_FILE_PATH)) {
+      const raw = fs.readFileSync(SYNC_FILE_PATH, 'utf8');
+      return JSON.parse(raw);
+    }
+  } catch (err) {
+    console.error('[SatCom] Failed to read sync_store.json, creating fallback', err);
+  }
+  return { users: {}, tokens: {}, vaults: {}, devices: {} };
+}
+
+function saveSyncStore(store: SyncDataStore): void {
+  try {
+    if (!fs.existsSync(SYNC_DATA_DIR)) {
+      fs.mkdirSync(SYNC_DATA_DIR, { recursive: true });
+    }
+    fs.writeFileSync(SYNC_FILE_PATH, JSON.stringify(store, null, 2), 'utf8');
+  } catch (err) {
+    console.error('[SatCom] Failed to write sync_store.json', err);
+  }
+}
+
+function hashPasswordServer(password: string, salt: string): string {
+  return crypto.createHash('sha256').update(`${salt}:${password}:pixelops_satcom_secret`).digest('hex');
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
   app.use(express.json({ limit: '15mb' }));
+
+  // --- SatCom Multi-Device Cloud Sync API Endpoints ---
+  app.post('/api/auth/register', (req, res) => {
+    try {
+      const { username, email, password, callsign, device } = req.body || {};
+      if (!username || !password) {
+        return res.status(400).json({ error: 'USERNAME_AND_PASSWORD_REQUIRED', message: 'Username and password required.' });
+      }
+
+      const cleanUser = String(username).toLowerCase().trim();
+      const cleanEmail = String(email || `${cleanUser}@pixelops.local`).toLowerCase().trim();
+      const store = loadSyncStore();
+
+      if (store.users[cleanUser]) {
+        return res.status(409).json({ error: 'USER_EXISTS', message: 'An operative with that username already exists.' });
+      }
+
+      const salt = Math.random().toString(36).substring(2, 12);
+      const passwordHash = hashPasswordServer(password, salt);
+      const userId = `usr_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
+      const now = new Date().toISOString();
+
+      const userRecord = {
+        id: userId,
+        username: cleanUser,
+        email: cleanEmail,
+        callsign: (callsign || cleanUser).toUpperCase(),
+        salt,
+        passwordHash,
+        securityClearance: 'COMMANDER',
+        createdAt: now,
+        lastLoginAt: now,
+        devices: device ? [device] : [],
+      };
+
+      const token = `tok_${userId}_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 12)}`;
+      store.users[cleanUser] = userRecord;
+      store.tokens[token] = { userId, username: cleanUser };
+      if (device) {
+        store.devices[userId] = store.devices[userId] || [];
+        store.devices[userId].push(device);
+      }
+      saveSyncStore(store);
+
+      const session = {
+        token,
+        user: {
+          id: userId,
+          username: userRecord.username,
+          email: userRecord.email,
+          callsign: userRecord.callsign,
+          securityClearance: userRecord.securityClearance,
+          createdAt: now,
+          lastLoginAt: now,
+        },
+        device: device || { deviceId: 'default', deviceName: 'Browser', deviceType: 'desktop', lastActive: now },
+        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      };
+
+      res.json({ ok: true, session });
+    } catch (err: any) {
+      res.status(500).json({ error: 'AUTH_ERROR', message: err?.message || 'Server authentication fault' });
+    }
+  });
+
+  app.post('/api/auth/login', (req, res) => {
+    try {
+      const { usernameOrEmail, password, device } = req.body || {};
+      const cleanQuery = String(usernameOrEmail || '').toLowerCase().trim();
+      const store = loadSyncStore();
+
+      let userRecord: any = null;
+      for (const u of Object.values(store.users)) {
+        if (u.username === cleanQuery || u.email === cleanQuery) {
+          userRecord = u;
+          break;
+        }
+      }
+
+      if (!userRecord) {
+        return res.status(401).json({ error: 'INVALID_CREDENTIALS', message: 'No operative found matching credentials.' });
+      }
+
+      const computed = hashPasswordServer(password, userRecord.salt);
+      if (computed !== userRecord.passwordHash) {
+        return res.status(401).json({ error: 'INVALID_PASSWORD', message: 'Invalid operative password key.' });
+      }
+
+      userRecord.lastLoginAt = new Date().toISOString();
+      if (device) {
+        userRecord.devices = userRecord.devices || [];
+        const existingIdx = userRecord.devices.findIndex((d: any) => d.deviceId === device.deviceId);
+        if (existingIdx >= 0) {
+          userRecord.devices[existingIdx] = device;
+        } else {
+          userRecord.devices.push(device);
+        }
+        store.devices[userRecord.id] = userRecord.devices;
+      }
+
+      const token = `tok_${userRecord.id}_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 12)}`;
+      store.tokens[token] = { userId: userRecord.id, username: userRecord.username };
+      saveSyncStore(store);
+
+      const session = {
+        token,
+        user: {
+          id: userRecord.id,
+          username: userRecord.username,
+          email: userRecord.email,
+          callsign: userRecord.callsign,
+          securityClearance: userRecord.securityClearance,
+          createdAt: userRecord.createdAt,
+          lastLoginAt: userRecord.lastLoginAt,
+        },
+        device: device || { deviceId: 'default', deviceName: 'Browser', deviceType: 'desktop', lastActive: new Date().toISOString() },
+        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      };
+
+      res.json({ ok: true, session });
+    } catch (err: any) {
+      res.status(500).json({ error: 'AUTH_ERROR', message: err?.message || 'Server authentication fault' });
+    }
+  });
+
+  app.get('/api/auth/me', (req, res) => {
+    try {
+      const authHeader = req.headers.authorization || '';
+      const token = authHeader.replace(/^Bearer\s+/i, '');
+      const store = loadSyncStore();
+      const tokenData = store.tokens[token];
+
+      if (!tokenData) {
+        return res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid session token' });
+      }
+
+      const user = Object.values(store.users).find((u: any) => u.id === tokenData.userId);
+      if (!user) {
+        return res.status(404).json({ error: 'NOT_FOUND', message: 'User not found' });
+      }
+
+      res.json({
+        ok: true,
+        user: {
+          id: user.id,
+          username: user.username,
+          email: user.email,
+          callsign: user.callsign,
+          securityClearance: user.securityClearance,
+          createdAt: user.createdAt,
+          lastLoginAt: user.lastLoginAt,
+        },
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: 'AUTH_ERROR', message: err?.message || 'Server error' });
+    }
+  });
+
+  app.post('/api/sync/push', (req, res) => {
+    try {
+      const userId = (req.headers['x-user-id'] as string) || (req.query.userId as string) || 'default_user';
+      const deviceId = (req.headers['x-device-id'] as string) || 'default_device';
+      const syncPackage = req.body;
+
+      if (!syncPackage) {
+        return res.status(400).json({ error: 'PACKAGE_REQUIRED', message: 'Sync payload is empty.' });
+      }
+
+      const store = loadSyncStore();
+      store.vaults[userId] = syncPackage;
+
+      // Update device heartbeat
+      const userDevices = store.devices[userId] || [];
+      const devIdx = userDevices.findIndex((d) => d.deviceId === deviceId);
+      if (devIdx >= 0) {
+        userDevices[devIdx].lastActive = new Date().toISOString();
+      }
+      store.devices[userId] = userDevices;
+      saveSyncStore(store);
+
+      res.json({ ok: true, timestamp: new Date().toISOString() });
+    } catch (err: any) {
+      res.status(500).json({ error: 'SYNC_ERROR', message: err?.message || 'Server sync error' });
+    }
+  });
+
+  app.get('/api/sync/pull', (req, res) => {
+    try {
+      const userId = (req.headers['x-user-id'] as string) || (req.query.userId as string) || 'default_user';
+      const store = loadSyncStore();
+      const pkg = store.vaults[userId] || null;
+
+      res.json({ ok: true, package: pkg, timestamp: new Date().toISOString() });
+    } catch (err: any) {
+      res.status(500).json({ error: 'SYNC_ERROR', message: err?.message || 'Server sync error' });
+    }
+  });
+
+  app.get('/api/sync/devices', (req, res) => {
+    try {
+      const userId = (req.headers['x-user-id'] as string) || (req.query.userId as string) || 'default_user';
+      const store = loadSyncStore();
+      const devices = store.devices[userId] || [];
+
+      res.json({ ok: true, devices });
+    } catch (err: any) {
+      res.status(500).json({ error: 'DEVICES_ERROR', message: err?.message || 'Server error' });
+    }
+  });
+
+  app.post('/api/sync/device/unlink', (req, res) => {
+    try {
+      const userId = (req.headers['x-user-id'] as string) || (req.query.userId as string) || 'default_user';
+      const { targetDeviceId } = req.body || {};
+      const store = loadSyncStore();
+      if (store.devices[userId]) {
+        store.devices[userId] = store.devices[userId].filter((d) => d.deviceId !== targetDeviceId);
+      }
+      saveSyncStore(store);
+
+      res.json({ ok: true, unlinked: targetDeviceId });
+    } catch (err: any) {
+      res.status(500).json({ error: 'UNLINK_ERROR', message: err?.message || 'Server error' });
+    }
+  });
 
   app.get('/api/agent/status', async (_req, res) => {
     const hasKey = Boolean(

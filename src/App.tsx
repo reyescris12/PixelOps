@@ -98,6 +98,13 @@ import { analyzePromptAmbiguity } from './engine/taskBriefEngine';
 import { TaskBriefModal, TaskBrief } from './components/TaskBriefModal';
 import { TerminalConsole } from './components/TerminalConsole';
 import { WorkspaceFileViewer } from './components/WorkspaceFileViewer';
+import { SyncAccountModal } from './components/SyncAccountModal';
+import {
+  startAutoSync,
+  getSyncStats,
+  subscribeSyncStatus,
+  SyncStats,
+} from './services/SyncService';
 import { PluginMarketplace } from './components/PluginMarketplace';
 import { ComposioService } from './services/ComposioService';
 import {
@@ -233,6 +240,8 @@ const CommandCenterContent: React.FC = () => {
   const [isAgentFactoryOpen, setIsAgentFactoryOpen] = useState(false);
   const [isTerminalConsoleOpen, setIsTerminalConsoleOpen] = useState(false);
   const [isWorkspaceFilesOpen, setIsWorkspaceFilesOpen] = useState(false);
+  const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
+  const [syncStats, setSyncStats] = useState<SyncStats>(() => getSyncStats());
   const [dismissPortraitGuard, setDismissPortraitGuard] = useState(false);
   const [taskBriefState, setTaskBriefState] = useState<{
     isOpen: boolean;
@@ -290,6 +299,18 @@ const CommandCenterContent: React.FC = () => {
       unsubscribe?.();
     };
   }, [syncComposioAccounts]);
+
+  // SatCom Multi-Device Cloud Sync Background Service
+  useEffect(() => {
+    const stopAutoSync = startAutoSync();
+    const unsub = subscribeSyncStatus((stats) => {
+      setSyncStats(stats);
+    });
+    return () => {
+      stopAutoSync();
+      unsub();
+    };
+  }, []);
 
   // Town Hall Meeting & Multi-Agent Roundtable States
   const [roundtableSessions, setRoundtableSessions] = useState<RoundtableMeetingSession[]>(
@@ -2218,6 +2239,31 @@ const CommandCenterContent: React.FC = () => {
             <button
               type="button"
               onClick={() => {
+                setIsSyncModalOpen(true);
+                playBeep('tap');
+              }}
+              className={`px-2 py-0.5 border flex items-center gap-1 cursor-pointer transition-colors ${
+                syncStats.status === 'syncing'
+                  ? 'bg-[#16382b] border-[#4ade80] text-[#4ade80]'
+                  : 'bg-[#152026] hover:bg-[#1e2f38] border-[#314a56] hover:border-[#38bdf8] text-[#38bdf8]'
+              }`}
+              title="Open SatCom Multi-Device Cloud Sync & Accounts"
+            >
+              <span
+                className={`w-1.5 h-1.5 rounded-full ${
+                  syncStats.status === 'syncing'
+                    ? 'bg-[#4ade80] animate-spin'
+                    : syncStats.status === 'offline'
+                    ? 'bg-[#94a3b8]'
+                    : 'bg-[#38bdf8] animate-pulse'
+                }`}
+              />
+              <span>[SYNC{syncStats.status === 'syncing' ? '...' : ''}]</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
                 setIsNightShiftOpen(true);
                 playBeep('tap');
               }}
@@ -2646,6 +2692,23 @@ const CommandCenterContent: React.FC = () => {
               <span className="text-base" aria-hidden="true">📁</span>
               <span className="hidden sm:inline">Files</span>
             </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setIsSyncModalOpen((prev) => !prev);
+                playBeep('tap');
+              }}
+              className={`min-h-[42px] px-3 sm:px-5 py-1.5 font-mono-tabular text-sm sm:text-base flex items-center gap-2 transition-colors cursor-pointer border-l border-[#363b4e] ${
+                isSyncModalOpen
+                  ? 'bg-[#15342a] text-[#4ade80] font-semibold'
+                  : 'text-[#4ade80] hover:bg-[#122820]'
+              }`}
+              title="Open SatCom Multi-Device Cloud Sync"
+            >
+              <span className="text-base" aria-hidden="true">☁️</span>
+              <span className="hidden sm:inline">Sync</span>
+            </button>
           </nav>
         </footer>
       </div>
@@ -2666,6 +2729,7 @@ const CommandCenterContent: React.FC = () => {
           playBeep('tap');
         }}
         onOpenWorkspaceFiles={() => setIsWorkspaceFilesOpen(true)}
+        onOpenSyncModal={() => setIsSyncModalOpen(true)}
         onOpenFieldManual={() => setIsFieldManualOpen(true)}
         onOpenPluginAuth={handleOpenPluginAuth}
       />
@@ -2806,6 +2870,11 @@ const CommandCenterContent: React.FC = () => {
       <WorkspaceFileViewer
         isOpen={isWorkspaceFilesOpen}
         onClose={() => setIsWorkspaceFilesOpen(false)}
+      />
+
+      <SyncAccountModal
+        isOpen={isSyncModalOpen}
+        onClose={() => setIsSyncModalOpen(false)}
       />
 
       <PluginAuthModal

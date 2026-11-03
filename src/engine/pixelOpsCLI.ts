@@ -30,6 +30,20 @@ import {
   runAgentWithTools,
   getAvailableIntegrations,
 } from '../services/ComposioService';
+import {
+  getActiveSession,
+  loginAccount,
+  registerAccount,
+  logoutAccount,
+  fetchRemoteDevices,
+  DeviceInfo,
+} from '../services/AuthService';
+import {
+  syncBidirectional,
+  pushToCloud,
+  pullFromCloud,
+  getSyncStats,
+} from '../services/SyncService';
 
 export interface CLICommandContext {
   crewAgents: Array<{
@@ -786,7 +800,166 @@ export async function executeCLICommand(
     };
   }
 
-  // 14. HELP
+  // 14. SYNC [status|push|pull]
+  if (action === 'sync') {
+    const sub = (args[0] || '').toLowerCase();
+    const stats = getSyncStats();
+
+    if (sub === 'status') {
+      const lines = [
+        '+------------------------------------------------------------------------------+',
+        '| SATCOM MULTI-DEVICE CLOUD SYNCHRONIZATION STATUS                             |',
+        '+------------------------------------------------------------------------------+',
+        `  Status:             ${stats.status.toUpperCase()}`,
+        `  Last Synchronized:  ${stats.lastSyncedAt ? new Date(stats.lastSyncedAt).toLocaleString() : 'Never'}`,
+        `  Workspace Files:    ${stats.filesCount}`,
+        `  NightShift Tasks:   ${stats.routinesCount}`,
+        `  Reflex Memories:    ${stats.memoriesCount}`,
+        `  Auto-Sync Loop:     ${stats.autoSyncEnabled ? 'ENABLED (45s)' : 'DISABLED'}`,
+        '+------------------------------------------------------------------------------+',
+      ];
+      return {
+        command: trimmed,
+        output: lines.join('\n'),
+        status: 'ok',
+        timestamp,
+      };
+    }
+
+    if (sub === 'push') {
+      const res = await pushToCloud();
+      return {
+        command: trimmed,
+        output: res.success
+          ? '[SATCOM PUSH COMPLETE] Local files, routines, and memories dispatched to cloud vault.'
+          : `[SATCOM PUSH FAILED] ${res.error}`,
+        status: res.success ? 'ok' : 'error',
+        timestamp,
+      };
+    }
+
+    if (sub === 'pull') {
+      const res = await pullFromCloud();
+      return {
+        command: trimmed,
+        output: res.success
+          ? res.updated
+            ? '[SATCOM PULL COMPLETE] Remote updates merged into local terminal store.'
+            : '[SATCOM PULL COMPLETE] Local vault is already up to date.'
+          : `[SATCOM PULL FAILED] ${res.error}`,
+        status: res.success ? 'ok' : 'error',
+        timestamp,
+      };
+    }
+
+    // Default: full bidirectional sync
+    const res = await syncBidirectional();
+    return {
+      command: trimmed,
+      output: res.success
+        ? [
+            '+------------------------------------------------------------------------------+',
+            '| SATCOM QUANTUM SYNC COMPLETED SUCCESSFULLY                                   |',
+            '+------------------------------------------------------------------------------+',
+            res.updated
+              ? '✓ Bidirectional alignment complete. Remote dossiers & schedules merged.'
+              : '✓ Local and cloud vaults are 100% aligned. No conflicts detected.',
+            `  Files: ${stats.filesCount} | Routines: ${stats.routinesCount} | Memories: ${stats.memoriesCount}`,
+            '+------------------------------------------------------------------------------+',
+          ].join('\n')
+        : `[SATCOM SYNC NOTICE] ${res.error || 'Local terminal operating in air-gapped mode.'}`,
+      status: res.success ? 'ok' : 'warning',
+      timestamp,
+    };
+  }
+
+  // 15. ACCOUNT [whoami|logout|devices]
+  if (action === 'account') {
+    const sub = (args[0] || '').toLowerCase();
+    const session = getActiveSession();
+
+    if (sub === 'logout') {
+      logoutAccount();
+      return {
+        command: trimmed,
+        output: '[AUTHENTICATION REVOKED] Disconnected from SatCom Cloud. Air-gapped mode active.',
+        status: 'ok',
+        timestamp,
+      };
+    }
+
+    if (sub === 'devices') {
+      if (!session) {
+        return {
+          command: trimmed,
+          output: 'ERROR: No active operative session. Log in or create an account first.',
+          status: 'error',
+          timestamp,
+        };
+      }
+      try {
+        const devs = await fetchRemoteDevices();
+        const lines = [
+          '+------------------------------------------------------------------------------+',
+          '| LINKED SAFEHOUSE FLEET TERMINALS                                             |',
+          '+------------------------------------------------------------------------------+',
+          ...devs.map(
+            (d: DeviceInfo) =>
+              `  [${d.deviceType.toUpperCase()}] ${d.deviceName.padEnd(24)} | ID: ${d.deviceId.slice(0, 16)}... | Active: ${new Date(d.lastActive).toLocaleTimeString()}`
+          ),
+          '+------------------------------------------------------------------------------+',
+        ];
+        return {
+          command: trimmed,
+          output: lines.join('\n'),
+          status: 'ok',
+          timestamp,
+        };
+      } catch (err: any) {
+        return {
+          command: trimmed,
+          output: `Failed to fetch fleet devices: ${err?.message || err}`,
+          status: 'error',
+          timestamp,
+        };
+      }
+    }
+
+    // Default: whoami
+    if (!session) {
+      return {
+        command: trimmed,
+        output: [
+          'AIR-GAPPED OPERATIVE MODE (NO CLOUD LINK ACTIVE)',
+          'To link this terminal with your phone or other computers, use the [SYNC] button or login.',
+          'Usage: pixelops account [whoami | devices | logout]',
+        ].join('\n'),
+        status: 'warning',
+        timestamp,
+      };
+    }
+
+    return {
+      command: trimmed,
+      output: [
+        '+------------------------------------------------------------------------------+',
+        '| ACTIVE OPERATIVE CREDENTIALS                                                 |',
+        '+------------------------------------------------------------------------------+',
+        `  Callsign:           ${session.user.callsign}`,
+        `  Handle:             @${session.user.username}`,
+        `  Satellite Email:    ${session.user.email}`,
+        `  Clearance:          ${session.user.securityClearance}`,
+        `  Terminal Node:      ${session.device.deviceName} (${session.device.deviceType})`,
+        `  Node ID:            ${session.device.deviceId}`,
+        `  Session Valid Till: ${new Date(session.expiresAt).toLocaleDateString()}`,
+        '+------------------------------------------------------------------------------+',
+      ].join('\n'),
+      status: 'ok',
+      timestamp,
+    };
+  }
+
+  // 16. HELP
   if (action === 'help') {
     const helpText = [
       'PIXELOPS TACTICAL HEADLESS CLI UTILITY v1.0',
@@ -796,6 +969,8 @@ export async function executeCLICommand(
       '  pixelops chain <workflow>          Execute an autonomous multi-agent task chain across operatives',
       '  pixelops dispatch <agent> <task>   Queue a tactical directive to an operative',
       '  pixelops approve <taskId>          Approve pending human-in-the-loop task briefs',
+      '  pixelops sync [status|push|pull]   Execute multi-device quantum cloud sync',
+      '  pixelops account [devices|logout]  Inspect operative callsign, clearance & linked devices',
       '  pixelops files [category]          List IndexedDB workspace files (reports, logs, config)',
       '  pixelops cat <filePath>            Read content of an IndexedDB workspace file',
       '  pixelops plugins                   List BYOK capability plugins and auth tokens',

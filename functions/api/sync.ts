@@ -117,6 +117,15 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
         if (u) dbUserId = u.id;
         if (!dbUserId) dbUserId = userKey;
 
+        // Ensure user row exists in users table to satisfy foreign keys
+        try {
+          await d1.prepare(`
+            INSERT INTO users (id, username, email, callsign, password_hash, salt, recovery_key, security_clearance, created_at, last_login_at)
+            VALUES (?, ?, ?, ?, 'MIGRATED', 'MIGRATED', 'MIGRATED', 'COMMANDER', ?, ?)
+            ON CONFLICT(id) DO NOTHING
+          `).bind(dbUserId, userKey, `${userKey}@pixelops.local`, userKey.toUpperCase(), now, now).run();
+        } catch {}
+
         await d1.prepare(`
           INSERT INTO user_data (user_id, sync_package, version, updated_at)
           VALUES (?, ?, 1, ?)

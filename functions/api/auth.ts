@@ -303,7 +303,30 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
 
       if (!userRecord && kv) {
         const raw = await kv.get(`user:${cleanQuery}`);
-        if (raw) userRecord = JSON.parse(raw);
+        if (raw) {
+          try {
+            userRecord = JSON.parse(raw);
+            if (d1 && userRecord) {
+              // Auto-migrate account from KV into Cloudflare D1
+              await d1.prepare(`
+                INSERT INTO users (id, username, email, callsign, password_hash, salt, recovery_key, security_clearance, created_at, last_login_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO NOTHING
+              `).bind(
+                userRecord.id,
+                userRecord.username,
+                userRecord.email || `${userRecord.username}@pixelops.local`,
+                userRecord.callsign || userRecord.username,
+                userRecord.passwordHash,
+                userRecord.salt,
+                userRecord.recoveryKey || null,
+                userRecord.securityClearance || 'COMMANDER',
+                userRecord.createdAt || new Date().toISOString(),
+                userRecord.lastLoginAt || new Date().toISOString()
+              ).run();
+            }
+          } catch {}
+        }
       }
 
       if (!userRecord) {
@@ -319,6 +342,27 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
               break;
             }
           }
+        }
+        if (d1 && userRecord) {
+          try {
+            // Auto-migrate account from memory into Cloudflare D1
+            await d1.prepare(`
+              INSERT INTO users (id, username, email, callsign, password_hash, salt, recovery_key, security_clearance, created_at, last_login_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              ON CONFLICT(id) DO NOTHING
+            `).bind(
+              userRecord.id,
+              userRecord.username,
+              userRecord.email || `${userRecord.username}@pixelops.local`,
+              userRecord.callsign || userRecord.username,
+              userRecord.passwordHash,
+              userRecord.salt,
+              userRecord.recoveryKey || null,
+              userRecord.securityClearance || 'COMMANDER',
+              userRecord.createdAt || new Date().toISOString(),
+              userRecord.lastLoginAt || new Date().toISOString()
+            ).run();
+          } catch {}
         }
       }
 

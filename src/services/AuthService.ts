@@ -436,12 +436,54 @@ export async function loginAccount(params: {
       }
     } else {
       const errData = await res.json().catch(() => ({}));
+      // If server doesn't recognize account, check local store for seamless D1 migration
       if (res.status === 401) {
-        throw new Error(errData.message || 'Invalid operative credentials or password.');
+        const localUsers = getLocalUsers();
+        const found = localUsers.find(
+          (u) =>
+            u.username.toLowerCase() === query ||
+            u.email.toLowerCase() === query ||
+            (u.callsign && u.callsign.toLowerCase() === query)
+        );
+
+        if (found) {
+          const computedHash = await hashPassword(password, found.salt);
+          if (computedHash === found.passwordHash) {
+            // Auto-migrate account into D1 database
+            try {
+              const regRes = await fetch('/api/register', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  username: found.username,
+                  email: found.email,
+                  password,
+                  callsign: found.callsign,
+                  device,
+                }),
+              });
+
+              if (regRes.ok) {
+                const regData = await regRes.json();
+                if (regData.session) {
+                  try {
+                    localStorage.setItem('pixelops_last_sync_timestamp_v1', new Date().toISOString());
+                  } catch {}
+                  setActiveSession(regData.session);
+                  return regData.session;
+                }
+              }
+            } catch {}
+          } else {
+            throw new Error('Invalid operative password key.');
+          }
+        } else {
+          throw new Error(errData.message || 'No operative found matching credentials.');
+        }
       }
     }
   } catch (netErr: any) {
-    if (netErr.message?.includes('Invalid operative credentials') || netErr.message?.includes('Invalid operative password key')) {
+    if (netErr.message?.includes('Invalid operative credentials') || netErr.message?.includes('Invalid operative password key') || netErr.message?.includes('No operative found')) {
       throw netErr;
     }
   }

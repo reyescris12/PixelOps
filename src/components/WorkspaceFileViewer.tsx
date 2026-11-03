@@ -88,6 +88,15 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
     data: true,
   });
 
+  // Mobile Master-Detail view tab: 'files' (directory tree list) vs 'preview' (open file viewer/editor)
+  const [mobileActiveTab, setMobileActiveTab] = useState<'files' | 'preview'>('files');
+
+  useEffect(() => {
+    if (initialFilePath) {
+      setMobileActiveTab('preview');
+    }
+  }, [initialFilePath]);
+
   const loadFiles = async (preserveSelected: boolean = true) => {
     setIsLoading(true);
     try {
@@ -113,6 +122,7 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
         if (target) {
           setSelectedFile(target);
           setEditContent(target.content);
+          setMobileActiveTab('preview');
         } else if (allFiles.length > 0) {
           setSelectedFile(allFiles[0]);
           setEditContent(allFiles[0].content);
@@ -198,6 +208,7 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
     setEditContent(file.content);
     setDeleteConfirmPath(null);
     if (viewMode === 'edit') setViewMode('rendered');
+    setMobileActiveTab('preview');
   };
 
   const handleCopy = async () => {
@@ -220,6 +231,7 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
     playBeep('error');
     await deleteWorkspaceFile(path);
     setDeleteConfirmPath(null);
+    setMobileActiveTab('files');
     await loadFiles(false);
   };
 
@@ -252,6 +264,7 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
       setSelectedFile(created);
       setEditContent(created.content);
       setViewMode('rendered');
+      setMobileActiveTab('preview');
     } catch (e) {
       console.error('Failed to create file:', e);
     }
@@ -330,12 +343,12 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
   return (
     <AnimatePresence>
       <div
-        className="fixed inset-0 z-[120] flex items-start sm:items-center justify-center p-1 sm:p-4 bg-black/80 backdrop-blur-sm overflow-y-auto"
+        className="fixed inset-0 z-[120] flex items-center justify-center p-0 sm:p-3 md:p-4 bg-black/80 backdrop-blur-sm overflow-hidden"
         style={{
-          paddingTop: 'max(8px, env(safe-area-inset-top, 8px))',
-          paddingBottom: 'max(8px, env(safe-area-inset-bottom, 8px))',
-          paddingLeft: 'max(8px, env(safe-area-inset-left, 8px))',
-          paddingRight: 'max(8px, env(safe-area-inset-right, 8px))',
+          paddingTop: 'max(0px, env(safe-area-inset-top, 0px))',
+          paddingBottom: 'max(0px, env(safe-area-inset-bottom, 0px))',
+          paddingLeft: 'max(0px, env(safe-area-inset-left, 0px))',
+          paddingRight: 'max(0px, env(safe-area-inset-right, 0px))',
         }}
       >
         <motion.div
@@ -343,21 +356,21 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95, y: 15 }}
           transition={{ duration: 0.2 }}
-          className="relative w-full max-w-6xl h-[94dvh] sm:h-[92vh] max-h-[880px] flex flex-col bg-[#0a0c0e] border-2 rounded-lg shadow-2xl overflow-hidden font-mono text-xs sm:text-sm text-[#e2e8f0] my-auto"
+          className="relative w-full max-w-6xl h-full sm:h-[92vh] max-h-none sm:max-h-[880px] flex flex-col bg-[#0a0c0e] border-0 sm:border-2 rounded-none sm:rounded-lg shadow-2xl overflow-hidden font-mono text-xs sm:text-sm text-[#e2e8f0]"
           style={{ borderColor: themeColors.accent }}
         >
           {/* Top Terminal Header Bar */}
           <div
-            className="flex items-center justify-between px-3 sm:px-4 py-2 border-b select-none"
+            className="flex items-center justify-between px-3 sm:px-4 py-2 border-b select-none shrink-0"
             style={{
               backgroundColor: '#11151a',
               borderColor: themeColors.border,
             }}
           >
-            <div className="flex items-center gap-2">
-              <span className="text-base">📁</span>
-              <span className="font-bold tracking-wider text-xs sm:text-sm text-white">
-                PIXELOPS WORKSPACE FILE EXPLORER
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-base shrink-0">📁</span>
+              <span className="font-bold tracking-wider text-xs sm:text-sm text-white truncate">
+                WORKSPACE FILES
               </span>
               <span
                 className={`hidden md:inline-block px-2 py-0.5 text-[10px] font-bold uppercase rounded border ${themeColors.badge}`}
@@ -366,7 +379,44 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
               </span>
             </div>
 
-            <div className="flex items-center gap-2">
+            {/* Mobile Master-Detail Navigation Tabs */}
+            <div className="flex md:hidden items-center bg-[#0d1015] p-0.5 rounded border border-slate-800 mx-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setMobileActiveTab('files');
+                  playBeep('tap');
+                }}
+                className={`px-2 py-0.5 rounded text-[11px] font-bold transition-colors ${
+                  mobileActiveTab === 'files'
+                    ? 'bg-slate-200 text-black'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                Files ({files.length})
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (selectedFile) {
+                    setMobileActiveTab('preview');
+                    playBeep('tap');
+                  }
+                }}
+                disabled={!selectedFile}
+                className={`px-2 py-0.5 rounded text-[11px] font-bold transition-colors truncate max-w-[105px] ${
+                  !selectedFile
+                    ? 'opacity-40 cursor-not-allowed text-slate-500'
+                    : mobileActiveTab === 'preview'
+                    ? 'bg-slate-200 text-black'
+                    : 'text-slate-400 hover:text-white'
+                }`}
+              >
+                {selectedFile ? selectedFile.path.split('/').pop() : 'Document'}
+              </button>
+            </div>
+
+            <div className="flex items-center gap-1.5 shrink-0">
               <button
                 type="button"
                 onClick={handleRefresh}
@@ -382,11 +432,11 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
               <button
                 type="button"
                 onClick={() => setIsCreatingNew(true)}
-                className="flex items-center gap-1 px-2.5 py-1 rounded bg-[#1e293b] hover:bg-[#334155] text-white border border-slate-600 transition-colors text-xs font-semibold"
+                className="flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded bg-[#1e293b] hover:bg-[#334155] text-white border border-slate-600 transition-colors text-xs font-semibold"
                 title="Create a new report or log file"
               >
                 <Plus className="w-3 h-3" />
-                <span>New</span>
+                <span className="hidden xs:inline">New</span>
               </button>
 
               <button
@@ -407,7 +457,7 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
               <button
                 type="button"
                 onClick={onClose}
-                className="p-1.5 hover:bg-red-500/20 text-slate-400 hover:text-red-400 rounded transition-colors ml-1"
+                className="p-1.5 hover:bg-red-500/20 text-slate-400 hover:text-red-400 rounded transition-colors ml-0.5"
                 title="Close Explorer (Esc)"
               >
                 <X className="w-4 h-4" />
@@ -417,12 +467,12 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
 
           {/* Subheader Status Telemetry */}
           <div
-            className="flex items-center justify-between px-3 py-1.5 border-b bg-[#0d1015] text-[11px] text-slate-400 select-none"
+            className="flex items-center justify-between px-3 py-1.5 border-b bg-[#0d1015] text-[11px] text-slate-400 select-none shrink-0"
             style={{ borderColor: themeColors.border }}
           >
             <div className="flex items-center gap-3">
               <span className="flex items-center gap-1.5">
-                <Database className="w-3 h-3 text-slate-500" />
+                <Database className="w-3 h-3 text-slate-500 shrink-0" />
                 <span>
                   Storage: <strong className="text-slate-200">{files.length}</strong>{' '}
                   records ({Math.round(totalBytes / 1024 * 10) / 10} KB)
@@ -432,18 +482,20 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
               <span className="hidden sm:inline">Engine: Dexie.js v3 IndexedDB + VFS</span>
             </div>
 
-            <div className="flex items-center gap-2">
-              <span className="text-slate-400">
+            <div className="flex items-center gap-2 overflow-hidden">
+              <span className="text-slate-400 truncate max-w-[150px] sm:max-w-none">
                 {selectedFile ? selectedFile.path : 'No file selected'}
               </span>
             </div>
           </div>
 
           {/* Main Content: Split Pane Explorer */}
-          <div className="flex-1 flex flex-col md:flex-row overflow-hidden">
+          <div className="flex-1 flex flex-col md:flex-row overflow-hidden min-h-0">
             {/* Left Column: Directory Tree & File List */}
             <div
-              className="w-full md:w-80 md:min-w-[280px] md:max-w-xs flex flex-col border-b md:border-b-0 md:border-r bg-[#090b0e] overflow-hidden"
+              className={`w-full md:w-80 md:min-w-[280px] md:max-w-xs flex flex-col border-b md:border-b-0 md:border-r bg-[#090b0e] overflow-hidden min-h-0 ${
+                mobileActiveTab === 'files' ? 'flex-1 h-full' : 'hidden md:flex'
+              }`}
               style={{ borderColor: themeColors.border }}
             >
               {/* Search Bar & Category Filters */}
@@ -565,32 +617,39 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
                                   key={file.path}
                                   type="button"
                                   onClick={() => handleSelectFile(file)}
-                                  className={`w-full flex items-center gap-2 px-2 py-1.5 rounded text-left transition-colors cursor-pointer group ${
+                                  className={`w-full flex items-center justify-between gap-2 px-2.5 py-2.5 sm:py-1.5 rounded text-left transition-colors cursor-pointer group active:bg-white/10 ${
                                     isSelected
                                       ? 'bg-white/10 text-white font-semibold'
                                       : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
                                   }`}
                                   style={{
                                     borderLeft: isSelected
-                                      ? `2px solid ${themeColors.accent}`
-                                      : '2px solid transparent',
+                                      ? `3px solid ${themeColors.accent}`
+                                      : '3px solid transparent',
                                   }}
                                 >
-                                  {isMd ? (
-                                    <FileText className="w-3.5 h-3.5 text-sky-400 shrink-0" />
-                                  ) : isJson ? (
-                                    <FileCode className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                                  ) : (
-                                    <File className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                                  )}
-                                  <span className="truncate flex-1 text-xs">
-                                    {basename}
-                                  </span>
-                                  <span className="text-[10px] text-slate-600 group-hover:text-slate-500 shrink-0">
-                                    {file.sizeBytes > 1024
-                                      ? `${Math.round(file.sizeBytes / 1024 * 10) / 10}KB`
-                                      : `${file.sizeBytes}B`}
-                                  </span>
+                                  <div className="flex items-center gap-2 overflow-hidden flex-1 min-w-0">
+                                    {isMd ? (
+                                      <FileText className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                                    ) : isJson ? (
+                                      <FileCode className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                                    ) : (
+                                      <File className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                    )}
+                                    <span className="truncate text-xs">
+                                      {basename}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center gap-1.5 shrink-0">
+                                    <span className="text-[10px] text-slate-500 group-hover:text-slate-400">
+                                      {file.sizeBytes > 1024
+                                        ? `${Math.round(file.sizeBytes / 1024 * 10) / 10}KB`
+                                        : `${file.sizeBytes}B`}
+                                    </span>
+                                    <span className="md:hidden text-[11px] text-slate-500 group-hover:text-slate-300">
+                                      →
+                                    </span>
+                                  </div>
                                 </button>
                               );
                             })}
@@ -604,22 +663,40 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
             </div>
 
             {/* Right Column: File Preview Pane & Actions */}
-            <div className="flex-1 flex flex-col bg-[#0b0e12] overflow-hidden">
+            <div
+              className={`flex-1 flex flex-col bg-[#0b0e12] overflow-hidden min-h-0 ${
+                mobileActiveTab === 'preview' ? 'flex-1 h-full' : 'hidden md:flex'
+              }`}
+            >
               {selectedFile ? (
                 <>
                   {/* Preview Toolbar */}
                   <div
-                    className="flex flex-wrap items-center justify-between gap-2 px-3 sm:px-4 py-2 border-b bg-[#10141b]"
+                    className="flex flex-wrap items-center justify-between gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 border-b bg-[#10141b] shrink-0"
                     style={{ borderColor: themeColors.border }}
                   >
-                    <div className="flex items-center gap-2 overflow-hidden">
+                    <div className="flex items-center gap-1.5 sm:gap-2 overflow-hidden min-w-0 max-w-[65%] sm:max-w-none">
+                      {/* Mobile Back to Files List Button */}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMobileActiveTab('files');
+                          playBeep('tap');
+                        }}
+                        className="md:hidden flex items-center gap-1 px-2 py-1 rounded bg-[#1e293b] hover:bg-[#334155] text-slate-200 border border-slate-700 text-xs font-bold cursor-pointer shrink-0"
+                        title="Back to file list"
+                      >
+                        <span>←</span>
+                        <span>Files</span>
+                      </button>
+
                       <span className="font-bold text-white text-xs sm:text-sm truncate">
                         {selectedFile.path}
                       </span>
-                      <span className="px-1.5 py-0.5 rounded text-[10px] uppercase font-bold bg-slate-800 text-slate-300 border border-slate-700">
+                      <span className="px-1.5 py-0.5 rounded text-[10px] uppercase font-bold bg-slate-800 text-slate-300 border border-slate-700 shrink-0">
                         {selectedFile.format}
                       </span>
-                      <span className="text-[11px] text-slate-500 hidden sm:inline">
+                      <span className="text-[11px] text-slate-500 hidden sm:inline shrink-0">
                         {selectedFile.sizeBytes} bytes
                       </span>
                     </div>
@@ -792,7 +869,7 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
                   </div>
                 </>
               ) : (
-                <div className="flex-1 flex flex-col items-center justify-center p-8 text-center text-slate-500 gap-3">
+                <div className="flex-1 flex flex-col items-center justify-center p-6 text-center text-slate-500 gap-3">
                   <FileText className="w-12 h-12 text-slate-600" />
                   <div>
                     <p className="font-semibold text-slate-400 mb-1">
@@ -803,19 +880,28 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
                       or export.
                     </p>
                   </div>
-                  <button
-                    type="button"
-                    onClick={handleSeedSamples}
-                    className="px-3 py-1.5 rounded text-xs font-semibold border flex items-center gap-1.5 transition-colors cursor-pointer"
-                    style={{
-                      backgroundColor: themeColors.accentBg,
-                      borderColor: themeColors.border,
-                      color: themeColors.accent,
-                    }}
-                  >
-                    <Sparkles className="w-3.5 h-3.5" />
-                    <span>Open Master Execution Schedule</span>
-                  </button>
+                  <div className="flex flex-wrap items-center justify-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setMobileActiveTab('files')}
+                      className="md:hidden px-3 py-1.5 rounded text-xs font-semibold bg-slate-800 text-white hover:bg-slate-700 border border-slate-600 flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <span>← Browse Files</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSeedSamples}
+                      className="px-3 py-1.5 rounded text-xs font-semibold border flex items-center gap-1.5 transition-colors cursor-pointer"
+                      style={{
+                        backgroundColor: themeColors.accentBg,
+                        borderColor: themeColors.border,
+                        color: themeColors.accent,
+                      }}
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>Seed Sample Reports</span>
+                    </button>
+                  </div>
                 </div>
               )}
             </div>

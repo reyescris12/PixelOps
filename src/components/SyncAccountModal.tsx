@@ -107,6 +107,7 @@ export const SyncAccountModal: React.FC<SyncAccountModalProps> = ({
   const [generatedPairingCode, setGeneratedPairingCode] = useState('');
   const [copiedPairing, setCopiedPairing] = useState(false);
   const [copiedRecovery, setCopiedRecovery] = useState(false);
+  const [oneTimeRecoveryNotice, setOneTimeRecoveryNotice] = useState<string | null>(null);
 
   // Sync action state
   const [isSyncing, setIsSyncing] = useState(false);
@@ -188,12 +189,15 @@ export const SyncAccountModal: React.FC<SyncAccountModalProps> = ({
 
         playBeep('complete');
         setSession(newSession);
+        if (newSession.oneTimeRecoveryKey) {
+          setOneTimeRecoveryNotice(newSession.oneTimeRecoveryKey);
+        }
         setEditCallsign(newSession.user.callsign);
         setEditUsername(newSession.user.username);
         setEditEmail(newSession.user.email);
         setSyncStats(getSyncStats());
         setAuthSuccess(`Operative clearance established: ${newSession.user.callsign}`);
-        setActiveTab('sync');
+        setActiveTab('account');
         loadDevices();
         handleManualSync();
       } else if (authMode === 'login') {
@@ -318,18 +322,11 @@ export const SyncAccountModal: React.FC<SyncAccountModalProps> = ({
     setTimeout(() => setCopiedPairing(false), 2500);
   };
 
-  const handleCopyRecoveryKey = () => {
-    if (!session?.user?.recoveryKey) return;
-    navigator.clipboard.writeText(session.user.recoveryKey);
-    setCopiedRecovery(true);
-    playBeep('tap');
-    setTimeout(() => setCopiedRecovery(false), 2500);
-  };
-
   const handleLogout = () => {
     playBeep('tap');
     logoutAccount();
     setSession(null);
+    setOneTimeRecoveryNotice(null);
     setActiveTab('account');
     setAuthMode('login');
     setAuthSuccess('Operative link terminated. Operating in isolated local mode.');
@@ -500,6 +497,53 @@ export const SyncAccountModal: React.FC<SyncAccountModalProps> = ({
 
         {/* Tab Content Body */}
         <div className="flex-1 overflow-y-auto p-3 sm:p-4 space-y-4 text-xs">
+          {/* One-Time Recovery Key Alert Banner (Only shown once upon new registration) */}
+          {oneTimeRecoveryNotice && (
+            <div className="p-3.5 bg-amber-950/90 border-2 border-amber-500 rounded-xl space-y-2.5 shadow-xl animate-in fade-in">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Key className="w-4 h-4 text-amber-400" />
+                  <span className="font-bold text-xs uppercase tracking-wider text-amber-300">
+                    Satellite Recovery Key (Save Offline)
+                  </span>
+                </div>
+                <span className="text-[9px] uppercase font-bold bg-amber-500/20 text-amber-300 px-2 py-0.5 rounded border border-amber-500/40">
+                  ONE-TIME DISPLAY
+                </span>
+              </div>
+              <p className="text-[11px] text-amber-200/90 leading-relaxed">
+                Record this key now. To protect your account against breaches, this key is <strong>never stored in plaintext</strong> and <strong>cannot be viewed again</strong>. You will need it if you ever forget your password.
+              </p>
+              <div className="flex items-center gap-2 bg-zinc-950 px-3 py-2 rounded-lg border border-amber-500/40">
+                <code className="font-mono text-xs text-amber-300 flex-1 tracking-wider select-all font-semibold">
+                  {oneTimeRecoveryNotice}
+                </code>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(oneTimeRecoveryNotice);
+                    setCopiedRecovery(true);
+                    playBeep('tap');
+                    setTimeout(() => setCopiedRecovery(false), 2500);
+                  }}
+                  className="px-2.5 py-1 bg-amber-500 text-zinc-950 font-bold text-xs rounded hover:bg-amber-400 flex items-center gap-1 transition-colors cursor-pointer"
+                >
+                  {copiedRecovery ? <Check className="w-3.5 h-3.5 text-zinc-950" /> : <Copy className="w-3.5 h-3.5" />}
+                  <span>{copiedRecovery ? 'COPIED' : 'COPY'}</span>
+                </button>
+              </div>
+              <div className="flex justify-end pt-1">
+                <button
+                  type="button"
+                  onClick={() => setOneTimeRecoveryNotice(null)}
+                  className="px-3 py-1 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 border border-zinc-700 text-xs rounded transition-colors cursor-pointer"
+                >
+                  I Have Safely Saved This Key
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* TAB 1: CLOUD SYNC */}
           {activeTab === 'sync' && (
             <div className="space-y-4">
@@ -774,30 +818,6 @@ export const SyncAccountModal: React.FC<SyncAccountModalProps> = ({
                         </div>
                       </div>
 
-                      {/* Satellite Recovery Key Card */}
-                      {session.user.recoveryKey && (
-                        <div className="p-3 bg-zinc-950/80 border border-amber-500/30 rounded-lg space-y-1.5">
-                          <div className="flex items-center justify-between">
-                            <span className="text-[10px] uppercase font-bold text-amber-400 flex items-center gap-1.5">
-                              <Key className="w-3.5 h-3.5" />
-                              Satellite Recovery Key (Keep Secret)
-                            </span>
-                            <button
-                              onClick={handleCopyRecoveryKey}
-                              className="flex items-center gap-1 px-2 py-0.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 rounded border border-amber-500/30 text-[10px] cursor-pointer"
-                            >
-                              {copiedRecovery ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3" />}
-                              <span>{copiedRecovery ? 'COPIED' : 'COPY KEY'}</span>
-                            </button>
-                          </div>
-                          <div className="font-mono text-xs text-amber-200 tracking-wider bg-zinc-900 px-2.5 py-1.5 rounded border border-zinc-800 select-all">
-                            {session.user.recoveryKey}
-                          </div>
-                          <p className="text-[9px] text-zinc-400">
-                            Required to recover or reset your password if forgotten.
-                          </p>
-                        </div>
-                      )}
 
                       {/* Metadata Grid */}
                       <div className="grid grid-cols-2 gap-2 text-[11px]">

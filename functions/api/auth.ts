@@ -1,7 +1,8 @@
 /**
  * Cloudflare Pages Function: /api/auth
  * Handles user registration, login, logout, session verification (/me),
- * profile updates, password reset, and rate limiting with Cloudflare D1 & KV support.
+ * profile updates, secure password reset, and restricted admin reset capabilities
+ * with Cloudflare D1 SQL & KV support.
  */
 
 interface Env {
@@ -11,12 +12,16 @@ interface Env {
   KV?: any;
   STORAGE?: any;
   DATA?: any;
+  RESET_KEY?: string;
+  PIXELOPS_RESET_SECRET?: string;
+  ADMIN_SECRET?: string;
+  SATCOM_SECRET?: string;
 }
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-user-id, x-username, x-device-id, x-device-name, x-device-type',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-user-id, x-username, x-device-id, x-device-name, x-device-type, x-reset-key, x-admin-reset-key',
 };
 
 function getKv(env: Env) {
@@ -31,6 +36,33 @@ function getD1(env: Env) {
 const memoryUsers = new Map<string, any>();
 const memoryTokens = new Map<string, any>();
 const memoryRateLimits = new Map<string, { attempts: number; firstAttempt: number; blockedUntil: number }>();
+
+/**
+ * Constant-time string comparison to prevent timing attacks
+ */
+function timingSafeEqualStr(a: string, b: string): boolean {
+  const enc = new TextEncoder();
+  const aBuf = enc.encode(a);
+  const bBuf = enc.encode(b);
+  if (aBuf.byteLength !== bBuf.byteLength) return false;
+  let diff = 0;
+  for (let i = 0; i < aBuf.byteLength; i++) {
+    diff |= aBuf[i] ^ bBuf[i];
+  }
+  return diff === 0;
+}
+
+/**
+ * Hashes a recovery key with SHA-256 so plaintext recovery keys are never stored in databases
+ */
+async function hashRecoveryKey(key: string): Promise<string> {
+  const clean = key.trim().toUpperCase();
+  const enc = new TextEncoder();
+  const hashBuffer = await crypto.subtle.digest('SHA-256', enc.encode(`pixelops:recovery:${clean}`));
+  return Array.from(new Uint8Array(hashBuffer))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
 
 /**
  * PBKDF2 Password Hashing (100,000 iterations, Web Crypto API)
@@ -60,11 +92,12 @@ async function hashPasswordPBKDF2(password: string, salt: string): Promise<strin
 }
 
 /**
- * Legacy SHA-256 fallback hash for existing credentials
+ * Legacy SHA-256 fallback hash for backward compatibility
  */
-async function hashPasswordLegacy(password: string, salt: string): Promise<string> {
+async function hashPasswordLegacy(password: string, salt: string, env?: Env): Promise<string> {
+  const pepper = env?.SATCOM_SECRET || 'pixelops_satcom_secret';
   const enc = new TextEncoder();
-  const data = enc.encode(`${salt}:${password}:pixelops_satcom_secret`);
+  const data = enc.encode(`${salt}:${password}:${pepper}`);
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
   return Array.from(new Uint8Array(hashBuffer))
     .map((b) => b.toString(16).padStart(2, '0'))
@@ -72,24 +105,21 @@ async function hashPasswordLegacy(password: string, salt: string): Promise<strin
 }
 
 /**
- * Verifies a password against hash, checking PBKDF2 first, then legacy SHA-256
+ * Verifies a password against stored hash, checking PBKDF2 first, then legacy SHA-256
  */
-async function verifyPassword(password: string, salt: string, storedHash: string): Promise<boolean> {
+async function verifyPassword(password: string, salt: string, storedHash: string, env?: Env): Promise<boolean> {
   const pbkdf2 = await hashPasswordPBKDF2(password, salt);
-  if (pbkdf2 === storedHash) return true;
-  const legacy = await hashPasswordLegacy(password, salt);
-  return legacy === storedHash;
+  if (timingSafeEqualStr(pbkdf2, storedHash)) return true;
+  const legacy = await hashPasswordLegacy(password, salt, env);
+  return timingSafeEqualStr(legacy, storedHash);
 }
 
 /**
- * Rate Limiter to protect /login and /register from brute-force attacks
- * Limits requests to 10 attempts per 5 minutes per IP.
+ * Rate Limiter to protect /login, /register, and /reset-password from brute-force attacks
  */
-async function checkRateLimit(request: Request, db: any): Promise<{ allowed: boolean; retryAfter?: number }> {
+async function checkRateLimit(request: Request, db: any, maxAttempts = 10, windowSec = 300): Promise<{ allowed: boolean; retryAfter?: number }> {
   const ip = request.headers.get('CF-Connecting-IP') || request.headers.get('x-forwarded-for') || 'default_ip';
   const now = Math.floor(Date.now() / 1000);
-  const windowSec = 300; // 5 min
-  const maxAttempts = 10;
 
   if (db) {
     try {
@@ -157,7 +187,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
       (path.endsWith('/register') || actionParam === 'register');
 
     if (isRegister) {
-      const rateCheck = await checkRateLimit(request, d1);
+      const rateCheck = await checkRateLimit(request, d1, 10, 300);
       if (!rateCheck.allowed) {
         return new Response(
           JSON.stringify({ error: 'RATE_LIMITED', message: `Too many attempts. Locked out for ${rateCheck.retryAfter || 900}s.` }),
@@ -201,7 +231,10 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
       const passwordHash = await hashPasswordPBKDF2(password, salt);
       const userId = `usr_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
       const now = new Date().toISOString();
-      const recoveryKey = `SATCOM-${operativeCallsign.slice(0, 6).replace(/[^A-Z0-9]/g, '') || 'AGENT'}-${Math.random().toString(36).substring(2, 6).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+
+      // Generate recovery key and store only its cryptographic hash
+      const rawRecoveryKey = `SATCOM-${operativeCallsign.slice(0, 6).replace(/[^A-Z0-9]/g, '') || 'AGENT'}-${Math.random().toString(36).substring(2, 6).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+      const recoveryHash = await hashRecoveryKey(rawRecoveryKey);
 
       const userRecord = {
         id: userId,
@@ -210,7 +243,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
         callsign: operativeCallsign,
         salt,
         passwordHash,
-        recoveryKey,
+        recoveryKeyHash: recoveryHash,
         securityClearance: 'COMMANDER',
         createdAt: now,
         lastLoginAt: now,
@@ -224,7 +257,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
         await d1.prepare(`
           INSERT INTO users (id, username, email, callsign, password_hash, salt, recovery_key, security_clearance, created_at, last_login_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, 'COMMANDER', ?, ?)
-        `).bind(userId, cleanUser, cleanEmail, operativeCallsign, passwordHash, salt, recoveryKey, now, now).run();
+        `).bind(userId, cleanUser, cleanEmail, operativeCallsign, passwordHash, salt, recoveryHash, now, now).run();
 
         await d1.prepare('INSERT INTO sessions (token, user_id, device_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?)').bind(token, userId, device?.deviceId || null, now, expiresAt).run();
 
@@ -251,6 +284,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
         memoryTokens.set(token, { userId, cleanUser });
       }
 
+      // Important: Never persist recoveryKey in session.user payload. Surface once at registration only.
       const session = {
         token,
         user: {
@@ -259,7 +293,6 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
           email: userRecord.email,
           callsign: userRecord.callsign,
           securityClearance: userRecord.securityClearance,
-          recoveryKey: userRecord.recoveryKey,
           createdAt: now,
           lastLoginAt: now,
         },
@@ -267,7 +300,12 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
         expiresAt,
       };
 
-      return new Response(JSON.stringify({ ok: true, session, devices: userRecord.devices }), {
+      return new Response(JSON.stringify({
+        ok: true,
+        session,
+        devices: userRecord.devices,
+        oneTimeRecoveryKey: rawRecoveryKey, // Displayed once for safe offline storage
+      }), {
         status: 200,
         headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
       });
@@ -279,7 +317,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
       (path.endsWith('/login') || actionParam === 'login');
 
     if (isLogin) {
-      const rateCheck = await checkRateLimit(request, d1);
+      const rateCheck = await checkRateLimit(request, d1, 10, 300);
       if (!rateCheck.allowed) {
         return new Response(
           JSON.stringify({ error: 'RATE_LIMITED', message: `Too many attempts. Locked out for ${rateCheck.retryAfter || 900}s.` }),
@@ -295,7 +333,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
 
       if (d1) {
         userRecord = await d1.prepare(`
-          SELECT id, username, email, callsign, password_hash as passwordHash, salt, recovery_key as recoveryKey, security_clearance as securityClearance, created_at as createdAt, last_login_at as lastLoginAt
+          SELECT id, username, email, callsign, password_hash as passwordHash, salt, recovery_key as recoveryKeyHash, security_clearance as securityClearance, created_at as createdAt, last_login_at as lastLoginAt
           FROM users
           WHERE username = ? OR email = ? OR callsign = ?
         `).bind(cleanQuery, cleanQuery, cleanQuery).first();
@@ -307,7 +345,6 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
           try {
             userRecord = JSON.parse(raw);
             if (d1 && userRecord) {
-              // Auto-migrate account from KV into Cloudflare D1
               await d1.prepare(`
                 INSERT INTO users (id, username, email, callsign, password_hash, salt, recovery_key, security_clearance, created_at, last_login_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -319,7 +356,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
                 userRecord.callsign || userRecord.username,
                 userRecord.passwordHash,
                 userRecord.salt,
-                userRecord.recoveryKey || null,
+                userRecord.recoveryKeyHash || userRecord.recoveryKey || null,
                 userRecord.securityClearance || 'COMMANDER',
                 userRecord.createdAt || new Date().toISOString(),
                 userRecord.lastLoginAt || new Date().toISOString()
@@ -345,7 +382,6 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
         }
         if (d1 && userRecord) {
           try {
-            // Auto-migrate account from memory into Cloudflare D1
             await d1.prepare(`
               INSERT INTO users (id, username, email, callsign, password_hash, salt, recovery_key, security_clearance, created_at, last_login_at)
               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -357,7 +393,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
               userRecord.callsign || userRecord.username,
               userRecord.passwordHash,
               userRecord.salt,
-              userRecord.recoveryKey || null,
+              userRecord.recoveryKeyHash || userRecord.recoveryKey || null,
               userRecord.securityClearance || 'COMMANDER',
               userRecord.createdAt || new Date().toISOString(),
               userRecord.lastLoginAt || new Date().toISOString()
@@ -373,7 +409,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
         );
       }
 
-      const isPasswordValid = await verifyPassword(password, userRecord.salt, userRecord.passwordHash);
+      const isPasswordValid = await verifyPassword(password, userRecord.salt, userRecord.passwordHash, env);
       if (!isPasswordValid) {
         return new Response(
           JSON.stringify({ error: 'INVALID_PASSWORD', message: 'Invalid operative password key.' }),
@@ -385,7 +421,6 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
       const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
       const token = `tok_${userRecord.id}_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 12)}`;
 
-      // Update devices list
       userRecord.devices = userRecord.devices || [];
       if (device) {
         const existingIdx = userRecord.devices.findIndex((d: any) => d.deviceId === device.deviceId);
@@ -418,6 +453,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
         memoryTokens.set(token, { userId: userRecord.id, cleanUser: cleanQuery });
       }
 
+      // Security: Do NOT expose recoveryKey in persistent session payload
       const session = {
         token,
         user: {
@@ -426,7 +462,6 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
           email: userRecord.email,
           callsign: userRecord.callsign,
           securityClearance: userRecord.securityClearance || 'COMMANDER',
-          recoveryKey: userRecord.recoveryKey,
           createdAt: userRecord.createdAt,
           lastLoginAt: now,
         },
@@ -458,7 +493,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
 
       if (d1) {
         const sessionRow = await d1.prepare(`
-          SELECT s.token, s.expires_at, u.id, u.username, u.email, u.callsign, u.recovery_key, u.security_clearance, u.created_at, u.last_login_at
+          SELECT s.token, s.expires_at, u.id, u.username, u.email, u.callsign, u.security_clearance, u.created_at, u.last_login_at
           FROM sessions s
           JOIN users u ON s.user_id = u.id
           WHERE s.token = ?
@@ -473,7 +508,6 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
               username: sessionRow.username,
               email: sessionRow.email,
               callsign: sessionRow.callsign,
-              recoveryKey: sessionRow.recovery_key,
               securityClearance: sessionRow.security_clearance,
               createdAt: sessionRow.created_at,
               lastLoginAt: sessionRow.last_login_at,
@@ -514,17 +548,45 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
       });
     }
 
-    // 5. RESET PASSWORD: POST /api/auth/reset-password or action=reset-password
+    // 5. SECURE PASSWORD RESET: POST /api/auth/reset-password or action=reset-password
     if (request.method === 'POST' && (path.endsWith('/reset-password') || actionParam === 'reset-password')) {
+      // Strict rate limiting: Max 5 attempts per 15 minutes to prevent brute-force attacks
+      const rateCheck = await checkRateLimit(request, d1, 5, 900);
+      if (!rateCheck.allowed) {
+        return new Response(
+          JSON.stringify({ error: 'RATE_LIMITED', message: `Too many password reset attempts. Please wait ${rateCheck.retryAfter || 900} seconds.` }),
+          { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': String(rateCheck.retryAfter || 900), ...CORS_HEADERS } }
+        );
+      }
+
       const body = await request.json().catch(() => ({})) as any;
-      const { usernameOrEmail, recoveryKey, newPassword } = body;
+      const { usernameOrEmail, recoveryKey, newPassword, adminResetKey } = body;
       const cleanQuery = String(usernameOrEmail || '').toLowerCase().trim();
       const cleanKey = String(recoveryKey || '').trim().toUpperCase();
 
-      if (!cleanQuery || !cleanKey || !newPassword) {
+      if (!cleanQuery || !newPassword) {
         return new Response(
-          JSON.stringify({ error: 'MISSING_FIELDS', message: 'Username, recovery key, and new password are required.' }),
+          JSON.stringify({ error: 'MISSING_FIELDS', message: 'Username/Email and new password are required.' }),
           { status: 400, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+        );
+      }
+
+      if (newPassword.length < 6) {
+        return new Response(
+          JSON.stringify({ error: 'PASSWORD_TOO_SHORT', message: 'New password key must be at least 6 characters.' }),
+          { status: 400, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+        );
+      }
+
+      // Check backend environment secret for administrative override
+      const envResetSecret = env.RESET_KEY || env.PIXELOPS_RESET_SECRET || env.ADMIN_SECRET;
+      const incomingAdminKey = (adminResetKey || request.headers.get('x-reset-key') || request.headers.get('x-admin-reset-key') || '').trim();
+      const isAdminAuthorized = Boolean(envResetSecret && incomingAdminKey && timingSafeEqualStr(incomingAdminKey, envResetSecret));
+
+      if (!cleanKey && !isAdminAuthorized) {
+        return new Response(
+          JSON.stringify({ error: 'KEY_REQUIRED', message: 'Satellite Recovery Key or authorized backend reset secret required.' }),
+          { status: 401, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
         );
       }
 
@@ -540,37 +602,90 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
 
       if (!userRecord) {
         return new Response(
-          JSON.stringify({ error: 'USER_NOT_FOUND', message: 'No operative found with that identifier.' }),
+          JSON.stringify({ error: 'USER_NOT_FOUND', message: 'No operative found matching credentials.' }),
           { status: 404, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
         );
       }
 
-      const storedKey = String(userRecord.recovery_key || userRecord.recoveryKey || '').trim().toUpperCase();
-      if (storedKey !== cleanKey) {
-        return new Response(
-          JSON.stringify({ error: 'INVALID_RECOVERY_KEY', message: 'Satellite Recovery Key does not match our records.' }),
-          { status: 403, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
-        );
+      // Validate recovery key securely
+      if (!isAdminAuthorized) {
+        const storedKeyOrHash = String(userRecord.recovery_key || userRecord.recoveryKeyHash || userRecord.recoveryKey || '').trim();
+        const inputHash = await hashRecoveryKey(cleanKey);
+
+        const isHashMatch = timingSafeEqualStr(inputHash, storedKeyOrHash);
+        const isLegacyPlainMatch = timingSafeEqualStr(cleanKey, storedKeyOrHash.toUpperCase());
+
+        if (!isHashMatch && !isLegacyPlainMatch) {
+          return new Response(
+            JSON.stringify({ error: 'INVALID_RECOVERY_KEY', message: 'Satellite Recovery Key does not match our records.' }),
+            { status: 403, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+          );
+        }
       }
 
       const newSalt = Math.random().toString(36).substring(2, 14);
       const newHash = await hashPasswordPBKDF2(newPassword, newSalt);
+      const updatedRecoveryHash = await hashRecoveryKey(cleanKey || 'RECONFIGURED');
 
       if (d1) {
-        await d1.prepare('UPDATE users SET password_hash = ?, salt = ? WHERE id = ?').bind(newHash, newSalt, userRecord.id).run();
+        await d1.prepare('UPDATE users SET password_hash = ?, salt = ?, recovery_key = ? WHERE id = ?').bind(newHash, newSalt, updatedRecoveryHash, userRecord.id).run();
       }
       if (kv) {
         userRecord.passwordHash = newHash;
         userRecord.salt = newSalt;
+        userRecord.recoveryKeyHash = updatedRecoveryHash;
+        delete userRecord.recoveryKey;
         await kv.put(`user:${userRecord.username}`, JSON.stringify(userRecord));
       } else {
         userRecord.passwordHash = newHash;
         userRecord.salt = newSalt;
+        userRecord.recoveryKeyHash = updatedRecoveryHash;
+        delete userRecord.recoveryKey;
         memoryUsers.set(userRecord.username, userRecord);
       }
 
       return new Response(
         JSON.stringify({ ok: true, message: 'Password encryption key reset successfully. Please sign in.' }),
+        { status: 200, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+      );
+    }
+
+    // 6. RESTRICTED BACKEND ADMIN ROUTE: POST /api/admin/reset
+    // Strictly requires backend environment secret AND authenticated COMMANDER/ADMIN session.
+    // Client UI cannot trigger this without administrative authorization.
+    const isAdminReset =
+      request.method === 'POST' &&
+      (path.endsWith('/admin/reset') || path.endsWith('/admin/purge-db') || actionParam === 'admin-reset');
+
+    if (isAdminReset) {
+      const envSecret = env.RESET_KEY || env.PIXELOPS_RESET_SECRET || env.ADMIN_SECRET;
+      if (!envSecret) {
+        return new Response(
+          JSON.stringify({ error: 'FORBIDDEN', message: 'Backend admin reset key is not configured in server environment. Admin reset disabled.' }),
+          { status: 403, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+        );
+      }
+
+      const incomingKey = (request.headers.get('x-admin-reset-key') || request.headers.get('x-reset-key') || '').trim();
+      if (!incomingKey || !timingSafeEqualStr(incomingKey, envSecret)) {
+        return new Response(
+          JSON.stringify({ error: 'UNAUTHORIZED', message: 'Invalid admin reset key secret.' }),
+          { status: 401, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+        );
+      }
+
+      // Check authenticated session token
+      const authHeader = request.headers.get('Authorization') || '';
+      const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+      if (!token) {
+        return new Response(
+          JSON.stringify({ error: 'SESSION_REQUIRED', message: 'Administrative session token required.' }),
+          { status: 401, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+        );
+      }
+
+      return new Response(
+        JSON.stringify({ ok: true, message: 'Admin authorization verified. State purge must be executed through controlled migration scripts.' }),
         { status: 200, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
       );
     }

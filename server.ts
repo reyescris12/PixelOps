@@ -456,8 +456,37 @@ function saveSyncStore(store: SyncDataStore): void {
   }
 }
 
+function timingSafeEqualStr(a: string, b: string): boolean {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const bufA = Buffer.from(a, 'utf8');
+  const bufB = Buffer.from(b, 'utf8');
+  if (bufA.length !== bufB.length) return false;
+  return crypto.timingSafeEqual(bufA, bufB);
+}
+
+function hashRecoveryKeyServer(key: string): string {
+  return crypto.createHash('sha256').update(`recovery:${key.trim().toUpperCase()}`).digest('hex');
+}
+
 function hashPasswordServer(password: string, salt: string): string {
-  return crypto.createHash('sha256').update(`${salt}:${password}:pixelops_satcom_secret`).digest('hex');
+  const pepper = process.env.SATCOM_SECRET || 'pixelops_satcom_secret';
+  return crypto.createHash('sha256').update(`${salt}:${password}:${pepper}`).digest('hex');
+}
+
+const resetAttemptTracker = new Map<string, { attempts: number; resetAt: number }>();
+function checkResetRateLimit(key: string, maxAttempts = 5, windowMs = 15 * 60 * 1000): { allowed: boolean; retryAfter?: number } {
+  const now = Date.now();
+  const entry = resetAttemptTracker.get(key);
+  if (!entry || now > entry.resetAt) {
+    resetAttemptTracker.set(key, { attempts: 1, resetAt: now + windowMs });
+    return { allowed: true };
+  }
+  if (entry.attempts >= maxAttempts) {
+    const retryAfter = Math.ceil((entry.resetAt - now) / 1000);
+    return { allowed: false, retryAfter };
+  }
+  entry.attempts += 1;
+  return { allowed: true };
 }
 
 async function startServer() {
@@ -502,7 +531,8 @@ async function startServer() {
       const now = new Date().toISOString();
 
       const operativeCallsign = (callsign || cleanUser).toUpperCase();
-      const recoveryKey = `SATCOM-${operativeCallsign.slice(0, 6).replace(/[^A-Z0-9]/g, '') || 'AGENT'}-${Math.random().toString(36).substring(2, 6).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+      const rawRecoveryKey = `SATCOM-${operativeCallsign.slice(0, 6).replace(/[^A-Z0-9]/g, '') || 'AGENT'}-${Math.random().toString(36).substring(2, 6).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+      const recoveryHash = hashRecoveryKeyServer(rawRecoveryKey);
 
       const userRecord = {
         id: userId,
@@ -511,7 +541,7 @@ async function startServer() {
         callsign: operativeCallsign,
         salt,
         passwordHash,
-        recoveryKey,
+        recoveryKeyHash: recoveryHash, // Cryptographically hashed - never stored in plaintext
         securityClearance: 'COMMANDER',
         createdAt: now,
         lastLoginAt: now,
@@ -536,7 +566,6 @@ async function startServer() {
           email: userRecord.email,
           callsign: userRecord.callsign,
           securityClearance: userRecord.securityClearance,
-          recoveryKey: userRecord.recoveryKey,
           createdAt: now,
           lastLoginAt: now,
         },
@@ -544,7 +573,7 @@ async function startServer() {
         expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
       };
 
-      res.json({ ok: true, session, devices: userRecord.devices });
+      res.json({ ok: true, session, oneTimeRecoveryKey: rawRecoveryKey, devices: userRecord.devices });
     } catch (err: any) {
       res.status(500).json({ error: 'AUTH_ERROR', message: err?.message || 'Server authentication fault' });
     }
@@ -576,8 +605,9 @@ async function startServer() {
         return res.status(401).json({ error: 'INVALID_PASSWORD', message: 'Invalid operative password key.' });
       }
 
-      if (!userRecord.recoveryKey) {
-        userRecord.recoveryKey = `SATCOM-${userRecord.callsign.slice(0, 6).replace(/[^A-Z0-9]/g, '') || 'AGENT'}-${Math.random().toString(36).substring(2, 6).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+      if (!userRecord.recoveryKeyHash && userRecord.recoveryKey) {
+        userRecord.recoveryKeyHash = hashRecoveryKeyServer(userRecord.recoveryKey);
+        delete userRecord.recoveryKey;
       }
 
       userRecord.lastLoginAt = new Date().toISOString();
@@ -605,7 +635,6 @@ async function startServer() {
           email: userRecord.email,
           callsign: userRecord.callsign,
           securityClearance: userRecord.securityClearance,
-          recoveryKey: userRecord.recoveryKey,
           createdAt: userRecord.createdAt,
           lastLoginAt: userRecord.lastLoginAt,
         },
@@ -653,7 +682,6 @@ async function startServer() {
               username: user.username,
               email: user.email,
               callsign: user.callsign,
-              recoveryKey: user.recoveryKey,
               securityClearance: user.securityClearance,
               createdAt: user.createdAt,
               lastLoginAt: user.lastLoginAt,
@@ -670,16 +698,35 @@ async function startServer() {
 
   app.post('/api/auth/reset-password', (req, res) => {
     try {
-      const { usernameOrEmail, recoveryKey, newPassword } = req.body || {};
+      const { usernameOrEmail, recoveryKey, newPassword, adminResetKey } = req.body || {};
       const cleanQuery = String(usernameOrEmail || '').toLowerCase().trim();
       const cleanKey = String(recoveryKey || '').trim().toUpperCase();
 
-      if (!cleanQuery || !cleanKey || !newPassword) {
-        return res.status(400).json({ error: 'FIELDS_REQUIRED', message: 'Username/Email, Recovery Key, and New Password are required.' });
+      const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() || req.socket.remoteAddress || 'local';
+      const rateKey = `${ip}:${cleanQuery}`;
+      const rateCheck = checkResetRateLimit(rateKey, 5, 15 * 60 * 1000);
+      if (!rateCheck.allowed) {
+        return res.status(429).json({
+          error: 'RATE_LIMITED',
+          message: `Too many password reset attempts. Please wait ${rateCheck.retryAfter} seconds.`,
+        });
+      }
+
+      if (!cleanQuery || !newPassword) {
+        return res.status(400).json({ error: 'FIELDS_REQUIRED', message: 'Username/Email and New Password are required.' });
       }
 
       if (newPassword.length < 6) {
         return res.status(400).json({ error: 'PASSWORD_TOO_SHORT', message: 'New password must be at least 6 characters.' });
+      }
+
+      // Check backend environment secret for admin override
+      const envResetSecret = process.env.RESET_KEY || process.env.PIXELOPS_RESET_SECRET || process.env.ADMIN_SECRET;
+      const incomingAdminKey = (adminResetKey || req.headers['x-reset-key'] || req.headers['x-admin-reset-key'] || '').toString().trim();
+      const isAdminAuthorized = Boolean(envResetSecret && incomingAdminKey && timingSafeEqualStr(incomingAdminKey, envResetSecret));
+
+      if (!cleanKey && !isAdminAuthorized) {
+        return res.status(401).json({ error: 'KEY_REQUIRED', message: 'Satellite Recovery Key or authorized backend reset secret required.' });
       }
 
       const store = loadSyncStore();
@@ -698,20 +745,74 @@ async function startServer() {
         return res.status(404).json({ error: 'USER_NOT_FOUND', message: 'No operative found matching credentials.' });
       }
 
-      const storedKey = String(userRecord.recoveryKey || '').trim().toUpperCase();
-      if (!storedKey || storedKey !== cleanKey) {
-        return res.status(401).json({ error: 'INVALID_RECOVERY_KEY', message: 'Invalid Satellite Recovery Key for this operative account.' });
+      if (!isAdminAuthorized) {
+        const storedKeyOrHash = String(userRecord.recoveryKeyHash || userRecord.recoveryKey || '').trim();
+        const inputHash = hashRecoveryKeyServer(cleanKey);
+        const isHashMatch = timingSafeEqualStr(inputHash, storedKeyOrHash);
+        const isLegacyPlainMatch = timingSafeEqualStr(cleanKey, storedKeyOrHash.toUpperCase());
+
+        if (!isHashMatch && !isLegacyPlainMatch) {
+          return res.status(401).json({ error: 'INVALID_RECOVERY_KEY', message: 'Invalid Satellite Recovery Key for this operative account.' });
+        }
       }
 
       const newSalt = Math.random().toString(36).substring(2, 12);
       userRecord.salt = newSalt;
       userRecord.passwordHash = hashPasswordServer(newPassword, newSalt);
+      userRecord.recoveryKeyHash = hashRecoveryKeyServer(cleanKey || 'RECONFIGURED');
+      delete userRecord.recoveryKey;
       userRecord.lastUpdatedAt = new Date().toISOString();
       saveSyncStore(store);
 
       res.json({ ok: true, message: 'Password encryption key reset successfully. You may now sign in with your new key.' });
     } catch (err: any) {
       res.status(500).json({ error: 'RESET_FAULT', message: err?.message || 'Server error during password reset' });
+    }
+  });
+
+  // Restricted Backend Admin Reset Endpoint
+  app.post('/api/admin/reset', (req, res) => {
+    try {
+      const envResetSecret = process.env.RESET_KEY || process.env.PIXELOPS_RESET_SECRET || process.env.ADMIN_SECRET;
+      if (!envResetSecret) {
+        return res.status(403).json({
+          error: 'ADMIN_RESET_DISABLED',
+          message: 'Backend reset secret is not configured in server environment. Admin reset disabled.',
+        });
+      }
+
+      const incomingKey = (req.headers['x-admin-reset-key'] || req.headers['x-reset-key'] || req.body?.adminResetKey || '').toString().trim();
+      if (!incomingKey || !timingSafeEqualStr(incomingKey, envResetSecret)) {
+        return res.status(401).json({
+          error: 'UNAUTHORIZED',
+          message: 'Invalid administrative reset secret key.',
+        });
+      }
+
+      const authHeader = (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+      const store = loadSyncStore();
+      const tokenData = store.tokens[authHeader];
+      if (!tokenData) {
+        return res.status(401).json({
+          error: 'SESSION_REQUIRED',
+          message: 'Authenticated administrative session required.',
+        });
+      }
+
+      const user = store.users[tokenData.username];
+      if (!user || (user.securityClearance !== 'COMMANDER' && user.securityClearance !== 'DIRECTOR')) {
+        return res.status(403).json({
+          error: 'INSUFFICIENT_CLEARANCE',
+          message: 'Only COMMANDER or DIRECTOR clearance may invoke administrative endpoints.',
+        });
+      }
+
+      return res.json({
+        ok: true,
+        message: 'Admin authorization verified. State purge must be executed through controlled migration scripts.',
+      });
+    } catch (err: any) {
+      return res.status(500).json({ error: 'ADMIN_FAULT', message: err?.message || 'Server error' });
     }
   });
 
@@ -786,7 +887,6 @@ async function startServer() {
           email: userRecord.email,
           callsign: userRecord.callsign,
           securityClearance: userRecord.securityClearance,
-          recoveryKey: userRecord.recoveryKey,
           createdAt: userRecord.createdAt,
           lastLoginAt: userRecord.lastLoginAt,
         },

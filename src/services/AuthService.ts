@@ -11,7 +11,6 @@ export interface UserAccount {
   username: string;
   email: string;
   callsign: string;
-  recoveryKey?: string;
   securityClearance: 'OPERATIVE' | 'COMMANDER' | 'DIRECTOR';
   createdAt: string;
   lastLoginAt: string;
@@ -42,7 +41,8 @@ interface LocalUserRecord {
   callsign: string;
   salt: string;
   passwordHash: string;
-  recoveryKey?: string;
+  recoveryKeyHash?: string;
+  recoveryKey?: string; // Legacy fallback only, purged upon next update
   securityClearance: 'OPERATIVE' | 'COMMANDER' | 'DIRECTOR';
   createdAt: string;
   lastLoginAt: string;
@@ -65,11 +65,23 @@ export function generateRecoveryKey(callsign: string): string {
 }
 
 /**
+ * Cryptographically hashes a recovery key for secure zero-knowledge storage
+ */
+export async function hashRecoveryKeyClient(key: string): Promise<string> {
+  const clean = key.trim().toUpperCase();
+  const enc = new TextEncoder();
+  const data = enc.encode(`recovery:${clean}`);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
  * Computes a secure SHA-256 hash with user salt using the browser Web Crypto API
  */
 export async function hashPassword(password: string, salt: string): Promise<string> {
   const enc = new TextEncoder();
-  const data = enc.encode(`${salt}:${password}:pixelops_satcom_secret`);
+  const data = enc.encode(`${salt}:${password}`);
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -234,7 +246,7 @@ export async function registerAccount(params: {
   email: string;
   password: string;
   callsign?: string;
-}): Promise<AuthSession> {
+}): Promise<AuthSession & { oneTimeRecoveryKey?: string }> {
   const username = params.username.trim().toLowerCase();
   const email = params.email.trim().toLowerCase();
   const password = params.password;
@@ -248,7 +260,8 @@ export async function registerAccount(params: {
   }
 
   const device = getCurrentDeviceInfo();
-  const recoveryKey = generateRecoveryKey(callsign);
+  const rawRecoveryKey = generateRecoveryKey(callsign);
+  const recoveryHash = await hashRecoveryKeyClient(rawRecoveryKey);
 
   // 1. Attempt server-side API registration first
   try {
@@ -281,7 +294,7 @@ export async function registerAccount(params: {
     if (res.ok) {
       const data = await res.json();
       if (data.session) {
-        // Also save user in local cache for offline redundancy
+        // Also save user in local cache for offline redundancy with hashed recovery key
         const salt = Math.random().toString(36).substring(2, 14);
         const passwordHash = await hashPassword(password, salt);
         const fleetDevices = Array.isArray(data.devices) && data.devices.length > 0 ? data.devices : [device];
@@ -292,7 +305,7 @@ export async function registerAccount(params: {
           callsign: data.session.user.callsign,
           salt,
           passwordHash,
-          recoveryKey: data.session.user.recoveryKey || recoveryKey,
+          recoveryKeyHash: recoveryHash,
           securityClearance: data.session.user.securityClearance,
           createdAt: data.session.user.createdAt,
           lastLoginAt: data.session.user.lastLoginAt,
@@ -304,7 +317,10 @@ export async function registerAccount(params: {
         } catch {}
 
         setActiveSession(data.session);
-        return data.session;
+        return {
+          ...data.session,
+          oneTimeRecoveryKey: data.oneTimeRecoveryKey || rawRecoveryKey,
+        };
       }
     } else {
       const errData = await res.json().catch(() => ({}));
@@ -336,7 +352,7 @@ export async function registerAccount(params: {
     callsign,
     salt,
     passwordHash,
-    recoveryKey,
+    recoveryKeyHash: recoveryHash,
     securityClearance: 'COMMANDER',
     createdAt: now,
     lastLoginAt: now,
@@ -354,7 +370,6 @@ export async function registerAccount(params: {
       username: newUser.username,
       email: newUser.email,
       callsign: newUser.callsign,
-      recoveryKey: newUser.recoveryKey,
       securityClearance: newUser.securityClearance,
       createdAt: newUser.createdAt,
       lastLoginAt: newUser.lastLoginAt,
@@ -364,7 +379,10 @@ export async function registerAccount(params: {
   };
 
   setActiveSession(session);
-  return session;
+  return {
+    ...session,
+    oneTimeRecoveryKey: rawRecoveryKey,
+  };
 }
 
 /**
@@ -420,7 +438,6 @@ export async function loginAccount(params: {
           callsign: data.session.user.callsign,
           salt,
           passwordHash,
-          recoveryKey: data.session.user.recoveryKey,
           securityClearance: data.session.user.securityClearance,
           createdAt: data.session.user.createdAt,
           lastLoginAt: data.session.user.lastLoginAt,
@@ -448,7 +465,17 @@ export async function loginAccount(params: {
 
         if (found) {
           const computedHash = await hashPassword(password, found.salt);
-          if (computedHash === found.passwordHash) {
+          let isPwMatch = computedHash === found.passwordHash;
+          if (!isPwMatch) {
+            const legacyData = new TextEncoder().encode(`${found.salt}:${password}:pixelops_satcom_secret`);
+            const legacyBuf = await crypto.subtle.digest('SHA-256', legacyData);
+            const legacyHash = Array.from(new Uint8Array(legacyBuf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+            if (legacyHash === found.passwordHash) {
+              isPwMatch = true;
+              found.passwordHash = computedHash;
+            }
+          }
+          if (isPwMatch) {
             // Auto-migrate account into D1 database
             try {
               const regRes = await fetch('/api/register', {
@@ -502,7 +529,18 @@ export async function loginAccount(params: {
   }
 
   const computedHash = await hashPassword(password, foundUser.salt);
-  if (computedHash !== foundUser.passwordHash) {
+  let isPasswordValid = computedHash === foundUser.passwordHash;
+  if (!isPasswordValid) {
+    const legacyData = new TextEncoder().encode(`${foundUser.salt}:${password}:pixelops_satcom_secret`);
+    const legacyBuf = await crypto.subtle.digest('SHA-256', legacyData);
+    const legacyHash = Array.from(new Uint8Array(legacyBuf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+    if (legacyHash === foundUser.passwordHash) {
+      isPasswordValid = true;
+      foundUser.passwordHash = computedHash;
+    }
+  }
+
+  if (!isPasswordValid) {
     throw new Error('Invalid encryption key / password.');
   }
 
@@ -524,7 +562,6 @@ export async function loginAccount(params: {
       username: foundUser.username,
       email: foundUser.email,
       callsign: foundUser.callsign,
-      recoveryKey: foundUser.recoveryKey,
       securityClearance: foundUser.securityClearance,
       createdAt: foundUser.createdAt,
       lastLoginAt: foundUser.lastLoginAt,
@@ -577,17 +614,23 @@ export async function resetPassword(params: {
         const newSalt = Math.random().toString(36).substring(2, 14);
         user.salt = newSalt;
         user.passwordHash = await hashPassword(newPassword, newSalt);
+        user.recoveryKeyHash = await hashRecoveryKeyClient(recoveryKey);
+        delete user.recoveryKey;
         saveLocalUsers(localUsers);
       }
       return { success: true, message: data.message || 'Password reset successfully. Sign in with your new key.' };
     } else {
       const errData = await res.json().catch(() => ({}));
-      if (res.status === 401 || res.status === 404) {
+      if (res.status === 401 || res.status === 403 || res.status === 404 || res.status === 429) {
         throw new Error(errData.message || 'Recovery verification failed. Verify your recovery key.');
       }
     }
   } catch (netErr: any) {
-    if (netErr.message?.includes('Recovery verification failed') || netErr.message?.includes('Invalid Satellite Recovery Key')) {
+    if (
+      netErr.message?.includes('Recovery verification failed') ||
+      netErr.message?.includes('Invalid Satellite Recovery Key') ||
+      netErr.message?.includes('wait')
+    ) {
       throw netErr;
     }
   }
@@ -599,14 +642,18 @@ export async function resetPassword(params: {
     throw new Error('No operative account found matching credentials.');
   }
 
-  const storedKey = (user.recoveryKey || '').trim().toUpperCase();
-  if (!storedKey || storedKey !== recoveryKey) {
+  const inputHash = await hashRecoveryKeyClient(recoveryKey);
+  const storedKeyOrHash = (user.recoveryKeyHash || user.recoveryKey || '').trim();
+  const isMatch = storedKeyOrHash === inputHash || storedKeyOrHash.toUpperCase() === recoveryKey;
+  if (!storedKeyOrHash || !isMatch) {
     throw new Error('Invalid Satellite Recovery Key for this operative.');
   }
 
   const newSalt = Math.random().toString(36).substring(2, 14);
   user.salt = newSalt;
   user.passwordHash = await hashPassword(newPassword, newSalt);
+  user.recoveryKeyHash = inputHash;
+  delete user.recoveryKey;
   saveLocalUsers(localUsers);
 
   return { success: true, message: 'Password key reset successfully in local terminal. Please sign in.' };
@@ -880,7 +927,7 @@ export async function exportSatellitePairingToken(): Promise<string> {
           callsign: userRec.callsign,
           salt: userRec.salt,
           passwordHash: userRec.passwordHash,
-          recoveryKey: userRec.recoveryKey,
+          recoveryKeyHash: userRec.recoveryKeyHash,
           securityClearance: userRec.securityClearance,
           devices: userRec.devices,
         }
@@ -946,6 +993,10 @@ export async function importSatellitePairingToken(tokenString: string): Promise<
 
   // 4. Persist credentials locally so mobile can sign in with username, email, or callsign & password
   if (payload.credentials) {
+    const recoveryHash =
+      payload.credentials.recoveryKeyHash ||
+      (payload.credentials.recoveryKey ? await hashRecoveryKeyClient(payload.credentials.recoveryKey) : undefined);
+
     upsertLocalUser({
       id: payload.credentials.id,
       username: payload.credentials.username,
@@ -953,7 +1004,7 @@ export async function importSatellitePairingToken(tokenString: string): Promise<
       callsign: payload.credentials.callsign,
       salt: payload.credentials.salt,
       passwordHash: payload.credentials.passwordHash,
-      recoveryKey: payload.credentials.recoveryKey,
+      recoveryKeyHash: recoveryHash,
       securityClearance: payload.credentials.securityClearance,
       createdAt: payload.user.createdAt || new Date().toISOString(),
       lastLoginAt: new Date().toISOString(),

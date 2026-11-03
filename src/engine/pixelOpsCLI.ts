@@ -949,7 +949,7 @@ export async function executeCLICommand(
         `  Handle:             @${session.user.username}`,
         `  Satellite Email:    ${session.user.email}`,
         `  Clearance:          ${session.user.securityClearance}`,
-        `  Recovery Key:       ${session.user.recoveryKey || 'N/A'}`,
+        `  Recovery Key:       [SECURE OFFLINE - ENCRYPTED]`,
         `  Terminal Node:      ${session.device.deviceName} (${session.device.deviceType})`,
         `  Node ID:            ${session.device.deviceId}`,
         `  Session Valid Till: ${new Date(session.expiresAt).toLocaleDateString()}`,

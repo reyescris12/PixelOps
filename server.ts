@@ -481,7 +481,7 @@ async function startServer() {
   app.use(express.json({ limit: '15mb' }));
 
   // --- SatCom Multi-Device Cloud Sync API Endpoints ---
-  app.post('/api/auth/register', (req, res) => {
+  const handleRegister = (req: express.Request, res: express.Response) => {
     try {
       const { username, email, password, callsign, device } = req.body || {};
       if (!username || !password) {
@@ -548,9 +548,9 @@ async function startServer() {
     } catch (err: any) {
       res.status(500).json({ error: 'AUTH_ERROR', message: err?.message || 'Server authentication fault' });
     }
-  });
+  };
 
-  app.post('/api/auth/login', (req, res) => {
+  const handleLogin = (req: express.Request, res: express.Response) => {
     try {
       const { usernameOrEmail, password, device } = req.body || {};
       const cleanQuery = String(usernameOrEmail || '').toLowerCase().trim();
@@ -576,7 +576,6 @@ async function startServer() {
         return res.status(401).json({ error: 'INVALID_PASSWORD', message: 'Invalid operative password key.' });
       }
 
-      // If userRecord doesn't have recoveryKey yet, generate one for them
       if (!userRecord.recoveryKey) {
         userRecord.recoveryKey = `SATCOM-${userRecord.callsign.slice(0, 6).replace(/[^A-Z0-9]/g, '') || 'AGENT'}-${Math.random().toString(36).substring(2, 6).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
       }
@@ -617,6 +616,55 @@ async function startServer() {
       res.json({ ok: true, session, devices: userRecord.devices });
     } catch (err: any) {
       res.status(500).json({ error: 'AUTH_ERROR', message: err?.message || 'Server authentication fault' });
+    }
+  };
+
+  app.post('/api/auth/register', handleRegister);
+  app.post('/api/register', handleRegister);
+  app.post('/api/auth/login', handleLogin);
+  app.post('/api/login', handleLogin);
+
+  app.post('/api/logout', (req, res) => {
+    try {
+      const authHeader = (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+      if (authHeader) {
+        const store = loadSyncStore();
+        delete store.tokens[authHeader];
+        saveSyncStore(store);
+      }
+      res.json({ ok: true, message: 'Logged out successfully.' });
+    } catch {
+      res.json({ ok: true });
+    }
+  });
+
+  app.get('/api/me', (req, res) => {
+    try {
+      const authHeader = (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+      const store = loadSyncStore();
+      if (authHeader && store.tokens[authHeader]) {
+        const { username } = store.tokens[authHeader];
+        const user = store.users[username];
+        if (user) {
+          return res.json({
+            ok: true,
+            user: {
+              id: user.id,
+              username: user.username,
+              email: user.email,
+              callsign: user.callsign,
+              recoveryKey: user.recoveryKey,
+              securityClearance: user.securityClearance,
+              createdAt: user.createdAt,
+              lastLoginAt: user.lastLoginAt,
+            },
+            devices: store.devices[username] || user.devices || [],
+          });
+        }
+      }
+      res.status(401).json({ ok: false, error: 'NO_VALID_SESSION' });
+    } catch (err: any) {
+      res.status(500).json({ error: 'SERVER_ERROR', message: err?.message });
     }
   });
 

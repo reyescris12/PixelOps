@@ -1,14 +1,15 @@
 /**
  * Cloudflare Pages Function: /api/sync
- * Handles multi-device cloud synchronization push, pull, and device fleet tracking.
+ * Handles multi-device cloud synchronization push, pull, and device fleet tracking
+ * with full Cloudflare D1 SQL, Cloudflare KV, and memory fallback support.
  */
 
 interface Env {
+  DB?: any;
   SYNC_KV?: any;
   PIXELOPS_KV?: any;
   KV?: any;
   STORAGE?: any;
-  DB?: any;
   DATA?: any;
 }
 
@@ -19,7 +20,11 @@ const CORS_HEADERS = {
 };
 
 function getKv(env: Env) {
-  return env.SYNC_KV || env.PIXELOPS_KV || env.KV || env.STORAGE || env.DB || env.DATA;
+  return env.SYNC_KV || env.PIXELOPS_KV || env.KV || env.STORAGE || env.DATA;
+}
+
+function getD1(env: Env) {
+  return env.DB && typeof env.DB.prepare === 'function' ? env.DB : null;
 }
 
 // Memory fallback store
@@ -38,6 +43,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
     return onRequestOptions();
   }
 
+  const d1 = getD1(env);
   const kv = getKv(env);
   const url = new URL(request.url);
   const path = url.pathname.replace(/\/+$/, '');
@@ -54,7 +60,15 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
     const authHeader = request.headers.get('Authorization') || '';
     const token = authHeader.replace(/^Bearer\s+/i, '').trim();
     if (token) {
-      if (kv) {
+      if (d1) {
+        const row = await d1.prepare(`
+          SELECT u.username, u.id FROM sessions s
+          JOIN users u ON s.user_id = u.id
+          WHERE s.token = ?
+        `).bind(token).first();
+        if (row) userKey = row.username || row.id;
+      }
+      if (!userKey && kv) {
         const rawToken = await kv.get(`token:${token}`);
         if (rawToken) {
           try {
@@ -62,7 +76,8 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
             userKey = parsed.cleanUser || parsed.userId;
           } catch {}
         }
-      } else {
+      }
+      if (!userKey) {
         const parsed = memoryTokens.get(token);
         if (parsed) userKey = parsed.cleanUser || parsed.userId;
       }
@@ -86,6 +101,33 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
           JSON.stringify({ error: 'PACKAGE_REQUIRED', message: 'Sync payload is empty.' }),
           { status: 400, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
         );
+      }
+
+      const now = new Date().toISOString();
+      const incomingDevice = syncPackage.device || {
+        deviceId,
+        deviceName,
+        deviceType,
+        lastActive: now,
+      };
+
+      if (d1) {
+        let dbUserId = rawUserId;
+        const u = await d1.prepare('SELECT id FROM users WHERE username = ? OR id = ?').bind(userKey, userKey).first();
+        if (u) dbUserId = u.id;
+        if (!dbUserId) dbUserId = userKey;
+
+        await d1.prepare(`
+          INSERT INTO user_data (user_id, sync_package, version, updated_at)
+          VALUES (?, ?, 1, ?)
+          ON CONFLICT(user_id) DO UPDATE SET sync_package = excluded.sync_package, updated_at = excluded.updated_at
+        `).bind(dbUserId, JSON.stringify(syncPackage), now).run();
+
+        await d1.prepare(`
+          INSERT INTO devices (device_id, user_id, device_name, device_type, last_active)
+          VALUES (?, ?, ?, ?, ?)
+          ON CONFLICT(user_id, device_id) DO UPDATE SET last_active = excluded.last_active, device_name = excluded.device_name
+        `).bind(incomingDevice.deviceId, dbUserId, incomingDevice.deviceName, incomingDevice.deviceType, now).run();
       }
 
       const storageKey = `vault:${userKey}`;
@@ -113,19 +155,12 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
         devicesList = memoryDevices.get(devListKey) || [];
       }
 
-      const incomingDevice = syncPackage.device || {
-        deviceId,
-        deviceName,
-        deviceType,
-        lastActive: new Date().toISOString(),
-      };
-
       const devIdx = devicesList.findIndex((d: any) => d.deviceId === incomingDevice.deviceId);
       if (devIdx >= 0) {
         devicesList[devIdx] = {
           ...devicesList[devIdx],
           ...incomingDevice,
-          lastActive: new Date().toISOString(),
+          lastActive: now,
         };
       } else {
         devicesList.push(incomingDevice);
@@ -144,7 +179,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
       }
 
       return new Response(
-        JSON.stringify({ ok: true, timestamp: new Date().toISOString(), devicesCount: devicesList.length }),
+        JSON.stringify({ ok: true, timestamp: now, devicesCount: devicesList.length }),
         { status: 200, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
       );
     }
@@ -155,16 +190,31 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
       (path.endsWith('/pull') || actionParam === 'pull' || (path.endsWith('/sync') && actionParam !== 'devices'));
 
     if (isPull) {
-      const storageKey = `vault:${userKey}`;
       let pkg: any = null;
 
-      if (kv) {
+      if (d1) {
+        let dbUserId = rawUserId;
+        const u = await d1.prepare('SELECT id FROM users WHERE username = ? OR id = ?').bind(userKey, userKey).first();
+        if (u) dbUserId = u.id;
+        if (!dbUserId) dbUserId = userKey;
+
+        const row = await d1.prepare('SELECT sync_package FROM user_data WHERE user_id = ?').bind(dbUserId).first();
+        if (row && row.sync_package) {
+          try { pkg = JSON.parse(row.sync_package); } catch {}
+        }
+      }
+
+      if (!pkg && kv) {
+        const storageKey = `vault:${userKey}`;
         let raw = await kv.get(storageKey);
         if (!raw && rawUserId) raw = await kv.get(`vault:${rawUserId}`);
         if (raw) {
           try { pkg = JSON.parse(raw); } catch {}
         }
-      } else {
+      }
+
+      if (!pkg) {
+        const storageKey = `vault:${userKey}`;
         pkg = memoryVaults.get(storageKey) || (rawUserId ? memoryVaults.get(`vault:${rawUserId}`) : null);
       }
 
@@ -181,26 +231,39 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
 
     if (isDevices) {
       let devices: any[] = [];
-      const devListKey = `devices:${userKey}`;
 
-      if (kv) {
-        let raw = await kv.get(devListKey);
-        if (!raw && rawUserId) raw = await kv.get(`devices:${rawUserId}`);
-        if (raw) {
-          try { devices = JSON.parse(raw); } catch {}
+      if (d1) {
+        let dbUserId = rawUserId;
+        const u = await d1.prepare('SELECT id FROM users WHERE username = ? OR id = ?').bind(userKey, userKey).first();
+        if (u) dbUserId = u.id;
+        if (!dbUserId) dbUserId = userKey;
+
+        const rows = await d1.prepare('SELECT device_id as deviceId, device_name as deviceName, device_type as deviceType, last_active as lastActive FROM devices WHERE user_id = ?').bind(dbUserId).all();
+        if (rows && rows.results && rows.results.length > 0) {
+          devices = rows.results;
         }
-      } else {
-        devices = memoryDevices.get(devListKey) || (rawUserId ? memoryDevices.get(`devices:${rawUserId}`) : []) || [];
       }
 
-      // If still empty, check user record devices
-      if (devices.length === 0 && kv) {
-        const rawUser = await kv.get(`user:${userKey}`);
-        if (rawUser) {
-          try {
-            const u = JSON.parse(rawUser);
-            if (Array.isArray(u.devices)) devices = u.devices;
-          } catch {}
+      if (devices.length === 0) {
+        const devListKey = `devices:${userKey}`;
+        if (kv) {
+          let raw = await kv.get(devListKey);
+          if (!raw && rawUserId) raw = await kv.get(`devices:${rawUserId}`);
+          if (raw) {
+            try { devices = JSON.parse(raw); } catch {}
+          }
+        } else {
+          devices = memoryDevices.get(devListKey) || (rawUserId ? memoryDevices.get(`devices:${rawUserId}`) : []) || [];
+        }
+
+        if (devices.length === 0 && kv) {
+          const rawUser = await kv.get(`user:${userKey}`);
+          if (rawUser) {
+            try {
+              const u = JSON.parse(rawUser);
+              if (Array.isArray(u.devices)) devices = u.devices;
+            } catch {}
+          }
         }
       }
 
@@ -218,8 +281,17 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
     if (isUnlink) {
       const body = await request.json().catch(() => ({})) as any;
       const { targetDeviceId } = body;
-      const devListKey = `devices:${userKey}`;
 
+      if (d1) {
+        let dbUserId = rawUserId;
+        const u = await d1.prepare('SELECT id FROM users WHERE username = ? OR id = ?').bind(userKey, userKey).first();
+        if (u) dbUserId = u.id;
+        if (!dbUserId) dbUserId = userKey;
+
+        await d1.prepare('DELETE FROM devices WHERE user_id = ? AND device_id = ?').bind(dbUserId, targetDeviceId).run();
+      }
+
+      const devListKey = `devices:${userKey}`;
       if (kv) {
         const raw = await kv.get(devListKey);
         if (raw) {

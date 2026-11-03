@@ -938,7 +938,51 @@ export async function importSatellitePairingToken(tokenString: string): Promise<
   return session;
 }
 
-export const logoutAccount = clearActiveSession;
+/**
+ * Validates the current session token with the server/D1 (/api/me)
+ */
+export async function validateActiveSession(): Promise<boolean> {
+  const session = getActiveSession();
+  if (!session) return false;
+
+  try {
+    const res = await fetch('/api/me', {
+      headers: {
+        Authorization: `Bearer ${session.token}`,
+      },
+    });
+
+    if (res.status === 401) {
+      clearActiveSession();
+      return false;
+    }
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data.user) {
+        session.user = { ...session.user, ...data.user };
+        setActiveSession(session);
+      }
+      return true;
+    }
+  } catch {}
+
+  return true;
+}
+
+export async function logoutAccount(): Promise<void> {
+  const session = getActiveSession();
+  if (session) {
+    try {
+      await fetch('/api/logout', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${session.token}` },
+      });
+    } catch {}
+  }
+  clearActiveSession();
+}
+
 export const fetchRemoteDevices = getLinkedDevices;
 export const unlinkRemoteDevice = unlinkDevice;
 export function isLoggedIn(): boolean {

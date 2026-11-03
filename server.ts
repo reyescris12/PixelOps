@@ -524,6 +524,7 @@ async function startServer() {
       if (device) {
         store.devices[userId] = store.devices[userId] || [];
         store.devices[userId].push(device);
+        store.devices[cleanUser] = store.devices[userId];
       }
       saveSyncStore(store);
 
@@ -543,7 +544,7 @@ async function startServer() {
         expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
       };
 
-      res.json({ ok: true, session });
+      res.json({ ok: true, session, devices: userRecord.devices });
     } catch (err: any) {
       res.status(500).json({ error: 'AUTH_ERROR', message: err?.message || 'Server authentication fault' });
     }
@@ -590,6 +591,7 @@ async function startServer() {
           userRecord.devices.push(device);
         }
         store.devices[userRecord.id] = userRecord.devices;
+        store.devices[userRecord.username] = userRecord.devices;
       }
 
       const token = `tok_${userRecord.id}_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 12)}`;
@@ -612,7 +614,7 @@ async function startServer() {
         expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
       };
 
-      res.json({ ok: true, session });
+      res.json({ ok: true, session, devices: userRecord.devices });
     } catch (err: any) {
       res.status(500).json({ error: 'AUTH_ERROR', message: err?.message || 'Server authentication fault' });
     }
@@ -783,65 +785,122 @@ async function startServer() {
     }
   });
 
-  app.post('/api/sync/push', (req, res) => {
+  // Helper to resolve clean user key across tokens, headers, and usernames
+  function resolveUserKey(req: express.Request, store: SyncDataStore): { userKey: string; rawUserId: string } {
+    let userKey = (req.headers['x-username'] as string)?.toLowerCase().trim() || (req.query.username as string)?.toLowerCase().trim() || '';
+    const rawUserId = (req.headers['x-user-id'] as string) || (req.query.userId as string) || '';
+
+    if (!userKey) {
+      const authHeader = (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+      if (authHeader && store.tokens[authHeader]) {
+        userKey = store.tokens[authHeader].username;
+      }
+    }
+
+    if (!userKey && rawUserId) {
+      // Check if rawUserId matches a user's id in store
+      for (const u of Object.values(store.users)) {
+        if (u.id === rawUserId || u.username === rawUserId.toLowerCase()) {
+          userKey = u.username.toLowerCase();
+          break;
+        }
+      }
+    }
+
+    if (!userKey) {
+      userKey = (rawUserId || 'default_user').toLowerCase().trim();
+    }
+
+    return { userKey, rawUserId };
+  }
+
+  const handleSyncPush = (req: express.Request, res: express.Response) => {
     try {
-      const userId = (req.headers['x-user-id'] as string) || (req.query.userId as string) || 'default_user';
-      const deviceId = (req.headers['x-device-id'] as string) || 'default_device';
+      const store = loadSyncStore();
+      const { userKey, rawUserId } = resolveUserKey(req, store);
+      const deviceId = (req.headers['x-device-id'] as string) || req.body?.deviceId || 'default_device';
+      const deviceName = (req.headers['x-device-name'] as string) || req.body?.device?.deviceName || 'Active Node';
+      const deviceType = (req.headers['x-device-type'] as string) || req.body?.device?.deviceType || 'desktop';
       const syncPackage = req.body;
 
       if (!syncPackage) {
         return res.status(400).json({ error: 'PACKAGE_REQUIRED', message: 'Sync payload is empty.' });
       }
 
-      const store = loadSyncStore();
-      store.vaults[userId] = syncPackage;
+      store.vaults[userKey] = syncPackage;
+      if (rawUserId) store.vaults[rawUserId] = syncPackage;
 
-      // Update device heartbeat
-      const userDevices = store.devices[userId] || [];
-      const devIdx = userDevices.findIndex((d) => d.deviceId === deviceId);
+      // Update or register device in fleet
+      const userDevices = store.devices[userKey] || (rawUserId ? store.devices[rawUserId] : []) || [];
+      const incomingDevice = syncPackage.device || {
+        deviceId,
+        deviceName,
+        deviceType,
+        lastActive: new Date().toISOString(),
+      };
+
+      const devIdx = userDevices.findIndex((d) => d.deviceId === incomingDevice.deviceId);
       if (devIdx >= 0) {
-        userDevices[devIdx].lastActive = new Date().toISOString();
+        userDevices[devIdx] = { ...userDevices[devIdx], ...incomingDevice, lastActive: new Date().toISOString() };
+      } else {
+        userDevices.push(incomingDevice);
       }
-      store.devices[userId] = userDevices;
+
+      store.devices[userKey] = userDevices;
+      if (rawUserId) store.devices[rawUserId] = userDevices;
+
+      // Also sync back to user record if found
+      if (store.users[userKey]) {
+        store.users[userKey].devices = userDevices;
+      }
+
       saveSyncStore(store);
 
-      res.json({ ok: true, timestamp: new Date().toISOString() });
+      res.json({ ok: true, timestamp: new Date().toISOString(), devicesCount: userDevices.length });
     } catch (err: any) {
       res.status(500).json({ error: 'SYNC_ERROR', message: err?.message || 'Server sync error' });
     }
-  });
+  };
 
-  app.get('/api/sync/pull', (req, res) => {
+  const handleSyncPull = (req: express.Request, res: express.Response) => {
     try {
-      const userId = (req.headers['x-user-id'] as string) || (req.query.userId as string) || 'default_user';
       const store = loadSyncStore();
-      const pkg = store.vaults[userId] || null;
+      const { userKey, rawUserId } = resolveUserKey(req, store);
+      const pkg = store.vaults[userKey] || (rawUserId ? store.vaults[rawUserId] : null);
 
-      res.json({ ok: true, package: pkg, timestamp: new Date().toISOString() });
+      res.json({ ok: true, package: pkg || null, timestamp: new Date().toISOString() });
     } catch (err: any) {
       res.status(500).json({ error: 'SYNC_ERROR', message: err?.message || 'Server sync error' });
     }
-  });
+  };
 
-  app.get('/api/sync/devices', (req, res) => {
+  const handleSyncDevices = (req: express.Request, res: express.Response) => {
     try {
-      const userId = (req.headers['x-user-id'] as string) || (req.query.userId as string) || 'default_user';
       const store = loadSyncStore();
-      const devices = store.devices[userId] || [];
+      const { userKey, rawUserId } = resolveUserKey(req, store);
+      let devices = store.devices[userKey] || (rawUserId ? store.devices[rawUserId] : []) || [];
+
+      if (devices.length === 0 && store.users[userKey]?.devices) {
+        devices = store.users[userKey].devices;
+      }
 
       res.json({ ok: true, devices });
     } catch (err: any) {
       res.status(500).json({ error: 'DEVICES_ERROR', message: err?.message || 'Server error' });
     }
-  });
+  };
 
-  app.post('/api/sync/device/unlink', (req, res) => {
+  const handleSyncUnlink = (req: express.Request, res: express.Response) => {
     try {
-      const userId = (req.headers['x-user-id'] as string) || (req.query.userId as string) || 'default_user';
-      const { targetDeviceId } = req.body || {};
       const store = loadSyncStore();
-      if (store.devices[userId]) {
-        store.devices[userId] = store.devices[userId].filter((d) => d.deviceId !== targetDeviceId);
+      const { userKey, rawUserId } = resolveUserKey(req, store);
+      const { targetDeviceId } = req.body || {};
+
+      if (store.devices[userKey]) {
+        store.devices[userKey] = store.devices[userKey].filter((d) => d.deviceId !== targetDeviceId);
+      }
+      if (rawUserId && store.devices[rawUserId]) {
+        store.devices[rawUserId] = store.devices[rawUserId].filter((d) => d.deviceId !== targetDeviceId);
       }
       saveSyncStore(store);
 
@@ -849,6 +908,25 @@ async function startServer() {
     } catch (err: any) {
       res.status(500).json({ error: 'UNLINK_ERROR', message: err?.message || 'Server error' });
     }
+  };
+
+  app.post('/api/sync/push', handleSyncPush);
+  app.get('/api/sync/pull', handleSyncPull);
+  app.get('/api/sync/devices', handleSyncDevices);
+  app.post('/api/sync/device/unlink', handleSyncUnlink);
+
+  // Fallback unified /api/sync endpoint for query parameters
+  app.all('/api/sync', (req, res) => {
+    const action = String(req.query.action || '').toLowerCase();
+    if (req.method === 'POST') {
+      if (action === 'unlink') return handleSyncUnlink(req, res);
+      return handleSyncPush(req, res);
+    }
+    if (req.method === 'GET') {
+      if (action === 'devices') return handleSyncDevices(req, res);
+      return handleSyncPull(req, res);
+    }
+    res.status(405).json({ error: 'METHOD_NOT_ALLOWED' });
   });
 
   app.get('/api/agent/status', async (_req, res) => {

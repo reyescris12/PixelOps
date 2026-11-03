@@ -252,7 +252,7 @@ export async function registerAccount(params: {
 
   // 1. Attempt server-side API registration first
   try {
-    const res = await fetch('/api/auth/register', {
+    let res = await fetch('/api/auth/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -264,12 +264,27 @@ export async function registerAccount(params: {
       }),
     });
 
+    if (!res.ok && res.status === 404) {
+      res = await fetch('/api/auth?action=register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username,
+          email,
+          password,
+          callsign,
+          device,
+        }),
+      });
+    }
+
     if (res.ok) {
       const data = await res.json();
       if (data.session) {
         // Also save user in local cache for offline redundancy
         const salt = Math.random().toString(36).substring(2, 14);
         const passwordHash = await hashPassword(password, salt);
+        const fleetDevices = Array.isArray(data.devices) && data.devices.length > 0 ? data.devices : [device];
         upsertLocalUser({
           id: data.session.user.id,
           username: data.session.user.username,
@@ -281,8 +296,12 @@ export async function registerAccount(params: {
           securityClearance: data.session.user.securityClearance,
           createdAt: data.session.user.createdAt,
           lastLoginAt: data.session.user.lastLoginAt,
-          devices: [device],
+          devices: fleetDevices,
         });
+
+        try {
+          localStorage.setItem('pixelops_last_sync_timestamp_v1', new Date().toISOString());
+        } catch {}
 
         setActiveSession(data.session);
         return data.session;
@@ -365,7 +384,7 @@ export async function loginAccount(params: {
 
   // 1. Attempt server-side login
   try {
-    const res = await fetch('/api/auth/login', {
+    let res = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -375,12 +394,25 @@ export async function loginAccount(params: {
       }),
     });
 
+    if (!res.ok && res.status === 404) {
+      res = await fetch('/api/auth?action=login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          usernameOrEmail: query,
+          password,
+          device,
+        }),
+      });
+    }
+
     if (res.ok) {
       const data = await res.json();
       if (data.session) {
         // Cache user locally for offline access
         const salt = Math.random().toString(36).substring(2, 14);
         const passwordHash = await hashPassword(password, salt);
+        const fleetDevices = Array.isArray(data.devices) && data.devices.length > 0 ? data.devices : [device];
         upsertLocalUser({
           id: data.session.user.id,
           username: data.session.user.username,
@@ -392,8 +424,12 @@ export async function loginAccount(params: {
           securityClearance: data.session.user.securityClearance,
           createdAt: data.session.user.createdAt,
           lastLoginAt: data.session.user.lastLoginAt,
-          devices: [device],
+          devices: fleetDevices,
         });
+
+        try {
+          localStorage.setItem('pixelops_last_sync_timestamp_v1', new Date().toISOString());
+        } catch {}
 
         setActiveSession(data.session);
         return data.session;
@@ -656,32 +692,72 @@ export async function updateProfile(params: {
  */
 export async function getLinkedDevices(): Promise<DeviceInfo[]> {
   const session = getActiveSession();
-  if (!session) return [getCurrentDeviceInfo()];
+  const currentDev = getCurrentDeviceInfo();
+  if (!session) return [currentDev];
+
+  let fleet: DeviceInfo[] = [];
 
   try {
-    const res = await fetch('/api/sync/devices', {
+    let res = await fetch('/api/sync/devices', {
       headers: {
         Authorization: `Bearer ${session.token}`,
         'x-user-id': session.user.id,
-        'x-device-id': session.device.deviceId,
+        'x-username': session.user.username.toLowerCase(),
+        'x-device-id': currentDev.deviceId,
+        'x-device-name': currentDev.deviceName,
+        'x-device-type': currentDev.deviceType,
       },
     });
 
+    if (!res.ok && res.status === 404) {
+      res = await fetch(`/api/sync?action=devices&username=${encodeURIComponent(session.user.username.toLowerCase())}`, {
+        headers: {
+          Authorization: `Bearer ${session.token}`,
+          'x-user-id': session.user.id,
+          'x-username': session.user.username.toLowerCase(),
+          'x-device-id': currentDev.deviceId,
+        },
+      });
+    }
+
     if (res.ok) {
       const data = await res.json();
-      if (Array.isArray(data.devices)) {
-        return data.devices;
+      if (Array.isArray(data.devices) && data.devices.length > 0) {
+        fleet = data.devices;
       }
     }
   } catch {}
 
+  // Merge with local user recorded devices
   const localUsers = getLocalUsers();
-  const user = localUsers.find((u) => u.id === session.user.id);
+  const user = localUsers.find(
+    (u) =>
+      u.id === session.user.id ||
+      u.username.toLowerCase() === session.user.username.toLowerCase()
+  );
   if (user && Array.isArray(user.devices)) {
-    return user.devices;
+    for (const d of user.devices) {
+      if (!fleet.some((x) => x.deviceId === d.deviceId)) {
+        fleet.push(d);
+      }
+    }
   }
 
-  return [session.device];
+  // Ensure current device and session device are always present
+  if (!fleet.some((d) => d.deviceId === currentDev.deviceId)) {
+    fleet.unshift(currentDev);
+  }
+  if (session.device && !fleet.some((d) => d.deviceId === session.device.deviceId)) {
+    fleet.push(session.device);
+  }
+
+  // Persist consolidated fleet into local user record
+  if (user) {
+    user.devices = fleet;
+    saveLocalUsers(localUsers);
+  }
+
+  return fleet;
 }
 
 /**
@@ -692,19 +768,33 @@ export async function unlinkDevice(targetDeviceId: string): Promise<boolean> {
   if (!session) return false;
 
   try {
-    await fetch('/api/sync/device/unlink', {
+    let res = await fetch('/api/sync/device/unlink', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${session.token}`,
         'x-user-id': session.user.id,
+        'x-username': session.user.username.toLowerCase(),
       },
       body: JSON.stringify({ targetDeviceId }),
     });
+
+    if (!res.ok && res.status === 404) {
+      await fetch('/api/sync?action=unlink', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.token}`,
+          'x-user-id': session.user.id,
+          'x-username': session.user.username.toLowerCase(),
+        },
+        body: JSON.stringify({ targetDeviceId }),
+      });
+    }
   } catch {}
 
   const localUsers = getLocalUsers();
-  const user = localUsers.find((u) => u.id === session.user.id);
+  const user = localUsers.find((u) => u.id === session.user.id || u.username.toLowerCase() === session.user.username.toLowerCase());
   if (user) {
     user.devices = user.devices.filter((d) => d.deviceId !== targetDeviceId);
     saveLocalUsers(localUsers);
@@ -739,6 +829,7 @@ export async function exportSatellitePairingToken(): Promise<string> {
   const payload = {
     token: session.token,
     user: session.user,
+    device: session.device, // Include exporting device!
     credentials: userRec
       ? {
           id: userRec.id,
@@ -749,6 +840,7 @@ export async function exportSatellitePairingToken(): Promise<string> {
           passwordHash: userRec.passwordHash,
           recoveryKey: userRec.recoveryKey,
           securityClearance: userRec.securityClearance,
+          devices: userRec.devices,
         }
       : null,
     syncPackage,
@@ -795,7 +887,22 @@ export async function importSatellitePairingToken(tokenString: string): Promise<
   // 1. Activate session
   setActiveSession(session);
 
-  // 2. Persist credentials locally so mobile can sign in with username, email, or callsign & password
+  // 2. Set last sync handshake timestamp immediately!
+  try {
+    localStorage.setItem('pixelops_last_sync_timestamp_v1', new Date().toISOString());
+  } catch {}
+
+  // 3. Merge devices from exporter and current device
+  const remoteDevices: DeviceInfo[] = [];
+  if (payload.device) remoteDevices.push(payload.device);
+  if (Array.isArray(payload.credentials?.devices)) {
+    remoteDevices.push(...payload.credentials.devices);
+  }
+  const mergedDevices = [currentDevice, ...remoteDevices].filter(
+    (dev, idx, arr) => arr.findIndex((d) => d.deviceId === dev.deviceId) === idx
+  );
+
+  // 4. Persist credentials locally so mobile can sign in with username, email, or callsign & password
   if (payload.credentials) {
     upsertLocalUser({
       id: payload.credentials.id,
@@ -808,11 +915,11 @@ export async function importSatellitePairingToken(tokenString: string): Promise<
       securityClearance: payload.credentials.securityClearance,
       createdAt: payload.user.createdAt || new Date().toISOString(),
       lastLoginAt: new Date().toISOString(),
-      devices: [currentDevice],
+      devices: mergedDevices,
     });
   }
 
-  // 3. Immediately apply all dossiers, routines, and memories into mobile IndexedDB/localStorage!
+  // 5. Immediately apply all dossiers, routines, and memories into mobile IndexedDB/localStorage!
   if (payload.syncPackage) {
     try {
       const { applyRemoteSyncPackage } = await import('./SyncService');
@@ -821,6 +928,12 @@ export async function importSatellitePairingToken(tokenString: string): Promise<
       console.warn('Failed to apply sync package from token', syncErr);
     }
   }
+
+  // 6. Broadcast this newly paired device to server fleet
+  try {
+    const { performFullSync } = await import('./SyncService');
+    performFullSync().catch(() => {});
+  } catch {}
 
   return session;
 }

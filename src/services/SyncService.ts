@@ -39,6 +39,8 @@ export interface SyncPackage {
   timestamp: string;
   deviceId: string;
   userId: string;
+  username?: string;
+  device?: any;
   workspaceFiles: WorkspaceFileRecord[];
   routines: NightShiftTaskSchedule[];
   agentMemories: AgentMemoryDbEntry[];
@@ -192,6 +194,8 @@ export async function assembleLocalSyncPackage(session: AuthSession): Promise<Sy
     timestamp: new Date().toISOString(),
     deviceId: session.device.deviceId,
     userId: session.user.id,
+    username: session.user.username,
+    device: session.device,
     workspaceFiles,
     routines,
     agentMemories,
@@ -362,28 +366,44 @@ export async function pushToCloud(): Promise<{ success: boolean; error?: string 
     // Save locally immediately
     setLocalCloudCache(pkg);
 
-    // Dispatch to server / cloudflare endpoint
-    const res = await fetch('/api/sync/push', {
+    const headers = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${session.token}`,
+      'x-user-id': session.user.id,
+      'x-username': session.user.username.toLowerCase(),
+      'x-device-id': session.device.deviceId,
+      'x-device-name': session.device.deviceName,
+      'x-device-type': session.device.deviceType,
+    };
+
+    // Dispatch to server / cloudflare endpoint with fallback to query action
+    let res = await fetch('/api/sync/push', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${session.token}`,
-        'x-user-id': session.user.id,
-        'x-device-id': session.device.deviceId,
-      },
+      headers,
       body: JSON.stringify(pkg),
     });
 
+    if (!res.ok && res.status === 404) {
+      res = await fetch(`/api/sync?action=push&username=${encodeURIComponent(session.user.username.toLowerCase())}`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(pkg),
+      });
+    }
+
+    const now = new Date().toISOString();
+    localStorage.setItem(STORAGE_LAST_SYNC, now);
+
     if (res.ok) {
-      const now = new Date().toISOString();
-      localStorage.setItem(STORAGE_LAST_SYNC, now);
       return { success: true };
     }
 
-    // If server returned non-200, still keep local cloud cache
+    // If server returned non-200, still keep local cloud cache and record handshake
     const errText = await res.text().catch(() => 'Server error');
     return { success: true, error: `Cloud sync stored locally (${errText.slice(0, 50)})` };
   } catch (err: any) {
+    const now = new Date().toISOString();
+    localStorage.setItem(STORAGE_LAST_SYNC, now);
     return { success: false, error: err?.message || 'Sync push failed' };
   }
 }
@@ -397,15 +417,25 @@ export async function pullFromCloud(): Promise<{ success: boolean; updated: bool
     return { success: false, updated: false, error: 'No active operative account signed in.' };
   }
 
+  const headers = {
+    Authorization: `Bearer ${session.token}`,
+    'x-user-id': session.user.id,
+    'x-username': session.user.username.toLowerCase(),
+    'x-device-id': session.device.deviceId,
+  };
+
   try {
-    const res = await fetch('/api/sync/pull', {
+    let res = await fetch('/api/sync/pull', {
       method: 'GET',
-      headers: {
-        Authorization: `Bearer ${session.token}`,
-        'x-user-id': session.user.id,
-        'x-device-id': session.device.deviceId,
-      },
+      headers,
     });
+
+    if (!res.ok && res.status === 404) {
+      res = await fetch(`/api/sync?action=pull&username=${encodeURIComponent(session.user.username.toLowerCase())}`, {
+        method: 'GET',
+        headers,
+      });
+    }
 
     if (res.ok) {
       const data = await res.json();
@@ -415,6 +445,8 @@ export async function pullFromCloud(): Promise<{ success: boolean; updated: bool
         localStorage.setItem(STORAGE_LAST_SYNC, now);
         return { success: true, updated: true };
       }
+      const now = new Date().toISOString();
+      localStorage.setItem(STORAGE_LAST_SYNC, now);
       return { success: true, updated: false };
     }
 
@@ -422,6 +454,8 @@ export async function pullFromCloud(): Promise<{ success: boolean; updated: bool
     const localCache = getLocalCloudCache();
     if (localCache) {
       await applyRemoteSyncPackage(localCache);
+      const now = new Date().toISOString();
+      localStorage.setItem(STORAGE_LAST_SYNC, now);
       return { success: true, updated: true };
     }
 
@@ -431,6 +465,8 @@ export async function pullFromCloud(): Promise<{ success: boolean; updated: bool
     const localCache = getLocalCloudCache();
     if (localCache) {
       await applyRemoteSyncPackage(localCache);
+      const now = new Date().toISOString();
+      localStorage.setItem(STORAGE_LAST_SYNC, now);
       return { success: true, updated: true };
     }
     return { success: false, updated: false, error: err?.message || 'Sync pull failed' };

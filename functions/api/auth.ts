@@ -128,6 +128,8 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
           await kv.put(`user:${operativeCallsign.toLowerCase()}`, JSON.stringify(userRecord));
         }
         await kv.put(`token:${token}`, JSON.stringify({ userId, cleanUser }));
+        await kv.put(`devices:${cleanUser}`, JSON.stringify(userRecord.devices));
+        await kv.put(`devices:${userId}`, JSON.stringify(userRecord.devices));
       } else {
         memoryUsers.set(cleanUser, userRecord);
         if (cleanEmail) memoryUsers.set(cleanEmail, userRecord);
@@ -135,7 +137,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
         memoryTokens.set(token, { userId, cleanUser });
       }
 
-      return new Response(JSON.stringify({ ok: true, session }), {
+      return new Response(JSON.stringify({ ok: true, session, devices: userRecord.devices }), {
         status: 200,
         headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
       });
@@ -218,13 +220,17 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
 
       if (kv) {
         await kv.put(`user:${cleanQuery}`, JSON.stringify(userRecord));
+        await kv.put(`user:${userRecord.username}`, JSON.stringify(userRecord));
         await kv.put(`token:${token}`, JSON.stringify({ userId: userRecord.id, cleanUser: cleanQuery }));
+        await kv.put(`devices:${userRecord.username}`, JSON.stringify(userRecord.devices));
+        await kv.put(`devices:${userRecord.id}`, JSON.stringify(userRecord.devices));
       } else {
         memoryUsers.set(cleanQuery, userRecord);
+        memoryUsers.set(userRecord.username, userRecord);
         memoryTokens.set(token, { userId: userRecord.id, cleanUser: cleanQuery });
       }
 
-      return new Response(JSON.stringify({ ok: true, session }), {
+      return new Response(JSON.stringify({ ok: true, session, devices: userRecord.devices }), {
         status: 200,
         headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
       });

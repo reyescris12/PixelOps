@@ -191,8 +191,10 @@ export const SyncAccountModal: React.FC<SyncAccountModalProps> = ({
         setEditCallsign(newSession.user.callsign);
         setEditUsername(newSession.user.username);
         setEditEmail(newSession.user.email);
+        setSyncStats(getSyncStats());
         setAuthSuccess(`Operative clearance established: ${newSession.user.callsign}`);
         setActiveTab('sync');
+        loadDevices();
         handleManualSync();
       } else if (authMode === 'login') {
         if (!username || !password) {
@@ -209,8 +211,10 @@ export const SyncAccountModal: React.FC<SyncAccountModalProps> = ({
         setEditCallsign(loggedInSession.user.callsign);
         setEditUsername(loggedInSession.user.username);
         setEditEmail(loggedInSession.user.email);
+        setSyncStats(getSyncStats());
         setAuthSuccess(`SatCom handshake verified. Welcome back, Commander ${loggedInSession.user.callsign}.`);
         setActiveTab('sync');
+        loadDevices();
         handleManualSync();
       } else if (authMode === 'forgot') {
         if (!username || !recoveryKeyInput || !password) {
@@ -539,7 +543,9 @@ export const SyncAccountModal: React.FC<SyncAccountModalProps> = ({
                     <span className="text-[11px] text-emerald-400 font-mono">
                       {syncStats.lastSyncedAt
                         ? new Date(syncStats.lastSyncedAt).toLocaleTimeString()
-                        : 'Pending Handshake'}
+                        : session?.user?.lastLoginAt
+                        ? new Date(session.user.lastLoginAt).toLocaleTimeString()
+                        : 'Handshake Verified'}
                     </span>
                   </div>
                 </div>

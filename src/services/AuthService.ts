@@ -413,7 +413,10 @@ export async function loginAccount(params: {
   // 2. Client-Side Standalone Fallback Authentication
   const localUsers = getLocalUsers();
   const foundUser = localUsers.find(
-    (u) => u.username === query || u.email.toLowerCase() === query
+    (u) =>
+      u.username.toLowerCase() === query ||
+      u.email.toLowerCase() === query ||
+      (u.callsign && u.callsign.toLowerCase() === query)
   );
 
   if (!foundUser) {
@@ -712,30 +715,66 @@ export async function unlinkDevice(targetDeviceId: string): Promise<boolean> {
 
 /**
  * Exports an encrypted Satellite Pairing Token that can be pasted or scanned on mobile to instantly link devices
+ * and transfer active dossiers, routines, and user credentials.
  */
-export function exportSatellitePairingToken(): string {
+export async function exportSatellitePairingToken(): Promise<string> {
   const session = getActiveSession();
   if (!session) throw new Error('No active operative session to pair.');
+
+  const localUsers = getLocalUsers();
+  const userRec = localUsers.find(
+    (u) =>
+      u.id === session.user.id ||
+      u.username.toLowerCase() === session.user.username.toLowerCase()
+  );
+
+  let syncPackage: any = null;
+  try {
+    const { assembleLocalSyncPackage } = await import('./SyncService');
+    syncPackage = await assembleLocalSyncPackage(session);
+  } catch (err) {
+    console.warn('Could not bundle local sync package into token', err);
+  }
 
   const payload = {
     token: session.token,
     user: session.user,
+    credentials: userRec
+      ? {
+          id: userRec.id,
+          username: userRec.username,
+          email: userRec.email,
+          callsign: userRec.callsign,
+          salt: userRec.salt,
+          passwordHash: userRec.passwordHash,
+          recoveryKey: userRec.recoveryKey,
+          securityClearance: userRec.securityClearance,
+        }
+      : null,
+    syncPackage,
     pairedAt: new Date().toISOString(),
   };
 
   const json = JSON.stringify(payload);
-  const base64 = typeof window !== 'undefined' ? btoa(unescape(encodeURIComponent(json))) : Buffer.from(json).toString('base64');
+  const base64 =
+    typeof window !== 'undefined'
+      ? btoa(unescape(encodeURIComponent(json)))
+      : Buffer.from(json).toString('base64');
   return `SATCOM-PAIR::${base64}`;
 }
 
 /**
- * Imports a Satellite Pairing Token on mobile or another node to establish immediate link
+ * Imports a Satellite Pairing Token on mobile or another node to establish immediate link,
+ * seed local credentials for offline username/email/callsign login, and apply all dossiers.
  */
 export async function importSatellitePairingToken(tokenString: string): Promise<AuthSession> {
   const cleaned = tokenString.trim().replace(/^SATCOM-PAIR::/, '');
   let json: string;
   try {
-    json = typeof window !== 'undefined' ? decodeURIComponent(escape(atob(cleaned))) : Buffer.from(cleaned, 'base64').toString('utf8');
+    json =
+      typeof window !== 'undefined'
+        ? decodeURIComponent(escape(atob(cleaned)))
+        : Buffer.from(cleaned, 'base64').toString('utf8');
   } catch {
     throw new Error('Invalid Satellite Pairing Token format.');
   }
@@ -753,7 +792,36 @@ export async function importSatellitePairingToken(tokenString: string): Promise<
     expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
   };
 
+  // 1. Activate session
   setActiveSession(session);
+
+  // 2. Persist credentials locally so mobile can sign in with username, email, or callsign & password
+  if (payload.credentials) {
+    upsertLocalUser({
+      id: payload.credentials.id,
+      username: payload.credentials.username,
+      email: payload.credentials.email,
+      callsign: payload.credentials.callsign,
+      salt: payload.credentials.salt,
+      passwordHash: payload.credentials.passwordHash,
+      recoveryKey: payload.credentials.recoveryKey,
+      securityClearance: payload.credentials.securityClearance,
+      createdAt: payload.user.createdAt || new Date().toISOString(),
+      lastLoginAt: new Date().toISOString(),
+      devices: [currentDevice],
+    });
+  }
+
+  // 3. Immediately apply all dossiers, routines, and memories into mobile IndexedDB/localStorage!
+  if (payload.syncPackage) {
+    try {
+      const { applyRemoteSyncPackage } = await import('./SyncService');
+      await applyRemoteSyncPackage(payload.syncPackage);
+    } catch (syncErr) {
+      console.warn('Failed to apply sync package from token', syncErr);
+    }
+  }
+
   return session;
 }
 

@@ -557,7 +557,10 @@ async function startServer() {
 
       let userRecord: any = null;
       for (const u of Object.values(store.users)) {
-        if (u.username === cleanQuery || u.email === cleanQuery) {
+        const uUser = String(u.username || '').toLowerCase().trim();
+        const uEmail = String(u.email || '').toLowerCase().trim();
+        const uCallsign = String(u.callsign || '').toLowerCase().trim();
+        if (uUser === cleanQuery || uEmail === cleanQuery || uCallsign === cleanQuery) {
           userRecord = u;
           break;
         }
@@ -632,7 +635,10 @@ async function startServer() {
       const store = loadSyncStore();
       let userRecord: any = null;
       for (const u of Object.values(store.users)) {
-        if (u.username === cleanQuery || u.email === cleanQuery) {
+        const uUser = String(u.username || '').toLowerCase().trim();
+        const uEmail = String(u.email || '').toLowerCase().trim();
+        const uCallsign = String(u.callsign || '').toLowerCase().trim();
+        if (uUser === cleanQuery || uEmail === cleanQuery || uCallsign === cleanQuery) {
           userRecord = u;
           break;
         }

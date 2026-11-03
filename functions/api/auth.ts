@@ -121,9 +121,17 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
 
       if (kv) {
         await kv.put(`user:${cleanUser}`, JSON.stringify(userRecord));
+        if (cleanEmail) {
+          await kv.put(`user:${cleanEmail}`, JSON.stringify(userRecord));
+        }
+        if (operativeCallsign) {
+          await kv.put(`user:${operativeCallsign.toLowerCase()}`, JSON.stringify(userRecord));
+        }
         await kv.put(`token:${token}`, JSON.stringify({ userId, cleanUser }));
       } else {
         memoryUsers.set(cleanUser, userRecord);
+        if (cleanEmail) memoryUsers.set(cleanEmail, userRecord);
+        if (operativeCallsign) memoryUsers.set(operativeCallsign.toLowerCase(), userRecord);
         memoryTokens.set(token, { userId, cleanUser });
       }
 
@@ -146,6 +154,18 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
         if (raw) userRecord = JSON.parse(raw);
       } else {
         userRecord = memoryUsers.get(cleanQuery);
+        if (!userRecord) {
+          for (const u of memoryUsers.values()) {
+            if (
+              u.username === cleanQuery ||
+              u.email === cleanQuery ||
+              u.callsign?.toLowerCase() === cleanQuery
+            ) {
+              userRecord = u;
+              break;
+            }
+          }
+        }
       }
 
       if (!userRecord) {
@@ -237,6 +257,18 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
         if (raw) userRecord = JSON.parse(raw);
       } else {
         userRecord = memoryUsers.get(cleanQuery);
+        if (!userRecord) {
+          for (const u of memoryUsers.values()) {
+            if (
+              u.username === cleanQuery ||
+              u.email === cleanQuery ||
+              u.callsign?.toLowerCase() === cleanQuery
+            ) {
+              userRecord = u;
+              break;
+            }
+          }
+        }
       }
 
       if (!userRecord) {

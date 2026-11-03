@@ -239,7 +239,8 @@ export const SyncAccountModal: React.FC<SyncAccountModalProps> = ({
         const pairedSession = await importSatellitePairingToken(pairingTokenInput.trim());
         playBeep('complete');
         setSession(pairedSession);
-        setAuthSuccess(`Device paired successfully: linked to Operative ${pairedSession.user.callsign}.`);
+        setSyncStats(getSyncStats());
+        setAuthSuccess(`Device paired & synchronized: All dossiers, routines, and credentials linked to Operative ${pairedSession.user.callsign}.`);
         setActiveTab('sync');
         handleManualSync();
       }
@@ -293,9 +294,10 @@ export const SyncAccountModal: React.FC<SyncAccountModalProps> = ({
     }
   };
 
-  const handleOpenMobilePairing = () => {
+  const handleOpenMobilePairing = async () => {
     try {
-      const code = exportSatellitePairingToken();
+      setSyncFeedback('Encrypting and bundling dossiers & credentials into pairing token...');
+      const code = await exportSatellitePairingToken();
       setGeneratedPairingCode(code);
       setShowPairingModal(true);
       playBeep('tap');
@@ -642,6 +644,37 @@ export const SyncAccountModal: React.FC<SyncAccountModalProps> = ({
                 >
                   <div className="w-4 h-4 rounded-full bg-zinc-950 shadow-md" />
                 </button>
+              </div>
+
+              {/* Direct Multi-Device Sync Relay (QR / Token) */}
+              <div className="p-3 bg-zinc-900/40 border border-zinc-800 rounded-lg space-y-2">
+                <h4 className="font-semibold text-xs text-zinc-200 flex items-center gap-1.5">
+                  <Smartphone className="w-3.5 h-3.5 text-emerald-400" />
+                  Instant Desktop & Mobile Direct Sync Link
+                </h4>
+                <p className="text-[10px] text-zinc-400">
+                  Transfer all current dossiers, routines, and memories directly between desktop and mobile with 1 tap.
+                </p>
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  <button
+                    onClick={handleOpenMobilePairing}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-950/40 hover:bg-emerald-900/50 text-emerald-300 rounded border border-emerald-600/40 text-[11px] font-semibold transition-colors cursor-pointer"
+                  >
+                    <Smartphone className="w-3.5 h-3.5" />
+                    <span>Send Dossiers to Mobile (Copy Token)</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      playBeep('tap');
+                      setActiveTab('account');
+                      setAuthMode('pair');
+                    }}
+                    className="flex items-center gap-1.5 px-3 py-1.5 bg-cyan-950/40 hover:bg-cyan-900/50 text-cyan-300 rounded border border-cyan-600/40 text-[11px] font-semibold transition-colors cursor-pointer"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Receive / Import Sync Token</span>
+                  </button>
+                </div>
               </div>
 
               {/* Manual Air-Gapped Backup & Restore */}

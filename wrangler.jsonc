@@ -8,7 +8,7 @@
     {
       "binding": "DB",
       "database_name": "pixelops-db",
-      "database_id": "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+      "database_id": "eb239f07-7112-429e-a77c-5506c1744d0b"
     }
   ]
 }

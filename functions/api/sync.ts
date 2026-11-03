@@ -5,6 +5,10 @@
 
 interface Env {
   SYNC_KV?: any;
+  PIXELOPS_KV?: any;
+  KV?: any;
+  STORAGE?: any;
+  DB?: any;
 }
 
 const CORS_HEADERS = {
@@ -12,6 +16,10 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-user-id, x-device-id',
 };
+
+function getKv(env: Env) {
+  return env.SYNC_KV || env.PIXELOPS_KV || env.KV || env.STORAGE || env.DB;
+}
 
 // Memory fallback store
 const memoryVaults = new Map<string, any>();
@@ -28,6 +36,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
     return onRequestOptions();
   }
 
+  const kv = getKv(env);
   const url = new URL(request.url);
   const path = url.pathname.replace(/\/+$/, '');
   const userId = request.headers.get('x-user-id') || url.searchParams.get('userId') || 'default_user';
@@ -45,8 +54,8 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
       }
 
       const storageKey = `vault:${userId}`;
-      if (env.SYNC_KV) {
-        await env.SYNC_KV.put(storageKey, JSON.stringify(syncPackage));
+      if (kv) {
+        await kv.put(storageKey, JSON.stringify(syncPackage));
       } else {
         memoryVaults.set(storageKey, syncPackage);
       }
@@ -56,8 +65,8 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
         deviceId,
         lastActive: new Date().toISOString(),
       };
-      if (env.SYNC_KV) {
-        await env.SYNC_KV.put(`device:${userId}:${deviceId}`, JSON.stringify(deviceEntry));
+      if (kv) {
+        await kv.put(`device:${userId}:${deviceId}`, JSON.stringify(deviceEntry));
       }
 
       return new Response(
@@ -71,8 +80,8 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
       const storageKey = `vault:${userId}`;
       let pkg: any = null;
 
-      if (env.SYNC_KV) {
-        const raw = await env.SYNC_KV.get(storageKey);
+      if (kv) {
+        const raw = await kv.get(storageKey);
         if (raw) pkg = JSON.parse(raw);
       } else {
         pkg = memoryVaults.get(storageKey);
@@ -88,8 +97,8 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
     if (request.method === 'GET' && path.endsWith('/devices')) {
       let devices: any[] = [];
       const userKey = `devices:${userId}`;
-      if (env.SYNC_KV) {
-        const raw = await env.SYNC_KV.get(userKey);
+      if (kv) {
+        const raw = await kv.get(userKey);
         if (raw) devices = JSON.parse(raw);
       } else {
         devices = memoryDevices.get(userKey) || [];
@@ -107,11 +116,11 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
       const { targetDeviceId } = body;
       const userKey = `devices:${userId}`;
 
-      if (env.SYNC_KV) {
-        const raw = await env.SYNC_KV.get(userKey);
+      if (kv) {
+        const raw = await kv.get(userKey);
         if (raw) {
           const list = JSON.parse(raw).filter((d: any) => d.deviceId !== targetDeviceId);
-          await env.SYNC_KV.put(userKey, JSON.stringify(list));
+          await kv.put(userKey, JSON.stringify(list));
         }
       } else {
         const list = (memoryDevices.get(userKey) || []).filter((d) => d.deviceId !== targetDeviceId);

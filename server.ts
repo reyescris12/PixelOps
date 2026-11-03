@@ -462,7 +462,21 @@ function hashPasswordServer(password: string, salt: string): string {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+
+  // CORS Middleware for Mobile Browsers & Cross-Origin Sync
+  app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.header(
+      'Access-Control-Allow-Headers',
+      'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-user-id, x-device-id'
+    );
+    if (req.method === 'OPTIONS') {
+      return res.sendStatus(204);
+    }
+    next();
+  });
 
   app.use(express.json({ limit: '15mb' }));
 
@@ -487,13 +501,17 @@ async function startServer() {
       const userId = `usr_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
       const now = new Date().toISOString();
 
+      const operativeCallsign = (callsign || cleanUser).toUpperCase();
+      const recoveryKey = `SATCOM-${operativeCallsign.slice(0, 6).replace(/[^A-Z0-9]/g, '') || 'AGENT'}-${Math.random().toString(36).substring(2, 6).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+
       const userRecord = {
         id: userId,
         username: cleanUser,
         email: cleanEmail,
-        callsign: (callsign || cleanUser).toUpperCase(),
+        callsign: operativeCallsign,
         salt,
         passwordHash,
+        recoveryKey,
         securityClearance: 'COMMANDER',
         createdAt: now,
         lastLoginAt: now,
@@ -517,6 +535,7 @@ async function startServer() {
           email: userRecord.email,
           callsign: userRecord.callsign,
           securityClearance: userRecord.securityClearance,
+          recoveryKey: userRecord.recoveryKey,
           createdAt: now,
           lastLoginAt: now,
         },
@@ -553,6 +572,11 @@ async function startServer() {
         return res.status(401).json({ error: 'INVALID_PASSWORD', message: 'Invalid operative password key.' });
       }
 
+      // If userRecord doesn't have recoveryKey yet, generate one for them
+      if (!userRecord.recoveryKey) {
+        userRecord.recoveryKey = `SATCOM-${userRecord.callsign.slice(0, 6).replace(/[^A-Z0-9]/g, '') || 'AGENT'}-${Math.random().toString(36).substring(2, 6).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+      }
+
       userRecord.lastLoginAt = new Date().toISOString();
       if (device) {
         userRecord.devices = userRecord.devices || [];
@@ -577,6 +601,7 @@ async function startServer() {
           email: userRecord.email,
           callsign: userRecord.callsign,
           securityClearance: userRecord.securityClearance,
+          recoveryKey: userRecord.recoveryKey,
           createdAt: userRecord.createdAt,
           lastLoginAt: userRecord.lastLoginAt,
         },
@@ -587,6 +612,135 @@ async function startServer() {
       res.json({ ok: true, session });
     } catch (err: any) {
       res.status(500).json({ error: 'AUTH_ERROR', message: err?.message || 'Server authentication fault' });
+    }
+  });
+
+  app.post('/api/auth/reset-password', (req, res) => {
+    try {
+      const { usernameOrEmail, recoveryKey, newPassword } = req.body || {};
+      const cleanQuery = String(usernameOrEmail || '').toLowerCase().trim();
+      const cleanKey = String(recoveryKey || '').trim().toUpperCase();
+
+      if (!cleanQuery || !cleanKey || !newPassword) {
+        return res.status(400).json({ error: 'FIELDS_REQUIRED', message: 'Username/Email, Recovery Key, and New Password are required.' });
+      }
+
+      if (newPassword.length < 6) {
+        return res.status(400).json({ error: 'PASSWORD_TOO_SHORT', message: 'New password must be at least 6 characters.' });
+      }
+
+      const store = loadSyncStore();
+      let userRecord: any = null;
+      for (const u of Object.values(store.users)) {
+        if (u.username === cleanQuery || u.email === cleanQuery) {
+          userRecord = u;
+          break;
+        }
+      }
+
+      if (!userRecord) {
+        return res.status(404).json({ error: 'USER_NOT_FOUND', message: 'No operative found matching credentials.' });
+      }
+
+      const storedKey = String(userRecord.recoveryKey || '').trim().toUpperCase();
+      if (!storedKey || storedKey !== cleanKey) {
+        return res.status(401).json({ error: 'INVALID_RECOVERY_KEY', message: 'Invalid Satellite Recovery Key for this operative account.' });
+      }
+
+      const newSalt = Math.random().toString(36).substring(2, 12);
+      userRecord.salt = newSalt;
+      userRecord.passwordHash = hashPasswordServer(newPassword, newSalt);
+      userRecord.lastUpdatedAt = new Date().toISOString();
+      saveSyncStore(store);
+
+      res.json({ ok: true, message: 'Password encryption key reset successfully. You may now sign in with your new key.' });
+    } catch (err: any) {
+      res.status(500).json({ error: 'RESET_FAULT', message: err?.message || 'Server error during password reset' });
+    }
+  });
+
+  app.post('/api/auth/update-profile', (req, res) => {
+    try {
+      const authHeader = req.headers.authorization || '';
+      const token = authHeader.replace(/^Bearer\s+/i, '');
+      const store = loadSyncStore();
+      const tokenData = store.tokens[token];
+
+      if (!tokenData) {
+        return res.status(401).json({ error: 'UNAUTHORIZED', message: 'Session expired or invalid.' });
+      }
+
+      const userRecord = Object.values(store.users).find((u: any) => u.id === tokenData.userId);
+      if (!userRecord) {
+        return res.status(404).json({ error: 'USER_NOT_FOUND', message: 'Operative profile not found.' });
+      }
+
+      const { callsign, username, email, currentPassword, newPassword } = req.body || {};
+
+      // If user wants to change password, verify current password
+      if (newPassword) {
+        if (!currentPassword) {
+          return res.status(400).json({ error: 'CURRENT_PASSWORD_REQUIRED', message: 'Enter your current password to set a new password.' });
+        }
+        const verifyHash = hashPasswordServer(currentPassword, userRecord.salt);
+        if (verifyHash !== userRecord.passwordHash) {
+          return res.status(401).json({ error: 'INVALID_CURRENT_PASSWORD', message: 'Current password verification failed.' });
+        }
+        if (newPassword.length < 6) {
+          return res.status(400).json({ error: 'NEW_PASSWORD_TOO_SHORT', message: 'New password must be at least 6 characters.' });
+        }
+        const newSalt = Math.random().toString(36).substring(2, 12);
+        userRecord.salt = newSalt;
+        userRecord.passwordHash = hashPasswordServer(newPassword, newSalt);
+      }
+
+      // If username changed, ensure not taken
+      if (username) {
+        const cleanNewUser = String(username).toLowerCase().trim();
+        if (cleanNewUser !== userRecord.username) {
+          if (cleanNewUser.length < 3) {
+            return res.status(400).json({ error: 'INVALID_USERNAME', message: 'Username must be at least 3 characters.' });
+          }
+          if (store.users[cleanNewUser]) {
+            return res.status(409).json({ error: 'USERNAME_TAKEN', message: 'An operative already exists with this handle.' });
+          }
+          delete store.users[userRecord.username];
+          userRecord.username = cleanNewUser;
+          store.users[cleanNewUser] = userRecord;
+          tokenData.username = cleanNewUser;
+        }
+      }
+
+      if (callsign) {
+        userRecord.callsign = String(callsign).trim().toUpperCase();
+      }
+
+      if (email) {
+        userRecord.email = String(email).toLowerCase().trim();
+      }
+
+      userRecord.lastUpdatedAt = new Date().toISOString();
+      saveSyncStore(store);
+
+      const session = {
+        token,
+        user: {
+          id: userRecord.id,
+          username: userRecord.username,
+          email: userRecord.email,
+          callsign: userRecord.callsign,
+          securityClearance: userRecord.securityClearance,
+          recoveryKey: userRecord.recoveryKey,
+          createdAt: userRecord.createdAt,
+          lastLoginAt: userRecord.lastLoginAt,
+        },
+        device: { deviceId: 'current', deviceName: 'Updated Node', deviceType: 'desktop', lastActive: new Date().toISOString() },
+        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      };
+
+      res.json({ ok: true, session });
+    } catch (err: any) {
+      res.status(500).json({ error: 'UPDATE_FAULT', message: err?.message || 'Server error updating profile' });
     }
   });
 

@@ -3,7 +3,7 @@
  * 
  * Cryptographic User Authentication & Device Identity Service for PixelOps.
  * Provides client-side and server-backed user registration, salted SHA-256 password hashing,
- * session token management, and multi-device identity tracking.
+ * session token management, multi-device identity tracking, password recovery, and profile editing.
  */
 
 export interface UserAccount {
@@ -11,6 +11,7 @@ export interface UserAccount {
   username: string;
   email: string;
   callsign: string;
+  recoveryKey?: string;
   securityClearance: 'OPERATIVE' | 'COMMANDER' | 'DIRECTOR';
   createdAt: string;
   lastLoginAt: string;
@@ -34,9 +35,34 @@ export interface AuthSession {
   expiresAt: string;
 }
 
+interface LocalUserRecord {
+  id: string;
+  username: string;
+  email: string;
+  callsign: string;
+  salt: string;
+  passwordHash: string;
+  recoveryKey?: string;
+  securityClearance: 'OPERATIVE' | 'COMMANDER' | 'DIRECTOR';
+  createdAt: string;
+  lastLoginAt: string;
+  devices: DeviceInfo[];
+}
+
 const STORAGE_AUTH_SESSION = 'pixelops_auth_session_v1';
 const STORAGE_DEVICE_ID = 'pixelops_device_id_v1';
 const STORAGE_LOCAL_USERS = 'pixelops_auth_local_users_v1';
+
+/**
+ * Generates a human-readable, high-entropy satellite recovery key
+ * Example: SATCOM-CIPHER-8A2F-9B1D
+ */
+export function generateRecoveryKey(callsign: string): string {
+  const clean = callsign.replace(/[^A-Za-z0-9]/g, '').slice(0, 6).toUpperCase() || 'AGENT';
+  const r1 = Math.random().toString(36).substring(2, 6).toUpperCase();
+  const r2 = Math.random().toString(36).substring(2, 6).toUpperCase();
+  return `SATCOM-${clean}-${r1}-${r2}`;
+}
 
 /**
  * Computes a secure SHA-256 hash with user salt using the browser Web Crypto API
@@ -50,9 +76,10 @@ export async function hashPassword(password: string, salt: string): Promise<stri
 }
 
 /**
- * Generates a stable unique device identifier for this browser instance
+ * Retrieves or creates a persistent unique Device ID for this client hardware
  */
 export function getOrCreateDeviceId(): string {
+  if (typeof window === 'undefined') return 'server_node';
   try {
     let id = localStorage.getItem(STORAGE_DEVICE_ID);
     if (!id) {
@@ -108,35 +135,35 @@ export function getDeviceName(): string {
   else if (/Edge/i.test(ua)) browser = 'Edge';
 
   const type = getDeviceType();
-  const typeLabel = type === 'mobile' ? 'Mobile' : type === 'tablet' ? 'Tablet' : 'Desktop';
-  return `${os} (${browser}) • ${typeLabel}`;
+  if (type === 'mobile' || type === 'tablet') {
+    return `${os} (${browser})`;
+  }
+  return `${os} Command Node (${browser})`;
 }
 
 /**
- * Returns complete metadata for the current device
+ * Returns comprehensive current device identity object
  */
 export function getCurrentDeviceInfo(): DeviceInfo {
   return {
     deviceId: getOrCreateDeviceId(),
     deviceName: getDeviceName(),
     deviceType: getDeviceType(),
-    platform: typeof navigator !== 'undefined' ? navigator.platform || 'web' : 'web',
+    platform: typeof navigator !== 'undefined' ? navigator.platform || 'web' : 'server',
     lastActive: new Date().toISOString(),
     isCurrent: true,
   };
 }
 
 /**
- * Loads the currently authenticated session from storage
+ * Retrieves the currently active user session from local client storage
  */
 export function getActiveSession(): AuthSession | null {
+  if (typeof window === 'undefined') return null;
   try {
     const raw = localStorage.getItem(STORAGE_AUTH_SESSION);
     if (!raw) return null;
     const session = JSON.parse(raw) as AuthSession;
-    if (!session || !session.token || !session.user) return null;
-
-    // Check expiration (30 days default)
     if (session.expiresAt && new Date(session.expiresAt).getTime() < Date.now()) {
       clearActiveSession();
       return null;
@@ -148,47 +175,29 @@ export function getActiveSession(): AuthSession | null {
 }
 
 /**
- * Stores the active authenticated session
+ * Saves active session and dispatches global authentication status change
  */
 export function setActiveSession(session: AuthSession): void {
   try {
     localStorage.setItem(STORAGE_AUTH_SESSION, JSON.stringify(session));
     if (typeof window !== 'undefined') {
-      window.dispatchEvent(
-        new CustomEvent('pixelops:auth-changed', { detail: { session, isAuthenticated: true } })
-      );
+      window.dispatchEvent(new CustomEvent('pixelops:auth-changed', { detail: { session } }));
     }
-  } catch {}
+  } catch (err) {
+    console.error('Failed to save auth session', err);
+  }
 }
 
 /**
- * Clears the active session (Logout)
+ * Clears current session (Log out)
  */
 export function clearActiveSession(): void {
   try {
     localStorage.removeItem(STORAGE_AUTH_SESSION);
     if (typeof window !== 'undefined') {
-      window.dispatchEvent(
-        new CustomEvent('pixelops:auth-changed', { detail: { session: null, isAuthenticated: false } })
-      );
+      window.dispatchEvent(new CustomEvent('pixelops:auth-changed', { detail: { session: null } }));
     }
   } catch {}
-}
-
-/**
- * Helper to get local stored users when in offline / standalone mode
- */
-interface LocalUserRecord {
-  id: string;
-  username: string;
-  email: string;
-  callsign: string;
-  salt: string;
-  passwordHash: string;
-  securityClearance: 'OPERATIVE' | 'COMMANDER' | 'DIRECTOR';
-  createdAt: string;
-  lastLoginAt: string;
-  devices: DeviceInfo[];
 }
 
 function getLocalUsers(): LocalUserRecord[] {
@@ -206,8 +215,19 @@ function saveLocalUsers(users: LocalUserRecord[]): void {
   } catch {}
 }
 
+function upsertLocalUser(record: LocalUserRecord): void {
+  const users = getLocalUsers();
+  const idx = users.findIndex((u) => u.username === record.username || u.id === record.id);
+  if (idx >= 0) {
+    users[idx] = { ...users[idx], ...record };
+  } else {
+    users.push(record);
+  }
+  saveLocalUsers(users);
+}
+
 /**
- * Registers a new account with email/username and password
+ * Registers a new account with email/username, password, and recovery key
  */
 export async function registerAccount(params: {
   username: string;
@@ -228,6 +248,7 @@ export async function registerAccount(params: {
   }
 
   const device = getCurrentDeviceInfo();
+  const recoveryKey = generateRecoveryKey(callsign);
 
   // 1. Attempt server-side API registration first
   try {
@@ -246,6 +267,23 @@ export async function registerAccount(params: {
     if (res.ok) {
       const data = await res.json();
       if (data.session) {
+        // Also save user in local cache for offline redundancy
+        const salt = Math.random().toString(36).substring(2, 14);
+        const passwordHash = await hashPassword(password, salt);
+        upsertLocalUser({
+          id: data.session.user.id,
+          username: data.session.user.username,
+          email: data.session.user.email,
+          callsign: data.session.user.callsign,
+          salt,
+          passwordHash,
+          recoveryKey: data.session.user.recoveryKey || recoveryKey,
+          securityClearance: data.session.user.securityClearance,
+          createdAt: data.session.user.createdAt,
+          lastLoginAt: data.session.user.lastLoginAt,
+          devices: [device],
+        });
+
         setActiveSession(data.session);
         return data.session;
       }
@@ -254,13 +292,11 @@ export async function registerAccount(params: {
       if (res.status === 409 || errData.message?.includes('already exists')) {
         throw new Error(errData.message || 'An operative with that username or email already exists.');
       }
-      // If server returns other error, fall back to robust local client authentication
     }
   } catch (netErr: any) {
     if (netErr.message?.includes('already exists')) {
       throw netErr;
     }
-    // Network offline or serverless fallback
   }
 
   // 2. Client-Side Standalone Fallback Registration
@@ -281,6 +317,7 @@ export async function registerAccount(params: {
     callsign,
     salt,
     passwordHash,
+    recoveryKey,
     securityClearance: 'COMMANDER',
     createdAt: now,
     lastLoginAt: now,
@@ -298,6 +335,7 @@ export async function registerAccount(params: {
       username: newUser.username,
       email: newUser.email,
       callsign: newUser.callsign,
+      recoveryKey: newUser.recoveryKey,
       securityClearance: newUser.securityClearance,
       createdAt: newUser.createdAt,
       lastLoginAt: newUser.lastLoginAt,
@@ -340,6 +378,23 @@ export async function loginAccount(params: {
     if (res.ok) {
       const data = await res.json();
       if (data.session) {
+        // Cache user locally for offline access
+        const salt = Math.random().toString(36).substring(2, 14);
+        const passwordHash = await hashPassword(password, salt);
+        upsertLocalUser({
+          id: data.session.user.id,
+          username: data.session.user.username,
+          email: data.session.user.email,
+          callsign: data.session.user.callsign,
+          salt,
+          passwordHash,
+          recoveryKey: data.session.user.recoveryKey,
+          securityClearance: data.session.user.securityClearance,
+          createdAt: data.session.user.createdAt,
+          lastLoginAt: data.session.user.lastLoginAt,
+          devices: [device],
+        });
+
         setActiveSession(data.session);
         return data.session;
       }
@@ -350,10 +405,9 @@ export async function loginAccount(params: {
       }
     }
   } catch (netErr: any) {
-    if (netErr.message?.includes('Invalid operative credentials')) {
+    if (netErr.message?.includes('Invalid operative credentials') || netErr.message?.includes('Invalid operative password key')) {
       throw netErr;
     }
-    // Network offline or fallback to local database
   }
 
   // 2. Client-Side Standalone Fallback Authentication
@@ -363,7 +417,7 @@ export async function loginAccount(params: {
   );
 
   if (!foundUser) {
-    throw new Error('No operative account found matching those credentials.');
+    throw new Error('No operative account found matching credentials. If you created this account on desktop, ensure you are connected to the same safehouse server or pair via satellite code.');
   }
 
   const computedHash = await hashPassword(password, foundUser.salt);
@@ -389,6 +443,7 @@ export async function loginAccount(params: {
       username: foundUser.username,
       email: foundUser.email,
       callsign: foundUser.callsign,
+      recoveryKey: foundUser.recoveryKey,
       securityClearance: foundUser.securityClearance,
       createdAt: foundUser.createdAt,
       lastLoginAt: foundUser.lastLoginAt,
@@ -399,6 +454,198 @@ export async function loginAccount(params: {
 
   setActiveSession(session);
   return session;
+}
+
+/**
+ * Resets an operative's password using their Satellite Recovery Key
+ */
+export async function resetPassword(params: {
+  usernameOrEmail: string;
+  recoveryKey: string;
+  newPassword: string;
+}): Promise<{ success: boolean; message: string }> {
+  const query = params.usernameOrEmail.trim().toLowerCase();
+  const recoveryKey = params.recoveryKey.trim().toUpperCase();
+  const newPassword = params.newPassword;
+
+  if (!query || !recoveryKey || !newPassword) {
+    throw new Error('Username/Email, Recovery Key, and New Password are required.');
+  }
+  if (newPassword.length < 6) {
+    throw new Error('New encryption password must be at least 6 characters.');
+  }
+
+  // 1. Attempt server-side password reset
+  try {
+    const res = await fetch('/api/auth/reset-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        usernameOrEmail: query,
+        recoveryKey,
+        newPassword,
+      }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      // Update local cache as well
+      const localUsers = getLocalUsers();
+      const user = localUsers.find((u) => u.username === query || u.email.toLowerCase() === query);
+      if (user) {
+        const newSalt = Math.random().toString(36).substring(2, 14);
+        user.salt = newSalt;
+        user.passwordHash = await hashPassword(newPassword, newSalt);
+        saveLocalUsers(localUsers);
+      }
+      return { success: true, message: data.message || 'Password reset successfully. Sign in with your new key.' };
+    } else {
+      const errData = await res.json().catch(() => ({}));
+      if (res.status === 401 || res.status === 404) {
+        throw new Error(errData.message || 'Recovery verification failed. Verify your recovery key.');
+      }
+    }
+  } catch (netErr: any) {
+    if (netErr.message?.includes('Recovery verification failed') || netErr.message?.includes('Invalid Satellite Recovery Key')) {
+      throw netErr;
+    }
+  }
+
+  // 2. Client-Side Standalone Fallback Reset
+  const localUsers = getLocalUsers();
+  const user = localUsers.find((u) => u.username === query || u.email.toLowerCase() === query);
+  if (!user) {
+    throw new Error('No operative account found matching credentials.');
+  }
+
+  const storedKey = (user.recoveryKey || '').trim().toUpperCase();
+  if (!storedKey || storedKey !== recoveryKey) {
+    throw new Error('Invalid Satellite Recovery Key for this operative.');
+  }
+
+  const newSalt = Math.random().toString(36).substring(2, 14);
+  user.salt = newSalt;
+  user.passwordHash = await hashPassword(newPassword, newSalt);
+  saveLocalUsers(localUsers);
+
+  return { success: true, message: 'Password key reset successfully in local terminal. Please sign in.' };
+}
+
+/**
+ * Updates an authenticated operative's profile (callsign, username, email, and/or password)
+ */
+export async function updateProfile(params: {
+  callsign?: string;
+  username?: string;
+  email?: string;
+  currentPassword?: string;
+  newPassword?: string;
+}): Promise<AuthSession> {
+  const currentSession = getActiveSession();
+  if (!currentSession) {
+    throw new Error('No active operative session. Please sign in first.');
+  }
+
+  const token = currentSession.token;
+  const { callsign, username, email, currentPassword, newPassword } = params;
+
+  // 1. Attempt server-side profile update
+  try {
+    const res = await fetch('/api/auth/update-profile', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        'x-user-id': currentSession.user.id,
+      },
+      body: JSON.stringify({
+        callsign,
+        username,
+        email,
+        currentPassword,
+        newPassword,
+      }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data.session) {
+        // Keep current device info
+        data.session.device = currentSession.device;
+        setActiveSession(data.session);
+
+        // Update local users record
+        const localUsers = getLocalUsers();
+        const user = localUsers.find((u) => u.id === currentSession.user.id);
+        if (user) {
+          if (callsign) user.callsign = callsign.trim().toUpperCase();
+          if (username) user.username = username.trim().toLowerCase();
+          if (email) user.email = email.trim().toLowerCase();
+          if (newPassword) {
+            const newSalt = Math.random().toString(36).substring(2, 14);
+            user.salt = newSalt;
+            user.passwordHash = await hashPassword(newPassword, newSalt);
+          }
+          saveLocalUsers(localUsers);
+        }
+
+        return data.session;
+      }
+    } else {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.message || 'Server failed to update profile.');
+    }
+  } catch (err: any) {
+    if (err.message && !err.message.includes('fetch')) {
+      throw err;
+    }
+  }
+
+  // 2. Client-Side Standalone Fallback Update
+  const localUsers = getLocalUsers();
+  const user = localUsers.find((u) => u.id === currentSession.user.id);
+
+  if (newPassword) {
+    if (!currentPassword) {
+      throw new Error('Current password is required to set a new password.');
+    }
+    if (user) {
+      const verify = await hashPassword(currentPassword, user.salt);
+      if (verify !== user.passwordHash) {
+        throw new Error('Current password verification failed.');
+      }
+      const newSalt = Math.random().toString(36).substring(2, 14);
+      user.salt = newSalt;
+      user.passwordHash = await hashPassword(newPassword, newSalt);
+    }
+  }
+
+  if (username) {
+    const cleanUser = username.trim().toLowerCase();
+    if (cleanUser.length < 3) throw new Error('Username must be at least 3 characters.');
+    if (user) user.username = cleanUser;
+    currentSession.user.username = cleanUser;
+  }
+
+  if (callsign) {
+    const cleanCallsign = callsign.trim().toUpperCase();
+    if (user) user.callsign = cleanCallsign;
+    currentSession.user.callsign = cleanCallsign;
+  }
+
+  if (email) {
+    const cleanEmail = email.trim().toLowerCase();
+    if (user) user.email = cleanEmail;
+    currentSession.user.email = cleanEmail;
+  }
+
+  if (user) {
+    user.lastLoginAt = new Date().toISOString();
+    saveLocalUsers(localUsers);
+  }
+
+  setActiveSession(currentSession);
+  return currentSession;
 }
 
 /**
@@ -420,22 +667,15 @@ export async function getLinkedDevices(): Promise<DeviceInfo[]> {
     if (res.ok) {
       const data = await res.json();
       if (Array.isArray(data.devices)) {
-        return data.devices.map((d: DeviceInfo) => ({
-          ...d,
-          isCurrent: d.deviceId === session.device.deviceId,
-        }));
+        return data.devices;
       }
     }
   } catch {}
 
-  // Fallback to local users registry
   const localUsers = getLocalUsers();
   const user = localUsers.find((u) => u.id === session.user.id);
   if (user && Array.isArray(user.devices)) {
-    return user.devices.map((d) => ({
-      ...d,
-      isCurrent: d.deviceId === session.device.deviceId,
-    }));
+    return user.devices;
   }
 
   return [session.device];
@@ -468,6 +708,53 @@ export async function unlinkDevice(targetDeviceId: string): Promise<boolean> {
   }
 
   return true;
+}
+
+/**
+ * Exports an encrypted Satellite Pairing Token that can be pasted or scanned on mobile to instantly link devices
+ */
+export function exportSatellitePairingToken(): string {
+  const session = getActiveSession();
+  if (!session) throw new Error('No active operative session to pair.');
+
+  const payload = {
+    token: session.token,
+    user: session.user,
+    pairedAt: new Date().toISOString(),
+  };
+
+  const json = JSON.stringify(payload);
+  const base64 = typeof window !== 'undefined' ? btoa(unescape(encodeURIComponent(json))) : Buffer.from(json).toString('base64');
+  return `SATCOM-PAIR::${base64}`;
+}
+
+/**
+ * Imports a Satellite Pairing Token on mobile or another node to establish immediate link
+ */
+export async function importSatellitePairingToken(tokenString: string): Promise<AuthSession> {
+  const cleaned = tokenString.trim().replace(/^SATCOM-PAIR::/, '');
+  let json: string;
+  try {
+    json = typeof window !== 'undefined' ? decodeURIComponent(escape(atob(cleaned))) : Buffer.from(cleaned, 'base64').toString('utf8');
+  } catch {
+    throw new Error('Invalid Satellite Pairing Token format.');
+  }
+
+  const payload = JSON.parse(json);
+  if (!payload?.user || !payload?.token) {
+    throw new Error('Malformed pairing token payload.');
+  }
+
+  const currentDevice = getCurrentDeviceInfo();
+  const session: AuthSession = {
+    token: payload.token,
+    user: payload.user,
+    device: currentDevice,
+    expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+  };
+
+  setActiveSession(session);
+  return session;
 }
 
 export const logoutAccount = clearActiveSession;

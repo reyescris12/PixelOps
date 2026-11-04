@@ -80,6 +80,10 @@ export const onRequest = async (context: {
     }
 
     const { endpoint, method = 'POST', body, entityId } = payload;
+    console.log(
+      `[COMPOSIO CLOUDFLARE ROUTER] Endpoint: "${endpoint}" | Method: ${method} | EntityId: "${entityId}" | Body:`,
+      JSON.stringify(body || {}).slice(0, 300)
+    );
 
     if (!endpoint) {
       return new Response(

@@ -289,66 +289,28 @@ export const GEMINI_TOOL_DECLARATIONS: Record<string, GeminiFunctionDeclarationS
       'Schedule a tactical briefing, field operation, or calendar event on Google Calendar.',
     parameters: {
       type: 'OBJECT',
-      properties: {
-        title: {
-          type: 'STRING',
-          description: 'Title of the calendar operation or meeting.',
-        },
-        startTime: {
-          type: 'STRING',
-          description: 'Proposed time window or ISO timestamp (e.g., "Tomorrow 09:00 UTC").',
-        },
-        attendees: {
-          type: 'STRING',
-          description: 'Comma-separated list of operatives or team participants.',
-        },
-      },
-      required: ['title', 'startTime'],
+      properties: {},
+      required: [],
     },
   },
-  slack_post_dispatch: {
-    name: 'slack_post_dispatch',
-    description: 'Post a real-time dispatch or alert message to a designated Slack channel.',
-    parameters: {
-      type: 'OBJECT',
-      properties: {
-        channel: {
-          type: 'STRING',
-          description: 'Target channel name (e.g., #ops-command, #field-intel).',
-        },
-        message: {
-          type: 'STRING',
-          description: 'Formatted dispatch content to broadcast.',
-        },
-        priority: {
-          type: 'STRING',
-          description: 'Priority classification: standard, elevated, or critical.',
-        },
-      },
-      required: ['channel', 'message'],
-    },
-  },
-  github_create_issue: {
-    name: 'github_create_issue',
+  slack_list_channels: {
+    name: 'slack_list_channels',
     description:
-      'Query live GitHub repository telemetry and create an engineering issue, pull request audit, or patch ticket.',
+      'List public and private channels in the connected Slack workspace.',
     parameters: {
       type: 'OBJECT',
-      properties: {
-        repository: {
-          type: 'STRING',
-          description: 'Target repository name in owner/repo format (e.g., facebook/react or pixelops/core-engine).',
-        },
-        title: {
-          type: 'STRING',
-          description: 'Issue title summarizing the bug or directive.',
-        },
-        labels: {
-          type: 'STRING',
-          description: 'Comma-separated labels (e.g., security, agent-patch).',
-        },
-      },
-      required: ['repository', 'title'],
+      properties: {},
+      required: [],
+    },
+  },
+  gmail_list_messages: {
+    name: 'gmail_list_messages',
+    description:
+      'List or search emails in Gmail inbox matching an optional query (e.g. "is:unread", "from:user").',
+    parameters: {
+      type: 'OBJECT',
+      properties: {},
+      required: [],
     },
   },
   vault_query_intel: {
@@ -411,23 +373,29 @@ export function buildDynamicToolDeclarations(
     GEMINI_TOOL_DECLARATIONS.delegate_task_to_operative,
   ];
 
-  const pluginMap: Record<string, GeminiFunctionDeclarationSchema> = {
-    web_search: GEMINI_TOOL_DECLARATIONS.live_web_search,
-    code_sandbox: GEMINI_TOOL_DECLARATIONS.code_sandbox_eval,
-    fs_storage: GEMINI_TOOL_DECLARATIONS.fs_storage_manager,
-    api_gateway: GEMINI_TOOL_DECLARATIONS.api_fetch_gateway,
-    memory_lookup: GEMINI_TOOL_DECLARATIONS.memory_vector_lookup,
-    calendar: GEMINI_TOOL_DECLARATIONS.calendar_schedule_event,
-    slack: GEMINI_TOOL_DECLARATIONS.slack_post_dispatch,
-    github: GEMINI_TOOL_DECLARATIONS.github_create_issue,
-    vault: GEMINI_TOOL_DECLARATIONS.vault_query_intel,
+  const pluginMap: Record<string, GeminiFunctionDeclarationSchema[]> = {
+    web_search: [GEMINI_TOOL_DECLARATIONS.live_web_search],
+    code_sandbox: [GEMINI_TOOL_DECLARATIONS.code_sandbox_eval],
+    fs_storage: [GEMINI_TOOL_DECLARATIONS.fs_storage_manager],
+    api_gateway: [GEMINI_TOOL_DECLARATIONS.api_fetch_gateway],
+    memory_lookup: [GEMINI_TOOL_DECLARATIONS.memory_vector_lookup],
+    calendar: [GEMINI_TOOL_DECLARATIONS.calendar_schedule_event, GEMINI_TOOL_DECLARATIONS.calendar_list_events],
+    slack: [GEMINI_TOOL_DECLARATIONS.slack_post_dispatch, GEMINI_TOOL_DECLARATIONS.slack_list_channels],
+    github: [GEMINI_TOOL_DECLARATIONS.github_create_issue, GEMINI_TOOL_DECLARATIONS.github_list_issues, GEMINI_TOOL_DECLARATIONS.github_get_repository],
+    vault: [GEMINI_TOOL_DECLARATIONS.vault_query_intel],
+    gmail: [GEMINI_TOOL_DECLARATIONS.gmail_list_messages],
   };
 
   const addedNames = new Set(declarations.map((d) => d.name));
   for (const pluginId of enabledPlugins) {
-    if (pluginMap[pluginId] && !addedNames.has(pluginMap[pluginId].name)) {
-      declarations.push(pluginMap[pluginId]);
-      addedNames.add(pluginMap[pluginId].name);
+    const schemas = pluginMap[pluginId];
+    if (Array.isArray(schemas)) {
+      for (const s of schemas) {
+        if (s && !addedNames.has(s.name)) {
+          declarations.push(s);
+          addedNames.add(s.name);
+        }
+      }
     }
   }
 
@@ -755,11 +723,18 @@ export async function executeFunctionCallHandler(fc: {
   }
 
   try {
-    // Check Composio integration actions (e.g. composio_github_create_issue, composio_slack_send_message, etc.)
+    // Debug logging for tool invocations
+    console.log(
+      `[AGENT EXECUTION ROUTER] Invoking Tool Slug: "${name}" | Destination: [${dest.targetRoom}/${dest.targetStationId}] | Parameters:`,
+      args
+    );
+
+    // Check Composio integration actions (e.g. composio_github_list_issues, composio_github_create_issue, etc.)
     if (name.startsWith('composio_') || name.startsWith('COMPOSIO_')) {
+      console.log(`[COMPOSIO DISPATCH] Executing Composio tool: "${name}" with parameters:`, args);
       const compResult = await executeComposioAction(name, args);
       const summary = compResult.successful
-        ? `Composio [${name.replace(/^composio_/i, '').toUpperCase()}]: Dispatched successfully`
+        ? `Composio [${name.replace(/^composio_/i, '').toUpperCase()}]: Successfully executed (${Array.isArray(compResult.data) ? `${compResult.data.length} items` : 'verified response'})`
         : `Composio Error: ${compResult.error || 'Execution failed'}`;
       return {
         id: fc.id,
@@ -1083,6 +1058,153 @@ export async function executeFunctionCallHandler(fc: {
           args,
           resultSummary: summary,
           livePayload: liveResult,
+          targetRoom: dest.targetRoom,
+          targetStationId: dest.targetStationId,
+        },
+      };
+    }
+
+    // 3A. Live GitHub Repository Issues Listing & Audit
+    if (name === 'github_list_issues') {
+      const repo = String(args.repository || args.repo || 'facebook/react').trim();
+      const state = String(args.state || 'open').trim();
+      const compRes = await executeComposioAction('GITHUB_LIST_ISSUES', { repo, state, labels: args.labels });
+      if (compRes.successful) {
+        return {
+          id: fc.id,
+          name,
+          response: compRes.data,
+          executedToolMeta: {
+            pluginId: dest.pluginId,
+            toolName: name,
+            args,
+            resultSummary: `GitHub Issues [${repo} (${state})]: Retrieved live issues`,
+            livePayload: compRes.data,
+            targetRoom: dest.targetRoom,
+            targetStationId: dest.targetStationId,
+          },
+        };
+      }
+      const ghData = await executeSafeOperation(
+        async (signal) => {
+          const res = await fetch(`https://api.github.com/repos/${repo}/issues?state=${state}&per_page=15`, { signal });
+          if (res.ok) return await res.json();
+          return null;
+        },
+        { timeoutMs: 8000, maxRetries: 1, fallbackValue: [], operationName: 'github_list_issues' }
+      );
+      const issuesList = Array.isArray(ghData) ? ghData : [];
+      return {
+        id: fc.id,
+        name,
+        response: issuesList,
+        executedToolMeta: {
+          pluginId: dest.pluginId,
+          toolName: name,
+          args,
+          resultSummary: `GitHub [${repo}]: Found ${issuesList.length} ${state} issues`,
+          livePayload: issuesList,
+          targetRoom: dest.targetRoom,
+          targetStationId: dest.targetStationId,
+        },
+      };
+    }
+
+    // 3B. Live GitHub Repository Metadata & Intelligence
+    if (name === 'github_get_repository') {
+      const repo = String(args.repository || args.repo || 'facebook/react').trim();
+      const compRes = await executeComposioAction('GITHUB_GET_A_REPOSITORY', { repo });
+      if (compRes.successful) {
+        return {
+          id: fc.id,
+          name,
+          response: compRes.data,
+          executedToolMeta: {
+            pluginId: dest.pluginId,
+            toolName: name,
+            args,
+            resultSummary: `GitHub Repo [${repo}]: Retrieved repository intelligence`,
+            livePayload: compRes.data,
+            targetRoom: dest.targetRoom,
+            targetStationId: dest.targetStationId,
+          },
+        };
+      }
+      const ghData = await executeSafeOperation(
+        async (signal) => {
+          const res = await fetch(`https://api.github.com/repos/${repo}`, { signal });
+          if (res.ok) return await res.json();
+          return null;
+        },
+        { timeoutMs: 8000, maxRetries: 1, fallbackValue: null, operationName: 'github_get_repository' }
+      );
+      return {
+        id: fc.id,
+        name,
+        response: ghData || { repository: repo, status: 'NOT_FOUND' },
+        executedToolMeta: {
+          pluginId: dest.pluginId,
+          toolName: name,
+          args,
+          resultSummary: ghData ? `GitHub [${repo}]: ★${ghData.stargazers_count} stars, ${ghData.open_issues_count} open issues` : `GitHub [${repo}]: Inspected`,
+          livePayload: ghData,
+          targetRoom: dest.targetRoom,
+          targetStationId: dest.targetStationId,
+        },
+      };
+    }
+
+    // 3C. Google Calendar Events Listing
+    if (name === 'calendar_list_events') {
+      const compRes = await executeComposioAction('GOOGLECALENDAR_LIST_EVENTS', args);
+      return {
+        id: fc.id,
+        name,
+        response: compRes.data || { events: [] },
+        executedToolMeta: {
+          pluginId: dest.pluginId,
+          toolName: name,
+          args,
+          resultSummary: compRes.successful ? 'Calendar: Retrieved upcoming events' : `Calendar: ${compRes.error || 'Failed'}`,
+          livePayload: compRes.data,
+          targetRoom: dest.targetRoom,
+          targetStationId: dest.targetStationId,
+        },
+      };
+    }
+
+    // 3D. Slack Channels Listing
+    if (name === 'slack_list_channels') {
+      const compRes = await executeComposioAction('SLACK_LIST_CHANNELS', args);
+      return {
+        id: fc.id,
+        name,
+        response: compRes.data || { channels: [] },
+        executedToolMeta: {
+          pluginId: dest.pluginId,
+          toolName: name,
+          args,
+          resultSummary: compRes.successful ? 'Slack: Listed workspace channels' : `Slack: ${compRes.error || 'Failed'}`,
+          livePayload: compRes.data,
+          targetRoom: dest.targetRoom,
+          targetStationId: dest.targetStationId,
+        },
+      };
+    }
+
+    // 3E. Gmail Messages Listing
+    if (name === 'gmail_list_messages') {
+      const compRes = await executeComposioAction('GMAIL_LIST_MESSAGES', args);
+      return {
+        id: fc.id,
+        name,
+        response: compRes.data || { messages: [] },
+        executedToolMeta: {
+          pluginId: dest.pluginId,
+          toolName: name,
+          args,
+          resultSummary: compRes.successful ? 'Gmail: Listed messages matching query' : `Gmail: ${compRes.error || 'Failed'}`,
+          livePayload: compRes.data,
           targetRoom: dest.targetRoom,
           targetStationId: dest.targetStationId,
         },
@@ -3700,6 +3822,17 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
         params.agentSystemPrompt,
         memoryContextStr,
         `CRITICAL TOOL & CAPABILITY DIRECTIVES:
+- INTENT-DRIVEN COMPOSIO & PLUGIN TOOL SELECTION (FULL CRUD SPECTRUM):
+  Before invoking any tool from Composio or connected external plugins, analyze the user's intent:
+  * READ / LIST / SEARCH / AUDIT INTENT:
+    - If the user asks to check, audit, list, search, get, fetch, read, inspect, or review (e.g., "check repo issues", "get repository details", "check unread emails", "search calendar events", "show Slack channels", "view pull requests"):
+      You MUST select a LIST, GET, or SEARCH tool (e.g. composio_github_list_issues, composio_github_get_repository, composio_github_list_pull_requests, composio_gmail_list_messages, composio_googlecalendar_list_events, composio_slack_list_channels, composio_notion_search, composio_linear_list_issues).
+    - NEVER default to a write/create action (like create_issue, send_message, send_email) when a read, list, search, or audit action is requested.
+  * WRITE / CREATE / SEND / DELETE INTENT:
+    - If the user explicitly asks to create, open, compose, send, push, post, schedule, star, or delete (e.g., "create an issue", "send an email", "schedule an event", "post a message"):
+      You MUST select a CREATE, POST, SEND, or DELETE tool.
+  * PARAMETER VALIDATION:
+    - Ensure you correctly extract and validate all required parameters (such as repository owner/name, query filters, search strings, channel names, or recipient email addresses) from the user's dispatch text before firing the tool payload. For GitHub repository targets, split "owner/repo" into owner and repo fields.
 - TWO-STEP DRAFTING ENFORCEMENT FOR EXTERNAL COMMS (GMAIL, SLACK, DISCORD, GITHUB, NOTION, LINEAR):
   * When communicating via external tools (e.g. composio_gmail_send_email, composio_slack_send_message, composio_discord_send_message, composio_github_create_issue, composio_notion_create_page, composio_linear_create_issue), you MUST execute a mandatory two-step workflow:
     1. DRAFTING STEP: First synthesize the actual informative message, professional email, report, or issue content in full detail based on your agent knowledge and any previous findings.

@@ -1400,10 +1400,76 @@ export async function getAvailableIntegrations(): Promise<ComposioIntegration[]>
  * Pre-defined, production-ready Gemini FunctionDeclaration schemas for Composio integrations
  */
 export const COMPOSIO_GEMINI_TOOL_SCHEMAS: Record<string, any> = {
-  // GITHUB
+  // GITHUB - READ / LIST / SEARCH / GET / WRITE
+  composio_github_list_issues: {
+    name: 'composio_github_list_issues',
+    description: 'List issues in a GitHub repository with optional state filter ("open", "closed", "all") and labels. Use when the user asks to check, audit, list, or review issues.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        owner: { type: 'STRING', description: 'Repository owner or organization name (e.g. "octocat").' },
+        repo: { type: 'STRING', description: 'Repository name (e.g. "Hello-World"). If provided as "owner/repo", it will be parsed automatically.' },
+        state: { type: 'STRING', description: 'Issue state filter: "open", "closed", or "all". Default is "open".' },
+        labels: { type: 'STRING', description: 'Comma-separated list of label names to filter by (e.g. "bug,ui").' },
+        per_page: { type: 'NUMBER', description: 'Number of issues to return per page (1 to 50).' },
+      },
+      required: ['owner', 'repo'],
+    },
+  },
+  composio_github_get_repository: {
+    name: 'composio_github_get_repository',
+    description: 'Get detailed information, description, stargazers count, open issues count, default branch, and telemetry for a GitHub repository.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        owner: { type: 'STRING', description: 'Repository owner or organization name.' },
+        repo: { type: 'STRING', description: 'Repository name.' },
+      },
+      required: ['owner', 'repo'],
+    },
+  },
+  composio_github_search_repositories: {
+    name: 'composio_github_search_repositories',
+    description: 'Search for public or private GitHub repositories by query keywords, language, or topic.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        q: { type: 'STRING', description: 'Search query string (e.g. "react state management language:typescript").' },
+        sort: { type: 'STRING', description: 'Sort field: "stars", "forks", or "updated".' },
+        order: { type: 'STRING', description: 'Sort order: "desc" or "asc".' },
+      },
+      required: ['q'],
+    },
+  },
+  composio_github_list_pull_requests: {
+    name: 'composio_github_list_pull_requests',
+    description: 'List pull requests on a GitHub repository to review code contributions, PR numbers, branches, and statuses.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        owner: { type: 'STRING', description: 'Repository owner.' },
+        repo: { type: 'STRING', description: 'Repository name.' },
+        state: { type: 'STRING', description: 'PR state filter: "open", "closed", or "all".' },
+      },
+      required: ['owner', 'repo'],
+    },
+  },
+  composio_github_get_issue: {
+    name: 'composio_github_get_issue',
+    description: 'Get details, status, body, and comments for a specific GitHub issue by issue number.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        owner: { type: 'STRING', description: 'Repository owner.' },
+        repo: { type: 'STRING', description: 'Repository name.' },
+        issue_number: { type: 'NUMBER', description: 'The issue number to retrieve (e.g. 42).' },
+      },
+      required: ['owner', 'repo', 'issue_number'],
+    },
+  },
   composio_github_create_issue: {
     name: 'composio_github_create_issue',
-    description: 'Create a new issue on a GitHub repository using the user authenticated GitHub account via Composio.',
+    description: 'Create a new issue on a GitHub repository using the user authenticated GitHub account via Composio. Use ONLY when the user explicitly asks to create or open an issue.',
     parameters: {
       type: 'OBJECT',
       properties: {
@@ -1428,10 +1494,33 @@ export const COMPOSIO_GEMINI_TOOL_SCHEMAS: Record<string, any> = {
     },
   },
 
-  // SLACK
+  // SLACK - READ / LIST / GET / POST
+  composio_slack_list_channels: {
+    name: 'composio_slack_list_channels',
+    description: 'List public and private channels in the connected Slack workspace. Use when checking available channels or channel IDs.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        types: { type: 'STRING', description: 'Comma-separated channel types: "public_channel,private_channel".' },
+        limit: { type: 'NUMBER', description: 'Maximum channels to retrieve (1 to 100).' },
+      },
+    },
+  },
+  composio_slack_get_channel_history: {
+    name: 'composio_slack_get_channel_history',
+    description: 'Fetch recent message history and communications from a Slack channel to review or audit discussions.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        channel: { type: 'STRING', description: 'Slack channel ID or name (e.g. "C12345678" or "#general").' },
+        limit: { type: 'NUMBER', description: 'Number of recent messages to return (default 20).' },
+      },
+      required: ['channel'],
+    },
+  },
   composio_slack_send_message: {
     name: 'composio_slack_send_message',
-    description: 'Send a message to a Slack channel or DM using the user authenticated Slack connection.',
+    description: 'Send a message to a Slack channel or DM using the user authenticated Slack connection. Use ONLY when the user asks to post or send a message.',
     parameters: {
       type: 'OBJECT',
       properties: {
@@ -1442,10 +1531,33 @@ export const COMPOSIO_GEMINI_TOOL_SCHEMAS: Record<string, any> = {
     },
   },
 
-  // GMAIL
+  // GMAIL - READ / LIST / GET / SEND
+  composio_gmail_list_messages: {
+    name: 'composio_gmail_list_messages',
+    description: 'List or search email messages in the user authenticated Gmail inbox matching an optional search query (e.g. "is:unread", "from:support@pixelops.app", "subject:alert"). Use when the user asks to check, review, or find emails.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        query: { type: 'STRING', description: 'Optional Gmail search query syntax (e.g. "is:unread", "label:INBOX", "from:alice@example.com").' },
+        q: { type: 'STRING', description: 'Alias for query.' },
+        max_results: { type: 'NUMBER', description: 'Maximum messages to list (1 to 20, default 10).' },
+      },
+    },
+  },
+  composio_gmail_get_message: {
+    name: 'composio_gmail_get_message',
+    description: 'Retrieve the full headers, subject, sender, and body content of a specific email message by message ID.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        message_id: { type: 'STRING', description: 'Gmail message ID to fetch.' },
+      },
+      required: ['message_id'],
+    },
+  },
   composio_gmail_send_email: {
     name: 'composio_gmail_send_email',
-    description: 'Compose and dispatch an email via user authenticated Google Workspace / Gmail account.',
+    description: 'Compose and dispatch an email via user authenticated Google Workspace / Gmail account. Use ONLY when the user asks to send or compose an email.',
     parameters: {
       type: 'OBJECT',
       properties: {
@@ -1457,7 +1569,29 @@ export const COMPOSIO_GEMINI_TOOL_SCHEMAS: Record<string, any> = {
     },
   },
 
-  // NOTION
+  // NOTION - SEARCH / GET / CREATE
+  composio_notion_search: {
+    name: 'composio_notion_search',
+    description: 'Search for pages, documents, and databases across the connected Notion workspace by title or keyword.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        query: { type: 'STRING', description: 'Keyword or title query to search in Notion.' },
+      },
+      required: ['query'],
+    },
+  },
+  composio_notion_get_page: {
+    name: 'composio_notion_get_page',
+    description: 'Retrieve properties and content of a Notion page by page ID.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        page_id: { type: 'STRING', description: 'Notion page UUID or ID.' },
+      },
+      required: ['page_id'],
+    },
+  },
   composio_notion_create_page: {
     name: 'composio_notion_create_page',
     description: 'Create a new document or notes page in Notion workspace.',
@@ -1472,7 +1606,30 @@ export const COMPOSIO_GEMINI_TOOL_SCHEMAS: Record<string, any> = {
     },
   },
 
-  // LINEAR
+  // LINEAR - LIST / GET / CREATE
+  composio_linear_list_issues: {
+    name: 'composio_linear_list_issues',
+    description: 'List or search engineering tickets and issues in the connected Linear workspace. Use when checking or reviewing Linear tickets.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        team_id: { type: 'STRING', description: 'Optional Linear team ID.' },
+        query: { type: 'STRING', description: 'Search query to filter Linear issues.' },
+        limit: { type: 'NUMBER', description: 'Maximum issues to return.' },
+      },
+    },
+  },
+  composio_linear_get_issue: {
+    name: 'composio_linear_get_issue',
+    description: 'Get detailed information, state, and comments for a specific Linear issue by ID or issue key (e.g. "ENG-42").',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        issue_id: { type: 'STRING', description: 'Linear issue ID or key.' },
+      },
+      required: ['issue_id'],
+    },
+  },
   composio_linear_create_issue: {
     name: 'composio_linear_create_issue',
     description: 'Create an engineering ticket or issue in Linear workspace.',
@@ -1487,7 +1644,33 @@ export const COMPOSIO_GEMINI_TOOL_SCHEMAS: Record<string, any> = {
     },
   },
 
-  // GOOGLE CALENDAR
+  // GOOGLE CALENDAR - LIST / GET / CREATE
+  composio_googlecalendar_list_events: {
+    name: 'composio_googlecalendar_list_events',
+    description: 'List upcoming events, briefings, and meetings from Google Calendar within a time range or matching a search keyword. Use when the user asks to check, list, or review calendar schedule.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        calendar_id: { type: 'STRING', description: 'Calendar ID (default "primary").' },
+        q: { type: 'STRING', description: 'Free-text search term to filter calendar events.' },
+        time_min: { type: 'STRING', description: 'ISO 8601 start timestamp filter (e.g. "2026-11-01T00:00:00Z").' },
+        time_max: { type: 'STRING', description: 'ISO 8601 end timestamp filter.' },
+        max_results: { type: 'NUMBER', description: 'Maximum events to retrieve (default 20).' },
+      },
+    },
+  },
+  composio_googlecalendar_get_event: {
+    name: 'composio_googlecalendar_get_event',
+    description: 'Get details, description, attendees, and location for a specific Google Calendar event by event ID.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        calendar_id: { type: 'STRING', description: 'Calendar ID (default "primary").' },
+        event_id: { type: 'STRING', description: 'Event identifier.' },
+      },
+      required: ['event_id'],
+    },
+  },
   composio_googlecalendar_create_event: {
     name: 'composio_googlecalendar_create_event',
     description: 'Schedule a new calendar event, briefing, or meeting on Google Calendar.',
@@ -1517,7 +1700,19 @@ export const COMPOSIO_GEMINI_TOOL_SCHEMAS: Record<string, any> = {
     },
   },
 
-  // JIRA
+  // JIRA - SEARCH / CREATE
+  composio_jira_search_issues: {
+    name: 'composio_jira_search_issues',
+    description: 'Search Jira tickets, stories, or bugs using JQL or query text. Use when the user asks to review or check Jira issues.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        jql: { type: 'STRING', description: 'JQL search expression or text filter (e.g. "project = SEC AND status = Open").' },
+        max_results: { type: 'NUMBER', description: 'Max issues to return (default 20).' },
+      },
+      required: ['jql'],
+    },
+  },
   composio_jira_create_issue: {
     name: 'composio_jira_create_issue',
     description: 'File an agile ticket, story, or bug in Jira project management.',
@@ -1548,7 +1743,18 @@ export const COMPOSIO_GEMINI_TOOL_SCHEMAS: Record<string, any> = {
     },
   },
 
-  // TRELLO
+  // TRELLO - LIST / CREATE
+  composio_trello_list_cards: {
+    name: 'composio_trello_list_cards',
+    description: 'List mission cards on a specific Trello board or list.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        board_id: { type: 'STRING', description: 'Trello board ID.' },
+        list_id: { type: 'STRING', description: 'Optional Trello list ID.' },
+      },
+    },
+  },
   composio_trello_create_card: {
     name: 'composio_trello_create_card',
     description: 'Add a new mission card to a Trello kanban board list.',
@@ -1576,7 +1782,19 @@ export const COMPOSIO_GEMINI_TOOL_SCHEMAS: Record<string, any> = {
     },
   },
 
-  // GOOGLE SHEETS
+  // GOOGLE SHEETS - GET / APPEND
+  composio_googlesheets_get_values: {
+    name: 'composio_googlesheets_get_values',
+    description: 'Read cell values, rows, or tables from a Google Sheets spreadsheet by range.',
+    parameters: {
+      type: 'OBJECT',
+      properties: {
+        spreadsheet_id: { type: 'STRING', description: 'Google Spreadsheet ID.' },
+        range: { type: 'STRING', description: 'Sheet range to read (e.g. "Sheet1!A1:E20").' },
+      },
+      required: ['spreadsheet_id', 'range'],
+    },
+  },
   composio_googlesheets_append_row: {
     name: 'composio_googlesheets_append_row',
     description: 'Append a row of intelligence data or tactical metrics into a Google Sheet spreadsheet.',
@@ -1691,6 +1909,11 @@ export async function executeComposioAction(
 
   // Parameter normalizations
   if (normalizedAction.includes('GMAIL')) {
+    if (actionParams.query && !actionParams.q) {
+      actionParams.q = actionParams.query;
+    } else if (actionParams.q && !actionParams.query) {
+      actionParams.query = actionParams.q;
+    }
     if (actionParams.recipient_email && !actionParams.to) {
       actionParams.to = actionParams.recipient_email;
     } else if (actionParams.to && !actionParams.recipient_email) {
@@ -1702,10 +1925,16 @@ export async function executeComposioAction(
   }
 
   if (normalizedAction.includes('GITHUB')) {
+    if (actionParams.repository && !actionParams.repo) {
+      actionParams.repo = actionParams.repository;
+    }
     if (actionParams.repo && String(actionParams.repo).includes('/')) {
       const parts = String(actionParams.repo).split('/');
       actionParams.owner = actionParams.owner || parts[0];
       actionParams.repo = parts[1];
+    }
+    if (actionParams.issue_number && !actionParams.issueNumber) {
+      actionParams.issueNumber = actionParams.issue_number;
     }
   }
 
@@ -1714,6 +1943,19 @@ export async function executeComposioAction(
       actionParams.message = actionParams.text;
     } else if (actionParams.message && !actionParams.text) {
       actionParams.text = actionParams.message;
+    }
+  }
+
+  if (normalizedAction.includes('CALENDAR') || normalizedAction.includes('GOOGLECALENDAR')) {
+    if (!actionParams.calendarId && !actionParams.calendar_id) {
+      actionParams.calendarId = 'primary';
+      actionParams.calendar_id = 'primary';
+    }
+    if (actionParams.time_min && !actionParams.timeMin) {
+      actionParams.timeMin = actionParams.time_min;
+    }
+    if (actionParams.time_max && !actionParams.timeMax) {
+      actionParams.timeMax = actionParams.time_max;
     }
   }
 
@@ -1732,16 +1974,49 @@ export async function executeComposioAction(
     payload.connectedAccountId = matchedAccount.id;
   }
 
+  console.log(
+    `[COMPOSIO TOOL ROUTING] Action: "${normalizedAction}" | Tool Slug: "${actionName}" | Entity: "${effectiveUserId}" | Params:`,
+    actionParams
+  );
+
   // Action aliases to try if initial execution fails
   const actionsToTry = [normalizedAction];
   if (normalizedAction === 'GITHUB_CREATE_ISSUE') {
     actionsToTry.push('GITHUB_CREATE_AN_ISSUE');
   } else if (normalizedAction === 'GITHUB_CREATE_AN_ISSUE') {
     actionsToTry.push('GITHUB_CREATE_ISSUE');
+  } else if (normalizedAction === 'GITHUB_LIST_ISSUES') {
+    actionsToTry.push('GITHUB_LIST_REPOSITORY_ISSUES', 'GITHUB_ISSUES_LIST');
+  } else if (normalizedAction === 'GITHUB_GET_REPOSITORY') {
+    actionsToTry.push('GITHUB_GET_A_REPOSITORY');
+  } else if (normalizedAction === 'GITHUB_GET_A_REPOSITORY') {
+    actionsToTry.push('GITHUB_GET_REPOSITORY');
+  } else if (normalizedAction === 'GITHUB_GET_ISSUE') {
+    actionsToTry.push('GITHUB_GET_AN_ISSUE');
+  } else if (normalizedAction === 'GITHUB_LIST_PULL_REQUESTS') {
+    actionsToTry.push('GITHUB_PULLS_LIST');
   } else if (normalizedAction === 'SLACK_SEND_MESSAGE') {
     actionsToTry.push('SLACK_CHAT_POST_MESSAGE');
   } else if (normalizedAction === 'SLACK_CHAT_POST_MESSAGE') {
     actionsToTry.push('SLACK_SEND_MESSAGE');
+  } else if (normalizedAction === 'SLACK_LIST_CHANNELS') {
+    actionsToTry.push('SLACK_CONVERSATIONS_LIST', 'SLACK_LIST_PUBLIC_CHANNELS');
+  } else if (normalizedAction === 'SLACK_GET_CHANNEL_HISTORY') {
+    actionsToTry.push('SLACK_CONVERSATIONS_HISTORY');
+  } else if (normalizedAction === 'GMAIL_LIST_MESSAGES') {
+    actionsToTry.push('GMAIL_LIST_MAIL', 'GMAIL_USERS_MESSAGES_LIST');
+  } else if (normalizedAction === 'GMAIL_GET_MESSAGE') {
+    actionsToTry.push('GMAIL_USERS_MESSAGES_GET');
+  } else if (normalizedAction === 'GOOGLECALENDAR_LIST_EVENTS') {
+    actionsToTry.push('CALENDAR_LIST_EVENTS', 'GOOGLECALENDAR_EVENTS_LIST', 'GOOGLECALENDAR_FIND_EVENTS');
+  } else if (normalizedAction === 'GOOGLECALENDAR_GET_EVENT') {
+    actionsToTry.push('GOOGLECALENDAR_EVENTS_GET');
+  } else if (normalizedAction === 'NOTION_SEARCH') {
+    actionsToTry.push('NOTION_SEARCH_NOTION_PAGE_OR_DATABASE');
+  } else if (normalizedAction === 'LINEAR_LIST_ISSUES') {
+    actionsToTry.push('LINEAR_SEARCH_ISSUES');
+  } else if (normalizedAction === 'TRELLO_LIST_CARDS') {
+    actionsToTry.push('TRELLO_GET_CARDS_ON_A_BOARD');
   }
 
   let lastError: any = null;
@@ -1759,6 +2034,10 @@ export async function executeComposioAction(
         }
       }
 
+      console.log(
+        `[COMPOSIO EXECUTION RESULT] Action: "${act}" | Success: true | Data Summary:`,
+        Array.isArray(result?.data) ? `${result.data.length} items` : typeof result?.data === 'object' ? Object.keys(result.data || {}) : 'OK'
+      );
       return {
         successful: true,
         data: result?.data || result?.response || result,
@@ -1766,10 +2045,12 @@ export async function executeComposioAction(
         executedAt: new Date().toISOString(),
       };
     } catch (err: any) {
+      console.warn(`[COMPOSIO EXECUTION ATTEMPT FAILED] Action "${act}":`, err?.message || err);
       lastError = err;
     }
   }
 
+  console.error(`[COMPOSIO EXECUTION ALL ALIASES FAILED] Tool: "${actionName}" | Normalized: "${normalizedAction}" | Error:`, lastError?.message || lastError);
   return {
     successful: false,
     error: lastError?.message || 'Composio execution failed.',

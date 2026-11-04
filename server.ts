@@ -331,7 +331,7 @@ const SERVER_TOOL_DECLARATIONS: Record<string, FunctionDeclaration> = {
   github_create_issue: {
     name: 'github_create_issue',
     description:
-      'Inspect a live GitHub repository and create an engineering issue, pull request audit, or patch ticket.',
+      'Create an engineering issue or patch ticket on a GitHub repository. Use ONLY when the user explicitly asks to create or open an issue.',
     parameters: {
       type: Type.OBJECT,
       properties: {
@@ -349,6 +349,82 @@ const SERVER_TOOL_DECLARATIONS: Record<string, FunctionDeclaration> = {
         },
       },
       required: ['repository', 'title'],
+    },
+  },
+  github_list_issues: {
+    name: 'github_list_issues',
+    description:
+      'List or audit issues in a GitHub repository with optional state filter ("open", "closed", "all"). Use when the user asks to check, audit, list, or review GitHub issues.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        repository: {
+          type: Type.STRING,
+          description: 'Target repository name in owner/repo format (e.g. facebook/react).',
+        },
+        state: {
+          type: Type.STRING,
+          description: 'Issue state filter: "open", "closed", or "all". Default is "open".',
+        },
+      },
+      required: ['repository'],
+    },
+  },
+  github_get_repository: {
+    name: 'github_get_repository',
+    description:
+      'Get detailed intelligence, stars, forks, open issues count, and metadata for a GitHub repository.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        repository: {
+          type: Type.STRING,
+          description: 'Target repository name in owner/repo format (e.g., "facebook/react").',
+        },
+      },
+      required: ['repository'],
+    },
+  },
+  calendar_list_events: {
+    name: 'calendar_list_events',
+    description:
+      'List upcoming events, briefings, or meetings from Google Calendar. Use when the user asks to check or list calendar schedule.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        query: {
+          type: Type.STRING,
+          description: 'Optional search keyword to filter calendar events.',
+        },
+      },
+    },
+  },
+  slack_list_channels: {
+    name: 'slack_list_channels',
+    description:
+      'List public and private channels in the connected Slack workspace.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        types: {
+          type: Type.STRING,
+          description: 'Channel types (e.g. "public_channel,private_channel").',
+        },
+      },
+    },
+  },
+  gmail_list_messages: {
+    name: 'gmail_list_messages',
+    description:
+      'List or search emails in Gmail inbox matching an optional query.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        query: {
+          type: Type.STRING,
+          description: 'Search filter or query string (e.g. "is:unread").',
+        },
+      },
     },
   },
   vault_query_intel: {
@@ -1277,7 +1353,22 @@ async function startServer() {
         for (const pluginId of enabledPlugins) {
           if (pluginId === 'calendar') baseDeclarations.push(SERVER_TOOL_DECLARATIONS.calendar_schedule_event);
           if (pluginId === 'slack') baseDeclarations.push(SERVER_TOOL_DECLARATIONS.slack_post_dispatch);
-          if (pluginId === 'github') baseDeclarations.push(SERVER_TOOL_DECLARATIONS.github_create_issue);
+          if (pluginId === 'github') {
+            baseDeclarations.push(SERVER_TOOL_DECLARATIONS.github_create_issue);
+            baseDeclarations.push(SERVER_TOOL_DECLARATIONS.github_list_issues);
+            baseDeclarations.push(SERVER_TOOL_DECLARATIONS.github_get_repository);
+          }
+          if (pluginId === 'slack') {
+            baseDeclarations.push(SERVER_TOOL_DECLARATIONS.slack_post_dispatch);
+            baseDeclarations.push(SERVER_TOOL_DECLARATIONS.slack_list_channels);
+          }
+          if (pluginId === 'calendar') {
+            baseDeclarations.push(SERVER_TOOL_DECLARATIONS.calendar_schedule_event);
+            baseDeclarations.push(SERVER_TOOL_DECLARATIONS.calendar_list_events);
+          }
+          if (pluginId === 'gmail') {
+            baseDeclarations.push(SERVER_TOOL_DECLARATIONS.gmail_list_messages);
+          }
           if (pluginId === 'vault') baseDeclarations.push(SERVER_TOOL_DECLARATIONS.vault_query_intel);
         }
       }
@@ -1301,7 +1392,20 @@ async function startServer() {
 
       const systemInstruction = agentSystemPrompt
         ? `${agentSystemPrompt}${memoryContextStr}\nAvailable Assigned Tools: ${declaredToolNames}.`
-        : `${personaInstruction}\nYou are currently responding as ${activeAgentName} (${activeAgentRole}).${memoryContextStr}\nAvailable Function Calling Tools: ${declaredToolNames}.\nWhen the user asks for weather, atmospheric conditions, or forecasts, ALWAYS call "weather_lookup".\nWhen the user asks to search the web, look up real-world facts, news, flights, companies, or encyclopedia topics, ALWAYS call "live_web_search".`;
+        : `${personaInstruction}\nYou are currently responding as ${activeAgentName} (${activeAgentRole}).${memoryContextStr}\nAvailable Function Calling Tools: ${declaredToolNames}.
+CRITICAL INTENT-DRIVEN TOOL SELECTION GUARDRAILS:
+Before invoking any tool, analyze the user's intent:
+- READ / LIST / SEARCH / AUDIT INTENT:
+  If the user asks to check, audit, list, search, get, fetch, read, inspect, or review (e.g., "check repo issues", "get repository details", "check unread emails", "search calendar events", "show Slack channels"):
+  You MUST select a LIST, GET, or SEARCH tool (e.g., github_list_issues, github_get_repository, calendar_list_events, slack_list_channels, gmail_list_messages).
+  NEVER default to a write/create action when a read/list action is requested.
+- WRITE / CREATE / SEND / DELETE INTENT:
+  If the user explicitly asks to create, send, push, post, schedule, or delete:
+  You MUST select a CREATE, SEND, or DELETE tool.
+- PARAMETER VALIDATION:
+  Ensure you correctly extract and validate required parameters (like repository owner/name, query strings, or channel names) from the user's directive before firing the tool.
+When the user asks for weather, atmospheric conditions, or forecasts, ALWAYS call "weather_lookup".
+When the user asks to search the web, look up real-world facts, news, flights, companies, or encyclopedia topics, ALWAYS call "live_web_search".`;
 
       const userParts: any[] = [];
       if (attachment && attachment.data && attachment.mimeType) {
@@ -1330,6 +1434,10 @@ async function startServer() {
 
         const functionCalls = turn1Response.functionCalls;
         if (functionCalls && functionCalls.length > 0) {
+          console.log(
+            `[AGENT EXECUTION ROUTER] Agent: ${activeAgentName} Invoking ${functionCalls.length} tool(s):`,
+            functionCalls.map((fc) => ({ slug: fc.name, parameters: fc.args }))
+          );
           const modelContent = turn1Response.candidates?.[0]?.content || {
             role: 'model',
             parts: functionCalls.map((fc) => ({ functionCall: fc })),
@@ -2166,6 +2274,10 @@ ROUNDTABLE RULES:
         fetchOptions.body = JSON.stringify(modifiedBody);
       }
 
+      console.log(
+        `[COMPOSIO BACKEND PROXY] Method: ${method} | Endpoint: "${cleanEndpoint}" | Entity: "${entityId}" | Body:`,
+        JSON.stringify(modifiedBody || {}).slice(0, 300)
+      );
       let composioRes = await fetch(targetUrl, fetchOptions);
 
       // If 404 on connected_accounts, try alternative connectedAccounts route

@@ -103,6 +103,9 @@ import { RoomActionPlaybookPanel } from './components/RoomActionPlaybookPanel';
 import {
   IntelligencePlaybookDef,
   PlaybookExecutionResult,
+  UserPlaybookTarget,
+  loadUserPlaybookTargets,
+  DEFAULT_TARGET_PRESETS,
   executeIntelligencePlaybook,
 } from './engine/intelligencePlaybooks';
 import { SyncAccountModal } from './components/SyncAccountModal';
@@ -255,30 +258,44 @@ const CommandCenterContent: React.FC = () => {
   const [playbookLogs, setPlaybookLogs] = useState<string[]>([]);
   const [playbookResult, setPlaybookResult] = useState<PlaybookExecutionResult | null>(null);
 
-  const handleRunPlaybook = async (playbook: IntelligencePlaybookDef) => {
+  const handleOpenPlaybookSetup = (playbook: IntelligencePlaybookDef) => {
+    setActivePlaybook(playbook);
+    setPlaybookResult(null);
+    setIsPlaybookModalOpen(true);
+    setDialogueText(`[OSINT DIRECTIVE] Configure target for ${playbook.shortTitle} with ${playbook.assignedOperativeName}.`);
+  };
+
+  const handleRunPlaybook = async (playbook: IntelligencePlaybookDef, target?: UserPlaybookTarget) => {
+    const storedTargets = loadUserPlaybookTargets();
+    const resolvedTarget = target || storedTargets[playbook.id] || DEFAULT_TARGET_PRESETS[playbook.id][0];
+
     setActivePlaybook(playbook);
     setIsPlaybookModalOpen(true);
     setIsPlaybookRunning(true);
     setPlaybookStageIndex(0);
-    setPlaybookLogs([`Mission Ingested: Deploying ${playbook.assignedOperativeName} to ${playbook.roomName}...`]);
+    setPlaybookLogs([
+      `Mission Ingested: Deploying ${playbook.assignedOperativeName} to ${playbook.roomName}...`,
+      `Target Entity: [${resolvedTarget.targetName}]`,
+      `Recon Scope: ${resolvedTarget.targetScope}`,
+    ]);
     setPlaybookResult(null);
 
     handleMoveAgentToRoom(
       playbook.assignedOperativeId,
       playbook.assignedRoom,
       playbook.assignedStationId,
-      playbook.shortTitle.toUpperCase()
+      `${playbook.shortTitle.toUpperCase()} - ${resolvedTarget.targetName.slice(0, 16)}`
     );
 
-    setDialogueText(`[CLASSIFIED PLAYBOOK] Deploying ${playbook.assignedOperativeName} to ${playbook.roomBadge} for ${playbook.title}...`);
+    setDialogueText(`[CLASSIFIED PLAYBOOK] Deploying ${playbook.assignedOperativeName} to ${playbook.roomBadge} targeting "${resolvedTarget.targetName}"...`);
 
     try {
-      const res = await executeIntelligencePlaybook(playbook.id, (stageIdx, log) => {
+      const res = await executeIntelligencePlaybook(playbook.id, resolvedTarget, (stageIdx: number, log: string) => {
         setPlaybookStageIndex(stageIdx);
         setPlaybookLogs((prev) => [...prev, log]);
       });
       setPlaybookResult(res);
-      setDialogueText(`[DOSSIER ARCHIVED] ${playbook.assignedOperativeName} archived classified intelligence to ${res.targetPath}.`);
+      setDialogueText(`[DOSSIER ARCHIVED] ${playbook.assignedOperativeName} archived intelligence on "${res.targetName}" to ${res.targetPath}.`);
       playBeep('complete');
       refreshCommandLedger();
     } catch (err: any) {
@@ -2267,7 +2284,7 @@ const CommandCenterContent: React.FC = () => {
                 )}
                 <RoomActionPlaybookPanel
                   currentRoom={currentRoom}
-                  onExecutePlaybook={handleRunPlaybook}
+                  onExecutePlaybook={handleOpenPlaybookSetup}
                   variant="pill"
                 />
                 {currentRoom === 'armory' && (
@@ -2418,7 +2435,7 @@ const CommandCenterContent: React.FC = () => {
             isMeetingActive={isMeetingActive}
             activeSpeakerAgentIndex={activeSpeakerAgentIndex}
             onCallMeeting={handleCallTownHallMeeting}
-            onExecutePlaybook={handleRunPlaybook}
+            onExecutePlaybook={handleOpenPlaybookSetup}
           />
 
           {/* Centered Amber Console Boxes below the Overworld Diorama */}
@@ -2959,6 +2976,11 @@ const CommandCenterContent: React.FC = () => {
         activeStageIndex={playbookStageIndex}
         stageLogs={playbookLogs}
         result={playbookResult}
+        onRunPlaybook={(target) => {
+          if (activePlaybook) {
+            handleRunPlaybook(activePlaybook, target);
+          }
+        }}
         onOpenInVfs={(filePath) => {
           setIsPlaybookModalOpen(false);
           setIsWorkspaceFilesOpen(true);

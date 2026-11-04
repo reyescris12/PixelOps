@@ -2,10 +2,10 @@
  * PlaybookModal.tsx
  * 
  * Interactive HUD Execution Modal & Classified Dossier Viewer for PixelOps
- * One-Click Mission Playbooks.
+ * Open-Ended One-Click OSINT & Intelligence Playbooks.
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Shield,
@@ -21,10 +21,18 @@ import {
   AlertTriangle,
   Sparkles,
   Download,
+  Settings,
+  Target,
+  Search,
+  RotateCcw,
 } from 'lucide-react';
 import {
   IntelligencePlaybookDef,
   PlaybookExecutionResult,
+  UserPlaybookTarget,
+  DEFAULT_TARGET_PRESETS,
+  loadUserPlaybookTargets,
+  saveUserPlaybookTarget,
   dispatchMorningBriefingEmail,
 } from '../engine/intelligencePlaybooks';
 import { useTheme } from '../context/ThemeContext';
@@ -37,6 +45,7 @@ interface PlaybookModalProps {
   activeStageIndex: number;
   stageLogs: string[];
   result: PlaybookExecutionResult | null;
+  onRunPlaybook: (target: UserPlaybookTarget) => void;
   onOpenInVfs?: (filePath: string) => void;
 }
 
@@ -48,16 +57,62 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
   activeStageIndex,
   stageLogs,
   result,
+  onRunPlaybook,
   onOpenInVfs,
 }) => {
   const { playBeep } = useTheme();
+
+  // Active Target state
+  const [targetName, setTargetName] = useState('');
+  const [targetScope, setTargetScope] = useState('');
+  const [recipientEmail, setRecipientEmail] = useState('');
+  const [isEditingTarget, setIsEditingTarget] = useState(false);
+
+  // Email dispatch state
   const [copied, setCopied] = useState(false);
-  const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
-  const [emailInput, setEmailInput] = useState('commander@pixelops.app');
   const [isSendingEmail, setIsSendingEmail] = useState(false);
   const [emailStatus, setEmailStatus] = useState<string | null>(null);
 
+  // Initialize target from localStorage or presets when playbook changes
+  useEffect(() => {
+    if (playbook) {
+      const storedTargets = loadUserPlaybookTargets();
+      const current = storedTargets[playbook.id] || DEFAULT_TARGET_PRESETS[playbook.id][0];
+      setTargetName(current.targetName);
+      setTargetScope(current.targetScope);
+      setRecipientEmail(current.recipientEmail || 'commander@pixelops.app');
+      setEmailStatus(null);
+      // If no result yet and not currently running, default to showing the target setup
+      if (!result && !isRunning) {
+        setIsEditingTarget(true);
+      } else {
+        setIsEditingTarget(false);
+      }
+    }
+  }, [playbook, isOpen]);
+
   if (!isOpen || !playbook) return null;
+
+  const presets = DEFAULT_TARGET_PRESETS[playbook.id] || [];
+
+  const handleSelectPreset = (preset: UserPlaybookTarget) => {
+    setTargetName(preset.targetName);
+    setTargetScope(preset.targetScope);
+    if (preset.recipientEmail) setRecipientEmail(preset.recipientEmail);
+    playBeep('tap');
+  };
+
+  const handleStartSweep = () => {
+    const finalTarget: UserPlaybookTarget = {
+      targetName: targetName.trim() || 'General Market Focus',
+      targetScope: targetScope.trim() || 'General Intelligence Scope',
+      recipientEmail: recipientEmail.trim() || undefined,
+    };
+    saveUserPlaybookTarget(playbook.id, finalTarget);
+    setIsEditingTarget(false);
+    playBeep('tap');
+    onRunPlaybook(finalTarget);
+  };
 
   const handleCopy = () => {
     if (result?.dossierContent) {
@@ -69,11 +124,15 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
   };
 
   const handleDispatchEmail = async () => {
-    if (!result?.dossierContent || !emailInput.trim()) return;
+    if (!result?.dossierContent || !recipientEmail.trim()) return;
     setIsSendingEmail(true);
     setEmailStatus(null);
     try {
-      const res = await dispatchMorningBriefingEmail(emailInput.trim(), result.dossierContent);
+      const res = await dispatchMorningBriefingEmail(
+        recipientEmail.trim(),
+        result.dossierContent,
+        result.title
+      );
       if (res.success) {
         setEmailStatus(`TRANSMITTED: ${res.message}`);
         playBeep('complete');
@@ -95,7 +154,7 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
           initial={{ opacity: 0, scale: 0.95, y: 12 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.95, y: 12 }}
-          className="relative w-full max-w-3xl max-h-[90vh] bg-[#0c1017] border border-[#e59838] shadow-[0_0_40px_rgba(229,152,56,0.3)] flex flex-col font-mono-tabular text-xs text-[#f3ead8] overflow-hidden"
+          className="relative w-full max-w-3xl max-h-[92vh] bg-[#0c1017] border border-[#e59838] shadow-[0_0_40px_rgba(229,152,56,0.3)] flex flex-col font-mono-tabular text-xs text-[#f3ead8] overflow-hidden"
         >
           {/* Top Classified Header */}
           <div className="px-4 py-3 bg-[#161d27] border-b border-[#2d3b4e] flex items-center justify-between">
@@ -129,6 +188,128 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
 
           {/* Main Body */}
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            {/* Target Scope & Intelligence Directive Setup Banner */}
+            <div className="p-3.5 bg-[#0e1624] border border-[#25374e] space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-xs font-bold text-[#38bdf8]">
+                  <Target className="w-4 h-4" />
+                  <span>TARGET DIRECTIVE & RECON SCOPE</span>
+                </div>
+                {!isRunning && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsEditingTarget(!isEditingTarget);
+                      playBeep('tap');
+                    }}
+                    className="text-[10px] text-[#e59838] hover:text-[#fbbf24] flex items-center gap-1 cursor-pointer"
+                  >
+                    <Settings className="w-3 h-3" />
+                    <span>{isEditingTarget ? '[HIDE SETUP]' : '[EDIT TARGET]'}</span>
+                  </button>
+                )}
+              </div>
+
+              {/* Editable Target Form */}
+              {isEditingTarget && !isRunning ? (
+                <div className="space-y-3 pt-1">
+                  <p className="text-[11px] text-[#cbd5e1] leading-relaxed">
+                    {playbook.defaultPromptQuestion}
+                  </p>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-[#94a3b8]">
+                      Target Name, Organization, Stack, or Entity:
+                    </label>
+                    <input
+                      type="text"
+                      value={targetName}
+                      onChange={(e) => setTargetName(e.target.value)}
+                      placeholder={playbook.targetPlaceholder}
+                      className="w-full px-3 py-1.5 bg-[#070b10] border border-[#2c3d54] text-xs text-[#f3ead8] outline-none focus:border-[#e59838] transition-colors"
+                    />
+                  </div>
+
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-[#94a3b8]">
+                      Intelligence Scope, URLs, Keywords, or Focus Areas:
+                    </label>
+                    <textarea
+                      rows={2}
+                      value={targetScope}
+                      onChange={(e) => setTargetScope(e.target.value)}
+                      placeholder={playbook.scopePlaceholder}
+                      className="w-full px-3 py-1.5 bg-[#070b10] border border-[#2c3d54] text-xs text-[#f3ead8] outline-none focus:border-[#e59838] transition-colors resize-none"
+                    />
+                  </div>
+
+                  {playbook.supportsActionDispatch && (
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold text-[#94a3b8]">
+                        Optional Email Broadcast Destination:
+                      </label>
+                      <input
+                        type="email"
+                        value={recipientEmail}
+                        onChange={(e) => setRecipientEmail(e.target.value)}
+                        placeholder="recipient@domain.com"
+                        className="w-full px-3 py-1.5 bg-[#070b10] border border-[#2c3d54] text-xs text-[#f3ead8] outline-none focus:border-[#e59838] transition-colors"
+                      />
+                    </div>
+                  )}
+
+                  {/* Preset Pills */}
+                  <div className="space-y-1 pt-1">
+                    <div className="text-[10px] text-[#94a3b8]">Quick Presets / Templates:</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {presets.map((p) => (
+                        <button
+                          key={p.presetId || p.targetName}
+                          type="button"
+                          onClick={() => handleSelectPreset(p)}
+                          className="px-2 py-0.5 bg-[#142131] hover:bg-[#1f334d] text-[#cbd5e1] border border-[#2d425f] text-[10px] cursor-pointer transition-colors"
+                        >
+                          {p.category ? `[${p.category}] ` : ''}{p.targetName}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="pt-2 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={handleStartSweep}
+                      className="px-4 py-2 bg-[#e59838] text-[#121110] font-bold text-xs border border-[#e59838] hover:bg-[#d48828] cursor-pointer transition-colors flex items-center gap-1.5 shadow-[0_0_12px_rgba(229,152,56,0.35)]"
+                    >
+                      <span>▶ INITIATE CLASSIFIED OSINT SWEEP</span>
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                /* Compact Active Target Display when running or viewing results */
+                <div className="flex flex-wrap items-center justify-between gap-2 p-2 bg-[#090e17] border border-[#1b283a]">
+                  <div className="min-w-0">
+                    <div className="text-xs font-bold text-[#f3ead8] truncate">
+                      Target: <span className="text-[#e59838]">{targetName || 'General Focus'}</span>
+                    </div>
+                    <div className="text-[10px] text-[#94a3b8] truncate mt-0.5">
+                      Scope: {targetScope || 'General Intelligence Parameters'}
+                    </div>
+                  </div>
+
+                  {!isRunning && (
+                    <button
+                      type="button"
+                      onClick={() => setIsEditingTarget(true)}
+                      className="px-2 py-1 bg-[#1a2738] hover:bg-[#25374e] text-[#38bdf8] border border-[#38bdf8]/40 text-[10px] font-bold cursor-pointer transition-colors"
+                    >
+                      [CHANGE TARGET]
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
             {/* Pipeline Stage Tracker */}
             <div className="p-3 bg-[#080d14] border border-[#1b2636]">
               <div className="text-[10px] uppercase font-bold text-[#94a3b8] tracking-wider mb-2 flex items-center justify-between">
@@ -144,7 +325,7 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
                     PIPELINE VERIFIED & ARCHIVED
                   </span>
                 ) : (
-                  <span className="text-[#64748b]">STANDBY</span>
+                  <span className="text-[#64748b]">AWAITING TARGET DISPATCH</span>
                 )}
               </div>
 
@@ -188,7 +369,7 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
               <div className="p-3 bg-[#05080e] border border-[#1b2636] font-mono-tabular text-xs space-y-1.5">
                 <div className="text-[10px] text-[#38bdf8] font-bold uppercase tracking-wider flex items-center gap-1.5">
                   <Terminal className="w-3.5 h-3.5" />
-                  <span>Telemetry Log Stream:</span>
+                  <span>Live OSINT Telemetry Stream:</span>
                 </div>
                 {stageLogs.slice(-4).map((log, i) => (
                   <div key={i} className="text-[#a5b4fc] text-[11px] flex items-start gap-1">
@@ -200,7 +381,7 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
             )}
 
             {/* Completed Result Dossier View */}
-            {result && (
+            {result && !isEditingTarget && (
               <div className="space-y-3">
                 {/* Dossier Metadata Strip */}
                 <div className="p-2.5 bg-[#121924] border border-[#233145] flex flex-wrap items-center justify-between gap-2 text-xs">
@@ -212,7 +393,7 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
                   </div>
                   {result.threatLevel && (
                     <div className="flex items-center gap-1.5 font-bold">
-                      <span className="text-[#94a3b8]">THREAT LEVEL:</span>
+                      <span className="text-[#94a3b8]">ASSESSMENT:</span>
                       <span
                         className={`px-2 py-0.5 text-[10px] border ${
                           result.threatLevel.includes('CRITICAL')
@@ -236,7 +417,7 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
             )}
 
             {/* Optional Gmail Dispatch Sub-Panel for Morning Command Briefing */}
-            {playbook.supportsActionDispatch && result && (
+            {playbook.supportsActionDispatch && result && !isEditingTarget && (
               <div className="p-3 bg-[#131d2a] border border-[#2b3e59] flex flex-col sm:flex-row items-center justify-between gap-3">
                 <div>
                   <div className="text-xs font-bold text-[#f3ead8] flex items-center gap-1.5">
@@ -244,15 +425,15 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
                     <span>One-Click External Broadcast (Comms Relay)</span>
                   </div>
                   <div className="text-[10px] text-[#94a3b8] mt-0.5">
-                    Transmit this executive command dossier to your email inbox via connected Gmail integration.
+                    Transmit this executive intelligence dossier to your email inbox via connected Gmail integration.
                   </div>
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto">
                   <input
                     type="email"
-                    value={emailInput}
-                    onChange={(e) => setEmailInput(e.target.value)}
+                    value={recipientEmail}
+                    onChange={(e) => setRecipientEmail(e.target.value)}
                     placeholder="recipient@domain.com"
                     className="px-2.5 py-1 bg-[#090d14] border border-[#2d3d52] text-xs text-[#f3ead8] w-full sm:w-48 outline-none focus:border-[#38bdf8]"
                   />
@@ -279,11 +460,11 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
           {/* Bottom Action Footer */}
           <div className="px-4 py-3 bg-[#121822] border-t border-[#233145] flex flex-wrap items-center justify-between gap-2">
             <div className="text-[11px] text-[#64748b]">
-              {result ? 'Archived to IndexedDB Virtual File System' : 'Awaiting mission execution...'}
+              {result ? 'Archived to IndexedDB Virtual File System' : 'Configured for user-directed OSINT analysis'}
             </div>
 
             <div className="flex items-center gap-2">
-              {result && (
+              {result && !isEditingTarget && (
                 <>
                   <button
                     type="button"
@@ -307,14 +488,24 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
                 </>
               )}
 
-              <button
-                type="button"
-                onClick={onClose}
-                disabled={isRunning}
-                className="px-4 py-1.5 bg-[#e59838] text-[#121110] font-bold text-xs border border-[#e59838] hover:bg-[#d48828] cursor-pointer transition-colors disabled:opacity-50"
-              >
-                {result ? '[DONE · CLOSE HUD]' : '[CLOSE]'}
-              </button>
+              {isEditingTarget ? (
+                <button
+                  type="button"
+                  onClick={handleStartSweep}
+                  className="px-4 py-1.5 bg-[#e59838] text-[#121110] font-bold text-xs border border-[#e59838] hover:bg-[#d48828] cursor-pointer transition-colors"
+                >
+                  [▶ RUN WORKFLOW]
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={onClose}
+                  disabled={isRunning}
+                  className="px-4 py-1.5 bg-[#e59838] text-[#121110] font-bold text-xs border border-[#e59838] hover:bg-[#d48828] cursor-pointer transition-colors disabled:opacity-50"
+                >
+                  {result ? '[DONE · CLOSE HUD]' : '[CLOSE]'}
+                </button>
+              )}
             </div>
           </div>
         </motion.div>

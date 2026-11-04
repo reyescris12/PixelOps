@@ -11,8 +11,9 @@ import { RoomId } from '../engine/roomData';
 import {
   getPlaybookForRoom,
   IntelligencePlaybookDef,
+  loadUserPlaybookTargets,
 } from '../engine/intelligencePlaybooks';
-import { Play, Sparkles, Shield, Radar, BarChart2 } from 'lucide-react';
+import { Play, Sparkles, Shield, Radar, BarChart2, Target } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 
 interface RoomActionPlaybookPanelProps {
@@ -35,6 +36,9 @@ export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = (
 
   if (!playbook) return null;
 
+  const storedTargets = loadUserPlaybookTargets();
+  const activeTarget = storedTargets[playbook.id]?.targetName || 'General Target';
+
   const handleClick = (e: React.MouseEvent) => {
     e.stopPropagation();
     playBeep('tap');
@@ -50,7 +54,7 @@ export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = (
         <div className="bg-[#0b1017]/92 border border-[#e59838] shadow-[0_0_20px_rgba(229,152,56,0.35)] p-2 sm:p-2.5 backdrop-blur-md flex flex-col gap-1.5 max-w-[280px] sm:max-w-[320px]">
           <div className="flex items-center justify-between gap-2 border-b border-[#2d3a4c] pb-1">
             <span className="text-[10px] text-[#94a3b8] uppercase font-bold tracking-wider flex items-center gap-1">
-              <span>CLASSIFIED PLAYBOOK</span>
+              <span>OSINT INTEL PLAYBOOK</span>
               <span className="text-[#38bdf8]">[{playbook.roomBadge}]</span>
             </span>
             <span className="text-[9px] px-1 bg-[#1a2938] text-[#4ade80] border border-[#4ade80]/40 font-bold">
@@ -66,6 +70,14 @@ export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = (
             <div className="text-[10px] text-[#94a3b8] mt-0.5">
               Operative: <strong className="text-[#4ade80]">{playbook.assignedOperativeName}</strong> ({playbook.assignedOperativeRole})
             </div>
+          </div>
+
+          {/* User Target Directive Badge */}
+          <div className="text-[10px] text-[#cbd5e1] truncate bg-[#101722] px-1.5 py-0.5 border border-[#23354d] flex items-center justify-between gap-1">
+            <span className="text-[#94a3b8] uppercase font-bold text-[9px] flex items-center gap-1">
+              <Target className="w-2.5 h-2.5 text-[#38bdf8]" /> Target:
+            </span>
+            <span className="text-[#fbbf24] font-semibold truncate max-w-[190px]">{activeTarget}</span>
           </div>
 
           {/* Pipeline stages pill chain */}
@@ -84,7 +96,7 @@ export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = (
             onClick={handleClick}
             disabled={isExecuting}
             className="w-full py-1.5 px-2 bg-[#e59838] text-[#121110] font-bold text-[11px] border border-[#e59838] hover:bg-[#d48828] active:translate-y-0.5 cursor-pointer transition-all flex items-center justify-center gap-1.5 shadow-[0_0_10px_rgba(229,152,56,0.3)] disabled:opacity-50"
-            title={`Trigger ${playbook.shortTitle} with ${playbook.assignedOperativeName}`}
+            title={`Trigger ${playbook.shortTitle} with ${playbook.assignedOperativeName} targeting ${activeTarget}`}
           >
             <Play className="w-3 h-3 fill-current" />
             <span>{playbook.title}</span>
@@ -107,10 +119,13 @@ export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = (
           ? 'bg-[#152336] hover:bg-[#1e3452] text-[#38bdf8] border-[#0284c7]'
           : 'bg-[#11241a] hover:bg-[#193d2a] text-[#4ade80] border-[#16a34a]'
       } ${className}`}
-      title={`Run ${playbook.shortTitle} with ${playbook.assignedOperativeName} (${playbook.assignedOperativeRole})`}
+      title={`Run ${playbook.shortTitle} on "${activeTarget}" with ${playbook.assignedOperativeName}`}
     >
       <span>{playbook.icon}</span>
       <span>{playbook.title}</span>
+      <span className="opacity-75 hidden md:inline text-[9px] font-mono text-[#cbd5e1] border-l border-current/30 pl-1.5">
+        [{activeTarget}]
+      </span>
     </button>
   );
 };

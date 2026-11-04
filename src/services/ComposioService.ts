@@ -283,6 +283,35 @@ export function getOrCreateEntityId(): string {
   return generated;
 }
 
+/**
+ * Synchronizes the active Composio entityId (e.g. pulled down from Cloudflare D1 user_data on a new device).
+ * Persists to localStorage, IndexedDB, and alerts active marketplace and agent interfaces to refresh tools.
+ */
+export function setComposioEntityId(newEntityId: string): void {
+  if (!newEntityId || typeof newEntityId !== 'string') return;
+  const clean = newEntityId.trim();
+  if (!clean) return;
+
+  const changed = cachedEntityId !== clean;
+  cachedEntityId = clean;
+
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(STORAGE_ENTITY_ID_KEY, clean);
+    }
+  } catch {}
+
+  try {
+    set(STORAGE_ENTITY_ID_KEY, clean).catch(() => {});
+  } catch {}
+
+  if (changed && typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('composio:entity-changed', { detail: { entityId: clean } }));
+    window.dispatchEvent(new CustomEvent('composio:connection-updated'));
+    window.dispatchEvent(new CustomEvent('composio:session-synced'));
+  }
+}
+
 // Background async hydration from idb-keyval in case localStorage was cleared
 if (typeof window !== 'undefined') {
   get<string>(STORAGE_ENTITY_ID_KEY)
@@ -708,6 +737,8 @@ export function saveLocalConnectedAccount(acc: ComposioConnectedAccount): void {
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem(STORAGE_LOCAL_CONNECTED_ACCOUNTS, JSON.stringify(filtered));
     }
+    // Auto-sync with cloud vault so D1 user_data reflects the updated credentials immediately
+    import('./SyncService').then((s) => s.pushToCloud().catch(() => {})).catch(() => {});
   } catch {}
 }
 
@@ -721,6 +752,8 @@ export function removeLocalConnectedAccount(connectionIdOrAppName: string): void
     if (typeof localStorage !== 'undefined') {
       localStorage.setItem(STORAGE_LOCAL_CONNECTED_ACCOUNTS, JSON.stringify(filtered));
     }
+    // Auto-sync deletion to cloud vault
+    import('./SyncService').then((s) => s.pushToCloud().catch(() => {})).catch(() => {});
   } catch {}
 }
 
@@ -1754,6 +1787,7 @@ export async function runAgentWithTools(
 export const ComposioService = {
   COMPOSIO_BASE_URL,
   getOrCreateEntityId,
+  setComposioEntityId,
   getComposioApiKey,
   setComposioApiKey,
   pingComposio,

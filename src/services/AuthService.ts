@@ -12,6 +12,7 @@ export interface UserAccount {
   email: string;
   callsign: string;
   securityClearance: 'OPERATIVE' | 'COMMANDER' | 'DIRECTOR';
+  composioEntityId?: string;
   createdAt: string;
   lastLoginAt: string;
 }
@@ -44,6 +45,7 @@ interface LocalUserRecord {
   recoveryKeyHash?: string;
   recoveryKey?: string; // Legacy fallback only, purged upon next update
   securityClearance: 'OPERATIVE' | 'COMMANDER' | 'DIRECTOR';
+  composioEntityId?: string;
   createdAt: string;
   lastLoginAt: string;
   devices: DeviceInfo[];
@@ -262,6 +264,11 @@ export async function registerAccount(params: {
   const device = getCurrentDeviceInfo();
   const rawRecoveryKey = generateRecoveryKey(callsign);
   const recoveryHash = await hashRecoveryKeyClient(rawRecoveryKey);
+  let currentEntityId: string | null = null;
+  try {
+    const { getOrCreateEntityId } = await import('./ComposioService');
+    currentEntityId = getOrCreateEntityId();
+  } catch {}
 
   // 1. Attempt server-side API registration first
   try {
@@ -274,6 +281,7 @@ export async function registerAccount(params: {
         password,
         callsign,
         device,
+        composioEntityId: currentEntityId,
       }),
     });
 
@@ -287,6 +295,7 @@ export async function registerAccount(params: {
           password,
           callsign,
           device,
+          composioEntityId: currentEntityId,
         }),
       });
     }
@@ -427,6 +436,15 @@ export async function loginAccount(params: {
     if (res.ok) {
       const data = await res.json();
       if (data.session) {
+        // Instantly restore user's personal Composio entityId from Cloudflare D1 user_data record
+        const remoteEntityId = data.composioEntityId || data.session.user?.composioEntityId;
+        if (remoteEntityId) {
+          try {
+            const { setComposioEntityId } = await import('./ComposioService');
+            setComposioEntityId(remoteEntityId);
+          } catch {}
+        }
+
         // Cache user locally for offline access
         const salt = Math.random().toString(36).substring(2, 14);
         const passwordHash = await hashPassword(password, salt);
@@ -439,6 +457,7 @@ export async function loginAccount(params: {
           salt,
           passwordHash,
           securityClearance: data.session.user.securityClearance,
+          composioEntityId: remoteEntityId || undefined,
           createdAt: data.session.user.createdAt,
           lastLoginAt: data.session.user.lastLoginAt,
           devices: fleetDevices,

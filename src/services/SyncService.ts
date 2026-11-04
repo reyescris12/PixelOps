@@ -31,6 +31,7 @@ import {
   getLocalConnectedAccounts,
   saveLocalConnectedAccount,
   getOrCreateEntityId,
+  setComposioEntityId,
 } from './ComposioService';
 
 export interface SyncPackage {
@@ -310,7 +311,11 @@ export async function applyRemoteSyncPackage(pkg: SyncPackage): Promise<void> {
     }
   }
 
-  // 5. Merge Composio Connected Accounts
+  // 5. Restore Composio Entity ID & Connected Accounts
+  if (pkg.composioEntityId && typeof pkg.composioEntityId === 'string' && pkg.composioEntityId.trim()) {
+    setComposioEntityId(pkg.composioEntityId.trim());
+  }
+
   if (Array.isArray(pkg.composioAccounts) && pkg.composioAccounts.length > 0) {
     for (const acc of pkg.composioAccounts) {
       if (acc && acc.appName) {
@@ -439,6 +444,9 @@ export async function pullFromCloud(): Promise<{ success: boolean; updated: bool
 
     if (res.ok) {
       const data = await res.json();
+      if (data.entityId || data.composioEntityId) {
+        setComposioEntityId(data.entityId || data.composioEntityId);
+      }
       if (data.package) {
         await applyRemoteSyncPackage(data.package);
         const now = new Date().toISOString();

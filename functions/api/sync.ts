@@ -104,6 +104,11 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
       }
 
       const now = new Date().toISOString();
+      const incomingEntityId = syncPackage.composioEntityId || syncPackage.entityId || request.headers.get('x-entity-id') || null;
+      if (incomingEntityId) {
+        syncPackage.composioEntityId = incomingEntityId;
+      }
+
       const incomingDevice = syncPackage.device || {
         deviceId,
         deviceName,
@@ -126,11 +131,35 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
           `).bind(dbUserId, userKey, `${userKey}@pixelops.local`, userKey.toUpperCase(), now, now).run();
         } catch {}
 
-        await d1.prepare(`
-          INSERT INTO user_data (user_id, sync_package, version, updated_at)
-          VALUES (?, ?, 1, ?)
-          ON CONFLICT(user_id) DO UPDATE SET sync_package = excluded.sync_package, updated_at = excluded.updated_at
-        `).bind(dbUserId, JSON.stringify(syncPackage), now).run();
+        // Store sync package alongside user's Composio entityId in Cloudflare D1 user_data table
+        try {
+          await d1.prepare(`
+            INSERT INTO user_data (user_id, entity_id, sync_package, version, updated_at)
+            VALUES (?, ?, ?, 1, ?)
+            ON CONFLICT(user_id) DO UPDATE SET 
+              entity_id = COALESCE(excluded.entity_id, user_data.entity_id),
+              sync_package = excluded.sync_package, 
+              updated_at = excluded.updated_at
+          `).bind(dbUserId, incomingEntityId, JSON.stringify(syncPackage), now).run();
+        } catch {
+          try {
+            await d1.prepare("ALTER TABLE user_data ADD COLUMN entity_id TEXT").run();
+            await d1.prepare(`
+              INSERT INTO user_data (user_id, entity_id, sync_package, version, updated_at)
+              VALUES (?, ?, ?, 1, ?)
+              ON CONFLICT(user_id) DO UPDATE SET 
+                entity_id = COALESCE(excluded.entity_id, user_data.entity_id),
+                sync_package = excluded.sync_package, 
+                updated_at = excluded.updated_at
+            `).bind(dbUserId, incomingEntityId, JSON.stringify(syncPackage), now).run();
+          } catch {
+            await d1.prepare(`
+              INSERT INTO user_data (user_id, sync_package, version, updated_at)
+              VALUES (?, ?, 1, ?)
+              ON CONFLICT(user_id) DO UPDATE SET sync_package = excluded.sync_package, updated_at = excluded.updated_at
+            `).bind(dbUserId, JSON.stringify(syncPackage), now).run();
+          }
+        }
 
         await d1.prepare(`
           INSERT INTO devices (device_id, user_id, device_name, device_type, last_active)
@@ -200,6 +229,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
 
     if (isPull) {
       let pkg: any = null;
+      let resolvedEntityId: string | null = null;
 
       if (d1) {
         let dbUserId = rawUserId;
@@ -207,9 +237,25 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
         if (u) dbUserId = u.id;
         if (!dbUserId) dbUserId = userKey;
 
-        const row = await d1.prepare('SELECT sync_package FROM user_data WHERE user_id = ?').bind(dbUserId).first();
-        if (row && row.sync_package) {
-          try { pkg = JSON.parse(row.sync_package); } catch {}
+        let row: any = null;
+        try {
+          row = await d1.prepare('SELECT entity_id, sync_package FROM user_data WHERE user_id = ?').bind(dbUserId).first();
+        } catch {
+          row = await d1.prepare('SELECT sync_package FROM user_data WHERE user_id = ?').bind(dbUserId).first();
+        }
+
+        if (row) {
+          resolvedEntityId = row.entity_id || null;
+          if (row.sync_package) {
+            try {
+              pkg = JSON.parse(row.sync_package);
+              if (resolvedEntityId && pkg) {
+                pkg.composioEntityId = resolvedEntityId;
+              } else if (!resolvedEntityId && pkg?.composioEntityId) {
+                resolvedEntityId = pkg.composioEntityId;
+              }
+            } catch {}
+          }
         }
       }
 
@@ -218,17 +264,31 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
         let raw = await kv.get(storageKey);
         if (!raw && rawUserId) raw = await kv.get(`vault:${rawUserId}`);
         if (raw) {
-          try { pkg = JSON.parse(raw); } catch {}
+          try {
+            pkg = JSON.parse(raw);
+            if (!resolvedEntityId && pkg?.composioEntityId) {
+              resolvedEntityId = pkg.composioEntityId;
+            }
+          } catch {}
         }
       }
 
       if (!pkg) {
         const storageKey = `vault:${userKey}`;
         pkg = memoryVaults.get(storageKey) || (rawUserId ? memoryVaults.get(`vault:${rawUserId}`) : null);
+        if (!resolvedEntityId && pkg?.composioEntityId) {
+          resolvedEntityId = pkg.composioEntityId;
+        }
       }
 
       return new Response(
-        JSON.stringify({ ok: true, package: pkg || null, timestamp: new Date().toISOString() }),
+        JSON.stringify({
+          ok: true,
+          package: pkg || null,
+          entityId: resolvedEntityId || pkg?.composioEntityId || null,
+          composioEntityId: resolvedEntityId || pkg?.composioEntityId || null,
+          timestamp: new Date().toISOString(),
+        }),
         { status: 200, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
       );
     }

@@ -70,7 +70,7 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
   const [isTestingKey, setIsTestingKey] = useState(false);
   const [testResult, setTestResult] = useState<string | null>(null);
 
-  const entityId = useMemo(() => getOrCreateEntityId(), []);
+  const [entityId, setEntityId] = useState(() => getOrCreateEntityId());
 
   const isRefreshingRef = useRef(false);
   const lastRefreshTimeRef = useRef(0);
@@ -112,9 +112,17 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
       }, 500);
     };
 
+    const handleEntityChanged = (e: any) => {
+      if (e.detail?.entityId) {
+        setEntityId(e.detail.entityId);
+        refreshIntegrations(false);
+      }
+    };
+
     window.addEventListener('focus', handleSync);
     window.addEventListener('composio:connection-updated', handleSync);
     window.addEventListener('composio:session-synced', handleSync);
+    window.addEventListener('composio:entity-changed', handleEntityChanged);
 
     // In-memory sync without network refetch to eliminate infinite re-render loops
     const unsubscribe = ComposioService.subscribeToConnectionChanges?.((accounts) => {
@@ -142,6 +150,7 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
       window.removeEventListener('focus', handleSync);
       window.removeEventListener('composio:connection-updated', handleSync);
       window.removeEventListener('composio:session-synced', handleSync);
+      window.removeEventListener('composio:entity-changed', handleEntityChanged);
       unsubscribe?.();
     };
   }, [refreshIntegrations]);

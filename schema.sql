@@ -24,6 +24,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 CREATE TABLE IF NOT EXISTS user_data (
   user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  entity_id TEXT,
   sync_package TEXT NOT NULL,
   version INTEGER NOT NULL DEFAULT 1,
   updated_at TEXT NOT NULL
@@ -53,3 +54,4 @@ CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(token);
 CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_devices_user_id ON devices(user_id);
 CREATE INDEX IF NOT EXISTS idx_devices_device_id ON devices(device_id);
+CREATE INDEX IF NOT EXISTS idx_user_data_entity_id ON user_data(entity_id);

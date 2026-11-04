@@ -35,6 +35,7 @@ function getD1(env: Env) {
 // In-memory fallback if neither D1 nor KV is bound
 const memoryUsers = new Map<string, any>();
 const memoryTokens = new Map<string, any>();
+const memoryVaults = new Map<string, any>();
 const memoryRateLimits = new Map<string, { attempts: number; firstAttempt: number; blockedUntil: number }>();
 
 /**
@@ -231,6 +232,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
       const passwordHash = await hashPasswordPBKDF2(password, salt);
       const userId = `usr_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
       const now = new Date().toISOString();
+      const incomingEntityId = body.composioEntityId || body.entityId || request.headers.get('x-entity-id') || null;
 
       // Generate recovery key and store only its cryptographic hash
       const rawRecoveryKey = `SATCOM-${operativeCallsign.slice(0, 6).replace(/[^A-Z0-9]/g, '') || 'AGENT'}-${Math.random().toString(36).substring(2, 6).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
@@ -245,6 +247,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
         passwordHash,
         recoveryKeyHash: recoveryHash,
         securityClearance: 'COMMANDER',
+        composioEntityId: incomingEntityId || undefined,
         createdAt: now,
         lastLoginAt: now,
         devices: device ? [device] : [],
@@ -268,6 +271,34 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
             ON CONFLICT(user_id, device_id) DO UPDATE SET last_active = excluded.last_active, device_name = excluded.device_name
           `).bind(device.deviceId, userId, device.deviceName || 'Node', device.deviceType || 'desktop', now).run();
         }
+
+        // Store generated Composio entityId in Cloudflare D1 user_data table upon account registration
+        if (incomingEntityId) {
+          try {
+            await d1.prepare(`
+              INSERT INTO user_data (user_id, entity_id, sync_package, version, updated_at)
+              VALUES (?, ?, ?, 1, ?)
+              ON CONFLICT(user_id) DO UPDATE SET entity_id = excluded.entity_id, updated_at = excluded.updated_at
+            `).bind(userId, incomingEntityId, JSON.stringify({ composioEntityId: incomingEntityId }), now).run();
+          } catch {
+            try {
+              await d1.prepare("ALTER TABLE user_data ADD COLUMN entity_id TEXT").run();
+              await d1.prepare(`
+                INSERT INTO user_data (user_id, entity_id, sync_package, version, updated_at)
+                VALUES (?, ?, ?, 1, ?)
+                ON CONFLICT(user_id) DO UPDATE SET entity_id = excluded.entity_id, updated_at = excluded.updated_at
+              `).bind(userId, incomingEntityId, JSON.stringify({ composioEntityId: incomingEntityId }), now).run();
+            } catch {
+              try {
+                await d1.prepare(`
+                  INSERT INTO user_data (user_id, sync_package, version, updated_at)
+                  VALUES (?, ?, 1, ?)
+                  ON CONFLICT(user_id) DO UPDATE SET sync_package = excluded.sync_package, updated_at = excluded.updated_at
+                `).bind(userId, JSON.stringify({ composioEntityId: incomingEntityId }), now).run();
+              } catch {}
+            }
+          }
+        }
       }
 
       if (kv) {
@@ -277,11 +308,17 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
         await kv.put(`token:${token}`, JSON.stringify({ userId, cleanUser }));
         await kv.put(`devices:${cleanUser}`, JSON.stringify(userRecord.devices));
         await kv.put(`devices:${userId}`, JSON.stringify(userRecord.devices));
+        if (incomingEntityId) {
+          await kv.put(`vault:${userId}`, JSON.stringify({ composioEntityId: incomingEntityId }));
+        }
       } else {
         memoryUsers.set(cleanUser, userRecord);
         if (cleanEmail) memoryUsers.set(cleanEmail, userRecord);
         if (operativeCallsign) memoryUsers.set(operativeCallsign.toLowerCase(), userRecord);
         memoryTokens.set(token, { userId, cleanUser });
+        if (incomingEntityId) {
+          memoryVaults.set(`vault:${userId}`, { composioEntityId: incomingEntityId });
+        }
       }
 
       // Important: Never persist recoveryKey in session.user payload. Surface once at registration only.
@@ -293,6 +330,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
           email: userRecord.email,
           callsign: userRecord.callsign,
           securityClearance: userRecord.securityClearance,
+          composioEntityId: incomingEntityId || undefined,
           createdAt: now,
           lastLoginAt: now,
         },
@@ -303,6 +341,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
       return new Response(JSON.stringify({
         ok: true,
         session,
+        composioEntityId: incomingEntityId || null,
         devices: userRecord.devices,
         oneTimeRecoveryKey: rawRecoveryKey, // Displayed once for safe offline storage
       }), {
@@ -453,6 +492,48 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
         memoryTokens.set(token, { userId: userRecord.id, cleanUser: cleanQuery });
       }
 
+      // Query D1 user_data table for operative's personal Composio entityId
+      let userEntityId: string | null = null;
+      if (d1) {
+        try {
+          const udRow = await d1.prepare('SELECT entity_id, sync_package FROM user_data WHERE user_id = ?').bind(userRecord.id).first();
+          if (udRow) {
+            userEntityId = udRow.entity_id || null;
+            if (!userEntityId && udRow.sync_package) {
+              try {
+                const parsed = JSON.parse(udRow.sync_package);
+                userEntityId = parsed.composioEntityId || parsed.entityId || null;
+              } catch {}
+            }
+          }
+        } catch {
+          try {
+            const udRow = await d1.prepare('SELECT sync_package FROM user_data WHERE user_id = ?').bind(userRecord.id).first();
+            if (udRow && udRow.sync_package) {
+              const parsed = JSON.parse(udRow.sync_package);
+              userEntityId = parsed.composioEntityId || parsed.entityId || null;
+            }
+          } catch {}
+        }
+      }
+
+      if (!userEntityId && kv) {
+        try {
+          const rawVault = (await kv.get(`vault:${userRecord.id}`)) || (await kv.get(`vault:${userRecord.username}`));
+          if (rawVault) {
+            const parsed = JSON.parse(rawVault);
+            userEntityId = parsed.composioEntityId || parsed.entityId || null;
+          }
+        } catch {}
+      }
+
+      if (!userEntityId) {
+        const memVault = memoryVaults.get(`vault:${userRecord.id}`) || memoryVaults.get(`vault:${userRecord.username}`);
+        if (memVault) {
+          userEntityId = memVault.composioEntityId || memVault.entityId || null;
+        }
+      }
+
       // Security: Do NOT expose recoveryKey in persistent session payload
       const session = {
         token,
@@ -462,6 +543,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
           email: userRecord.email,
           callsign: userRecord.callsign,
           securityClearance: userRecord.securityClearance || 'COMMANDER',
+          composioEntityId: userEntityId || undefined,
           createdAt: userRecord.createdAt,
           lastLoginAt: now,
         },
@@ -469,7 +551,12 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
         expiresAt,
       };
 
-      return new Response(JSON.stringify({ ok: true, session, devices: userRecord.devices }), {
+      return new Response(JSON.stringify({
+        ok: true,
+        session,
+        composioEntityId: userEntityId || null,
+        devices: userRecord.devices,
+      }), {
         status: 200,
         headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
       });
@@ -501,6 +588,21 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
 
         if (sessionRow && new Date(sessionRow.expires_at).getTime() > Date.now()) {
           const devs = await d1.prepare('SELECT device_id as deviceId, device_name as deviceName, device_type as deviceType, last_active as lastActive FROM devices WHERE user_id = ?').bind(sessionRow.id).all();
+
+          let userEntityId: string | null = null;
+          try {
+            const udRow = await d1.prepare('SELECT entity_id, sync_package FROM user_data WHERE user_id = ?').bind(sessionRow.id).first();
+            if (udRow) {
+              userEntityId = udRow.entity_id || null;
+              if (!userEntityId && udRow.sync_package) {
+                try {
+                  const p = JSON.parse(udRow.sync_package);
+                  userEntityId = p.composioEntityId || p.entityId || null;
+                } catch {}
+              }
+            }
+          } catch {}
+
           return new Response(JSON.stringify({
             ok: true,
             user: {
@@ -509,9 +611,11 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
               email: sessionRow.email,
               callsign: sessionRow.callsign,
               securityClearance: sessionRow.security_clearance,
+              composioEntityId: userEntityId || undefined,
               createdAt: sessionRow.created_at,
               lastLoginAt: sessionRow.last_login_at,
             },
+            composioEntityId: userEntityId || null,
             devices: devs?.results || [],
           }), { status: 200, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } });
         }

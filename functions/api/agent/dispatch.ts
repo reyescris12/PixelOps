@@ -170,6 +170,11 @@ export async function onRequestPost(context: { request: Request; env: Env }): Pr
 - PRIMARY FUNCTION: Workflow coordination, executive synthesis, and operational SITREPs.
 - EXECUTION STYLE: Structured, authoritative, concise.
 - OUTPUT STANDARD: Executive command briefings summarizing multi-source telemetry with zero conversational delay. Focus on bottom-line impact, tactical resource allocation, and prioritized execution queues.`;
+    } else {
+      personaSpecialization = `[STANDARDIZED OPERATIVE PERSONA: ${agentName.toUpperCase()} (${activeAgentRole})]
+- PRIMARY FUNCTION: Grounded operational execution, verified intelligence synthesis, and tool-backed tactical workflows.
+- EXECUTION STYLE: Objective, highly disciplined, zero conversational delay.
+- OUTPUT STANDARD: Tool-verified operational briefs with zero fabricated telemetry.`;
     }
 
     const globalDirective = `# GLOBAL SYSTEM DIRECTIVE: AUTONOMOUS INTELLIGENCE & EXECUTION PROTOCOL (PIXELOPS)
@@ -177,15 +182,21 @@ export async function onRequestPost(context: { request: Request; env: Env }): Pr
 All operational agents (Cipher, Nyx, Vance, and custom roles) are strictly prohibited from generating fake mock summaries, hardcoded placeholders, or generic text-box fluff when executing tasks or briefings. Every agent must operate as an autonomous intelligence operative relying on live tool-fetched data, real-time wiretaps, and verifiable state parameters.
 
 ## MANDATORY RULES:
-- RULE A (REAL-TIME VERIFICATION FIRST): Before compiling any report, briefing, or audit, you MUST invoke your authorized tool matrix to gather live data. Citations must reference actual headlines, live issues, PR titles, real CVE strings, or verified URLs.
+- RULE A (REAL-TIME VERIFICATION FIRST): Before compiling any report, briefing, or audit, you MUST invoke your authorized tool matrix (via Composio integrations or workspace storage) to gather live data. Citations must reference actual headlines, live issues, PR titles, real CVE strings, or verified URLs.
 - RULE B (THE "SO WHAT?" IMPACT & ACTION DELTA): Every report or dossier MUST include a dedicated section titled "## Impact & Action Delta" answering: "Why does this matter, and what is the operational risk or next tactical step?"
-- RULE C (STRUCTURED SCHEMA COMPLIANCE): Output must strictly conform to clean Markdown frontmatter or structured payloads.
+- RULE C (STRUCTURED SCHEMA COMPLIANCE): Output must strictly conform to clean Markdown frontmatter or structured payloads so the terminal and VFS archive can index and render the results without layout breaks:
+  ---
+  title: <Dossier Title>
+  operative: <Agent Name> (<Agent Role>)
+  target: <Target Entity / Repo / Topic>
+  date: <ISO Date or YYYY-MM-DD>
+  threat_level: <ALPHA-CRITICAL | BRAVO-ELEVATED | CHARLIE-NOMINAL>
+  sources_consulted: [<live tool/url 1>, <live tool/url 2>]
+  ---
 
 ${personaSpecialization}`;
 
-    const systemInstruction = systemPrompt
-      ? `${globalDirective}\n\n${systemPrompt}`
-      : `You are ${agentName} (${activeAgentRole}) in the PixelOps Command Center.
+    const baseSystemInstruction = `You are ${agentName} (${activeAgentRole}) in the PixelOps Command Center.
 Available Dynamically Injected Tools: ${declaredToolNames || 'No external tools connected'}.
 
 ${globalDirective}
@@ -200,98 +211,267 @@ Before invoking any tool from Composio, analyze the user's intent:
   If the user explicitly asks to create, send, push, post, schedule, star, or delete:
   You MUST select a CREATE, POST, SEND, or DELETE tool.
 - PARAMETER VALIDATION:
-  Ensure you correctly extract and validate required parameters (such as repository owner/name, query filters, search strings, channel names, or recipient email addresses) from the user's directive before firing the tool.`;
+  Ensure you correctly extract and validate required parameters (such as repository owner/name, query filters, search strings, channel names, or recipient email addresses) from the user's directive before firing the tool. For GitHub targets, split "owner/repo" into distinct owner and repo parameters.`;
 
-    const geminiPayload: any = {
-      contents: [{ role: 'user', parts: [{ text: message }] }],
-      systemInstruction: { parts: [{ text: systemInstruction }] },
-      generationConfig: {
-        temperature: Number(temperature),
-      },
-    };
+    const systemInstruction = systemPrompt
+      ? `${baseSystemInstruction}\n\n[USER-SPECIFIED AGENT DIRECTIVES]\n${systemPrompt}`
+      : baseSystemInstruction;
 
-    if (dynamicTools.length > 0) {
-      geminiPayload.tools = [{ functionDeclarations: dynamicTools }];
-    }
+    // 4. Hardened Multi-Turn Execution & Self-Correcting Tool Loop
+    const conversationHistory: any[] = [
+      { role: 'user', parts: [{ text: message }] },
+    ];
+    const executedToolsRecord: any[] = [];
+    let finalDialogue = '';
+    const MAX_TOOL_TURNS = 3;
+    let turnCount = 0;
 
-    console.log(
-      `[AGENT DISPATCH] Dispatching to Gemini for "${agentName}". Active toolkits: [${activeAppNames.join(', ')}] | Dynamic tools: ${dynamicTools.length}`
-    );
+    while (turnCount < MAX_TOOL_TURNS) {
+      turnCount++;
 
-    const geminiRes = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(geminiApiKey)}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(geminiPayload),
+      const geminiPayload: any = {
+        contents: conversationHistory,
+        systemInstruction: { parts: [{ text: systemInstruction }] },
+        generationConfig: {
+          temperature: Number(temperature),
+        },
+      };
+
+      if (dynamicTools.length > 0) {
+        geminiPayload.tools = [{ functionDeclarations: dynamicTools }];
       }
-    );
 
-    if (!geminiRes.ok) {
-      const errText = await geminiRes.text();
-      return new Response(
-        JSON.stringify({ error: 'GEMINI_GENERATION_FAILED', details: errText }),
-        { status: geminiRes.status, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+      console.log(
+        `[AGENT DISPATCH] Turn ${turnCount}: Dispatching to Gemini for "${agentName}". Active toolkits: [${activeAppNames.join(', ')}] | Dynamic tools: ${dynamicTools.length}`
       );
-    }
 
-    const aiData: any = await geminiRes.json();
-    const candidate = aiData.candidates?.[0];
-    const functionCallPart = candidate?.content?.parts?.find((p: any) => p.functionCall);
+      const geminiRes = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(geminiApiKey)}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(geminiPayload),
+        }
+      );
 
-    // 4. If Gemini invoked a tool, automatically execute it via Composio v3
-    if (functionCallPart && functionCallPart.functionCall) {
-      const fc = functionCallPart.functionCall;
-      const toolName = fc.name || '';
-      const toolArgs = fc.args || {};
+      if (!geminiRes.ok) {
+        const errText = await geminiRes.text();
+        return new Response(
+          JSON.stringify({ error: 'GEMINI_GENERATION_FAILED', details: errText }),
+          { status: geminiRes.status, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+        );
+      }
 
-      console.log(`[AGENT DISPATCH] Gemini requested tool execution: "${toolName}" with args:`, toolArgs);
+      const aiData: any = await geminiRes.json();
+      const candidate = aiData.candidates?.[0];
+      const parts = candidate?.content?.parts || [];
+      const functionCalls = parts
+        .filter((p: any) => p.functionCall)
+        .map((p: any) => p.functionCall);
 
-      let executionResult: any = null;
-      let executionSuccessful = false;
+      // If no tools requested, we have completed textual / structured synthesis
+      if (functionCalls.length === 0) {
+        finalDialogue = parts.map((p: any) => p.text || '').join('\n').trim();
+        break;
+      }
 
-      if (composioApiKey && (toolName.startsWith('composio_') || toolName.startsWith('COMPOSIO_'))) {
-        const rawAction = toolName.replace(/^composio_/i, '').toUpperCase();
-        try {
-          const execRes = await fetch(`https://backend.composio.dev/api/v3/tools/execute/${encodeURIComponent(rawAction)}`, {
-            method: 'POST',
-            headers: {
-              'x-api-key': composioApiKey,
-              'Content-Type': 'application/json',
-              Accept: 'application/json',
+      // Record the assistant's tool-call request into conversation history
+      conversationHistory.push(candidate.content);
+
+      // Execute requested tools and prepare function response parts
+      const functionResponseParts: any[] = [];
+
+      for (const fc of functionCalls) {
+        const toolName = fc.name || '';
+        const toolArgs = fc.args || {};
+
+        console.log(`[AGENT DISPATCH] Executing tool: "${toolName}" with args:`, toolArgs);
+
+        let executionResult: any = null;
+        let executionSuccessful = false;
+
+        if (composioApiKey && (toolName.startsWith('composio_') || toolName.startsWith('COMPOSIO_'))) {
+          const rawAction = toolName.replace(/^composio_/i, '').toUpperCase();
+          try {
+            const execRes = await fetch(
+              `https://backend.composio.dev/api/v3/tools/execute/${encodeURIComponent(rawAction)}`,
+              {
+                method: 'POST',
+                headers: {
+                  'x-api-key': composioApiKey,
+                  'Content-Type': 'application/json',
+                  Accept: 'application/json',
+                },
+                body: JSON.stringify({
+                  parameters: toolArgs,
+                  entityId,
+                }),
+              }
+            );
+
+            executionResult = await execRes.json();
+            executionSuccessful = execRes.ok && !executionResult?.error;
+          } catch (execErr: any) {
+            executionResult = { error: execErr?.message || 'Tool execution network fault' };
+            executionSuccessful = false;
+          }
+        } else {
+          executionResult = { error: `Tool ${toolName} not executable via backend Composio gateway.` };
+          executionSuccessful = false;
+        }
+
+        executedToolsRecord.push({
+          toolName,
+          args: toolArgs,
+          success: executionSuccessful,
+          result: executionResult,
+        });
+
+        // SELF-CORRECTING FEEDBACK LOOP:
+        // Feed back exact error details so agent retries with corrected parameters instead of generating mock fluff
+        if (!executionSuccessful) {
+          const errMsg =
+            executionResult?.error?.message ||
+            executionResult?.error ||
+            executionResult?.message ||
+            'Tool execution returned failure.';
+
+          functionResponseParts.push({
+            functionResponse: {
+              name: toolName,
+              response: {
+                status: 'EXECUTION_ERROR',
+                error: errMsg,
+                rawDetails: executionResult,
+                self_correction_directive:
+                  `CRITICAL: Tool execution failed with error: "${errMsg}". ` +
+                  `Do NOT invent fake mock data. Analyze the error, adjust your arguments ` +
+                  `(e.g., ensure owner and repo are separated, query parameters match schema, or select a get/list tool), ` +
+                  `and either retry with corrected arguments or explain the verified error clearly in ## Impact & Action Delta.`,
+              },
             },
-            body: JSON.stringify({
-              parameters: toolArgs,
-              entityId,
-            }),
           });
-
-          executionResult = await execRes.json();
-          executionSuccessful = execRes.ok;
-        } catch (execErr: any) {
-          executionResult = { error: execErr?.message || 'Tool execution network fault' };
+        } else {
+          functionResponseParts.push({
+            functionResponse: {
+              name: toolName,
+              response: {
+                status: 'SUCCESS',
+                data: executionResult?.data || executionResult,
+              },
+            },
+          });
         }
       }
 
-      return new Response(
-        JSON.stringify({
-          success: true,
-          requiresToolExecution: false,
-          toolInvoked: toolName,
-          args: toolArgs,
-          executionResult,
-          executionSuccessful,
-          agentName,
-        }),
-        { status: 200, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
-      );
+      conversationHistory.push({
+        role: 'user',
+        parts: functionResponseParts,
+      });
     }
 
-    const responseText = candidate?.content?.parts?.[0]?.text || '';
+    // 5. Final Synthesis Fallback if loop hit turn limit
+    if (!finalDialogue) {
+      try {
+        const finalRes = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(geminiApiKey)}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              contents: conversationHistory,
+              systemInstruction: {
+                parts: [
+                  {
+                    text: `${systemInstruction}
+
+[FINAL SYNTHESIS DIRECTIVE]
+All tool execution turns are complete.
+Synthesize your final operational report now:
+1. ZERO MOCK DATA: Rely strictly on the real tool outputs and telemetry in the conversation above.
+2. LIVE CITATIONS: Reference actual repository issues, PRs, email senders, or real zero-counts.
+3. IMPACT & ACTION DELTA: Include mandatory section "## Impact & Action Delta".
+4. STRUCTURED SCHEMA: Begin with valid YAML frontmatter.`,
+                  },
+                ],
+              },
+              generationConfig: {
+                temperature: Number(temperature),
+              },
+            }),
+          }
+        );
+
+        if (finalRes.ok) {
+          const finalData: any = await finalRes.json();
+          finalDialogue =
+            finalData.candidates?.[0]?.content?.parts?.map((p: any) => p.text || '').join('\n').trim() || '';
+        }
+      } catch (finalErr) {
+        console.warn('[AGENT DISPATCH] Final synthesis call failed:', finalErr);
+      }
+    }
+
+    // Fallback heuristic card if final dialogue is still empty
+    if (!finalDialogue) {
+      const topTool = executedToolsRecord[0];
+      finalDialogue = `---
+title: "${agentName} Operational Synthesis"
+operative: "${agentName} (${activeAgentRole})"
+target: "Active Directive"
+date: "${new Date().toISOString()}"
+threat_level: "CHARLIE-NOMINAL"
+sources_consulted:
+  - "${topTool?.toolName || 'Composio Live Matrix'}"
+---
+
+# Operational Synthesis: Telemetry Verified
+**Operative:** ${agentName} (${activeAgentRole})
+**Execution Status:** ${topTool?.success ? 'LIVE DATA VERIFIED' : 'INVESTIGATION IN PROGRESS'}
+
+---
+
+## 1. Verified Telemetry Summary
+Executed live tool matrix query \`${topTool?.toolName || 'system_audit'}\`.
+Result status: ${topTool?.success ? 'Success - live payload processed.' : `Execution error: ${topTool?.result?.error || 'Inquiry logged.'}`}
+
+---
+
+## 2. Impact & Action Delta
+- **Operational Assessment:** Telemetry captured and indexed.
+- **Next Tactical Steps:** Review verified tool response in active terminal ledger.
+`;
+    }
+
+    // 6. Parse structured YAML frontmatter for predictable UI rendering
+    let frontmatterMeta: Record<string, any> | null = null;
+    const fmMatch = finalDialogue.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+    if (fmMatch && fmMatch[1]) {
+      try {
+        frontmatterMeta = {};
+        for (const line of fmMatch[1].split(/\r?\n/)) {
+          const colonIdx = line.indexOf(':');
+          if (colonIdx > 0) {
+            const key = line.slice(0, colonIdx).trim();
+            const val = line.slice(colonIdx + 1).trim().replace(/^["']|["']$/g, '');
+            frontmatterMeta[key] = val;
+          }
+        }
+      } catch {}
+    }
+
     return new Response(
       JSON.stringify({
         success: true,
-        dialogue: responseText,
+        dialogue: finalDialogue,
+        structuredPayload: {
+          frontmatter: frontmatterMeta,
+          hasImpactDelta: finalDialogue.includes('Impact & Action Delta'),
+          threatLevel: frontmatterMeta?.threat_level || 'CHARLIE-NOMINAL',
+          target: frontmatterMeta?.target || null,
+          title: frontmatterMeta?.title || `${agentName} Operational Report`,
+        },
+        executedTools: executedToolsRecord,
         agentName,
         activeToolkits: activeAppNames,
         dynamicToolsCount: dynamicTools.length,

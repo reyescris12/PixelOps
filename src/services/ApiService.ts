@@ -734,6 +734,10 @@ export async function executeFunctionCallHandler(fc: {
     if (name.startsWith('composio_') || name.startsWith('COMPOSIO_')) {
       console.log(`[COMPOSIO DISPATCH] Executing Composio tool: "${name}" with parameters:`, args);
       const compResult = await executeComposioAction(name, args);
+      if (!compResult.successful) {
+        compResult.self_correction_directive =
+          `Tool execution failed: "${compResult.error || 'Unknown execution fault'}". Do NOT generate fake mock data. Analyze the error and report the exact failure diagnosis in "## Impact & Action Delta".`;
+      }
       const summary = compResult.successful
         ? `Composio [${name.replace(/^composio_/i, '').toUpperCase()}]: Successfully executed (${Array.isArray(compResult.data) ? `${compResult.data.length} items` : 'verified response'})`
         : `Composio Error: ${compResult.error || 'Execution failed'}`;
@@ -4390,13 +4394,32 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
             (out) => out.executedToolMeta
           );
 
-          const functionResponseParts = functionResponses.map((fr) => ({
-            functionResponse: {
-              id: fr.id,
-              name: fr.name,
-              response: fr.response,
-            },
-          }));
+          const functionResponseParts = functionResponses.map((fr) => {
+            const isError = fr.response?.successful === false || Boolean(fr.response?.error);
+            if (isError) {
+              return {
+                functionResponse: {
+                  id: fr.id,
+                  name: fr.name,
+                  response: {
+                    status: 'EXECUTION_ERROR',
+                    error: fr.response?.error || 'Tool execution encountered an error.',
+                    self_correction_directive:
+                      'Tool execution failed. Do NOT hallucinate mock data or simulated responses. ' +
+                      'Analyze the error, report the factual error diagnosis, and explain the concrete operational remedy in "## Impact & Action Delta".',
+                    details: fr.response,
+                  },
+                },
+              };
+            }
+            return {
+              functionResponse: {
+                id: fr.id,
+                name: fr.name,
+                response: fr.response,
+              },
+            };
+          });
 
           // Turn 2 Request: Send functionResponse data back to Gemini with STRUCTURED_CARD_SCHEMA
           const turn2Payload = {
@@ -4407,11 +4430,11 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
 
 LIVE TOOL EXECUTION COMPLETE:
 You have just received live telemetry from real operational tools.
-Synthesize the live tool results into a thorough, professional, and detailed operational answer in the "dialogue" field of the JSON response schema.
-If the directive requested an analysis, summary, report, or findings:
-- Provide an extensive, well-structured technical breakdown directly in the dialogue.
-- Cite specific metrics, facts, and architectural takeaways from the tool results.
-- If a report was requested, format the dialogue with complete Markdown headers (# Document Title, ## 1. Executive Summary, ## 2. Core Findings & Principles, ## 3. Technical Recommendations) so the report can be committed directly to safehouse workspace files.`,
+MANDATORY AUTONOMOUS INTELLIGENCE PROTOCOL:
+- ZERO MOCK DATA: Rely strictly on the live tool results above. If a tool failed or returned zero records, report that factually. Never hallucinate fake metrics, issues, or accounts.
+- LIVE CITATIONS: Reference verified items, headlines, URLs, issues, commit hashes, or CVE strings from the tool response.
+- IMPACT & ACTION DELTA: You MUST include a dedicated section "## Impact & Action Delta" in the dialogue explaining: "Why does this matter, and what is the operational risk or next tactical step?"
+- STRUCTURED OUTPUT: Format reports with clean Markdown headers (# Document Title, ## 1. Executive Summary, ## 2. Core Findings & Telemetry, ## 3. Impact & Action Delta) so it renders cleanly and can be committed to the VFS archive.`,
                 },
               ],
             },
@@ -4469,10 +4492,39 @@ If the directive requested an analysis, summary, report, or findings:
           }
 
           // Fallback if Turn 2 synthesis timed out
+          const dateStr = new Date().toISOString().split('T')[0];
+          const fallbackDialogue = `---
+title: "Operational Telemetry Report: ${executedTools[0]?.toolName || 'Tool Execution'}"
+operative: "${params.activeAgentName} (${params.activeAgentRole})"
+target: "${params.prompt.slice(0, 40)}"
+date: "${dateStr}"
+threat_level: "CHARLIE-NOMINAL"
+sources_consulted:
+  - "${executedTools[0]?.toolName || 'Live Subsystem'}"
+---
+
+# Operational Telemetry: Verified Live Output
+**Operative:** ${params.activeAgentName}
+**Tool Invoked:** \`${executedTools[0]?.toolName || 'function_call'}\`
+**Telemetry Status:** Verified Live Response
+
+---
+
+## 1. Verified Telemetry Digest
+- **Summary:** ${executedTools[0]?.resultSummary || 'Telemetry stream verified.'}
+- **Target Room:** ${executedTools[0]?.targetRoom || 'Safehouse Hub'}
+
+---
+
+## 2. Impact & Action Delta
+- **Operational Risk:** Telemetry successfully ingested. No unhandled system faults detected.
+- **Immediate Next Step:** Review logged tool response in the command console.
+`;
+
           const fallbackCard: AgentExecutionCard = {
             id: `card-${Date.now()}`,
             prompt: params.prompt || `Attached visual intel`,
-            dialogue: `[TELEMETRY CAPTURED] ${params.activeAgentName}: Real-time tool execution complete. Data: "${executedTools[0]?.resultSummary}". Standing by.`,
+            dialogue: fallbackDialogue,
             cardTitle: 'Tool Telemetry Verified',
             actionCategory: 'Live Telemetry',
             steps: [

@@ -230,6 +230,7 @@ export interface ComposioActionExecutionResult {
   error?: string;
   actionName: string;
   executedAt: string;
+  self_correction_directive?: string;
 }
 
 export const COMPOSIO_BASE_URL = 'https://backend.composio.dev/api/v3';

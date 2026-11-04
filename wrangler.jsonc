@@ -10,5 +10,19 @@
       "database_name": "pixelops-db",
       "database_id": "eb239f07-7112-429e-a77c-5506c1744d0b"
     }
+  ],
+  "send_email": [
+    {
+      "name": "SEND_EMAIL",
+      "destination_address": "support@pixelops.app",
+      "allowed_destination_addresses": [
+        "support@pixelops.app"
+      ]
+    }
+  ],
+  "email_routes": [
+    {
+      "pattern": "support@pixelops.app"
+    }
   ]
 }

@@ -95,12 +95,25 @@ Logged to Cloudflare D1 database: pixelops-db (table: feedback)
   const emailBinding = env?.SEND_EMAIL || env?.EMAIL;
   if (emailBinding && typeof emailBinding.send === 'function') {
     try {
-      await emailBinding.send({
-        from: 'feedback-relay@pixelops.app',
-        to: SUPPORT_EMAIL,
-        subject,
-        text: textContent,
-      });
+      if (typeof EmailMessage !== 'undefined') {
+        const rawMime = [
+          `From: feedback-relay@pixelops.app`,
+          `To: ${SUPPORT_EMAIL}`,
+          `Subject: ${subject}`,
+          `Content-Type: text/plain; charset=utf-8`,
+          ``,
+          textContent,
+        ].join('\r\n');
+        const emailMsg = new EmailMessage('feedback-relay@pixelops.app', SUPPORT_EMAIL, rawMime);
+        await emailBinding.send(emailMsg);
+      } else {
+        await emailBinding.send({
+          from: 'feedback-relay@pixelops.app',
+          to: SUPPORT_EMAIL,
+          subject,
+          text: textContent,
+        });
+      }
       return { success: true, provider: 'cloudflare_email_binding' };
     } catch (err) {
       console.warn('[FEEDBACK EMAIL ERROR: CF BINDING]', err?.message || err);

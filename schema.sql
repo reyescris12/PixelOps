@@ -47,6 +47,12 @@ CREATE TABLE IF NOT EXISTS rate_limits (
   blocked_until INTEGER DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS feedback (
+  id TEXT PRIMARY KEY,
+  message TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
 -- Performance & Lookup Indexes
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
@@ -56,3 +62,4 @@ CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_devices_user_id ON devices(user_id);
 CREATE INDEX IF NOT EXISTS idx_devices_device_id ON devices(device_id);
 CREATE INDEX IF NOT EXISTS idx_user_data_entity_id ON user_data(entity_id);
+CREATE INDEX IF NOT EXISTS idx_feedback_created_at ON feedback(created_at);

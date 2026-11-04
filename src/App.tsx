@@ -99,6 +99,7 @@ import { TaskBriefModal, TaskBrief } from './components/TaskBriefModal';
 import { TerminalConsole } from './components/TerminalConsole';
 import { WorkspaceFileViewer } from './components/WorkspaceFileViewer';
 import { SyncAccountModal } from './components/SyncAccountModal';
+import { FeedbackTerminal } from './components/FeedbackTerminal';
 import {
   startAutoSync,
   getSyncStats,
@@ -241,6 +242,7 @@ const CommandCenterContent: React.FC = () => {
   const [isTerminalConsoleOpen, setIsTerminalConsoleOpen] = useState(false);
   const [isWorkspaceFilesOpen, setIsWorkspaceFilesOpen] = useState(false);
   const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
+  const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
   const [syncStats, setSyncStats] = useState<SyncStats>(() => getSyncStats());
   const [dismissPortraitGuard, setDismissPortraitGuard] = useState(false);
   const [taskBriefState, setTaskBriefState] = useState<{
@@ -2709,6 +2711,23 @@ const CommandCenterContent: React.FC = () => {
               <span className="text-base" aria-hidden="true">☁️</span>
               <span className="hidden sm:inline">Sync</span>
             </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setIsFeedbackOpen((prev) => !prev);
+                playBeep('tap');
+              }}
+              className={`min-h-[42px] px-3 sm:px-5 py-1.5 font-mono-tabular text-sm sm:text-base flex items-center gap-2 transition-colors cursor-pointer border-l border-[#363b4e] ${
+                isFeedbackOpen
+                  ? 'bg-[#0f2416] text-[#00ff66] font-semibold'
+                  : 'text-[#00ff66] hover:bg-[#0a1a0f]'
+              }`}
+              title="Open Feedback Terminal (Relay to support@pixelops.app)"
+            >
+              <span className="text-base" aria-hidden="true">📡</span>
+              <span className="hidden sm:inline">Feedback</span>
+            </button>
           </nav>
         </footer>
       </div>
@@ -2732,6 +2751,7 @@ const CommandCenterContent: React.FC = () => {
         onOpenSyncModal={() => setIsSyncModalOpen(true)}
         onOpenFieldManual={() => setIsFieldManualOpen(true)}
         onOpenPluginAuth={handleOpenPluginAuth}
+        onOpenFeedback={() => setIsFeedbackOpen(true)}
       />
 
       <RetroErrorModal
@@ -2875,6 +2895,11 @@ const CommandCenterContent: React.FC = () => {
       <SyncAccountModal
         isOpen={isSyncModalOpen}
         onClose={() => setIsSyncModalOpen(false)}
+      />
+
+      <FeedbackTerminal
+        isOpen={isFeedbackOpen}
+        onClose={() => setIsFeedbackOpen(false)}
       />
 
       <PluginAuthModal

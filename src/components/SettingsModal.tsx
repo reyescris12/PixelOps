@@ -53,6 +53,7 @@ interface SettingsModalProps {
   onOpenSyncModal?: () => void;
   onOpenPluginAuth?: (plugin: { id: string; name: string }) => void;
   onOpenFieldManual?: () => void;
+  onOpenFeedback?: () => void;
 }
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -76,6 +77,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onOpenSyncModal,
   onOpenPluginAuth,
   onOpenFieldManual,
+  onOpenFeedback,
 }) => {
   const { theme, soundEnabled, setSoundEnabled, playBeep } = useTheme();
   const [pingStatus, setPingStatus] = useState<{
@@ -591,6 +593,20 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             <span>Recharge Battery</span>
           </button>
         </div>
+
+        {onOpenFeedback && (
+          <button
+            type="button"
+            onClick={() => {
+              onClose();
+              onOpenFeedback();
+            }}
+            className="w-full min-h-[40px] px-3 py-2 rounded-xl bg-[#061806] hover:bg-[#0a240a] border border-[#00ff66]/50 text-xs font-mono font-semibold text-[#00ff66] flex items-center justify-center gap-2 cursor-pointer transition-colors shadow-[0_0_15px_rgba(0,255,102,0.15)]"
+          >
+            <span>📡</span>
+            <span>Open Feedback Terminal (support@pixelops.app)</span>
+          </button>
+        )}
 
         <button
           type="button"

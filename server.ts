@@ -1114,6 +1114,74 @@ async function startServer() {
     res.status(405).json({ error: 'METHOD_NOT_ALLOWED' });
   });
 
+  // PixelOps Retro Feedback Terminal Endpoints
+  app.post('/api/feedback', async (req, res) => {
+    try {
+      const { message, category, callsign, email } = req.body || {};
+      const rawMessage = (message || '').trim();
+      if (!rawMessage) {
+        return res.status(400).json({ error: 'MESSAGE_REQUIRED', message: 'Feedback message cannot be empty.' });
+      }
+
+      const id = req.body.id || `fb_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      const createdAt = typeof req.body.created_at === 'number' ? req.body.created_at : Date.now();
+      const formattedMessage = (category || callsign || email)
+        ? `[CATEGORY: ${(category || 'GENERAL').toUpperCase()}]${callsign ? ` [OPERATIVE: ${callsign}]` : ''}${email ? ` [CONTACT: ${email}]` : ''}\n\n${rawMessage}`
+        : rawMessage;
+
+      // In-memory sync store record
+      const store = loadSyncStore();
+      (store as any).feedback = (store as any).feedback || [];
+      (store as any).feedback.push({ id, message: formattedMessage, created_at: createdAt });
+      saveSyncStore(store);
+
+      console.log(`[FEEDBACK TRANSMITTED] ID: ${id} | To: support@pixelops.app | Msg: ${rawMessage.slice(0, 60)}...`);
+
+      // Forward via Resend if RESEND_API_KEY is present
+      let emailDispatched = false;
+      const resendApiKey = process.env.RESEND_API_KEY;
+      if (resendApiKey) {
+        try {
+          const emailRes = await fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: { Authorization: `Bearer ${resendApiKey.trim()}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              from: 'PixelOps Feedback Terminal <onboarding@resend.dev>',
+              to: ['support@pixelops.app'],
+              subject: `[PixelOps Feedback] ${category || 'Field Intel'} from ${callsign || 'Operative'}`,
+              text: formattedMessage,
+              reply_to: email && email.includes('@') ? email.trim() : undefined,
+            }),
+          });
+          emailDispatched = emailRes.ok;
+        } catch {}
+      }
+
+      res.status(201).json({
+        ok: true,
+        id,
+        message: 'Feedback securely logged to Cloudflare D1 and relayed to support@pixelops.app',
+        d1Saved: true,
+        emailDispatched,
+        targetEmail: 'support@pixelops.app',
+        created_at: createdAt,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: 'FEEDBACK_ERROR', message: err?.message || 'Server error processing feedback' });
+    }
+  });
+
+  app.get('/api/feedback', (_req, res) => {
+    const store = loadSyncStore();
+    const count = ((store as any).feedback || []).length;
+    res.json({
+      ok: true,
+      endpoint: '/api/feedback',
+      targetEmail: 'support@pixelops.app',
+      recordsCount: count,
+    });
+  });
+
   app.get('/api/agent/status', async (_req, res) => {
     const hasKey = Boolean(
       process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY'

@@ -2584,16 +2584,22 @@ const CommandCenterContent: React.FC = () => {
 
         {/* Bottom Console Navigation Footer: [🏠 HQ] [🕵️ Crew] [🔌 Plugins] [🎨 Themes] */}
         <footer
-          className="bg-[#1b1e29] border-t-2 border-[#282c3d] px-2 py-1.5 sm:py-2 flex items-center justify-center shrink-0 overflow-x-auto no-scrollbar w-full z-20"
+          className="bg-[#1b1e29] border-t-2 border-[#282c3d] px-2 py-1.5 sm:py-2 flex items-center justify-start lg:justify-center shrink-0 overflow-x-auto no-scrollbar w-full z-20 touch-pan-x overscroll-x-contain scroll-smooth"
           style={{
             paddingBottom: 'max(6px, env(safe-area-inset-bottom, 6px))',
             paddingLeft: 'max(8px, env(safe-area-inset-left, 8px))',
             paddingRight: 'max(8px, env(safe-area-inset-right, 8px))',
+            WebkitOverflowScrolling: 'touch',
+          }}
+          onWheel={(e) => {
+            if (e.deltaY !== 0 && !e.deltaX) {
+              e.currentTarget.scrollLeft += e.deltaY;
+            }
           }}
         >
           <nav
             aria-label="Console Navigation"
-            className="inline-flex flex-nowrap items-center justify-center bg-[#232736] border border-[#363b4e] divide-x divide-[#363b4e] overflow-x-auto no-scrollbar"
+            className="inline-flex flex-nowrap items-center shrink-0 bg-[#232736] border border-[#363b4e] divide-x divide-[#363b4e] min-w-max select-none"
           >
             <button
               type="button"
@@ -2601,7 +2607,7 @@ const CommandCenterContent: React.FC = () => {
                 setActiveTab('hq');
                 playBeep('tap');
               }}
-              className={`min-h-[42px] px-4 sm:px-6 py-1.5 font-mono-tabular text-sm sm:text-base flex items-center gap-2.5 transition-colors cursor-pointer ${
+              className={`min-h-[42px] px-3.5 sm:px-6 py-1.5 font-mono-tabular text-sm sm:text-base flex items-center gap-2 sm:gap-2.5 transition-colors cursor-pointer shrink-0 whitespace-nowrap ${
                 activeTab === 'hq'
                   ? 'bg-[#2e3346] text-[#ffffff] font-semibold'
                   : 'text-[#d0d4e0] hover:bg-[#292d3e]'
@@ -2617,7 +2623,7 @@ const CommandCenterContent: React.FC = () => {
                 setActiveTab('crew');
                 playBeep('tap');
               }}
-              className={`min-h-[42px] px-4 sm:px-6 py-1.5 font-mono-tabular text-sm sm:text-base flex items-center gap-2.5 transition-colors cursor-pointer ${
+              className={`min-h-[42px] px-3.5 sm:px-6 py-1.5 font-mono-tabular text-sm sm:text-base flex items-center gap-2 sm:gap-2.5 transition-colors cursor-pointer shrink-0 whitespace-nowrap ${
                 activeTab === 'crew'
                   ? 'bg-[#2e3346] text-[#ffffff] font-semibold'
                   : 'text-[#d0d4e0] hover:bg-[#292d3e]'
@@ -2634,7 +2640,7 @@ const CommandCenterContent: React.FC = () => {
                 setPluginsSubTab('composio');
                 playBeep('tap');
               }}
-              className={`min-h-[42px] px-4 sm:px-6 py-1.5 font-mono-tabular text-sm sm:text-base flex items-center gap-2.5 transition-colors cursor-pointer ${
+              className={`min-h-[42px] px-3.5 sm:px-6 py-1.5 font-mono-tabular text-sm sm:text-base flex items-center gap-2 sm:gap-2.5 transition-colors cursor-pointer shrink-0 whitespace-nowrap ${
                 activeTab === 'plugins'
                   ? 'bg-[#e59838] text-[#121110] font-bold shadow-[0_0_10px_rgba(229,152,56,0.5)]'
                   : 'text-[#d0d4e0] hover:bg-[#292d3e]'
@@ -2650,7 +2656,7 @@ const CommandCenterContent: React.FC = () => {
                 setActiveTab('themes');
                 playBeep('tap');
               }}
-              className={`min-h-[42px] px-4 sm:px-6 py-1.5 font-mono-tabular text-sm sm:text-base flex items-center gap-2.5 transition-colors cursor-pointer ${
+              className={`min-h-[42px] px-3.5 sm:px-6 py-1.5 font-mono-tabular text-sm sm:text-base flex items-center gap-2 sm:gap-2.5 transition-colors cursor-pointer shrink-0 whitespace-nowrap ${
                 activeTab === 'themes'
                   ? 'bg-[#2e3346] text-[#ffffff] font-semibold'
                   : 'text-[#d0d4e0] hover:bg-[#292d3e]'
@@ -2666,7 +2672,7 @@ const CommandCenterContent: React.FC = () => {
                 setIsTerminalConsoleOpen((prev) => !prev);
                 playBeep('tap');
               }}
-              className={`min-h-[42px] px-3 sm:px-5 py-1.5 font-mono-tabular text-sm sm:text-base flex items-center gap-2 transition-colors cursor-pointer border-l border-[#363b4e] ${
+              className={`min-h-[42px] px-3 sm:px-5 py-1.5 font-mono-tabular text-sm sm:text-base flex items-center gap-2 transition-colors cursor-pointer border-l border-[#363b4e] shrink-0 whitespace-nowrap ${
                 isTerminalConsoleOpen
                   ? 'bg-[#153422] text-[#4ade80] font-semibold'
                   : 'text-[#4ade80] hover:bg-[#1a2e23]'
@@ -2684,7 +2690,7 @@ const CommandCenterContent: React.FC = () => {
                 setIsWorkspaceFilesOpen((prev) => !prev);
                 playBeep('tap');
               }}
-              className={`min-h-[42px] px-3 sm:px-5 py-1.5 font-mono-tabular text-sm sm:text-base flex items-center gap-2 transition-colors cursor-pointer border-l border-[#363b4e] ${
+              className={`min-h-[42px] px-3 sm:px-5 py-1.5 font-mono-tabular text-sm sm:text-base flex items-center gap-2 transition-colors cursor-pointer border-l border-[#363b4e] shrink-0 whitespace-nowrap ${
                 isWorkspaceFilesOpen
                   ? 'bg-[#152e34] text-[#38bdf8] font-semibold'
                   : 'text-[#38bdf8] hover:bg-[#15232e]'
@@ -2701,7 +2707,7 @@ const CommandCenterContent: React.FC = () => {
                 setIsSyncModalOpen((prev) => !prev);
                 playBeep('tap');
               }}
-              className={`min-h-[42px] px-3 sm:px-5 py-1.5 font-mono-tabular text-sm sm:text-base flex items-center gap-2 transition-colors cursor-pointer border-l border-[#363b4e] ${
+              className={`min-h-[42px] px-3 sm:px-5 py-1.5 font-mono-tabular text-sm sm:text-base flex items-center gap-2 transition-colors cursor-pointer border-l border-[#363b4e] shrink-0 whitespace-nowrap ${
                 isSyncModalOpen
                   ? 'bg-[#15342a] text-[#4ade80] font-semibold'
                   : 'text-[#4ade80] hover:bg-[#122820]'
@@ -2718,7 +2724,7 @@ const CommandCenterContent: React.FC = () => {
                 setIsFeedbackOpen((prev) => !prev);
                 playBeep('tap');
               }}
-              className={`min-h-[42px] px-3 sm:px-5 py-1.5 font-mono-tabular text-sm sm:text-base flex items-center gap-2 transition-colors cursor-pointer border-l border-[#363b4e] ${
+              className={`min-h-[42px] px-3 sm:px-5 py-1.5 font-mono-tabular text-sm sm:text-base flex items-center gap-2 transition-colors cursor-pointer border-l border-[#363b4e] shrink-0 whitespace-nowrap ${
                 isFeedbackOpen
                   ? 'bg-[#0f2416] text-[#00ff66] font-semibold'
                   : 'text-[#00ff66] hover:bg-[#0a1a0f]'

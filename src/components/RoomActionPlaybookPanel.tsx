@@ -1,20 +1,55 @@
 /**
  * RoomActionPlaybookPanel.tsx
  * 
- * PixelOps Intelligence Suite: Classified Safehouse Room Action Panel
- * Mounts directly into the active room HUD or bottom tray to provide zero-prompt,
- * one-click multi-step mission execution.
+ * PixelOps 3-Pillar Room-Scoped Action Deck
+ * Unifies:
+ * - Pillar 1: Pocket Recon & Watchtower (COMMS TOWER & BASEMENT)
+ * - Pillar 2: 1-Click Cross-App Operator (WAR ROOM & SERVER VAULT)
+ * - Pillar 3: Operative Progression & Loadout Deck (LOUNGE & ARMORY)
+ * 
+ * Scoped by active Safehouse Room, fast, mobile-friendly, and 100% user-agnostic.
  */
 
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { RoomId } from '../engine/roomData';
 import {
-  getPlaybookForRoom,
+  getPlaybooksForRoom,
   IntelligencePlaybookDef,
   loadUserPlaybookTargets,
 } from '../engine/intelligencePlaybooks';
-import { Play, Sparkles, Shield, Radar, BarChart2, Target } from 'lucide-react';
+import {
+  useCrew,
+  CLEARANCE_RANKS,
+  SERVICE_RIBBONS,
+  ServiceRibbonId,
+  ClearanceLevelNumber,
+  CrewAgentState,
+} from '../context/CrewContext';
 import { useTheme } from '../context/ThemeContext';
+import {
+  getLocalConnectedAccounts,
+  subscribeToConnectionChanges,
+  ComposioConnectedAccount,
+} from '../services/ComposioService';
+import {
+  Play,
+  Target,
+  Sparkles,
+  Shield,
+  Radar,
+  Radio,
+  Mail,
+  Calendar,
+  GitBranch,
+  FolderArchive,
+  Award,
+  Download,
+  Check,
+  Copy,
+  ChevronRight,
+  ExternalLink,
+  Zap,
+} from 'lucide-react';
 
 interface RoomActionPlaybookPanelProps {
   currentRoom: RoomId;
@@ -22,6 +57,8 @@ interface RoomActionPlaybookPanelProps {
   isExecuting?: boolean;
   className?: string;
   variant?: 'floating' | 'banner' | 'pill';
+  onOpenVfs?: (targetPath?: string) => void;
+  onExportDossier?: () => void;
 }
 
 export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = ({
@@ -30,102 +67,500 @@ export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = (
   isExecuting = false,
   className = '',
   variant = 'floating',
+  onOpenVfs,
+  onExportDossier,
 }) => {
-  const { playBeep } = useTheme();
-  const playbook = getPlaybookForRoom(currentRoom);
+  const { playBeep, activeAgent } = useTheme();
+  const { crewAgents, getCrewAgent } = useCrew();
+  const activeCrewAgent = getCrewAgent(activeAgent?.id || '') || crewAgents[0];
 
-  if (!playbook) return null;
+  const [connectedAccounts, setConnectedAccounts] = useState<ComposioConnectedAccount[]>(() =>
+    getLocalConnectedAccounts()
+  );
+  const [copiedDossier, setCopiedDossier] = useState(false);
 
+  // Sync connected accounts live
+  useEffect(() => {
+    const unsubscribe = subscribeToConnectionChanges((accounts) => {
+      setConnectedAccounts(accounts);
+    });
+    return () => unsubscribe();
+  }, []);
+
+  const playbooks = getPlaybooksForRoom(currentRoom);
   const storedTargets = loadUserPlaybookTargets();
-  const activeTarget = storedTargets[playbook.id]?.targetName || 'General Target';
 
-  const handleClick = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    playBeep('tap');
-    onExecutePlaybook(playbook);
+  // Helper to test if a Composio app is active
+  const isAppConnected = (appName: string): boolean => {
+    const slug = appName.toLowerCase().replace(/[^a-z0-9]/g, '');
+    return connectedAccounts.some((acc) => {
+      const accSlug = (acc.appName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      return (
+        accSlug === slug &&
+        (acc.status?.toUpperCase() === 'ACTIVE' ||
+          acc.status?.toUpperCase() === 'CONNECTED' ||
+          acc.status?.toUpperCase() === 'INITIATED')
+      );
+    });
   };
 
-  // Variant: Top-Right Floating Tactical HUD over the Room Viewport
-  if (variant === 'floating') {
+  // Helper to generate Operative Dossier Card Markdown
+  const handleExportDossierCard = (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    playBeep('tap');
+
+    const dateStr = new Date().toISOString().split('T')[0];
+    const dossierMarkdown = [
+      `# 🪪 PIXELOPS SQUAD OPERATIVE DOSSIER`,
+      `**Transmission Date:** ${dateStr}`,
+      `**Classification:** TOP SECRET // PIXELOPS NETWORK`,
+      `**Safehouse Sector:** ${currentRoom.toUpperCase()}`,
+      ``,
+      `---`,
+      ``,
+      `## 🎖️ COMMAND SQUAD RECON MATRIX`,
+      ``,
+      ...crewAgents.map((ag: CrewAgentState) => {
+        const lvl = (ag.clearanceLevel || 1) as ClearanceLevelNumber;
+        const rank = CLEARANCE_RANKS[lvl];
+        const ribbonsList = (ag.serviceRibbons || [])
+          .map((ribbonId: string) => {
+            const def = SERVICE_RIBBONS[ribbonId as ServiceRibbonId];
+            return def ? `${def.icon} ${def.title}` : ribbonId;
+          })
+          .join(', ');
+
+        const displayName = ag.customName || ag.defaultName;
+        return [
+          `### ${displayName} (${ag.role})`,
+          `- **Clearance Rank:** ${rank.title}`,
+          `- **Rank Tier:** ${rank.badge}`,
+          `- **XP Accumulation:** ${ag.xp || 0} XP`,
+          `- **Missions Completed:** ${ag.missionsCompleted || 0}`,
+          `- **Active Service Ribbons:** ${ribbonsList || 'None in active service record'}`,
+          `- **Unlocked Theme:** ${rank.unlockedThemePreset}`,
+          `- **Unlocked Sprites:** ${rank.unlockedVariants.join(', ')}`,
+          ``,
+        ].join('\n');
+      }),
+      `---`,
+      `*Exported from PixelOps Command Center · Autonomous Intelligence & Tactical Recon*`,
+    ].join('\n');
+
+    // Copy to clipboard
+    navigator.clipboard.writeText(dossierMarkdown);
+    setCopiedDossier(true);
+    setTimeout(() => setCopiedDossier(false), 2500);
+
+    // Also download file
+    try {
+      const blob = new Blob([dossierMarkdown], { type: 'text/markdown;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `pixelops_operative_dossier_${dateStr}.md`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      // Clipboard fallback already succeeded
+    }
+
+    if (onExportDossier) {
+      onExportDossier();
+    }
+  };
+
+  // ==========================================
+  // PILL VARIANT (Minimal Header / Status Bar)
+  // ==========================================
+  if (variant === 'pill') {
+    // Lounge or Armory: Show Clearance Rank Badge
+    if (currentRoom === 'briefing_lounge' || currentRoom === 'armory') {
+      const activeLvl = (activeCrewAgent?.clearanceLevel || 1) as ClearanceLevelNumber;
+      const rank = CLEARANCE_RANKS[activeLvl];
+      return (
+        <button
+          type="button"
+          onClick={handleExportDossierCard}
+          className={`px-2 py-0.5 font-bold text-[10px] sm:text-[11px] border transition-all cursor-pointer flex items-center gap-1.5 active:scale-95 whitespace-nowrap bg-[#1a2333] hover:bg-[#25354e] text-[#fcd34d] border-[#f59e0b]/60 ${className}`}
+          title="Click to export Operative Dossier Card"
+        >
+          <Award className="w-3 h-3 text-[#fbbf24]" />
+          <span>{rank.badge}</span>
+          <span className="hidden sm:inline font-mono text-[9px] text-[#cbd5e1]">
+            [{activeCrewAgent?.xp || 0} XP]
+          </span>
+        </button>
+      );
+    }
+
+    // Comms Tower or Basement: Recon Pill
+    if (currentRoom === 'comms_tower' || currentRoom === 'archive_basement') {
+      const primary = playbooks[0];
+      if (!primary) return null;
+      return (
+        <button
+          type="button"
+          onClick={() => {
+            playBeep('tap');
+            onExecutePlaybook(primary);
+          }}
+          disabled={isExecuting}
+          className={`px-2 py-0.5 font-bold text-[10px] sm:text-[11px] border transition-all cursor-pointer flex items-center gap-1.5 active:scale-95 whitespace-nowrap bg-[#11241a] hover:bg-[#193d2a] text-[#4ade80] border-[#16a34a] ${className}`}
+          title={`Deploy ${primary.title} with ${primary.assignedOperativeName}`}
+        >
+          <Radar className="w-3 h-3" />
+          <span>[📡 WIRE-TAP]</span>
+        </button>
+      );
+    }
+
+    // War Room or Server Vault: Tactical Pill
+    if (currentRoom === 'war_room' || currentRoom === 'server_vault') {
+      const primary = playbooks[0];
+      if (!primary) return null;
+      const gmailOk = isAppConnected('gmail');
+      return (
+        <button
+          type="button"
+          onClick={() => {
+            playBeep('tap');
+            onExecutePlaybook(primary);
+          }}
+          disabled={isExecuting}
+          className={`px-2 py-0.5 font-bold text-[10px] sm:text-[11px] border transition-all cursor-pointer flex items-center gap-1.5 active:scale-95 whitespace-nowrap bg-[#291e10] hover:bg-[#3d2b15] text-[#fbbf24] border-[#f59e0b] ${className}`}
+          title={`Deploy ${primary.title} with ${primary.assignedOperativeName}`}
+        >
+          <Zap className="w-3 h-3 text-[#f59e0b]" />
+          <span>[⚡ TRIAGE GMAIL]</span>
+          <span
+            className={`w-1.5 h-1.5 rounded-full ${
+              gmailOk ? 'bg-[#4ade80]' : 'bg-[#f59e0b]'
+            }`}
+          />
+        </button>
+      );
+    }
+
+    return null;
+  }
+
+  // ==========================================
+  // FLOATING HUD VARIANT (Sector Specific Decks)
+  // ==========================================
+
+  // --- PILLAR 1: Pocket Recon & Watchtower (COMMS TOWER & BASEMENT) ---
+  if (currentRoom === 'comms_tower' || currentRoom === 'archive_basement') {
     return (
       <div
         className={`absolute top-2 right-2 sm:right-3 z-30 pointer-events-auto font-mono-tabular ${className}`}
       >
-        <div className="bg-[#0b1017]/92 border border-[#e59838] shadow-[0_0_20px_rgba(229,152,56,0.35)] p-2 sm:p-2.5 backdrop-blur-md flex flex-col gap-1.5 max-w-[280px] sm:max-w-[320px]">
-          <div className="flex items-center justify-between gap-2 border-b border-[#2d3a4c] pb-1">
+        <div className="bg-[#0b1017]/95 border border-[#38bdf8] shadow-[0_0_20px_rgba(56,189,248,0.3)] p-2 sm:p-2.5 backdrop-blur-md flex flex-col gap-1.5 max-w-[280px] sm:max-w-[320px]">
+          {/* Deck Header */}
+          <div className="flex items-center justify-between gap-2 border-b border-[#1e344e] pb-1">
             <span className="text-[10px] text-[#94a3b8] uppercase font-bold tracking-wider flex items-center gap-1">
-              <span>OSINT INTEL PLAYBOOK</span>
-              <span className="text-[#38bdf8]">[{playbook.roomBadge}]</span>
+              <Radar className="w-3 h-3 text-[#38bdf8]" />
+              <span>WATCHTOWER RECON DECK</span>
             </span>
-            <span className="text-[9px] px-1 bg-[#1a2938] text-[#4ade80] border border-[#4ade80]/40 font-bold">
-              1-CLICK
+            <span className="text-[9px] px-1 bg-[#102236] text-[#38bdf8] border border-[#38bdf8]/40 font-bold">
+              {currentRoom === 'archive_basement' ? 'BASEMENT' : 'COMMS'}
             </span>
           </div>
 
-          <div>
-            <div className="text-xs font-bold text-[#f3ead8] flex items-center gap-1.5">
-              <span>{playbook.icon}</span>
-              <span className="truncate">{playbook.shortTitle}</span>
+          <div className="text-[10px] text-[#cbd5e1] leading-tight">
+            Deploy automated OSINT sweeps & continuous watchtower surveillance:
+          </div>
+
+          {/* 3 Universal 1-Tap Mission Buttons */}
+          <div className="flex flex-col gap-1.5 pt-0.5">
+            {playbooks.map((pb) => {
+              const target = storedTargets[pb.id]?.targetName || 'Default Target';
+              return (
+                <button
+                  key={pb.id}
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    playBeep('tap');
+                    onExecutePlaybook(pb);
+                  }}
+                  disabled={isExecuting}
+                  className="w-full text-left p-1.5 bg-[#121c29] hover:bg-[#1a293d] border border-[#233852] hover:border-[#38bdf8] transition-all cursor-pointer flex items-center justify-between gap-1.5 group disabled:opacity-50"
+                >
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-bold text-[#f3ead8] flex items-center gap-1.5 truncate group-hover:text-[#38bdf8]">
+                      <span>{pb.icon}</span>
+                      <span className="truncate">{pb.shortTitle}</span>
+                    </div>
+                    <div className="text-[9px] text-[#94a3b8] truncate mt-0.5 flex items-center gap-1">
+                      <span>{pb.assignedOperativeName}</span>
+                      <span>·</span>
+                      <span className="text-[#fbbf24] truncate">[{target}]</span>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-3.5 h-3.5 text-[#64748b] group-hover:text-[#38bdf8] shrink-0" />
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Basement VFS Files Link */}
+          {currentRoom === 'archive_basement' && onOpenVfs && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                playBeep('tap');
+                onOpenVfs('intel/');
+              }}
+              className="mt-1 py-1 px-2 bg-[#142333] hover:bg-[#1b324a] text-[#38bdf8] border border-[#38bdf8]/50 text-[10px] font-bold cursor-pointer transition-colors flex items-center justify-center gap-1"
+            >
+              <FolderArchive className="w-3 h-3" />
+              <span>[📂 OPEN BASEMENT VFS FILES]</span>
+            </button>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  // --- PILLAR 2: 1-Click Cross-App Operator (WAR ROOM & SERVER VAULT) ---
+  if (currentRoom === 'war_room' || currentRoom === 'server_vault') {
+    const gmailConnected = isAppConnected('gmail');
+    const calendarConnected = isAppConnected('googlecalendar') || isAppConnected('calendar');
+    const githubConnected = isAppConnected('github');
+
+    return (
+      <div
+        className={`absolute top-2 right-2 sm:right-3 z-30 pointer-events-auto font-mono-tabular ${className}`}
+      >
+        <div className="bg-[#0b1017]/95 border border-[#e59838] shadow-[0_0_20px_rgba(229,152,56,0.35)] p-2 sm:p-2.5 backdrop-blur-md flex flex-col gap-1.5 max-w-[280px] sm:max-w-[320px]">
+          {/* Deck Header */}
+          <div className="flex items-center justify-between gap-2 border-b border-[#3b2d18] pb-1">
+            <span className="text-[10px] text-[#94a3b8] uppercase font-bold tracking-wider flex items-center gap-1">
+              <Zap className="w-3 h-3 text-[#e59838]" />
+              <span>TACTICAL OPERATOR DECK</span>
+            </span>
+            <span className="text-[9px] px-1 bg-[#261d10] text-[#e59838] border border-[#e59838]/40 font-bold">
+              {currentRoom === 'war_room' ? 'WAR ROOM' : 'VAULT'}
+            </span>
+          </div>
+
+          <div className="text-[10px] text-[#cbd5e1] leading-tight">
+            1-Click automations connected to your personal apps via Composio:
+          </div>
+
+          {/* 3 Cross-App Playbook Buttons with Connection Dots */}
+          <div className="flex flex-col gap-1.5 pt-0.5">
+            {playbooks.map((pb) => {
+              const target = storedTargets[pb.id]?.targetName || 'Default Target';
+              let isConnected = false;
+              let appBadge = 'APP';
+
+              if (pb.id === 'triage_gmail') {
+                isConnected = gmailConnected;
+                appBadge = 'GMAIL';
+              } else if (pb.id === 'calendar_brief') {
+                isConnected = calendarConnected;
+                appBadge = 'GCAL';
+              } else if (pb.id === 'sync_github') {
+                isConnected = githubConnected;
+                appBadge = 'GITHUB';
+              }
+
+              return (
+                <button
+                  key={pb.id}
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    playBeep('tap');
+                    onExecutePlaybook(pb);
+                  }}
+                  disabled={isExecuting}
+                  className="w-full text-left p-1.5 bg-[#17140f] hover:bg-[#261e14] border border-[#3d2e1b] hover:border-[#e59838] transition-all cursor-pointer flex items-center justify-between gap-1.5 group disabled:opacity-50"
+                >
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-bold text-[#f3ead8] flex items-center gap-1.5 truncate group-hover:text-[#e59838]">
+                      <span>{pb.icon}</span>
+                      <span className="truncate">{pb.shortTitle}</span>
+                    </div>
+                    <div className="text-[9px] text-[#94a3b8] truncate mt-0.5 flex items-center gap-1">
+                      <span>{pb.assignedOperativeName}</span>
+                      <span>·</span>
+                      <span className="text-[#fbbf24] truncate">[{target}]</span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span
+                      className={`text-[8px] font-bold px-1 py-0.2 border flex items-center gap-1 ${
+                        isConnected
+                          ? 'bg-[#102919] text-[#4ade80] border-[#22c55e]/40'
+                          : 'bg-[#2b1f11] text-[#fbbf24] border-[#f59e0b]/40'
+                      }`}
+                    >
+                      <span
+                        className={`w-1 h-1 rounded-full ${
+                          isConnected ? 'bg-[#4ade80]' : 'bg-[#fbbf24]'
+                        }`}
+                      />
+                      <span>{appBadge}</span>
+                    </span>
+                    <ChevronRight className="w-3.5 h-3.5 text-[#64748b] group-hover:text-[#e59838]" />
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // --- PILLAR 3: Operative Progression & Loadout Deck (LOUNGE & ARMORY) ---
+  if (currentRoom === 'briefing_lounge' || currentRoom === 'armory') {
+    const agent = activeCrewAgent;
+    const clearanceLvl = (agent?.clearanceLevel || 1) as ClearanceLevelNumber;
+    const clearance = CLEARANCE_RANKS[clearanceLvl];
+    const xp = agent?.xp || 0;
+    const minXp = clearance.minXp;
+    const maxXp = clearance.maxXp;
+    const nextTargetXp = maxXp === Infinity ? 500 : maxXp;
+    const progressPct =
+      maxXp === Infinity
+        ? 100
+        : Math.min(100, Math.max(0, Math.round(((xp - minXp) / (maxXp - minXp)) * 100)));
+
+    const activeRibbons = (agent?.serviceRibbons || []) as ServiceRibbonId[];
+    const agentDisplayName = agent?.customName || agent?.defaultName || 'Operative';
+
+    return (
+      <div
+        className={`absolute top-2 right-2 sm:right-3 z-30 pointer-events-auto font-mono-tabular ${className}`}
+      >
+        <div className="bg-[#0c1017]/95 border border-[#a855f7] shadow-[0_0_20px_rgba(168,85,247,0.35)] p-2 sm:p-2.5 backdrop-blur-md flex flex-col gap-1.5 max-w-[280px] sm:max-w-[320px]">
+          {/* Deck Header */}
+          <div className="flex items-center justify-between gap-2 border-b border-[#341d4e] pb-1">
+            <span className="text-[10px] text-[#94a3b8] uppercase font-bold tracking-wider flex items-center gap-1">
+              <Award className="w-3 h-3 text-[#c084fc]" />
+              <span>OPERATIVE PROGRESSION & LOADOUT</span>
+            </span>
+            <span className="text-[9px] px-1 bg-[#251336] text-[#c084fc] border border-[#a855f7]/40 font-bold">
+              {currentRoom === 'armory' ? 'ARMORY' : 'LOUNGE'}
+            </span>
+          </div>
+
+          {/* Active Agent Profile Card */}
+          <div className="p-1.5 bg-[#141221] border border-[#2b1f40] flex flex-col gap-1">
+            <div className="flex items-center justify-between">
+              <div className="text-[11px] font-bold text-[#f3ead8] flex items-center gap-1.5">
+                <span className="text-sm">🪪</span>
+                <span>{agentDisplayName}</span>
+                <span className="text-[9px] text-[#94a3b8]">({agent?.role})</span>
+              </div>
+              <span
+                className="text-[9px] font-bold px-1.5 py-0.2 border"
+                style={{
+                  color: clearance.terminalRGB,
+                  borderColor: `${clearance.terminalRGB}66`,
+                  backgroundColor: `${clearance.terminalRGB}15`,
+                }}
+              >
+                {clearance.badge}
+              </span>
             </div>
-            <div className="text-[10px] text-[#94a3b8] mt-0.5">
-              Operative: <strong className="text-[#4ade80]">{playbook.assignedOperativeName}</strong> ({playbook.assignedOperativeRole})
+
+            <div className="text-[10px] font-semibold" style={{ color: clearance.terminalRGB }}>
+              {clearance.title}
+            </div>
+
+            {/* XP Progress Bar */}
+            <div className="mt-1">
+              <div className="flex items-center justify-between text-[9px] text-[#94a3b8] mb-0.5">
+                <span>CLEARANCE XP</span>
+                <span className="font-bold text-[#f3ead8]">
+                  {xp} / {nextTargetXp} XP ({progressPct}%)
+                </span>
+              </div>
+              <div className="w-full h-1.5 bg-[#1f192b] overflow-hidden border border-[#3d2956]">
+                <div
+                  className="h-full transition-all duration-500"
+                  style={{
+                    width: `${progressPct}%`,
+                    backgroundColor: clearance.terminalRGB,
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Missions Completed Counter */}
+            <div className="text-[9px] text-[#94a3b8] flex items-center justify-between pt-0.5">
+              <span>Missions Verified:</span>
+              <strong className="text-[#4ade80]">{agent?.missionsCompleted || 0} completed</strong>
             </div>
           </div>
 
-          {/* User Target Directive Badge */}
-          <div className="text-[10px] text-[#cbd5e1] truncate bg-[#101722] px-1.5 py-0.5 border border-[#23354d] flex items-center justify-between gap-1">
-            <span className="text-[#94a3b8] uppercase font-bold text-[9px] flex items-center gap-1">
-              <Target className="w-2.5 h-2.5 text-[#38bdf8]" /> Target:
+          {/* Service Ribbons Bar */}
+          <div className="p-1.5 bg-[#0f1420] border border-[#1e273a] flex flex-col gap-1">
+            <div className="text-[9px] uppercase font-bold text-[#94a3b8] flex items-center justify-between">
+              <span>EARNED SERVICE RIBBONS</span>
+              <span className="text-[#38bdf8]">{activeRibbons.length}/4</span>
+            </div>
+            <div className="grid grid-cols-2 gap-1">
+              {Object.entries(SERVICE_RIBBONS).map(([key, def]) => {
+                const isEarned = activeRibbons.includes(key as ServiceRibbonId);
+                return (
+                  <div
+                    key={key}
+                    className={`p-1 border text-[9px] flex items-center gap-1 truncate ${
+                      isEarned
+                        ? 'bg-[#122319] text-[#4ade80] border-[#22c55e]/50 font-bold'
+                        : 'bg-[#10141c] text-[#475569] border-[#1e293b] opacity-60'
+                    }`}
+                    title={isEarned ? `${def.title}: ${def.description}` : `Locked: ${def.description}`}
+                  >
+                    <span>{def.icon}</span>
+                    <span className="truncate">{def.title}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Unlockable Cosmetic Loadout Preview */}
+          <div className="p-1.5 bg-[#12141c] border border-[#212738] text-[9px] text-[#94a3b8]">
+            <span className="text-[#c084fc] font-bold">CLEARANCE UNLOCK: </span>
+            <span className="text-[#cbd5e1]">
+              Preset: {clearance.unlockedThemePreset} · Sprites: {clearance.unlockedVariants.join(', ')}
             </span>
-            <span className="text-[#fbbf24] font-semibold truncate max-w-[190px]">{activeTarget}</span>
           </div>
 
-          {/* Pipeline stages pill chain */}
-          <div className="flex items-center gap-1 text-[8px] sm:text-[9px] text-[#cbd5e1] overflow-x-auto py-0.5">
-            <span className="px-1 py-0.2 bg-[#172333] border border-[#23354d]">Recon</span>
-            <span className="text-[#64748b]">&rarr;</span>
-            <span className="px-1 py-0.2 bg-[#172333] border border-[#23354d]">Filter</span>
-            <span className="text-[#64748b]">&rarr;</span>
-            <span className="px-1 py-0.2 bg-[#172333] border border-[#23354d]">Format</span>
-            <span className="text-[#64748b]">&rarr;</span>
-            <span className="px-1 py-0.2 bg-[#1b2f23] text-[#4ade80] border border-[#4ade80]/40">VFS</span>
-          </div>
-
+          {/* Export Dossier Card Button */}
           <button
             type="button"
-            onClick={handleClick}
-            disabled={isExecuting}
-            className="w-full py-1.5 px-2 bg-[#e59838] text-[#121110] font-bold text-[11px] border border-[#e59838] hover:bg-[#d48828] active:translate-y-0.5 cursor-pointer transition-all flex items-center justify-center gap-1.5 shadow-[0_0_10px_rgba(229,152,56,0.3)] disabled:opacity-50"
-            title={`Trigger ${playbook.shortTitle} with ${playbook.assignedOperativeName} targeting ${activeTarget}`}
+            onClick={handleExportDossierCard}
+            className="w-full py-1.5 px-2 bg-[#a855f7] text-[#0d0914] font-bold text-[11px] border border-[#a855f7] hover:bg-[#9333ea] active:translate-y-0.5 cursor-pointer transition-all flex items-center justify-center gap-1.5 shadow-[0_0_12px_rgba(168,85,247,0.35)]"
+            title="Export shareable Operative Dossier Card to clipboard and file"
           >
-            <Play className="w-3 h-3 fill-current" />
-            <span>{playbook.title}</span>
+            {copiedDossier ? (
+              <>
+                <Check className="w-3.5 h-3.5 text-[#0d0914]" />
+                <span>DOSSIER CARD COPIED & DOWNLOADED!</span>
+              </>
+            ) : (
+              <>
+                <Copy className="w-3 h-3 fill-current" />
+                <span>[🪪 EXPORT OPERATIVE DOSSIER CARD]</span>
+              </>
+            )}
           </button>
         </div>
       </div>
     );
   }
 
-  // Variant: Sleek Inline Pill Button for Room Status Bar / Header
-  return (
-    <button
-      type="button"
-      onClick={handleClick}
-      disabled={isExecuting}
-      className={`px-2.5 py-0.5 font-bold text-[10px] sm:text-[11px] border transition-all cursor-pointer flex items-center gap-1.5 active:scale-95 whitespace-nowrap shadow-[0_0_10px_rgba(229,152,56,0.25)] ${
-        currentRoom === 'war_room'
-          ? 'bg-[#291e10] hover:bg-[#3d2b15] text-[#fbbf24] border-[#f59e0b]'
-          : currentRoom === 'server_vault'
-          ? 'bg-[#152336] hover:bg-[#1e3452] text-[#38bdf8] border-[#0284c7]'
-          : 'bg-[#11241a] hover:bg-[#193d2a] text-[#4ade80] border-[#16a34a]'
-      } ${className}`}
-      title={`Run ${playbook.shortTitle} on "${activeTarget}" with ${playbook.assignedOperativeName}`}
-    >
-      <span>{playbook.icon}</span>
-      <span>{playbook.title}</span>
-      <span className="opacity-75 hidden md:inline text-[9px] font-mono text-[#cbd5e1] border-l border-current/30 pl-1.5">
-        [{activeTarget}]
-      </span>
-    </button>
-  );
+  return null;
 };

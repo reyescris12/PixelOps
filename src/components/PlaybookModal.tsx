@@ -2,7 +2,7 @@
  * PlaybookModal.tsx
  * 
  * Interactive HUD Execution Modal & Classified Dossier Viewer for PixelOps
- * Open-Ended One-Click OSINT & Intelligence Playbooks.
+ * Open-Ended One-Click OSINT & Tactical Cross-App Playbooks.
  */
 
 import React, { useState, useEffect } from 'react';
@@ -25,6 +25,10 @@ import {
   Target,
   Search,
   RotateCcw,
+  Moon,
+  Zap,
+  Calendar,
+  GitBranch,
 } from 'lucide-react';
 import {
   IntelligencePlaybookDef,
@@ -34,7 +38,14 @@ import {
   loadUserPlaybookTargets,
   saveUserPlaybookTarget,
   dispatchMorningBriefingEmail,
+  scheduleWiretapInNightShift,
 } from '../engine/intelligencePlaybooks';
+import {
+  getLocalConnectedAccounts,
+  initiateAppConnection,
+  subscribeToConnectionChanges,
+  ComposioConnectedAccount,
+} from '../services/ComposioService';
 import { useTheme } from '../context/ThemeContext';
 
 interface PlaybookModalProps {
@@ -65,23 +76,43 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
   // Active Target state
   const [targetName, setTargetName] = useState('');
   const [targetScope, setTargetScope] = useState('');
+  const [watchCondition, setWatchCondition] = useState('');
   const [recipientEmail, setRecipientEmail] = useState('');
   const [isEditingTarget, setIsEditingTarget] = useState(false);
 
-  // Email dispatch state
+  // Status & action state
   const [copied, setCopied] = useState(false);
   const [isSendingEmail, setIsSendingEmail] = useState(false);
   const [emailStatus, setEmailStatus] = useState<string | null>(null);
+  const [nightShiftStatus, setNightShiftStatus] = useState<string | null>(null);
+  const [isConnectingApp, setIsConnectingApp] = useState(false);
+  const [connectedAccounts, setConnectedAccounts] = useState<ComposioConnectedAccount[]>(() =>
+    getLocalConnectedAccounts()
+  );
+
+  // Listen for live Composio account changes
+  useEffect(() => {
+    const unsub = subscribeToConnectionChanges((accounts) => {
+      setConnectedAccounts(accounts);
+    });
+    return () => unsub();
+  }, []);
 
   // Initialize target from localStorage or presets when playbook changes
   useEffect(() => {
     if (playbook) {
       const storedTargets = loadUserPlaybookTargets();
-      const current = storedTargets[playbook.id] || DEFAULT_TARGET_PRESETS[playbook.id][0];
-      setTargetName(current.targetName);
-      setTargetScope(current.targetScope);
+      const current = storedTargets[playbook.id] || DEFAULT_TARGET_PRESETS[playbook.id]?.[0] || {
+        targetName: 'Primary Target',
+        targetScope: 'Operational scope',
+      };
+      setTargetName(current.targetName || '');
+      setTargetScope(current.targetScope || '');
+      setWatchCondition(current.watchCondition || '');
       setRecipientEmail(current.recipientEmail || '');
       setEmailStatus(null);
+      setNightShiftStatus(null);
+
       // If no result yet and not currently running, default to showing the target setup
       if (!result && !isRunning) {
         setIsEditingTarget(true);
@@ -95,23 +126,85 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
 
   const presets = DEFAULT_TARGET_PRESETS[playbook.id] || [];
 
+  // Determine required Composio app for Pillar 2 playbooks
+  let requiredAppSlug: string | null = null;
+  let requiredAppName = '';
+  if (playbook.id === 'triage_gmail') {
+    requiredAppSlug = 'gmail';
+    requiredAppName = 'Google Gmail';
+  } else if (playbook.id === 'calendar_brief') {
+    requiredAppSlug = 'googlecalendar';
+    requiredAppName = 'Google Calendar';
+  } else if (playbook.id === 'sync_github') {
+    requiredAppSlug = 'github';
+    requiredAppName = 'GitHub';
+  }
+
+  const isAppConnected = requiredAppSlug
+    ? connectedAccounts.some((acc) => {
+        const slug = (acc.appName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+        const target = requiredAppSlug!.toLowerCase().replace(/[^a-z0-9]/g, '');
+        return (
+          slug === target &&
+          (acc.status?.toUpperCase() === 'ACTIVE' ||
+            acc.status?.toUpperCase() === 'CONNECTED' ||
+            acc.status?.toUpperCase() === 'INITIATED')
+        );
+      })
+    : true;
+
   const handleSelectPreset = (preset: UserPlaybookTarget) => {
     setTargetName(preset.targetName);
     setTargetScope(preset.targetScope);
+    if (preset.watchCondition) setWatchCondition(preset.watchCondition);
     if (preset.recipientEmail) setRecipientEmail(preset.recipientEmail);
     playBeep('tap');
   };
 
   const handleStartSweep = () => {
     const finalTarget: UserPlaybookTarget = {
-      targetName: targetName.trim() || 'General Market Focus',
+      targetName: targetName.trim() || 'General Target Focus',
       targetScope: targetScope.trim() || 'General Intelligence Scope',
+      watchCondition: watchCondition.trim() || undefined,
       recipientEmail: recipientEmail.trim() || undefined,
     };
     saveUserPlaybookTarget(playbook.id, finalTarget);
     setIsEditingTarget(false);
     playBeep('tap');
     onRunPlaybook(finalTarget);
+  };
+
+  const handleArmNightShift = () => {
+    const finalTarget: UserPlaybookTarget = {
+      targetName: targetName.trim() || 'Monitored Target',
+      targetScope: targetScope.trim() || 'Continuous Watch Scope',
+      watchCondition: watchCondition.trim() || 'Delta or pricing modification',
+    };
+    saveUserPlaybookTarget(playbook.id, finalTarget);
+    const ok = scheduleWiretapInNightShift(finalTarget);
+    if (ok) {
+      setNightShiftStatus('NIGHT SHIFT ARMED: Target queued for autonomous hourly sweeps!');
+      playBeep('complete');
+    } else {
+      setNightShiftStatus('NOTICE: Target updated in watchtower registry.');
+    }
+    setTimeout(() => setNightShiftStatus(null), 4000);
+  };
+
+  const handleConnectApp = async () => {
+    if (!requiredAppSlug) return;
+    setIsConnectingApp(true);
+    playBeep('tap');
+    try {
+      const res = await initiateAppConnection(requiredAppSlug);
+      if (res?.redirectUrl) {
+        window.open(res.redirectUrl, '_blank');
+      }
+    } catch (err) {
+      console.warn('Failed to initiate app connection:', err);
+    } finally {
+      setIsConnectingApp(false);
+    }
   };
 
   const handleCopy = () => {
@@ -188,12 +281,37 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
 
           {/* Main Body */}
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            {/* Composio App Connection Alert for Connected-App Playbooks */}
+            {requiredAppSlug && !isAppConnected && (
+              <div className="p-3 bg-[#261d10] border border-[#f59e0b] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 text-[#fbbf24] shrink-0" />
+                  <div>
+                    <div className="text-xs font-bold text-[#fbbf24]">
+                      {requiredAppName} Integration Not Linked
+                    </div>
+                    <div className="text-[10px] text-[#cbd5e1] mt-0.5">
+                      Connect your account via Composio to authorize 1-click execution.
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleConnectApp}
+                  disabled={isConnectingApp}
+                  className="px-3 py-1.5 bg-[#f59e0b] text-[#121110] font-bold text-xs border border-[#f59e0b] hover:bg-[#d97706] cursor-pointer transition-colors shrink-0 disabled:opacity-50"
+                >
+                  {isConnectingApp ? 'CONNECTING...' : `[⚡ CONNECT ${requiredAppName.toUpperCase()}]`}
+                </button>
+              </div>
+            )}
+
             {/* Target Scope & Intelligence Directive Setup Banner */}
             <div className="p-3.5 bg-[#0e1624] border border-[#25374e] space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2 text-xs font-bold text-[#38bdf8]">
                   <Target className="w-4 h-4" />
-                  <span>TARGET DIRECTIVE & RECON SCOPE</span>
+                  <span>TARGET DIRECTIVE & SCOPE</span>
                 </div>
                 {!isRunning && (
                   <button
@@ -243,6 +361,22 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
                     />
                   </div>
 
+                  {/* Wiretap Condition */}
+                  {playbook.id === 'wiretap_watch' && (
+                    <div className="space-y-1">
+                      <label className="text-[10px] uppercase font-bold text-[#38bdf8]">
+                        Watch Condition (e.g. Price drop below $X, changelog update):
+                      </label>
+                      <input
+                        type="text"
+                        value={watchCondition}
+                        onChange={(e) => setWatchCondition(e.target.value)}
+                        placeholder="e.g. Price drops below $99, new version released, or landing page redesign"
+                        className="w-full px-3 py-1.5 bg-[#070b10] border border-[#2c3d54] text-xs text-[#f3ead8] outline-none focus:border-[#38bdf8] transition-colors"
+                      />
+                    </div>
+                  )}
+
                   {playbook.supportsActionDispatch && (
                     <div className="space-y-1">
                       <label className="text-[10px] uppercase font-bold text-[#94a3b8]">
@@ -259,29 +393,42 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
                   )}
 
                   {/* Preset Pills */}
-                  <div className="space-y-1 pt-1">
-                    <div className="text-[10px] text-[#94a3b8]">Quick Presets / Templates:</div>
-                    <div className="flex flex-wrap gap-1.5">
-                      {presets.map((p) => (
-                        <button
-                          key={p.presetId || p.targetName}
-                          type="button"
-                          onClick={() => handleSelectPreset(p)}
-                          className="px-2 py-0.5 bg-[#142131] hover:bg-[#1f334d] text-[#cbd5e1] border border-[#2d425f] text-[10px] cursor-pointer transition-colors"
-                        >
-                          {p.category ? `[${p.category}] ` : ''}{p.targetName}
-                        </button>
-                      ))}
+                  {presets.length > 0 && (
+                    <div className="space-y-1 pt-1">
+                      <div className="text-[10px] text-[#94a3b8]">Quick Presets / Templates:</div>
+                      <div className="flex flex-wrap gap-1.5">
+                        {presets.map((p) => (
+                          <button
+                            key={p.presetId || p.targetName}
+                            type="button"
+                            onClick={() => handleSelectPreset(p)}
+                            className="px-2 py-0.5 bg-[#142131] hover:bg-[#1f334d] text-[#cbd5e1] border border-[#2d425f] text-[10px] cursor-pointer transition-colors"
+                          >
+                            {p.category ? `[${p.category}] ` : ''}{p.targetName}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  </div>
+                  )}
 
-                  <div className="pt-2 flex justify-end">
+                  <div className="pt-2 flex flex-wrap items-center justify-between gap-2">
+                    {playbook.id === 'wiretap_watch' ? (
+                      <button
+                        type="button"
+                        onClick={handleArmNightShift}
+                        className="px-3 py-2 bg-[#142638] text-[#38bdf8] font-bold text-xs border border-[#38bdf8]/50 hover:bg-[#1e3852] cursor-pointer transition-colors flex items-center gap-1.5"
+                      >
+                        <Moon className="w-3.5 h-3.5" />
+                        <span>[🌙 ARM NIGHT SHIFT AUTO-WATCH]</span>
+                      </button>
+                    ) : <div />}
+
                     <button
                       type="button"
                       onClick={handleStartSweep}
                       className="px-4 py-2 bg-[#e59838] text-[#121110] font-bold text-xs border border-[#e59838] hover:bg-[#d48828] cursor-pointer transition-colors flex items-center gap-1.5 shadow-[0_0_12px_rgba(229,152,56,0.35)]"
                     >
-                      <span>▶ INITIATE CLASSIFIED OSINT SWEEP</span>
+                      <span>▶ INITIATE CLASSIFIED MISSION</span>
                     </button>
                   </div>
                 </div>
@@ -309,6 +456,13 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
                 </div>
               )}
             </div>
+
+            {nightShiftStatus && (
+              <div className="p-2.5 bg-[#0e2133] border border-[#38bdf8] text-xs text-[#38bdf8] flex items-center gap-2">
+                <Moon className="w-3.5 h-3.5 shrink-0" />
+                <span>{nightShiftStatus}</span>
+              </div>
+            )}
 
             {/* Pipeline Stage Tracker */}
             <div className="p-3 bg-[#080d14] border border-[#1b2636]">
@@ -369,7 +523,7 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
               <div className="p-3 bg-[#05080e] border border-[#1b2636] font-mono-tabular text-xs space-y-1.5">
                 <div className="text-[10px] text-[#38bdf8] font-bold uppercase tracking-wider flex items-center gap-1.5">
                   <Terminal className="w-3.5 h-3.5" />
-                  <span>Live OSINT Telemetry Stream:</span>
+                  <span>Live Telemetry & Tool Calls:</span>
                 </div>
                 {stageLogs.slice(-4).map((log, i) => (
                   <div key={i} className="text-[#a5b4fc] text-[11px] flex items-start gap-1">
@@ -460,7 +614,7 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
           {/* Bottom Action Footer */}
           <div className="px-4 py-3 bg-[#121822] border-t border-[#233145] flex flex-wrap items-center justify-between gap-2">
             <div className="text-[11px] text-[#64748b]">
-              {result ? 'Archived to IndexedDB Virtual File System' : 'Configured for user-directed OSINT analysis'}
+              {result ? 'Archived to IndexedDB Virtual File System' : 'Scoped to user target parameters & connected accounts'}
             </div>
 
             <div className="flex items-center gap-2">
@@ -494,7 +648,7 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
                   onClick={handleStartSweep}
                   className="px-4 py-1.5 bg-[#e59838] text-[#121110] font-bold text-xs border border-[#e59838] hover:bg-[#d48828] cursor-pointer transition-colors"
                 >
-                  [▶ RUN WORKFLOW]
+                  [▶ RUN MISSION]
                 </button>
               ) : (
                 <button

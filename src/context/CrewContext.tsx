@@ -426,6 +426,131 @@ export const FUNCTIONAL_ROLE_LIST: FunctionalRoleProfile[] = [
   FUNCTIONAL_ROLE_PROFILES.general_assistant,
 ];
 
+export type ClearanceLevelNumber = 1 | 2 | 3 | 4 | 5;
+
+export interface ClearanceRankDef {
+  level: ClearanceLevelNumber;
+  title: string;
+  badge: string;
+  minXp: number;
+  maxXp: number;
+  unlockedVariants: SpriteVariant[];
+  unlockedThemePreset: string;
+  terminalRGB: string;
+  description: string;
+}
+
+export const CLEARANCE_RANKS: Record<ClearanceLevelNumber, ClearanceRankDef> = {
+  1: {
+    level: 1,
+    title: 'LEVEL 1: FIELD PROBATION',
+    badge: 'PROBATION',
+    minXp: 0,
+    maxXp: 99,
+    unlockedVariants: ['trenchcoat', 'stealth_ops', 'hoodie'],
+    unlockedThemePreset: 'Amber CRT',
+    terminalRGB: 'rgb(245, 158, 11)',
+    description: 'Field probation operative. Standard issue comms and tactical reconnaissance rig.',
+  },
+  2: {
+    level: 2,
+    title: 'LEVEL 2: SPECIAL OPERATIVE',
+    badge: 'SPEC-OPS',
+    minXp: 100,
+    maxXp: 249,
+    unlockedVariants: ['safecracker', 'exo_hacker', 'recon_grey'],
+    unlockedThemePreset: 'Cyber Cyan',
+    terminalRGB: 'rgb(56, 189, 248)',
+    description: 'Verified field specialist. Access granted to cyber bypass kits and microfiche telemetry.',
+  },
+  3: {
+    level: 3,
+    title: 'LEVEL 3: TACTICAL LEAD',
+    badge: 'TACTICAL',
+    minXp: 250,
+    maxXp: 499,
+    unlockedVariants: ['intel_analyst', 'cyber_security', 'recon_blue'],
+    unlockedThemePreset: 'Emerald Matrix',
+    terminalRGB: 'rgb(74, 222, 128)',
+    description: 'Tactical squad commander. Authorized to orchestrate cross-app operations and multi-agent task chains.',
+  },
+  4: {
+    level: 4,
+    title: 'LEVEL 4: BLACK OPS COMMANDER',
+    badge: 'BLACK-OPS',
+    minXp: 500,
+    maxXp: 999,
+    unlockedVariants: ['crimson_grapple', 'ghillie_sniper', 'undercover_infiltration'],
+    unlockedThemePreset: 'Bloodline Red',
+    terminalRGB: 'rgb(248, 113, 113)',
+    description: 'Classified black ops directorate. High-impact infiltration and encrypted safehouse relay clearance.',
+  },
+  5: {
+    level: 5,
+    title: 'LEVEL 5: SHADOW DIRECTOR',
+    badge: 'DIRECTOR',
+    minXp: 1000,
+    maxXp: 99999,
+    unlockedVariants: ['hazmat_cloak', 'armored', 'recon_brown'],
+    unlockedThemePreset: 'Obsidian Stealth',
+    terminalRGB: 'rgb(168, 85, 247)',
+    description: 'Supreme command authority. Full unconstrained clearance over the Safehouse Omega Vault.',
+  },
+};
+
+export function calculateClearanceLevel(xp: number = 0): ClearanceLevelNumber {
+  if (xp >= 1000) return 5;
+  if (xp >= 500) return 4;
+  if (xp >= 250) return 3;
+  if (xp >= 100) return 2;
+  return 1;
+}
+
+export type ServiceRibbonId =
+  | 'First Wiretap'
+  | 'Night Shift Veteran'
+  | 'Neural Bypass Ace'
+  | 'Toolmaster';
+
+export interface ServiceRibbonDef {
+  id: ServiceRibbonId;
+  title: string;
+  icon: string;
+  description: string;
+  colorHex: string;
+}
+
+export const SERVICE_RIBBONS: Record<ServiceRibbonId, ServiceRibbonDef> = {
+  'First Wiretap': {
+    id: 'First Wiretap',
+    title: 'First Wiretap',
+    icon: '📡',
+    description: 'Awarded for deploying a live surveillance wire-tap or web monitor.',
+    colorHex: '#38bdf8',
+  },
+  'Night Shift Veteran': {
+    id: 'Night Shift Veteran',
+    title: 'Night Shift Veteran',
+    icon: '🌙',
+    description: 'Awarded for completing overnight automated watchtower surveillance.',
+    colorHex: '#a855f7',
+  },
+  'Neural Bypass Ace': {
+    id: 'Neural Bypass Ace',
+    title: 'Neural Bypass Ace',
+    icon: '⚡',
+    description: 'Awarded for manually clearing a Neural Bypass sequence during active API routing.',
+    colorHex: '#f59e0b',
+  },
+  Toolmaster: {
+    id: 'Toolmaster',
+    title: 'Toolmaster',
+    icon: '⚔️',
+    description: 'Awarded for orchestrating live cross-app integrations via Composio.',
+    colorHex: '#4ade80',
+  },
+};
+
 export interface AgentMemoryEntry {
   id: string;
   timestamp: string;
@@ -448,6 +573,10 @@ export interface CrewAgentState {
   currentRoom: RoomId;
   preferredStationId: string;
   isRecruited?: boolean;
+  xp: number;
+  missionsCompleted: number;
+  clearanceLevel: ClearanceLevelNumber;
+  serviceRibbons: string[];
 }
 
 export interface RecruitedAgentPayload {
@@ -462,6 +591,10 @@ export interface RecruitedAgentPayload {
   spriteVariant: SpriteVariant;
   currentRoom: RoomId;
   preferredStationId: string;
+  xp?: number;
+  missionsCompleted?: number;
+  clearanceLevel?: ClearanceLevelNumber;
+  serviceRibbons?: string[];
 }
 
 interface CrewContextValue {
@@ -481,6 +614,8 @@ interface CrewContextValue {
       systemPrompt?: string;
       assignedTools?: string[];
       spriteVariant?: SpriteVariant;
+      xp?: number;
+      missionsCompleted?: number;
     }
   ) => void;
   addAgentMemory: (id: string, entry: { prompt: string; summary: string }) => void;
@@ -497,6 +632,13 @@ interface CrewContextValue {
     assignedTools?: string[];
   }) => string;
   dismissAgent: (id: string) => void;
+  awardAgentXp: (
+    id: string,
+    xpGain: number,
+    isMission?: boolean,
+    ribbonToUnlock?: string
+  ) => { newXp: number; newLevel: ClearanceLevelNumber; leveledUp: boolean; unlockedRibbon?: string };
+  unlockRibbon: (id: string, ribbonName: string) => void;
 }
 
 const STORAGE_CREW_KEY = 'pixelops_crew_customization_v3';
@@ -555,6 +697,10 @@ interface StoredAgentCustomization {
   spriteVariant?: SpriteVariant;
   currentRoom?: RoomId;
   preferredStationId?: string;
+  xp?: number;
+  missionsCompleted?: number;
+  clearanceLevel?: ClearanceLevelNumber;
+  serviceRibbons?: string[];
 }
 
 const loadStoredCustomizations = (): Record<string, StoredAgentCustomization> => {
@@ -668,6 +814,11 @@ export const CrewProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const preferredStationId =
         saved.preferredStationId || DEFAULT_STATIONS_BY_INDEX[idx] || 'war_center_desk';
 
+      const xp = typeof saved.xp === 'number' ? saved.xp : 0;
+      const missionsCompleted = typeof saved.missionsCompleted === 'number' ? saved.missionsCompleted : 0;
+      const clearanceLevel = calculateClearanceLevel(xp);
+      const serviceRibbons = Array.isArray(saved.serviceRibbons) ? saved.serviceRibbons : [];
+
       return {
         id: profile.id,
         agentIndex: idx,
@@ -683,6 +834,10 @@ export const CrewProvider: React.FC<{ children: React.ReactNode }> = ({ children
         currentRoom,
         preferredStationId,
         isRecruited: false,
+        xp,
+        missionsCompleted,
+        clearanceLevel,
+        serviceRibbons,
       };
     });
   }, [theme.agents, customMap]);
@@ -694,6 +849,11 @@ export const CrewProvider: React.FC<{ children: React.ReactNode }> = ({ children
           ? rec.functionalRole
           : 'general_assistant';
       const fProfile = FUNCTIONAL_ROLE_PROFILES[fRole];
+
+      const xp = typeof rec.xp === 'number' ? rec.xp : 0;
+      const missionsCompleted = typeof rec.missionsCompleted === 'number' ? rec.missionsCompleted : 0;
+      const clearanceLevel = calculateClearanceLevel(xp);
+      const serviceRibbons = Array.isArray(rec.serviceRibbons) ? rec.serviceRibbons : [];
 
       return {
         id: rec.id,
@@ -710,6 +870,10 @@ export const CrewProvider: React.FC<{ children: React.ReactNode }> = ({ children
         currentRoom: rec.currentRoom || 'war_room',
         preferredStationId: rec.preferredStationId || 'war_center_desk',
         isRecruited: true,
+        xp,
+        missionsCompleted,
+        clearanceLevel,
+        serviceRibbons,
       };
     });
   }, [recruitedAgents, theme.agents.length]);
@@ -929,6 +1093,83 @@ export const CrewProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, []);
 
+  const awardAgentXp = useCallback(
+    (
+      id: string,
+      xpGain: number,
+      isMission: boolean = true,
+      ribbonToUnlock?: string
+    ) => {
+      let leveledUp = false;
+      let finalNewLevel: ClearanceLevelNumber = 1;
+      let finalNewXp = 0;
+      let newlyUnlockedRibbon: string | undefined = undefined;
+
+      const updateAgentRPG = (current: {
+        xp?: number;
+        missionsCompleted?: number;
+        serviceRibbons?: string[];
+      }) => {
+        const prevXp = current.xp || 0;
+        const newXp = prevXp + xpGain;
+        finalNewXp = newXp;
+        const prevLevel = calculateClearanceLevel(prevXp);
+        const newLevel = calculateClearanceLevel(newXp);
+        finalNewLevel = newLevel;
+        if (newLevel > prevLevel) {
+          leveledUp = true;
+        }
+
+        const prevRibbons = Array.isArray(current.serviceRibbons)
+          ? [...current.serviceRibbons]
+          : [];
+        const newRibbonsSet = new Set(prevRibbons);
+        if (ribbonToUnlock && !newRibbonsSet.has(ribbonToUnlock)) {
+          newRibbonsSet.add(ribbonToUnlock);
+          newlyUnlockedRibbon = ribbonToUnlock;
+        }
+
+        const newMissions = (current.missionsCompleted || 0) + (isMission ? 1 : 0);
+
+        return {
+          xp: newXp,
+          missionsCompleted: newMissions,
+          clearanceLevel: newLevel,
+          serviceRibbons: Array.from(newRibbonsSet),
+        };
+      };
+
+      if (id.startsWith('rec_')) {
+        setRecruitedAgents((prev) =>
+          prev.map((r) => (r.id === id ? { ...r, ...updateAgentRPG(r) } : r))
+        );
+      } else {
+        setCustomMap((prev) => {
+          const existing = prev[id] || {};
+          return {
+            ...prev,
+            [id]: {
+              ...existing,
+              ...updateAgentRPG(existing),
+            },
+          };
+        });
+      }
+
+      return {
+        newXp: finalNewXp,
+        newLevel: finalNewLevel,
+        leveledUp,
+        unlockedRibbon: newlyUnlockedRibbon,
+      };
+    },
+    []
+  );
+
+  const unlockRibbon = useCallback((id: string, ribbonName: string) => {
+    awardAgentXp(id, 0, false, ribbonName);
+  }, [awardAgentXp]);
+
   return (
     <CrewContext.Provider
       value={{
@@ -944,6 +1185,8 @@ export const CrewProvider: React.FC<{ children: React.ReactNode }> = ({ children
         resetCrewToDefaults,
         recruitAgent,
         dismissAgent,
+        awardAgentXp,
+        unlockRibbon,
       }}
     >
       {children}

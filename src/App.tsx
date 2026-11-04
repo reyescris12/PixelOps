@@ -12,6 +12,8 @@ import {
   SPRITE_VARIANT_LIST,
   SPRITE_VARIANTS,
   SpriteVariantCategory,
+  CLEARANCE_RANKS,
+  ServiceRibbonId,
 } from './context/CrewContext';
 import {
   SpriteCanvas,
@@ -161,6 +163,7 @@ const CommandCenterContent: React.FC = () => {
     resetCrewToDefaults,
     recruitAgent,
     dismissAgent,
+    awardAgentXp,
   } = useCrew();
   const [previewWalkFrame, setPreviewWalkFrame] = useState<1 | 2>(1);
   const [spriteArmoryCategory, setSpriteArmoryCategory] = useState<'All' | SpriteVariantCategory>('All');
@@ -295,7 +298,25 @@ const CommandCenterContent: React.FC = () => {
         setPlaybookLogs((prev) => [...prev, log]);
       });
       setPlaybookResult(res);
-      setDialogueText(`[DOSSIER ARCHIVED] ${playbook.assignedOperativeName} archived intelligence on "${res.targetName}" to ${res.targetPath}.`);
+
+      let ribbonToUnlock: ServiceRibbonId | undefined = undefined;
+      if (playbook.id === 'wiretap_watch') {
+        ribbonToUnlock = 'First Wiretap';
+      } else if (playbook.pillar === 2) {
+        ribbonToUnlock = 'Toolmaster';
+      }
+
+      const xpResult = awardAgentXp(playbook.assignedOperativeId, 25, true, ribbonToUnlock);
+      if (xpResult.leveledUp) {
+        const rankTitle = CLEARANCE_RANKS[xpResult.newLevel].title;
+        setDialogueText(
+          `[RANK PROMOTION] ${playbook.assignedOperativeName} reached ${rankTitle}! (+25 XP · Archived to ${res.targetPath})`
+        );
+      } else {
+        setDialogueText(
+          `[DOSSIER ARCHIVED] ${playbook.assignedOperativeName} archived intelligence on "${res.targetName}" to ${res.targetPath}. (+25 XP)`
+        );
+      }
       playBeep('complete');
       refreshCommandLedger();
     } catch (err: any) {
@@ -572,6 +593,9 @@ const CommandCenterContent: React.FC = () => {
     setDecryptionBoost(finalBoostPct);
     playBeep('complete');
 
+    // Award +50 XP and Neural Bypass Ace ribbon
+    const xpResult = awardAgentXp(activeAgent.id, 50, false, 'Neural Bypass Ace');
+
     // Award +150 token/battery bonus
     const bonusPrefs: CommandPreferences = {
       ...preferences,
@@ -584,8 +608,11 @@ const CommandCenterContent: React.FC = () => {
     setIsExecuting(false);
     setPendingTask(null);
     setCompletionAlertAgentId(activeAgent.id);
+    const promotionText = xpResult.leveledUp
+      ? ` PROMOTION: ${CLEARANCE_RANKS[xpResult.newLevel].title}!`
+      : '';
     setDialogueText(
-      `[BYPASS OVERRIDE +${finalBoostPct}%] Neural sequence cleared! +150 battery token bonus awarded. Finalizing telemetry...`
+      `[BYPASS OVERRIDE +${finalBoostPct}%] Neural sequence cleared! +150 battery tokens & +50 XP awarded.${promotionText}`
     );
     smoothCloseGameOverlay();
   };
@@ -2286,6 +2313,10 @@ const CommandCenterContent: React.FC = () => {
                   currentRoom={currentRoom}
                   onExecutePlaybook={handleOpenPlaybookSetup}
                   variant="pill"
+                  onOpenVfs={() => {
+                    setIsWorkspaceFilesOpen(true);
+                    playBeep('tap');
+                  }}
                 />
                 {currentRoom === 'armory' && (
                   <button
@@ -2436,6 +2467,10 @@ const CommandCenterContent: React.FC = () => {
             activeSpeakerAgentIndex={activeSpeakerAgentIndex}
             onCallMeeting={handleCallTownHallMeeting}
             onExecutePlaybook={handleOpenPlaybookSetup}
+            onOpenVfs={() => {
+              setIsWorkspaceFilesOpen(true);
+              playBeep('tap');
+            }}
           />
 
           {/* Centered Amber Console Boxes below the Overworld Diorama */}

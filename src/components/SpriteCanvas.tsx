@@ -1558,6 +1558,7 @@ interface SpriteCanvasProps {
   activeSpeakerAgentIndex?: number | null;
   onCallMeeting?: () => void;
   onExecutePlaybook?: (playbook: IntelligencePlaybookDef) => void;
+  onOpenVfs?: (targetPath?: string) => void;
 }
 
 const UPPER_DECK_ROOMS: RoomId[] = ['comms_tower', 'war_room', 'server_vault', 'armory'];
@@ -1652,6 +1653,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
   activeSpeakerAgentIndex = null,
   onCallMeeting,
   onExecutePlaybook,
+  onOpenVfs,
 }) => {
   const { theme, themeId, activeAgent, setActiveAgentId, playBeep } = useTheme();
   const { crewAgents, getCrewAgentByIndex, updateAgentRoom } = useCrew();
@@ -3050,6 +3052,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
             currentRoom={currentRoom}
             onExecutePlaybook={onExecutePlaybook}
             variant="floating"
+            onOpenVfs={onOpenVfs}
           />
         )}
 
@@ -3366,6 +3369,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
                 currentRoom={currentRoom}
                 onExecutePlaybook={onExecutePlaybook}
                 variant="pill"
+                onOpenVfs={onOpenVfs}
               />
             )}
 

@@ -32,6 +32,8 @@ import {
   saveLocalConnectedAccount,
   getOrCreateEntityId,
   setComposioEntityId,
+  getComposioApiKey,
+  setComposioApiKey,
 } from './ComposioService';
 
 export interface SyncPackage {
@@ -50,6 +52,7 @@ export interface SyncPackage {
   preferences: Record<string, any>;
   composioAccounts: any[];
   composioEntityId?: string;
+  composioApiKey?: string;
 }
 
 export type SyncStatus = 'idle' | 'syncing' | 'synced' | 'error' | 'offline';
@@ -182,6 +185,7 @@ export async function assembleLocalSyncPackage(session: AuthSession): Promise<Sy
   const appSessionState = loadAppSessionSnapshot();
   const composioAccounts = getLocalConnectedAccounts();
   const composioEntityId = getOrCreateEntityId();
+  const composioApiKey = getComposioApiKey() || undefined;
 
   let preferences: Record<string, any> = {};
   try {
@@ -205,6 +209,7 @@ export async function assembleLocalSyncPackage(session: AuthSession): Promise<Sy
     preferences,
     composioAccounts,
     composioEntityId,
+    composioApiKey,
   };
 }
 
@@ -311,9 +316,13 @@ export async function applyRemoteSyncPackage(pkg: SyncPackage): Promise<void> {
     }
   }
 
-  // 5. Restore Composio Entity ID & Connected Accounts
+  // 5. Restore Composio Entity ID & Connected Accounts & BYOK API Key
   if (pkg.composioEntityId && typeof pkg.composioEntityId === 'string' && pkg.composioEntityId.trim()) {
     setComposioEntityId(pkg.composioEntityId.trim());
+  }
+
+  if (pkg.composioApiKey && typeof pkg.composioApiKey === 'string' && pkg.composioApiKey.trim()) {
+    setComposioApiKey(pkg.composioApiKey.trim(), true);
   }
 
   if (Array.isArray(pkg.composioAccounts) && pkg.composioAccounts.length > 0) {
@@ -379,6 +388,8 @@ export async function pushToCloud(): Promise<{ success: boolean; error?: string 
       'x-device-id': session.device.deviceId,
       'x-device-name': session.device.deviceName,
       'x-device-type': session.device.deviceType,
+      'x-entity-id': getOrCreateEntityId(),
+      'x-composio-api-key': getComposioApiKey() || '',
     };
 
     // Dispatch to server / cloudflare endpoint with fallback to query action
@@ -446,6 +457,9 @@ export async function pullFromCloud(): Promise<{ success: boolean; updated: bool
       const data = await res.json();
       if (data.entityId || data.composioEntityId) {
         setComposioEntityId(data.entityId || data.composioEntityId);
+      }
+      if (data.composioApiKey && typeof data.composioApiKey === 'string' && data.composioApiKey.trim()) {
+        setComposioApiKey(data.composioApiKey.trim(), true);
       }
       if (data.package) {
         await applyRemoteSyncPackage(data.package);

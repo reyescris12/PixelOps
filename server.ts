@@ -530,6 +530,7 @@ async function startServer() {
       const userId = `usr_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
       const now = new Date().toISOString();
       const incomingEntityId = req.body?.composioEntityId || req.body?.entityId || (req.headers['x-entity-id'] as string) || null;
+      const incomingApiKey = req.body?.composioApiKey || req.body?.apiKey || (req.headers['x-composio-api-key'] as string) || null;
 
       const operativeCallsign = (callsign || cleanUser).toUpperCase();
       const rawRecoveryKey = `SATCOM-${operativeCallsign.slice(0, 6).replace(/[^A-Z0-9]/g, '') || 'AGENT'}-${Math.random().toString(36).substring(2, 6).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
@@ -545,6 +546,7 @@ async function startServer() {
         recoveryKeyHash: recoveryHash, // Cryptographically hashed - never stored in plaintext
         securityClearance: 'COMMANDER',
         composioEntityId: incomingEntityId || undefined,
+        composioApiKey: incomingApiKey || undefined,
         createdAt: now,
         lastLoginAt: now,
         devices: device ? [device] : [],
@@ -553,9 +555,9 @@ async function startServer() {
       const token = `tok_${userId}_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 12)}`;
       store.users[cleanUser] = userRecord;
       store.tokens[token] = { userId, username: cleanUser };
-      if (incomingEntityId) {
-        store.vaults[userId] = { composioEntityId: incomingEntityId };
-        store.vaults[cleanUser] = { composioEntityId: incomingEntityId };
+      if (incomingEntityId || incomingApiKey) {
+        store.vaults[userId] = { composioEntityId: incomingEntityId, composioApiKey: incomingApiKey };
+        store.vaults[cleanUser] = { composioEntityId: incomingEntityId, composioApiKey: incomingApiKey };
       }
       if (device) {
         store.devices[userId] = store.devices[userId] || [];
@@ -573,6 +575,7 @@ async function startServer() {
           callsign: userRecord.callsign,
           securityClearance: userRecord.securityClearance,
           composioEntityId: incomingEntityId || undefined,
+          composioApiKey: incomingApiKey || undefined,
           createdAt: now,
           lastLoginAt: now,
         },
@@ -580,7 +583,7 @@ async function startServer() {
         expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
       };
 
-      res.json({ ok: true, session, composioEntityId: incomingEntityId, oneTimeRecoveryKey: rawRecoveryKey, devices: userRecord.devices });
+      res.json({ ok: true, session, composioEntityId: incomingEntityId, composioApiKey: incomingApiKey, oneTimeRecoveryKey: rawRecoveryKey, devices: userRecord.devices });
     } catch (err: any) {
       res.status(500).json({ error: 'AUTH_ERROR', message: err?.message || 'Server authentication fault' });
     }
@@ -635,6 +638,7 @@ async function startServer() {
       saveSyncStore(store);
 
       const userEntityId = userRecord.composioEntityId || store.vaults[userRecord.id]?.composioEntityId || store.vaults[userRecord.username]?.composioEntityId || null;
+      const userApiKey = userRecord.composioApiKey || store.vaults[userRecord.id]?.composioApiKey || store.vaults[userRecord.username]?.composioApiKey || null;
 
       const session = {
         token,
@@ -645,6 +649,7 @@ async function startServer() {
           callsign: userRecord.callsign,
           securityClearance: userRecord.securityClearance,
           composioEntityId: userEntityId || undefined,
+          composioApiKey: userApiKey || undefined,
           createdAt: userRecord.createdAt,
           lastLoginAt: userRecord.lastLoginAt,
         },
@@ -652,7 +657,7 @@ async function startServer() {
         expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
       };
 
-      res.json({ ok: true, session, composioEntityId: userEntityId, devices: userRecord.devices });
+      res.json({ ok: true, session, composioEntityId: userEntityId, composioApiKey: userApiKey, devices: userRecord.devices });
     } catch (err: any) {
       res.status(500).json({ error: 'AUTH_ERROR', message: err?.message || 'Server authentication fault' });
     }
@@ -686,6 +691,7 @@ async function startServer() {
         const user = store.users[username];
         if (user) {
           const userEntityId = user.composioEntityId || store.vaults[user.id]?.composioEntityId || store.vaults[user.username]?.composioEntityId || null;
+          const userApiKey = user.composioApiKey || store.vaults[user.id]?.composioApiKey || store.vaults[user.username]?.composioApiKey || null;
           return res.json({
             ok: true,
             user: {
@@ -695,10 +701,12 @@ async function startServer() {
               callsign: user.callsign,
               securityClearance: user.securityClearance,
               composioEntityId: userEntityId || undefined,
+              composioApiKey: userApiKey || undefined,
               createdAt: user.createdAt,
               lastLoginAt: user.lastLoginAt,
             },
             composioEntityId: userEntityId,
+            composioApiKey: userApiKey,
             devices: store.devices[username] || user.devices || [],
           });
         }
@@ -995,6 +1003,13 @@ async function startServer() {
         if (rawUserId && store.users[rawUserId]) store.users[rawUserId].composioEntityId = incomingEntityId;
       }
 
+      const incomingApiKey = syncPackage.composioApiKey || (req.headers['x-composio-api-key'] as string) || null;
+      if (incomingApiKey) {
+        syncPackage.composioApiKey = incomingApiKey;
+        if (store.users[userKey]) store.users[userKey].composioApiKey = incomingApiKey;
+        if (rawUserId && store.users[rawUserId]) store.users[rawUserId].composioApiKey = incomingApiKey;
+      }
+
       store.vaults[userKey] = syncPackage;
       if (rawUserId) store.vaults[rawUserId] = syncPackage;
 
@@ -1036,8 +1051,9 @@ async function startServer() {
       const { userKey, rawUserId } = resolveUserKey(req, store);
       const pkg = store.vaults[userKey] || (rawUserId ? store.vaults[rawUserId] : null);
       const entityId = pkg?.composioEntityId || store.users[userKey]?.composioEntityId || (rawUserId ? store.users[rawUserId]?.composioEntityId : null) || null;
+      const composioApiKey = pkg?.composioApiKey || store.users[userKey]?.composioApiKey || (rawUserId ? store.users[rawUserId]?.composioApiKey : null) || null;
 
-      res.json({ ok: true, package: pkg || null, entityId, composioEntityId: entityId, timestamp: new Date().toISOString() });
+      res.json({ ok: true, package: pkg || null, entityId, composioEntityId: entityId, composioApiKey, timestamp: new Date().toISOString() });
     } catch (err: any) {
       res.status(500).json({ error: 'SYNC_ERROR', message: err?.message || 'Server sync error' });
     }

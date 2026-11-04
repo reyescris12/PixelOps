@@ -119,10 +119,18 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
       }
     };
 
+    const handleApiKeyChanged = (e: any) => {
+      const newKey = e.detail?.apiKey ?? getComposioApiKey();
+      setApiKey(newKey);
+      setInputApiKey(newKey);
+      refreshIntegrations(false);
+    };
+
     window.addEventListener('focus', handleSync);
     window.addEventListener('composio:connection-updated', handleSync);
     window.addEventListener('composio:session-synced', handleSync);
     window.addEventListener('composio:entity-changed', handleEntityChanged);
+    window.addEventListener('composio:api-key-changed', handleApiKeyChanged);
 
     // In-memory sync without network refetch to eliminate infinite re-render loops
     const unsubscribe = ComposioService.subscribeToConnectionChanges?.((accounts) => {
@@ -151,6 +159,7 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
       window.removeEventListener('composio:connection-updated', handleSync);
       window.removeEventListener('composio:session-synced', handleSync);
       window.removeEventListener('composio:entity-changed', handleEntityChanged);
+      window.removeEventListener('composio:api-key-changed', handleApiKeyChanged);
       unsubscribe?.();
     };
   }, [refreshIntegrations]);

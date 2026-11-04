@@ -21,7 +21,7 @@ interface Env {
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-user-id, x-username, x-device-id, x-device-name, x-device-type, x-reset-key, x-admin-reset-key',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-user-id, x-username, x-device-id, x-device-name, x-device-type, x-reset-key, x-admin-reset-key, x-entity-id, x-composio-api-key',
 };
 
 function getKv(env: Env) {
@@ -233,6 +233,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
       const userId = `usr_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
       const now = new Date().toISOString();
       const incomingEntityId = body.composioEntityId || body.entityId || request.headers.get('x-entity-id') || null;
+      const incomingApiKey = body.composioApiKey || body.apiKey || request.headers.get('x-composio-api-key') || null;
 
       // Generate recovery key and store only its cryptographic hash
       const rawRecoveryKey = `SATCOM-${operativeCallsign.slice(0, 6).replace(/[^A-Z0-9]/g, '') || 'AGENT'}-${Math.random().toString(36).substring(2, 6).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
@@ -248,6 +249,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
         recoveryKeyHash: recoveryHash,
         securityClearance: 'COMMANDER',
         composioEntityId: incomingEntityId || undefined,
+        composioApiKey: incomingApiKey || undefined,
         createdAt: now,
         lastLoginAt: now,
         devices: device ? [device] : [],
@@ -272,29 +274,38 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
           `).bind(device.deviceId, userId, device.deviceName || 'Node', device.deviceType || 'desktop', now).run();
         }
 
-        // Store generated Composio entityId in Cloudflare D1 user_data table upon account registration
-        if (incomingEntityId) {
+        // Store generated Composio entityId and custom API key in Cloudflare D1 user_data table upon account registration
+        if (incomingEntityId || incomingApiKey) {
           try {
             await d1.prepare(`
-              INSERT INTO user_data (user_id, entity_id, sync_package, version, updated_at)
-              VALUES (?, ?, ?, 1, ?)
-              ON CONFLICT(user_id) DO UPDATE SET entity_id = excluded.entity_id, updated_at = excluded.updated_at
-            `).bind(userId, incomingEntityId, JSON.stringify({ composioEntityId: incomingEntityId }), now).run();
+              INSERT INTO user_data (user_id, entity_id, composio_api_key, sync_package, version, updated_at)
+              VALUES (?, ?, ?, ?, 1, ?)
+              ON CONFLICT(user_id) DO UPDATE SET 
+                entity_id = COALESCE(excluded.entity_id, user_data.entity_id),
+                composio_api_key = COALESCE(excluded.composio_api_key, user_data.composio_api_key),
+                sync_package = excluded.sync_package,
+                updated_at = excluded.updated_at
+            `).bind(userId, incomingEntityId, incomingApiKey, JSON.stringify({ composioEntityId: incomingEntityId, composioApiKey: incomingApiKey }), now).run();
           } catch {
+            try { await d1.prepare("ALTER TABLE user_data ADD COLUMN entity_id TEXT").run(); } catch {}
+            try { await d1.prepare("ALTER TABLE user_data ADD COLUMN composio_api_key TEXT").run(); } catch {}
             try {
-              await d1.prepare("ALTER TABLE user_data ADD COLUMN entity_id TEXT").run();
               await d1.prepare(`
-                INSERT INTO user_data (user_id, entity_id, sync_package, version, updated_at)
-                VALUES (?, ?, ?, 1, ?)
-                ON CONFLICT(user_id) DO UPDATE SET entity_id = excluded.entity_id, updated_at = excluded.updated_at
-              `).bind(userId, incomingEntityId, JSON.stringify({ composioEntityId: incomingEntityId }), now).run();
+                INSERT INTO user_data (user_id, entity_id, composio_api_key, sync_package, version, updated_at)
+                VALUES (?, ?, ?, ?, 1, ?)
+                ON CONFLICT(user_id) DO UPDATE SET 
+                  entity_id = COALESCE(excluded.entity_id, user_data.entity_id),
+                  composio_api_key = COALESCE(excluded.composio_api_key, user_data.composio_api_key),
+                  sync_package = excluded.sync_package,
+                  updated_at = excluded.updated_at
+              `).bind(userId, incomingEntityId, incomingApiKey, JSON.stringify({ composioEntityId: incomingEntityId, composioApiKey: incomingApiKey }), now).run();
             } catch {
               try {
                 await d1.prepare(`
                   INSERT INTO user_data (user_id, sync_package, version, updated_at)
                   VALUES (?, ?, 1, ?)
                   ON CONFLICT(user_id) DO UPDATE SET sync_package = excluded.sync_package, updated_at = excluded.updated_at
-                `).bind(userId, JSON.stringify({ composioEntityId: incomingEntityId }), now).run();
+                `).bind(userId, JSON.stringify({ composioEntityId: incomingEntityId, composioApiKey: incomingApiKey }), now).run();
               } catch {}
             }
           }
@@ -308,16 +319,16 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
         await kv.put(`token:${token}`, JSON.stringify({ userId, cleanUser }));
         await kv.put(`devices:${cleanUser}`, JSON.stringify(userRecord.devices));
         await kv.put(`devices:${userId}`, JSON.stringify(userRecord.devices));
-        if (incomingEntityId) {
-          await kv.put(`vault:${userId}`, JSON.stringify({ composioEntityId: incomingEntityId }));
+        if (incomingEntityId || incomingApiKey) {
+          await kv.put(`vault:${userId}`, JSON.stringify({ composioEntityId: incomingEntityId, composioApiKey: incomingApiKey }));
         }
       } else {
         memoryUsers.set(cleanUser, userRecord);
         if (cleanEmail) memoryUsers.set(cleanEmail, userRecord);
         if (operativeCallsign) memoryUsers.set(operativeCallsign.toLowerCase(), userRecord);
         memoryTokens.set(token, { userId, cleanUser });
-        if (incomingEntityId) {
-          memoryVaults.set(`vault:${userId}`, { composioEntityId: incomingEntityId });
+        if (incomingEntityId || incomingApiKey) {
+          memoryVaults.set(`vault:${userId}`, { composioEntityId: incomingEntityId, composioApiKey: incomingApiKey });
         }
       }
 
@@ -331,6 +342,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
           callsign: userRecord.callsign,
           securityClearance: userRecord.securityClearance,
           composioEntityId: incomingEntityId || undefined,
+          composioApiKey: incomingApiKey || undefined,
           createdAt: now,
           lastLoginAt: now,
         },
@@ -342,6 +354,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
         ok: true,
         session,
         composioEntityId: incomingEntityId || null,
+        composioApiKey: incomingApiKey || null,
         devices: userRecord.devices,
         oneTimeRecoveryKey: rawRecoveryKey, // Displayed once for safe offline storage
       }), {
@@ -492,45 +505,65 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
         memoryTokens.set(token, { userId: userRecord.id, cleanUser: cleanQuery });
       }
 
-      // Query D1 user_data table for operative's personal Composio entityId
+      // Query D1 user_data table for operative's personal Composio entityId and custom API key
       let userEntityId: string | null = null;
+      let userApiKey: string | null = null;
       if (d1) {
         try {
-          const udRow = await d1.prepare('SELECT entity_id, sync_package FROM user_data WHERE user_id = ?').bind(userRecord.id).first();
+          const udRow = await d1.prepare('SELECT entity_id, composio_api_key, sync_package FROM user_data WHERE user_id = ?').bind(userRecord.id).first();
           if (udRow) {
             userEntityId = udRow.entity_id || null;
-            if (!userEntityId && udRow.sync_package) {
+            userApiKey = udRow.composio_api_key || null;
+            if ((!userEntityId || !userApiKey) && udRow.sync_package) {
               try {
                 const parsed = JSON.parse(udRow.sync_package);
-                userEntityId = parsed.composioEntityId || parsed.entityId || null;
+                if (!userEntityId) userEntityId = parsed.composioEntityId || parsed.entityId || null;
+                if (!userApiKey) userApiKey = parsed.composioApiKey || null;
               } catch {}
             }
           }
         } catch {
           try {
-            const udRow = await d1.prepare('SELECT sync_package FROM user_data WHERE user_id = ?').bind(userRecord.id).first();
-            if (udRow && udRow.sync_package) {
-              const parsed = JSON.parse(udRow.sync_package);
-              userEntityId = parsed.composioEntityId || parsed.entityId || null;
+            const udRow = await d1.prepare('SELECT entity_id, sync_package FROM user_data WHERE user_id = ?').bind(userRecord.id).first();
+            if (udRow) {
+              userEntityId = udRow.entity_id || null;
+              if (udRow.sync_package) {
+                try {
+                  const parsed = JSON.parse(udRow.sync_package);
+                  if (!userEntityId) userEntityId = parsed.composioEntityId || parsed.entityId || null;
+                  if (!userApiKey) userApiKey = parsed.composioApiKey || null;
+                } catch {}
+              }
             }
-          } catch {}
+          } catch {
+            try {
+              const udRow = await d1.prepare('SELECT sync_package FROM user_data WHERE user_id = ?').bind(userRecord.id).first();
+              if (udRow && udRow.sync_package) {
+                const parsed = JSON.parse(udRow.sync_package);
+                userEntityId = parsed.composioEntityId || parsed.entityId || null;
+                userApiKey = parsed.composioApiKey || null;
+              }
+            } catch {}
+          }
         }
       }
 
-      if (!userEntityId && kv) {
+      if ((!userEntityId || !userApiKey) && kv) {
         try {
           const rawVault = (await kv.get(`vault:${userRecord.id}`)) || (await kv.get(`vault:${userRecord.username}`));
           if (rawVault) {
             const parsed = JSON.parse(rawVault);
-            userEntityId = parsed.composioEntityId || parsed.entityId || null;
+            if (!userEntityId) userEntityId = parsed.composioEntityId || parsed.entityId || null;
+            if (!userApiKey) userApiKey = parsed.composioApiKey || null;
           }
         } catch {}
       }
 
-      if (!userEntityId) {
+      if (!userEntityId || !userApiKey) {
         const memVault = memoryVaults.get(`vault:${userRecord.id}`) || memoryVaults.get(`vault:${userRecord.username}`);
         if (memVault) {
-          userEntityId = memVault.composioEntityId || memVault.entityId || null;
+          if (!userEntityId) userEntityId = memVault.composioEntityId || memVault.entityId || null;
+          if (!userApiKey) userApiKey = memVault.composioApiKey || null;
         }
       }
 
@@ -544,6 +577,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
           callsign: userRecord.callsign,
           securityClearance: userRecord.securityClearance || 'COMMANDER',
           composioEntityId: userEntityId || undefined,
+          composioApiKey: userApiKey || undefined,
           createdAt: userRecord.createdAt,
           lastLoginAt: now,
         },
@@ -555,6 +589,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
         ok: true,
         session,
         composioEntityId: userEntityId || null,
+        composioApiKey: userApiKey || null,
         devices: userRecord.devices,
       }), {
         status: 200,
@@ -590,18 +625,35 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
           const devs = await d1.prepare('SELECT device_id as deviceId, device_name as deviceName, device_type as deviceType, last_active as lastActive FROM devices WHERE user_id = ?').bind(sessionRow.id).all();
 
           let userEntityId: string | null = null;
+          let userApiKey: string | null = null;
           try {
-            const udRow = await d1.prepare('SELECT entity_id, sync_package FROM user_data WHERE user_id = ?').bind(sessionRow.id).first();
+            const udRow = await d1.prepare('SELECT entity_id, composio_api_key, sync_package FROM user_data WHERE user_id = ?').bind(sessionRow.id).first();
             if (udRow) {
               userEntityId = udRow.entity_id || null;
-              if (!userEntityId && udRow.sync_package) {
+              userApiKey = udRow.composio_api_key || null;
+              if ((!userEntityId || !userApiKey) && udRow.sync_package) {
                 try {
                   const p = JSON.parse(udRow.sync_package);
-                  userEntityId = p.composioEntityId || p.entityId || null;
+                  if (!userEntityId) userEntityId = p.composioEntityId || p.entityId || null;
+                  if (!userApiKey) userApiKey = p.composioApiKey || null;
                 } catch {}
               }
             }
-          } catch {}
+          } catch {
+            try {
+              const udRow = await d1.prepare('SELECT entity_id, sync_package FROM user_data WHERE user_id = ?').bind(sessionRow.id).first();
+              if (udRow) {
+                userEntityId = udRow.entity_id || null;
+                if (udRow.sync_package) {
+                  try {
+                    const p = JSON.parse(udRow.sync_package);
+                    userEntityId = p.composioEntityId || p.entityId || null;
+                    userApiKey = p.composioApiKey || null;
+                  } catch {}
+                }
+              }
+            } catch {}
+          }
 
           return new Response(JSON.stringify({
             ok: true,
@@ -612,10 +664,12 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
               callsign: sessionRow.callsign,
               securityClearance: sessionRow.security_clearance,
               composioEntityId: userEntityId || undefined,
+              composioApiKey: userApiKey || undefined,
               createdAt: sessionRow.created_at,
               lastLoginAt: sessionRow.last_login_at,
             },
             composioEntityId: userEntityId || null,
+            composioApiKey: userApiKey || null,
             devices: devs?.results || [],
           }), { status: 200, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } });
         }

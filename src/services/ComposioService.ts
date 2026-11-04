@@ -9,7 +9,7 @@
  * - Routes via Cloudflare Pages Function proxy (/api/composio).
  */
 
-import { get, set } from 'idb-keyval';
+import { get, set, del } from 'idb-keyval';
 import { GoogleGenAI } from '@google/genai';
 
 export interface ComposioConnectedAccount {
@@ -238,6 +238,7 @@ const STORAGE_ENTITY_ID_KEY = 'pixelops_composio_entity_id';
 const STORAGE_CUSTOM_KEY_KEY = 'pixelops_composio_custom_api_key';
 
 let cachedEntityId: string | null = null;
+let cachedApiKey: string | null = null;
 
 /**
  * 1. Multi-User Isolation: Get or generate a persistent local entityId
@@ -326,30 +327,82 @@ if (typeof window !== 'undefined') {
     .catch(() => {});
 }
 
-/**
- * Custom BYOK Composio API Key management
- */
-export function getComposioApiKey(): string {
-  try {
-    return typeof localStorage !== 'undefined'
-      ? localStorage.getItem(STORAGE_CUSTOM_KEY_KEY)?.trim() || ''
-      : '';
-  } catch {
-    return '';
-  }
+// Background async hydration from idb-keyval for custom BYOK Composio API Key
+if (typeof window !== 'undefined') {
+  get<string>(STORAGE_CUSTOM_KEY_KEY)
+    .then((val) => {
+      if (val && val.trim().length > 0) {
+        cachedApiKey = val.trim();
+        try {
+          localStorage.setItem(STORAGE_CUSTOM_KEY_KEY, cachedApiKey);
+        } catch {}
+      }
+    })
+    .catch(() => {});
 }
 
-export function setComposioApiKey(key: string): void {
+/**
+ * Custom BYOK Composio API Key management
+ * Persisted across in-memory cache, localStorage, and IndexedDB,
+ * and synchronized across devices via Cloudflare D1 user_data.
+ */
+export function getComposioApiKey(): string {
+  if (cachedApiKey && cachedApiKey.trim().length > 0) {
+    return cachedApiKey;
+  }
+  try {
+    const existing = typeof localStorage !== 'undefined'
+      ? localStorage.getItem(STORAGE_CUSTOM_KEY_KEY)?.trim() || ''
+      : '';
+    if (existing) {
+      cachedApiKey = existing;
+      set(STORAGE_CUSTOM_KEY_KEY, existing).catch(() => {});
+      return existing;
+    }
+  } catch {
+    // Ignore quota or privacy sandbox errors
+  }
+  return '';
+}
+
+export function setComposioApiKey(key: string, skipSync = false): void {
+  const clean = (key || '').trim();
+  const changed = (cachedApiKey || '') !== clean;
+  cachedApiKey = clean || null;
+
   try {
     if (typeof localStorage !== 'undefined') {
-      if (!key || !key.trim()) {
+      if (!clean) {
         localStorage.removeItem(STORAGE_CUSTOM_KEY_KEY);
       } else {
-        localStorage.setItem(STORAGE_CUSTOM_KEY_KEY, key.trim());
+        localStorage.setItem(STORAGE_CUSTOM_KEY_KEY, clean);
       }
     }
   } catch {
     // Ignore
+  }
+
+  try {
+    if (!clean) {
+      del(STORAGE_CUSTOM_KEY_KEY).catch(() => {});
+    } else {
+      set(STORAGE_CUSTOM_KEY_KEY, clean).catch(() => {});
+    }
+  } catch {
+    // Ignore
+  }
+
+  if (changed && typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('composio:api-key-changed', { detail: { apiKey: clean } }));
+    window.dispatchEvent(new CustomEvent('composio:connection-updated'));
+    window.dispatchEvent(new CustomEvent('composio:session-synced'));
+  }
+
+  // Trigger background cloud sync push if key updated and sync is not skipped
+  if (changed && !skipSync && clean) {
+    import('./SyncService')
+      .then((s) => s.pushToCloud().catch(() => {}))
+      .catch(() => {});
   }
 }
 

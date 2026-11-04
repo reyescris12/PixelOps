@@ -13,6 +13,7 @@ export interface UserAccount {
   callsign: string;
   securityClearance: 'OPERATIVE' | 'COMMANDER' | 'DIRECTOR';
   composioEntityId?: string;
+  composioApiKey?: string;
   createdAt: string;
   lastLoginAt: string;
 }
@@ -46,6 +47,7 @@ interface LocalUserRecord {
   recoveryKey?: string; // Legacy fallback only, purged upon next update
   securityClearance: 'OPERATIVE' | 'COMMANDER' | 'DIRECTOR';
   composioEntityId?: string;
+  composioApiKey?: string;
   createdAt: string;
   lastLoginAt: string;
   devices: DeviceInfo[];
@@ -265,9 +267,11 @@ export async function registerAccount(params: {
   const rawRecoveryKey = generateRecoveryKey(callsign);
   const recoveryHash = await hashRecoveryKeyClient(rawRecoveryKey);
   let currentEntityId: string | null = null;
+  let currentApiKey: string | null = null;
   try {
-    const { getOrCreateEntityId } = await import('./ComposioService');
+    const { getOrCreateEntityId, getComposioApiKey } = await import('./ComposioService');
     currentEntityId = getOrCreateEntityId();
+    currentApiKey = getComposioApiKey() || null;
   } catch {}
 
   // 1. Attempt server-side API registration first
@@ -282,6 +286,7 @@ export async function registerAccount(params: {
         callsign,
         device,
         composioEntityId: currentEntityId,
+        composioApiKey: currentApiKey,
       }),
     });
 
@@ -296,6 +301,7 @@ export async function registerAccount(params: {
           callsign,
           device,
           composioEntityId: currentEntityId,
+          composioApiKey: currentApiKey,
         }),
       });
     }
@@ -445,6 +451,15 @@ export async function loginAccount(params: {
           } catch {}
         }
 
+        // Instantly restore user's personal BYOK Composio API Key from Cloudflare D1
+        const remoteApiKey = data.composioApiKey || data.session.user?.composioApiKey;
+        if (remoteApiKey) {
+          try {
+            const { setComposioApiKey } = await import('./ComposioService');
+            setComposioApiKey(remoteApiKey, true);
+          } catch {}
+        }
+
         // Cache user locally for offline access
         const salt = Math.random().toString(36).substring(2, 14);
         const passwordHash = await hashPassword(password, salt);
@@ -458,6 +473,7 @@ export async function loginAccount(params: {
           passwordHash,
           securityClearance: data.session.user.securityClearance,
           composioEntityId: remoteEntityId || undefined,
+          composioApiKey: remoteApiKey || undefined,
           createdAt: data.session.user.createdAt,
           lastLoginAt: data.session.user.lastLoginAt,
           devices: fleetDevices,
@@ -1041,6 +1057,15 @@ export async function importSatellitePairingToken(tokenString: string): Promise<
     }
   }
 
+  // Restore Composio API key if delivered with pairing payload
+  const pairingApiKey = payload.user?.composioApiKey || payload.syncPackage?.composioApiKey;
+  if (pairingApiKey && typeof pairingApiKey === 'string') {
+    try {
+      const { setComposioApiKey } = await import('./ComposioService');
+      setComposioApiKey(pairingApiKey.trim(), true);
+    } catch {}
+  }
+
   // 6. Broadcast this newly paired device to server fleet
   try {
     const { performFullSync } = await import('./SyncService');
@@ -1074,6 +1099,18 @@ export async function validateActiveSession(): Promise<boolean> {
       if (data.user) {
         session.user = { ...session.user, ...data.user };
         setActiveSession(session);
+      }
+      if (data.composioEntityId || data.user?.composioEntityId) {
+        try {
+          const { setComposioEntityId } = await import('./ComposioService');
+          setComposioEntityId(data.composioEntityId || data.user?.composioEntityId);
+        } catch {}
+      }
+      if (data.composioApiKey || data.user?.composioApiKey) {
+        try {
+          const { setComposioApiKey } = await import('./ComposioService');
+          setComposioApiKey(data.composioApiKey || data.user?.composioApiKey, true);
+        } catch {}
       }
       return true;
     }

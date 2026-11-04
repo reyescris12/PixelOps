@@ -16,7 +16,7 @@ interface Env {
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-user-id, x-username, x-device-id, x-device-name, x-device-type',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-user-id, x-username, x-device-id, x-device-name, x-device-type, x-entity-id, x-composio-api-key',
 };
 
 function getKv(env: Env) {
@@ -108,6 +108,10 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
       if (incomingEntityId) {
         syncPackage.composioEntityId = incomingEntityId;
       }
+      const incomingApiKey = syncPackage.composioApiKey || request.headers.get('x-composio-api-key') || null;
+      if (incomingApiKey) {
+        syncPackage.composioApiKey = incomingApiKey;
+      }
 
       const incomingDevice = syncPackage.device || {
         deviceId,
@@ -131,27 +135,34 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
           `).bind(dbUserId, userKey, `${userKey}@pixelops.local`, userKey.toUpperCase(), now, now).run();
         } catch {}
 
-        // Store sync package alongside user's Composio entityId in Cloudflare D1 user_data table
+        // Store sync package alongside user's Composio entityId and custom API key in Cloudflare D1 user_data table
         try {
           await d1.prepare(`
-            INSERT INTO user_data (user_id, entity_id, sync_package, version, updated_at)
-            VALUES (?, ?, ?, 1, ?)
+            INSERT INTO user_data (user_id, entity_id, composio_api_key, sync_package, version, updated_at)
+            VALUES (?, ?, ?, ?, 1, ?)
             ON CONFLICT(user_id) DO UPDATE SET 
               entity_id = COALESCE(excluded.entity_id, user_data.entity_id),
+              composio_api_key = COALESCE(excluded.composio_api_key, user_data.composio_api_key),
               sync_package = excluded.sync_package, 
               updated_at = excluded.updated_at
-          `).bind(dbUserId, incomingEntityId, JSON.stringify(syncPackage), now).run();
+          `).bind(dbUserId, incomingEntityId, incomingApiKey, JSON.stringify(syncPackage), now).run();
         } catch {
           try {
             await d1.prepare("ALTER TABLE user_data ADD COLUMN entity_id TEXT").run();
+          } catch {}
+          try {
+            await d1.prepare("ALTER TABLE user_data ADD COLUMN composio_api_key TEXT").run();
+          } catch {}
+          try {
             await d1.prepare(`
-              INSERT INTO user_data (user_id, entity_id, sync_package, version, updated_at)
-              VALUES (?, ?, ?, 1, ?)
+              INSERT INTO user_data (user_id, entity_id, composio_api_key, sync_package, version, updated_at)
+              VALUES (?, ?, ?, ?, 1, ?)
               ON CONFLICT(user_id) DO UPDATE SET 
                 entity_id = COALESCE(excluded.entity_id, user_data.entity_id),
+                composio_api_key = COALESCE(excluded.composio_api_key, user_data.composio_api_key),
                 sync_package = excluded.sync_package, 
                 updated_at = excluded.updated_at
-            `).bind(dbUserId, incomingEntityId, JSON.stringify(syncPackage), now).run();
+            `).bind(dbUserId, incomingEntityId, incomingApiKey, JSON.stringify(syncPackage), now).run();
           } catch {
             await d1.prepare(`
               INSERT INTO user_data (user_id, sync_package, version, updated_at)
@@ -230,6 +241,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
     if (isPull) {
       let pkg: any = null;
       let resolvedEntityId: string | null = null;
+      let resolvedApiKey: string | null = null;
 
       if (d1) {
         let dbUserId = rawUserId;
@@ -239,13 +251,18 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
 
         let row: any = null;
         try {
-          row = await d1.prepare('SELECT entity_id, sync_package FROM user_data WHERE user_id = ?').bind(dbUserId).first();
+          row = await d1.prepare('SELECT entity_id, composio_api_key, sync_package FROM user_data WHERE user_id = ?').bind(dbUserId).first();
         } catch {
-          row = await d1.prepare('SELECT sync_package FROM user_data WHERE user_id = ?').bind(dbUserId).first();
+          try {
+            row = await d1.prepare('SELECT entity_id, sync_package FROM user_data WHERE user_id = ?').bind(dbUserId).first();
+          } catch {
+            row = await d1.prepare('SELECT sync_package FROM user_data WHERE user_id = ?').bind(dbUserId).first();
+          }
         }
 
         if (row) {
           resolvedEntityId = row.entity_id || null;
+          resolvedApiKey = row.composio_api_key || null;
           if (row.sync_package) {
             try {
               pkg = JSON.parse(row.sync_package);
@@ -253,6 +270,11 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
                 pkg.composioEntityId = resolvedEntityId;
               } else if (!resolvedEntityId && pkg?.composioEntityId) {
                 resolvedEntityId = pkg.composioEntityId;
+              }
+              if (resolvedApiKey && pkg) {
+                pkg.composioApiKey = resolvedApiKey;
+              } else if (!resolvedApiKey && pkg?.composioApiKey) {
+                resolvedApiKey = pkg.composioApiKey;
               }
             } catch {}
           }
@@ -269,6 +291,9 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
             if (!resolvedEntityId && pkg?.composioEntityId) {
               resolvedEntityId = pkg.composioEntityId;
             }
+            if (!resolvedApiKey && pkg?.composioApiKey) {
+              resolvedApiKey = pkg.composioApiKey;
+            }
           } catch {}
         }
       }
@@ -279,6 +304,9 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
         if (!resolvedEntityId && pkg?.composioEntityId) {
           resolvedEntityId = pkg.composioEntityId;
         }
+        if (!resolvedApiKey && pkg?.composioApiKey) {
+          resolvedApiKey = pkg.composioApiKey;
+        }
       }
 
       return new Response(
@@ -287,6 +315,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
           package: pkg || null,
           entityId: resolvedEntityId || pkg?.composioEntityId || null,
           composioEntityId: resolvedEntityId || pkg?.composioEntityId || null,
+          composioApiKey: resolvedApiKey || pkg?.composioApiKey || null,
           timestamp: new Date().toISOString(),
         }),
         { status: 200, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }

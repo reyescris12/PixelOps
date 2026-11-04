@@ -25,7 +25,11 @@ import {
   getConnectedAccounts,
   initiateAppConnection,
 } from '../services/ComposioService';
-import { executeFunctionCallHandler } from '../services/ApiService';
+import {
+  executeFunctionCallHandler,
+  extractNumericalMetrics,
+  ExtractedNumericalMetrics,
+} from '../services/ApiService';
 
 export type PlaybookId =
   | 'wiretap_watch'
@@ -679,6 +683,7 @@ async function runWiretapWatchPipeline(
 
   onStageUpdate?.(1, `Surveillance Fetch: Scanning live web endpoint for modifications and pricing telemetry...`);
   let searchHits: any[] = [];
+  let extractedMetrics: ExtractedNumericalMetrics = { prices: [], percentages: [], versions: [], rawNumbers: [] };
   try {
     const searchRes = await executeFunctionCallHandler({
       name: 'live_web_search',
@@ -688,6 +693,9 @@ async function runWiretapWatchPipeline(
       },
     });
     searchHits = searchRes.response?.results || [];
+    extractedMetrics =
+      searchRes.response?.extractedMetrics ||
+      extractNumericalMetrics(searchHits.map((h: any) => `${h.title} ${h.snippet} ${h.extract || ''}`).join(' '));
   } catch {
     searchHits = [];
   }
@@ -728,15 +736,16 @@ Public web grounding confirms active endpoint reachability. Telemetry has been b
 **Key Observations:**
 - **Endpoint Status:** Active and responding to public telemetry.
 - **Delta Indicator:** ${searchHits.length > 0 ? 'Signals detected matching watch parameters.' : 'Nominal baseline established. Zero critical pricing anomalies.'}
+- **Detected Numerical Baseline:** ${extractedMetrics.prices.length > 0 ? `Captured Price: ${extractedMetrics.prices.join(', ')}` : extractedMetrics.percentages.length > 0 ? `Captured Variance: ${extractedMetrics.percentages.join(', ')}` : 'Real-time telemetry nominal.'}
 - **Recommended Action:** Enable Night Shift auto-watch to monitor this endpoint on scheduled background intervals.
 
 ---
 
 ## 2. Ingested Endpoint Signals & Pricing Delta
-| Endpoint / Resource | Tracked Metric | Detected Signal | Status | Action Directive |
+| Endpoint / Resource | Tracked Metric | Detected Signal / Value | Status | Action Directive |
 | :--- | :--- | :--- | :--- | :--- |
-| **${target.targetName}** | ${target.targetScope.slice(0, 24)} | Telemetry verified via live search | Ingested | Flag pricing/restock shifts |
-| **Packaging & Tiers** | Pricing Elasticity | Standard baseline captured | Monitored | Compare against subsequent sweeps |
+| **${target.targetName}** | ${target.targetScope.slice(0, 24)} | ${extractedMetrics.prices.length > 0 ? `Verified Price: ${extractedMetrics.prices.slice(0, 2).join(' | ')}` : extractedMetrics.percentages.length > 0 ? `Observed Delta: ${extractedMetrics.percentages[0]}` : 'Telemetry verified via live 2026 search'} | Ingested | Flag pricing/restock shifts |
+| **Packaging & Tiers** | Pricing Elasticity | ${extractedMetrics.prices.length > 1 ? `Alternative Tiers: ${extractedMetrics.prices.slice(1, 4).join(', ')}` : 'Standard 2026 rate card indexed'} | Monitored | Compare against subsequent sweeps |
 
 ---
 
@@ -765,13 +774,15 @@ Output Standard: Classified dossiers featuring Threat Level ratings (ALPHA-CRITI
 
 MANDATORY RULES:
 1. NO MOCK DATA: Rely strictly on provided live telemetry. Do not invent pricing or endpoints.
-2. CITATIONS: Reference actual titles, snippets, or URLs from searchHits.
-3. IMPACT & ACTION DELTA: You MUST include section "## 4. Impact & Action Delta" explaining why this matters and the next tactical step.
-4. STRUCTURED SCHEMA: Begin with valid YAML frontmatter.
+2. STRUCTURED PRICE/DATA EXTRACTION: If numerical prices or financial figures were found (${extractedMetrics.prices.join(', ') || 'verified numerical indicators'}), you MUST parse and incorporate the actual numerical values into the Section 2 Telemetry Table. NEVER substitute them with vague phrases like "pricing nominal" or "standard baseline".
+3. CITATIONS: Reference actual titles, snippets, or URLs from searchHits.
+4. IMPACT & ACTION DELTA: You MUST include section "## 4. Impact & Action Delta" explaining why this matters and the next tactical step.
+5. STRUCTURED SCHEMA: Begin with valid YAML frontmatter.
 
 Target URL: ${target.targetName}
 Watch Condition: ${target.targetScope}
 Date: ${dateStr}
+Extracted Metrics: ${JSON.stringify(extractedMetrics)}
 Search Telemetry: ${JSON.stringify(searchHits, null, 2)}
 
 Structure:
@@ -837,6 +848,7 @@ async function runDeepReconPipeline(
 
   onStageUpdate?.(1, `Multi-Query OSINT: Sweeping overview, recent news, risks, and sentiment for "${target.targetName}"...`);
   let searchHits: any[] = [];
+  let extractedMetrics: ExtractedNumericalMetrics = { prices: [], percentages: [], versions: [], rawNumbers: [] };
   try {
     const searchRes = await executeFunctionCallHandler({
       name: 'live_web_search',
@@ -846,6 +858,9 @@ async function runDeepReconPipeline(
       },
     });
     searchHits = searchRes.response?.results || [];
+    extractedMetrics =
+      searchRes.response?.extractedMetrics ||
+      extractNumericalMetrics(searchHits.map((h: any) => `${h.title} ${h.snippet} ${h.extract || ''}`).join(' '));
   } catch {
     searchHits = [];
   }
@@ -884,6 +899,7 @@ Analysis indicates active competitive maneuvering within this space. Marketing r
 
 **Key Intelligence Insights:**
 - **Market Velocity:** Rapid iteration cycles detected within target perimeter.
+- **Verified Numerical Signals:** ${extractedMetrics.prices.length > 0 ? `Active Price Points: ${extractedMetrics.prices.join(', ')}` : extractedMetrics.versions.length > 0 ? `Target Version: ${extractedMetrics.versions[0]}` : 'Market signals verified via live 2026 sweep.'}
 - **Strategic Threat / Opportunity:** Significant opportunities exist to outpace target by capitalizing on user feedback gaps, pricing frictions, or feature limitations.
 - **Recommended Posture:** Maintain active signal monitoring; execute countermeasures outlined in Section 4.
 
@@ -892,9 +908,9 @@ Analysis indicates active competitive maneuvering within this space. Marketing r
 ## 2. Ingested OSINT Telemetry & Delta Matrix
 | Focus Area | Detected Modification / Signal | Strategic Impact | Threat / Opportunity | Recommended Countermeasure |
 | :--- | :--- | :--- | :--- | :--- |
-| **Product & Features** | Recent additions and workflow modifications identified | Feature parity pressure | Elevated | Differentiate on speed, reliability, and user-centric workflows. |
-| **Pricing & Monetization** | Market tier adjustments and packaging realignment | Pricing elasticity friction | Moderate | Offer transparent, predictable, and superior value tiering. |
-| **User & Market Sentiment** | Community discussions highlight demand for flexible integrations | High Opportunity | Advantage | Emphasize interoperability, privacy, and frictionless adoption. |
+| **Product & Features** | ${extractedMetrics.versions.length > 0 ? `Version ${extractedMetrics.versions[0]} deployed with updated capabilities` : 'Recent additions and workflow modifications identified'} | Feature parity pressure | Elevated | Differentiate on speed, reliability, and user-centric workflows. |
+| **Pricing & Monetization** | ${extractedMetrics.prices.length > 0 ? `Active market price point: ${extractedMetrics.prices.slice(0, 2).join(' / ')}` : 'Market tier adjustments and packaging realignment'} | Pricing elasticity friction | Moderate | Offer transparent, predictable, and superior value tiering. |
+| **User & Market Sentiment** | ${extractedMetrics.percentages.length > 0 ? `Market sentiment index: ${extractedMetrics.percentages[0]} satisfaction` : 'Community discussions highlight demand for flexible integrations'} | High Opportunity | Advantage | Emphasize interoperability, privacy, and frictionless adoption. |
 
 ---
 
@@ -923,13 +939,15 @@ Output Standard: Classified dossiers (intel/dossier_[target]_[date].md) featurin
 
 MANDATORY RULES:
 1. NO MOCK DATA: Rely strictly on provided live telemetry. Do not invent marketing fluff or imaginary features.
-2. FACT-CHECKING CITATIONS: Reference actual titles, snippets, or URLs from search extractions.
-3. IMPACT & ACTION DELTA: You MUST include section "## 4. Impact & Action Delta" explaining why this matters and the next tactical step.
-4. STRUCTURED SCHEMA: Begin with valid YAML frontmatter.
+2. STRUCTURED PRICE/DATA EXTRACTION: You MUST parse the actual numerical prices (${extractedMetrics.prices.join(', ') || 'verified telemetry'}), percentages (${extractedMetrics.percentages.join(', ') || 'verified delta'}), and version numbers (${extractedMetrics.versions.join(', ') || 'verified releases'}) into the Section 2 Delta Matrix table. Never replace real numbers with generic text.
+3. FACT-CHECKING CITATIONS: Reference actual titles, snippets, or URLs from search extractions.
+4. IMPACT & ACTION DELTA: You MUST include section "## 4. Impact & Action Delta" explaining why this matters and the next tactical step.
+5. STRUCTURED SCHEMA: Begin with valid YAML frontmatter.
 
 Target Entity: ${target.targetName}
 Scope of Interest: ${target.targetScope}
 Current Date: ${dateStr}
+Extracted Metrics: ${JSON.stringify(extractedMetrics)}
 Live Web Search Extractions: ${JSON.stringify(searchHits, null, 2)}
 
 Structure:

@@ -211,7 +211,18 @@ Before invoking any tool from Composio, analyze the user's intent:
   If the user explicitly asks to create, send, push, post, schedule, star, or delete:
   You MUST select a CREATE, POST, SEND, or DELETE tool.
 - PARAMETER VALIDATION:
-  Ensure you correctly extract and validate required parameters (such as repository owner/name, query filters, search strings, channel names, or recipient email addresses) from the user's directive before firing the tool. For GitHub targets, split "owner/repo" into distinct owner and repo parameters.`;
+  Ensure you correctly extract and validate required parameters (such as repository owner/name, query filters, search strings, channel names, or recipient email addresses) from the user's directive before firing the tool. For GitHub targets, split "owner/repo" into distinct owner and repo parameters.
+
+DYNAMIC REAL-TIME QUERY FORMULATION & NUMERICAL EXTRACTION PROTOCOL:
+- TEMPORAL & FRESHNESS ANCHORS (RULE 1):
+  When tasked with checking live market data, prices, version updates, or recent news:
+  * Formulate temporal and financial-specific search queries (e.g., "[Target] pricing 2026", "[Ticker] live price 2026", "[Product] latest release changelog 2026") rather than defaulting to static encyclopedia terms.
+  * Always append current temporal anchors (current year "2026", "live ticker", "current price", or "latest release") to bypass static historical pages.
+- EXCLUSION FILTERS FOR OSINT (RULE 2):
+  * When running OSINT sweeps on financial or tech targets, focus strictly on live market data, price feeds, and vendor changelog sources.
+  * Discard static encyclopedia or historical wiki domains (Wikipedia, Fandom, Britannica) unless explicitly requested by the watch condition.
+- STRUCTURED PRICE/DATA EXTRACTION (RULE 3):
+  * Whenever tool outputs or search snippets return raw financial or metric data (prices, percentage deltas, version strings, dollar amounts), you MUST parse the actual numerical values directly into your telemetry table rather than falling back to general conceptual descriptions.`;
 
     const systemInstruction = systemPrompt
       ? `${baseSystemInstruction}\n\n[USER-SPECIFIED AGENT DIRECTIVES]\n${systemPrompt}`

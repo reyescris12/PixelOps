@@ -1139,30 +1139,47 @@ async function startServer() {
 
       // Forward via Resend if RESEND_API_KEY is present
       let emailDispatched = false;
-      const resendApiKey = process.env.RESEND_API_KEY;
+      let emailError: string | null = null;
+      let resendId: string | null = null;
+      const resendApiKey = ((req.headers['x-resend-api-key'] as string) || req.body?.resendApiKey || process.env.RESEND_API_KEY || '').trim();
       if (resendApiKey) {
         try {
           const emailRes = await fetch('https://api.resend.com/emails', {
             method: 'POST',
-            headers: { Authorization: `Bearer ${resendApiKey.trim()}`, 'Content-Type': 'application/json' },
+            headers: { Authorization: `Bearer ${resendApiKey}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              from: 'PixelOps Terminal <onboarding@resend.dev>',
-              to: ['a5c66322@ueseloogal.resend.app'],
+              from: 'PixelOps Terminal <support@pixelops.app>',
+              to: ['support@pixelops.app'],
               subject: '⚡ New Commander Feedback Transmission',
-              text: `Incoming feedback from PWA terminal:\n\n${rawMessage}\n\nOperative: ${callsign || 'ANONYMOUS'}\nContact: ${email || 'N/A'}\nCategory: ${category || 'GENERAL'}`,
+              text: `Incoming feedback from PWA terminal:\n\n${rawMessage}`,
               reply_to: email && email.includes('@') ? email.trim() : undefined,
             }),
           });
+          const resData = await emailRes.json().catch(() => ({}));
           emailDispatched = emailRes.ok;
-        } catch {}
+          if (emailDispatched) {
+            resendId = resData.id || null;
+          } else {
+            emailError = resData.message || resData.name || `HTTP ${emailRes.status}`;
+            console.error('[SERVER RESEND ERROR]', emailRes.status, resData);
+          }
+        } catch (err: any) {
+          emailError = err?.message || 'Network failure to Resend';
+        }
+      } else {
+        emailError = 'RESEND_API_KEY is not configured in environment or request.';
       }
 
       res.status(201).json({
         ok: true,
         id,
-        message: 'Feedback securely logged to Cloudflare D1 and relayed to support@pixelops.app',
+        message: emailDispatched
+          ? 'Feedback securely logged to Cloudflare D1 and delivered to support@pixelops.app.'
+          : `Feedback logged. Email note: ${emailError}`,
         d1Saved: true,
         emailDispatched,
+        emailError,
+        resendId,
         targetEmail: 'support@pixelops.app',
         created_at: createdAt,
       });

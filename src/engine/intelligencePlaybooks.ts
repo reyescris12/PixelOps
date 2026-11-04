@@ -143,21 +143,21 @@ export const DEFAULT_TARGET_PRESETS: Record<PlaybookId, UserPlaybookTarget[]> = 
       targetName: 'Daily Executive Operations Briefing',
       targetScope: 'Active tasks, project deliverables, unread communications, recent intelligence dossiers',
       category: 'Executive Operations',
-      recipientEmail: 'commander@pixelops.app',
+      recipientEmail: '',
     },
     {
       presetId: 'market_pulse',
       targetName: 'Daily Market & Industry Pulse',
       targetScope: 'Competitor announcements, market sentiment, regulatory filings, breaking tech news',
       category: 'Market Intelligence',
-      recipientEmail: 'market-intel@domain.com',
+      recipientEmail: '',
     },
     {
       presetId: 'eng_standup',
       targetName: 'Engineering Velocity & Security Standup',
       targetScope: 'Open pull requests, critical blocker issues, pending dependency patches',
       category: 'Engineering & Product',
-      recipientEmail: 'eng-lead@domain.com',
+      recipientEmail: '',
     },
   ],
 };
@@ -177,7 +177,7 @@ export const INTELLIGENCE_PLAYBOOKS: Record<PlaybookId, IntelligencePlaybookDef>
     assignedOperativeRole: 'Deep Intel Recon',
     description:
       'Autonomous open-ended competitor and market radar. Ingests user-specified competitor URLs, changelogs, products, or industries, extracts feature drops and pricing modifications, filters marketing noise, and generates an Executive Threat / Opportunity delta matrix in VFS.',
-    targetFilePattern: 'intel/competitor_radar_[target]_[date].md',
+    targetFilePattern: 'intel/dossier_[target]_[date].md',
     defaultPromptQuestion: 'What company, competitor, product, or industry sector should Agent Nyx monitor?',
     targetPlaceholder: 'e.g. Stripe, Acme Corp, Competitor Product, Drone Delivery Sector',
     scopePlaceholder: 'e.g. Changelogs, pricing changes, product drops, hiring velocity, API shifts',
@@ -219,7 +219,7 @@ export const INTELLIGENCE_PLAYBOOKS: Record<PlaybookId, IntelligencePlaybookDef>
     assignedOperativeRole: 'Code-Ops Specialist',
     description:
       'Open-ended tech stack, dependency, and infrastructure vulnerability audit. Evaluates the user-selected software stack, frameworks, or GitHub repositories, cross-references CVE databases and breaking advisories, and formats an actionable patch remediation plan into VFS.',
-    targetFilePattern: 'intel/tech_audit_[target]_[date].md',
+    targetFilePattern: 'intel/dossier_[target]_[date].md',
     defaultPromptQuestion: 'Which technologies, packages, frameworks, or GitHub repositories should Agent Cipher audit?',
     targetPlaceholder: 'e.g. Next.js + FastAPI, React 19, or owner/repository',
     scopePlaceholder: 'e.g. CVE vulnerabilities, breaking changes, dependency alerts, container security',
@@ -256,7 +256,7 @@ export const INTELLIGENCE_PLAYBOOKS: Record<PlaybookId, IntelligencePlaybookDef>
     assignedOperativeRole: 'Command Operations Chief',
     description:
       'Multi-source executive command briefing. Aggregates user-selected project issues, GitHub telemetry, market news, and recent VFS intelligence dossiers into a cohesive SITREP with optional 1-click email dispatch via Gmail.',
-    targetFilePattern: 'intel/morning_briefing_[target]_[date].md',
+    targetFilePattern: 'intel/dossier_[target]_[date].md',
     defaultPromptQuestion: 'What business focus, project deliverables, or team priorities should Agent Vance synthesize?',
     targetPlaceholder: 'e.g. Daily Executive Operations, Product Launch Sprint, Market Sentinel',
     scopePlaceholder: 'e.g. Open issues, pending pull requests, recent VFS dossiers, blocker highlights',
@@ -401,12 +401,12 @@ async function runCompetitorRadarPipeline(
 ): Promise<PlaybookExecutionResult> {
   const dateStr = getFormattedDateStr();
   const cleanTarget = sanitizeTargetSlug(target.targetName);
-  const targetPath = `intel/competitor_radar_${cleanTarget}_${dateStr}.md`;
+  const targetPath = `intel/dossier_${cleanTarget}_${dateStr}.md`;
 
   // Stage 1: Target Ingestion
   onStageUpdate?.(
     0,
-    `Target Ingestion: Ingesting surveillance perimeter for "${target.targetName}" [Scope: ${target.targetScope.slice(0, 45)}...]`
+    `Target Ingestion: Ingesting intelligence perimeter for "${target.targetName}" [Scope: ${target.targetScope.slice(0, 45)}...]`
   );
   await new Promise((r) => setTimeout(r, 600));
 
@@ -437,25 +437,24 @@ async function runCompetitorRadarPipeline(
   await new Promise((r) => setTimeout(r, 600));
 
   // Stage 4: Dossier Generation
-  onStageUpdate?.(3, `Dossier Generation: Compiling classified briefing & calculating Threat / Opportunity matrix...`);
+  onStageUpdate?.(3, `Dossier Generation: Compiling executive dossier & calculating Threat / Opportunity matrix...`);
 
   const threatLevel: 'ALPHA-CRITICAL' | 'BRAVO-ELEVATED' | 'CHARLIE-NOMINAL' =
     searchHits.length > 2 ? 'BRAVO-ELEVATED' : 'CHARLIE-NOMINAL';
 
-  const defaultDossier = `# Classified Intelligence Dossier: Competitor & Market Radar Sweep
+  const defaultDossier = `# Intelligence Dossier: Competitor & Market Analysis
 **Target Entity:** ${target.targetName}
 **Intelligence Scope:** ${target.targetScope}
-**Classification:** OMEGA-RESTRICTED // OSINT DIRECTIVE
-**Date of Sweep:** ${dateStr}
-**Assigned Operative:** Agent Nyx (Deep Intel Recon)
-**Operational Sector:** SEC-B1 (Shadow Wing / War Room)
+**Classification:** Confidential // Market Intelligence
+**Date:** ${dateStr}
+**Prepared By:** Agent Nyx (Deep Intel Recon)
 **Threat & Opportunity Assessment:** **[ ${threatLevel} ]**
 
 ---
 
 ## 1. Executive Summary & Strategic Takeaways
 Reconnaissance sweep completed targeting **${target.targetName}**.
-Telemetry indicates active competitive maneuvering within this space. Marketing rhetoric, superficial PR announcements, and vanity metrics were filtered out to isolate verifiable operational deltas.
+Analysis indicates active competitive maneuvering within this space. Marketing rhetoric, superficial PR announcements, and vanity metrics were filtered out to isolate verifiable operational deltas.
 
 **Key Intelligence Insights:**
 - **Market Velocity:** Rapid iteration cycles detected within target perimeter.
@@ -466,9 +465,9 @@ Telemetry indicates active competitive maneuvering within this space. Marketing 
 
 ## 2. Ingested OSINT Telemetry & Delta Matrix
 
-| Target Focus | Detected Modification / Signal | Strategic Impact | Threat Level | Recommended Countermeasure |
+| Focus Area | Detected Modification / Signal | Strategic Impact | Threat / Opportunity | Recommended Countermeasure |
 | :--- | :--- | :--- | :--- | :--- |
-| **Product & Features** | Recent additions and workflow modifications identified in latest release notes | Direct feature parity pressure | Elevated | Differentiate on speed, reliability, and local user ownership. |
+| **Product & Features** | Recent additions and workflow modifications identified in latest release notes | Feature parity pressure | Elevated | Differentiate on speed, reliability, and user-centric workflows. |
 | **Pricing & Monetization** | Market tier adjustments and packaging realignment | Pricing elasticity friction | Moderate | Offer transparent, predictable, and superior value tiering. |
 | **User & Market Sentiment** | Community discussions highlight demand for flexible integrations and open standards | High Opportunity | Advantage | Emphasize interoperability, privacy, and frictionless adoption. |
 | **Infrastructure / Tech** | Shift towards automated APIs and streamlined developer experience | Structural standard | Moderate | Benchmark performance and maintain sub-millisecond response rates. |
@@ -492,36 +491,34 @@ ${
 ## 4. Operational Action Directives
 - [x] Ingest ${target.targetName} telemetry into active command intelligence archive.
 - [ ] Monitor target user forums and community feedback for emerging pain points.
-- [ ] Re-run automated sweep on next scheduled Night Shift cycle.
+- [ ] Re-run scheduled intelligence sweep periodically.
 
-\`\`\`
-[DOSSIER SIGNATURE: NYX-OSINT-${Date.now().toString(36).toUpperCase()}]
-STATUS: VERIFIED & COMMITTED TO SAFEHOUSE VFS -> ${targetPath}
-\`\`\`
+---
+*Confidential Executive Intelligence Dossier · Generated on ${dateStr} · Reference: OSINT-${cleanTarget}-${dateStr}*
 `;
 
   const aiPrompt = `You are Agent Nyx, an elite OSINT and competitive intelligence operative.
-Generate a classified, in-depth intelligence dossier formatted in professional GitHub Markdown on the following target:
-Target Name: ${target.targetName}
+Generate an executive-ready intelligence dossier formatted in clean, professional GitHub Markdown on the following target:
+Target Entity: ${target.targetName}
 Scope of Interest: ${target.targetScope}
 Current Date: ${dateStr}
 Live Web Search Extractions:
 ${JSON.stringify(searchHits, null, 2)}
 
-Structure the report with:
-# Classified Intelligence Dossier: Competitor & Market Radar Sweep
+Structure the report cleanly:
+# Intelligence Dossier: Competitor & Market Analysis
 **Target Entity:** ${target.targetName}
 **Date:** ${dateStr}
-**Operative:** Agent Nyx (Deep Intel Recon)
+**Classification:** Confidential // Market Intelligence
 **Threat / Opportunity Level:** [ALPHA-CRITICAL / BRAVO-ELEVATED / CHARLIE-NOMINAL]
 
 Sections:
 1. Executive Summary & Strategic Takeaways (clear, ruthless, practical intelligence)
-2. Delta Matrix Table (Target Focus, Detected Modification, Strategic Impact, Threat/Opportunity, Countermeasure)
+2. Delta Matrix Table (Focus Area, Detected Modification, Strategic Impact, Threat/Opportunity, Recommended Countermeasure)
 3. Deep-Dive Field Findings (specific, actionable insights based on the target)
 4. Tactical Recommendations & Next Steps
 
-Do not mention you are an AI. Speak in-character as Agent Nyx. Return pure Markdown.`;
+Do not mention you are an AI. Do not reference internal application code, local developer logs, or safehouse scaffolding. Return pure, clean Markdown suitable for professional export.`;
 
   const finalDossier = await generateAIEnhancedDossier(aiPrompt, defaultDossier);
 
@@ -565,7 +562,7 @@ async function runTechAuditPipeline(
 ): Promise<PlaybookExecutionResult> {
   const dateStr = getFormattedDateStr();
   const cleanTarget = sanitizeTargetSlug(target.targetName);
-  const targetPath = `intel/tech_audit_${cleanTarget}_${dateStr}.md`;
+  const targetPath = `intel/dossier_${cleanTarget}_${dateStr}.md`;
 
   // Stage 1: Stack & Dependency Check
   onStageUpdate?.(
@@ -575,8 +572,8 @@ async function runTechAuditPipeline(
   await new Promise((r) => setTimeout(r, 600));
 
   let gitData: any = null;
-  // If target looks like a GitHub repo (owner/repo), attempt live GitHub query via Composio
-  if (target.targetName.includes('/')) {
+  // If target explicitly specifies a GitHub repo (owner/repo), query via Composio
+  if (target.targetName.includes('/') && !target.targetName.includes(' ')) {
     const [owner, repo] = target.targetName.split('/');
     try {
       const res = await executeComposioAction('GITHUB_GET_A_REPOSITORY', { owner: owner.trim(), repo: repo.trim() });
@@ -598,7 +595,7 @@ async function runTechAuditPipeline(
         maxResults: 4,
       },
     });
-    cveHits = searchRes.response?.results || [];
+    searchHits: cveHits = searchRes.response?.results || [];
   } catch {
     cveHits = [];
   }
@@ -612,13 +609,12 @@ async function runTechAuditPipeline(
       ? 'BRAVO-ELEVATED'
       : 'CHARLIE-NOMINAL';
 
-  const defaultDossier = `# Classified Technical Audit: Stack & Vulnerability Watch
-**Target Stack / Repository:** ${target.targetName}
-**Audit Focus:** ${target.targetScope}
-**Classification:** OMEGA-RESTRICTED // CODE-OPS DIRECTIVE
-**Date of Audit:** ${dateStr}
-**Assigned Operative:** Agent Cipher (Code-Ops Specialist)
-**Operational Sector:** SEC-C1 (Server Vault)
+  const defaultDossier = `# Technical Security & Vulnerability Audit Dossier
+**Target System / Repository:** ${target.targetName}
+**Audit Scope:** ${target.targetScope}
+**Classification:** Confidential // Security Audit
+**Date:** ${dateStr}
+**Prepared By:** Agent Cipher (Code-Ops Specialist)
 **Vulnerability Threat Status:** **[ ${threatLevel} ]**
 
 ---
@@ -661,25 +657,24 @@ ${
 2. **Environment Variable Hygiene:** Never expose private API keys, bearer tokens, or database connection strings in client bundles.
 3. **Automated Scanning:** Integrate continuous automated security audits into development pipelines.
 
-\`\`\`
-[DOSSIER SIGNATURE: CIPHER-SECURITY-${Date.now().toString(36).toUpperCase()}]
-STATUS: AUDIT VERIFIED & ARCHIVED TO VFS -> ${targetPath}
-\`\`\`
+---
+*Confidential Executive Security Audit · Generated on ${dateStr} · Reference: SEC-${cleanTarget}-${dateStr}*
 `;
 
-  const aiPrompt = `You are Agent Cipher, a master code-ops and cybersecurity specialist.
-Generate a comprehensive, technical security and dependency vulnerability audit dossier in GitHub Markdown on:
+  const aiPrompt = `You are a premier cybersecurity and technical architecture specialist.
+Generate a comprehensive, professional technical security and dependency vulnerability audit dossier in GitHub Markdown on:
 Target Tech / Repository: ${target.targetName}
 Audit Scope: ${target.targetScope}
 Date: ${dateStr}
 Telemetry & Advisory Hits:
 ${JSON.stringify(cveHits, null, 2)}
+${gitData ? `Repository Telemetry: ${JSON.stringify(gitData, null, 2)}` : ''}
 
 Structure:
-# Classified Technical Audit: Stack & Vulnerability Watch
-**Target:** ${target.targetName}
+# Technical Security & Vulnerability Audit Dossier
+**Target System / Repository:** ${target.targetName}
 **Date:** ${dateStr}
-**Operative:** Agent Cipher (Code-Ops Specialist)
+**Classification:** Confidential // Security Audit
 **Vulnerability Status:** [ALPHA-CRITICAL / BRAVO-ELEVATED / CHARLIE-NOMINAL]
 
 Sections:
@@ -688,7 +683,7 @@ Sections:
 3. Advisory Findings & Threat Breakdown
 4. Remediation Steps & Command Checklist
 
-Speak in-character as Agent Cipher. Return pure Markdown.`;
+Do not mention you are an AI. Do not reference internal application code, local developer logs, or safehouse scaffolding. Return pure, clean Markdown suitable for professional export.`;
 
   const finalDossier = await generateAIEnhancedDossier(aiPrompt, defaultDossier);
 
@@ -731,7 +726,7 @@ async function runMorningBriefingPipeline(
 ): Promise<PlaybookExecutionResult> {
   const dateStr = getFormattedDateStr();
   const cleanTarget = sanitizeTargetSlug(target.targetName);
-  const targetPath = `intel/morning_briefing_${cleanTarget}_${dateStr}.md`;
+  const targetPath = `intel/dossier_${cleanTarget}_${dateStr}.md`;
 
   // Stage 1: Multi-Source Aggregation
   onStageUpdate?.(
@@ -740,16 +735,20 @@ async function runMorningBriefingPipeline(
   );
 
   let gitIssues: any[] = [];
-  try {
-    const issuesRes = await executeComposioAction('GITHUB_LIST_ISSUES', {
-      owner: 'reyescris12',
-      repo: 'PixelOps',
-      state: 'open',
-    });
-    if (issuesRes.successful && Array.isArray(issuesRes.data)) {
-      gitIssues = issuesRes.data;
-    }
-  } catch {}
+  // Dynamically check if the user target references a GitHub repository
+  const repoMatch = `${target.targetName} ${target.targetScope}`.match(/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)/i);
+  if (repoMatch) {
+    try {
+      const issuesRes = await executeComposioAction('GITHUB_LIST_ISSUES', {
+        owner: repoMatch[1],
+        repo: repoMatch[2],
+        state: 'open',
+      });
+      if (issuesRes.successful && Array.isArray(issuesRes.data)) {
+        gitIssues = issuesRes.data;
+      }
+    } catch {}
+  }
 
   const vfsFiles = await listWorkspaceFiles();
   const recentIntel = vfsFiles.filter((f) => f.category === 'intel' || f.path.startsWith('intel/'));
@@ -768,13 +767,12 @@ async function runMorningBriefingPipeline(
   );
   await new Promise((r) => setTimeout(r, 500));
 
-  const defaultDossier = `# Executive Command Briefing // Intelligence Headquarters
+  const defaultDossier = `# Executive Command Briefing: Operations SITREP
 **Briefing Focus:** ${target.targetName}
 **Strategic Scope:** ${target.targetScope}
-**Date:** ${dateStr} // 08:00 LOCAL TIME
-**Assigned Operative:** Agent Vance (Command Operations Chief)
-**Operational Sector:** SEC-A1 (Comms Tower)
-**Classification:** COMMAND-RESTRICTED
+**Date:** ${dateStr}
+**Prepared By:** Agent Vance (Command Operations Chief)
+**Classification:** Confidential // Executive Briefing
 
 ---
 
@@ -794,7 +792,7 @@ All operational sectors report positive velocity. Key priorities, deliverable st
 ### 📊 Active Focus & Deliverables
 - **Target Area:** ${target.targetName}
 - **Monitored Scope:** ${target.targetScope}
-- **Status:** Coordinated under Agent Vance's direct oversight.
+- **Status:** Coordinated under executive strategic oversight.
 
 ### 🗄️ Recent Intelligence Dossiers in VFS
 ${
@@ -830,26 +828,25 @@ ${
 
 ## 4. Action Dispatch Status
 - **VFS Local Archive:** Saved to \`${targetPath}\`.
-- **Comms Relay Broadcast:** Ready for immediate 1-click transmission to ${target.recipientEmail || 'Commander'}.
+- **Broadcast Ready:** Formatted for direct team export or email transmission.
 
-\`\`\`
-[DOSSIER SIGNATURE: VANCE-COMMAND-${Date.now().toString(36).toUpperCase()}]
-COMM TOWER TRANSMISSION: READY FOR BROADCAST
-\`\`\`
+---
+*Confidential Executive Briefing · Generated on ${dateStr} · Reference: SITREP-${cleanTarget}-${dateStr}*
 `;
 
-  const aiPrompt = `You are Agent Vance, the Command Operations Chief.
+  const aiPrompt = `You are a Chief Operations Officer and Executive Strategist.
 Synthesize an executive morning command briefing in professional GitHub Markdown on:
 Focus: ${target.targetName}
 Scope & Priorities: ${target.targetScope}
 Date: ${dateStr}
 Recent VFS Intel Files: ${recentIntel.map((f) => f.path).join(', ')}
+${gitIssues.length > 0 ? `Target Repository Issues: ${JSON.stringify(gitIssues, null, 2)}` : ''}
 
 Structure:
-# Executive Command Briefing // Intelligence Headquarters
+# Executive Command Briefing: Operations SITREP
 **Briefing Focus:** ${target.targetName}
 **Date:** ${dateStr}
-**Operative:** Agent Vance (Command Operations Chief)
+**Classification:** Confidential // Executive Briefing
 
 Sections:
 1. Executive Situation Report (SITREP)
@@ -857,7 +854,7 @@ Sections:
 3. Daily Operational Directives (prioritized, actionable tasks)
 4. Dispatch & Broadcast Status
 
-Speak in-character as Agent Vance. Return pure Markdown.`;
+Do not mention you are an AI. Do not reference internal application code, local developer logs, or safehouse scaffolding. Return pure, clean Markdown suitable for professional export or email dispatch.`;
 
   const finalDossier = await generateAIEnhancedDossier(aiPrompt, defaultDossier);
 

@@ -1067,7 +1067,23 @@ export async function executeFunctionCallHandler(fc: {
 
     // 3A. Live GitHub Repository Issues Listing & Audit
     if (name === 'github_list_issues') {
-      const repo = String(args.repository || args.repo || 'facebook/react').trim();
+      const repo = String(args.repository || args.repo || '').trim();
+      if (!repo) {
+        return {
+          id: fc.id,
+          name,
+          response: { error: 'Missing target repository. Please specify the repository in "owner/repo" format.' },
+          executedToolMeta: {
+            pluginId: dest.pluginId,
+            toolName: name,
+            args,
+            resultSummary: 'Error: Missing target repository parameter',
+            livePayload: { error: 'Missing target repository parameter' },
+            targetRoom: dest.targetRoom,
+            targetStationId: dest.targetStationId,
+          },
+        };
+      }
       const state = String(args.state || 'open').trim();
       const compRes = await executeComposioAction('GITHUB_LIST_ISSUES', { repo, state, labels: args.labels });
       if (compRes.successful) {
@@ -1113,7 +1129,23 @@ export async function executeFunctionCallHandler(fc: {
 
     // 3B. Live GitHub Repository Metadata & Intelligence
     if (name === 'github_get_repository') {
-      const repo = String(args.repository || args.repo || 'facebook/react').trim();
+      const repo = String(args.repository || args.repo || '').trim();
+      if (!repo) {
+        return {
+          id: fc.id,
+          name,
+          response: { error: 'Missing target repository. Please specify the repository in "owner/repo" format.' },
+          executedToolMeta: {
+            pluginId: dest.pluginId,
+            toolName: name,
+            args,
+            resultSummary: 'Error: Missing target repository parameter',
+            livePayload: { error: 'Missing target repository parameter' },
+            targetRoom: dest.targetRoom,
+            targetStationId: dest.targetStationId,
+          },
+        };
+      }
       const compRes = await executeComposioAction('GITHUB_GET_A_REPOSITORY', { repo });
       if (compRes.successful) {
         return {
@@ -2764,7 +2796,25 @@ export async function tryParseAndExecuteExternalToolDirective(params: {
       actionArgs = { max_results: 5 };
     } else {
       const emailMatch = rawPrompt.match(/([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/i);
-      const recipient = emailMatch ? emailMatch[1] : 'team@pixelops.app';
+      if (!emailMatch) {
+        return {
+          id: `card-${Date.now()}`,
+          timestamp: new Date().toISOString(),
+          prompt: params.prompt,
+          dialogue: `${params.activeAgentName} (${params.activeAgentRole}): Missing recipient email address. Please provide the target recipient email address (e.g. user@company.com) so I can prepare and transmit this email.`,
+          cardTitle: 'GMAIL DISPATCH: RECIPIENT REQUIRED',
+          actionCategory: 'External Tools',
+          steps: [
+            { label: 'Intent Analysis', detail: 'Outbound email directive parsed', status: 'completed' },
+            { label: 'Recipient Validation', detail: 'No recipient email detected in directive', status: 'queued' },
+          ],
+          toolCalls: [],
+          tokenEstimate: 45,
+          agentName: params.activeAgentName,
+          themeId: params.themeId,
+        };
+      }
+      const recipient = emailMatch[1];
 
       const subjectMatch =
         rawPrompt.match(/(?:subject|titled?|with\s+subject)\s*[:"']\s*([^"'\n\r]+)["']?/i) ||
@@ -2823,8 +2873,26 @@ export async function tryParseAndExecuteExternalToolDirective(params: {
     let actionArgs: Record<string, any> = {};
 
     const repoMatch = rawPrompt.match(/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)/i);
-    const owner = repoMatch ? repoMatch[1] : 'reyescris12';
-    const repo = repoMatch ? repoMatch[2] : 'PixelOps';
+    if (!repoMatch) {
+      return {
+        id: `card-${Date.now()}`,
+        timestamp: new Date().toISOString(),
+        prompt: params.prompt,
+        dialogue: `${params.activeAgentName} (${params.activeAgentRole}): Missing target repository. Please specify the target repository in 'owner/repo' format (e.g. 'my-org/my-project') so I can access your repository.`,
+        cardTitle: 'GITHUB OPERATION: REPO REQUIRED',
+        actionCategory: 'External Tools',
+        steps: [
+          { label: 'Intent Analysis', detail: 'GitHub action directive parsed', status: 'completed' },
+          { label: 'Repository Validation', detail: 'Target repository not specified in owner/repo format', status: 'queued' },
+        ],
+        toolCalls: [],
+        tokenEstimate: 45,
+        agentName: params.activeAgentName,
+        themeId: params.themeId,
+      };
+    }
+    const owner = repoMatch[1];
+    const repo = repoMatch[2];
 
     if (isGithubStar) {
       actionArgs = { owner, repo };
@@ -3810,12 +3878,12 @@ export async function executeAgentDirective(params: {
         THEME_PERSONA_INSTRUCTIONS[params.themeId] || THEME_PERSONA_INSTRUCTIONS.spy;
 
       // Structured System Persona & Action Protocol Injection
-      const structuredPersona = `You are an autonomous tactical agent in PixelOps. Your identity is ${params.activeAgentName} and your specialized role is ${params.activeAgentRole}.
+      const structuredPersona = `You are an autonomous tactical operative. Your identity is ${params.activeAgentName} and your specialized role is ${params.activeAgentRole}.
 You have direct access to local execution tools: ${declaredToolNames || 'local execution engine'}.
-Think step-by-step, execute tasks logically, call tools whenever you need live data or local operations, and return structured results.`;
+Think step-by-step, execute tasks logically, call tools whenever you need live data or operations, and return structured results.`;
 
       const actionProtocolDirective = `CRITICAL OPERATIONAL DIRECTIVE:
-You are an autonomous tactical operative in PixelOps. You do NOT just generate conversational text—you execute tasks.
+You are an autonomous tactical operative. You do NOT just generate conversational text—you execute tasks.
 When given an operational task, you MUST either invoke the appropriate function call OR format your operational action using a strict execution tag before any conversational commentary, like this:
 
 [AGENT_ACTION: <tool_name>]
@@ -3828,11 +3896,18 @@ Available tools: ${declaredToolNames || 'weather_lookup, live_web_search, code_s
 If no tool is required, conclude your operational status using:
 [AGENT_STATUS: COMPLETE] or [AGENT_STATUS: WORKING]`;
 
+      const userAgnosticDirective = `STRICT USER-AGNOSTIC & TARGET-DRIVEN DIRECTIVE:
+- ALL OPERATIONS MUST BE GROUNDED IN USER TARGETS: Process data, perform audits, and gather intelligence strictly based on the target companies, domains, repositories, tech stacks, or topics provided dynamically by the active user session.
+- NEVER SELF-REFERENCE INTERNAL APP CODE: Do NOT reference PixelOps application source code, internal test suites, developer-specific GitHub accounts, local development logs, or internal safehouse scaffolding unless the user explicitly asks you to inspect this application's code.
+- USER-SCOPED INTEGRATION CALLS: When calling connected external tools (GitHub, Gmail, Slack, Calendar, Notion, Linear), operate strictly within the authenticated end-user's connected accounts and the target repositories/domains specified in their prompt. Never default to developer accounts, test emails, or hardcoded repositories.
+- EXTERNAL-READY WORK PRODUCTS: Format all reports, briefs, and dossiers as clean, portable Markdown files (standardizing on 'dossier_[target]_[date].md') that any professional can export, share, or email directly to their team.`;
+
       const operationalRealTaskConstraint = `STRICT OPERATIONAL DIRECTIVE:
 You are an autonomous tactical agent. Never generate fictional, mock, or simulated tasks. All generated tasks, targets, and directives must map directly to real operational utilities, live local storage keys, active background workers, or real system diagnostics.`;
 
       const systemInstruction = [
         structuredPersona,
+        userAgnosticDirective,
         operationalRealTaskConstraint,
         actionProtocolDirective,
         personaInstruction,

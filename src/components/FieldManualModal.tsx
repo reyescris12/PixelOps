@@ -78,7 +78,7 @@ const COMMAND_CATALOG: CommandExample[] = [
     title: 'Numbered Multi-Phase Operational Pipeline',
     category: 'Task Chaining',
     channel: 'terminal',
-    prompt: '1. Vance research GitHub Actions CI/CD security best practices. 2. Cipher write a hardened workflow template and audit summary to reports/ci_cd_security.md. 3. Nyx dispatch notice to ops-lead@pixelops.app.',
+    prompt: '1. Vance research GitHub Actions CI/CD security best practices. 2. Cipher write a hardened workflow template and audit summary to reports/ci_cd_security.md. 3. Nyx dispatch notice to lead@company.com.',
     description: 'Executes numbered steps sequentially with zero user intervention between phases, passing file paths and research context forward.',
     leadOperative: 'Vance',
     targetSector: 'War Room ➔ Server Vault ➔ Comms Tower',
@@ -158,7 +158,7 @@ const COMMAND_CATALOG: CommandExample[] = [
     title: 'Gmail: Outbound Email Dispatch',
     category: 'Composio & External',
     channel: 'terminal',
-    prompt: 'Nyx, send an email to ops-lead@pixelops.app with subject "Mission Alpha Clearance" saying "All safehouse perimeter sectors verified green."',
+    prompt: 'Nyx, send an email to lead@company.com with subject "Operational Clearance" saying "All perimeter sectors verified nominal."',
     description: 'Extracts recipient, subject, and body, checks OAuth credentials in Armory, and dispatches email live via Google Workspace / Gmail.',
     leadOperative: 'Nyx',
     targetSector: 'Comms Tower (comms_broadcast_desk)',
@@ -176,7 +176,7 @@ const COMMAND_CATALOG: CommandExample[] = [
     title: 'GitHub: Create Repository Issue',
     category: 'Composio & External',
     channel: 'terminal',
-    prompt: 'Cipher, create an issue in reyescris12/PixelOps titled "Implement token bucket rate limiter for external webhooks" saying "Priority high. Enforce 100 req/min."',
+    prompt: 'Cipher, create an issue in my-org/my-project titled "Implement token bucket rate limiter for external webhooks" saying "Priority high. Enforce 100 req/min."',
     description: 'Parses repository owner/name, title, and body parameters and files an issue live via user connected GitHub account.',
     leadOperative: 'Cipher',
     targetSector: 'Server Vault (vault_core_rack)',
@@ -185,7 +185,7 @@ const COMMAND_CATALOG: CommandExample[] = [
     title: 'GitHub: Star Repository',
     category: 'Composio & External',
     channel: 'terminal',
-    prompt: 'star repo reyescris12/PixelOps',
+    prompt: 'star repo owner/repository',
     description: 'Executes GITHUB_STAR_A_REPOSITORY_FOR_THE_AUTHENTICATED_USER on the authenticated GitHub account.',
     leadOperative: 'Cipher',
     targetSector: 'Server Vault',
@@ -203,7 +203,7 @@ const COMMAND_CATALOG: CommandExample[] = [
     title: 'Google Calendar: Schedule Tactical Briefing',
     category: 'Composio & External',
     channel: 'terminal',
-    prompt: 'schedule calendar event titled "Safehouse Strategic Alignment" at "Tomorrow 14:00 UTC" with attendees team@pixelops.app',
+    prompt: 'schedule calendar event titled "Quarterly Strategic Alignment" at "Tomorrow 14:00 UTC" with attendees team@domain.com',
     description: 'Parses title, datetime, and attendees, and creates an event on Google Calendar via Composio.',
     leadOperative: 'Nyx',
     targetSector: 'Comms Tower',
@@ -270,7 +270,7 @@ const COMMAND_CATALOG: CommandExample[] = [
     title: 'CLI: Execute Raw Tool Action',
     category: 'CLI Console',
     channel: 'cli',
-    prompt: 'pixelops composio run GMAIL_SEND_EMAIL \'{"recipient_email":"team@pixelops.app","subject":"Alert","body":"Perimeter clear"}\'',
+    prompt: 'pixelops composio run GMAIL_SEND_EMAIL \'{"recipient_email":"team@domain.com","subject":"Alert","body":"Perimeter clear"}\'',
     description: 'Executes a raw action directly against the connected third-party app with JSON parameters.',
     leadOperative: 'Any Operative',
     targetSector: 'Comms Tower',
@@ -279,7 +279,7 @@ const COMMAND_CATALOG: CommandExample[] = [
     title: 'CLI: Run Autonomous Agent with Tool Tools',
     category: 'CLI Console',
     channel: 'cli',
-    prompt: 'pixelops composio agent "Check my unread emails and star the PixelOps repo on GitHub"',
+    prompt: 'pixelops composio agent "Check my unread emails and check issues in owner/repo on GitHub"',
     description: 'Deploys an autonomous Gemini agent with dynamic tool bindings across all connected accounts.',
     leadOperative: 'Vance',
     targetSector: 'War Room',
@@ -1228,7 +1228,7 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
                   </p>
                   <div className="bg-[#0c0e17] p-2 text-[11px] text-[#cbd5e1] space-y-1">
                     <div><strong>Terminal:</strong> <code>Cipher, create an issue in owner/repo titled &quot;Bug&quot; saying &quot;Fix&quot;</code></div>
-                    <div><strong>CLI Action:</strong> <code>pixelops composio run GITHUB_STAR_A_REPOSITORY_FOR_THE_AUTHENTICATED_USER &apos;{JSON.stringify({ owner: "reyescris12", repo: "PixelOps" })}&apos;</code></div>
+                    <div><strong>CLI Action:</strong> <code>pixelops composio run GITHUB_STAR_A_REPOSITORY_FOR_THE_AUTHENTICATED_USER &apos;{JSON.stringify({ owner: "my-org", repo: "my-project" })}&apos;</code></div>
                   </div>
                 </div>
 

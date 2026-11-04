@@ -80,7 +80,7 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
       const current = storedTargets[playbook.id] || DEFAULT_TARGET_PRESETS[playbook.id][0];
       setTargetName(current.targetName);
       setTargetScope(current.targetScope);
-      setRecipientEmail(current.recipientEmail || 'commander@pixelops.app');
+      setRecipientEmail(current.recipientEmail || '');
       setEmailStatus(null);
       // If no result yet and not currently running, default to showing the target setup
       if (!result && !isRunning) {

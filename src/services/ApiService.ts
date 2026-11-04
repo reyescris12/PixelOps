@@ -17,6 +17,7 @@ import {
   ComposioIntegration,
   getConnectedAccounts,
   normalizeAppSlug,
+  getGeminiTools,
 } from './ComposioService';
 import {
   executeSafeOperation,
@@ -3766,6 +3767,22 @@ export async function executeAgentDirective(params: {
 
       // Build dynamic tool declarations from active plugins & assigned operative capabilities
       const baseDeclarations = buildDynamicToolDeclarations(params.enabledPlugins);
+
+      // Dynamically fetch and merge all live active Composio tools at runtime (Zero Hardcoding)
+      try {
+        const dynamicComposioTools = await getGeminiTools();
+        if (Array.isArray(dynamicComposioTools) && dynamicComposioTools.length > 0) {
+          const existingNames = new Set(baseDeclarations.map((d) => d.name));
+          for (const dt of dynamicComposioTools) {
+            if (dt && dt.name && !existingNames.has(dt.name)) {
+              baseDeclarations.push(dt);
+              existingNames.add(dt.name);
+            }
+          }
+        }
+      } catch (dynamicToolErr) {
+        console.warn('[AGENT DISPATCH] Could not augment with dynamic Composio tools:', dynamicToolErr);
+      }
       // Guarantee core capabilities (live_web_search, fs_storage_manager, code_sandbox_eval, memory_vector_lookup) are always available
       const CORE_AGENT_TOOLS = new Set([
         'live_web_search',

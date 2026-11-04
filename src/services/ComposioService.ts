@@ -1145,6 +1145,7 @@ export async function initiateAppConnection(
           userUuid: entityId,
         };
         saveLocalConnectedAccount(confirmedAccount);
+        invalidateDynamicToolsCache();
 
         // Poll connected accounts immediately and merge with server
         let latest = await getConnectedAccounts();
@@ -1251,6 +1252,7 @@ export async function initiateAppConnection(
 export async function disconnectAccount(connectionIdOrAppName: string): Promise<boolean> {
   try {
     removeLocalConnectedAccount(connectionIdOrAppName);
+    invalidateDynamicToolsCache();
     await callComposioProxy(`/connected_accounts/${encodeURIComponent(connectionIdOrAppName)}`, 'DELETE');
     const latest = await getConnectedAccounts();
     notifyConnectionSync(latest);
@@ -1819,6 +1821,90 @@ export const COMPOSIO_GEMINI_TOOL_SCHEMAS: Record<string, any> = {
  * Automatically inspects the current user's live connected accounts if no specific list is passed,
  * ensuring newly connected Armory toolkits are instantly available to Vance, Cipher, Nyx, etc.
  */
+let cachedDynamicTools: any[] | null = null;
+let cachedDynamicToolsTimestamp = 0;
+const DYNAMIC_TOOLS_CACHE_TTL_MS = 300_000; // 5 minutes
+
+/**
+ * Invalidates the in-memory cache of dynamically fetched tools.
+ * Called automatically when an integration is connected or disconnected.
+ */
+export function invalidateDynamicToolsCache(): void {
+  cachedDynamicTools = null;
+  cachedDynamicToolsTimestamp = 0;
+}
+
+/**
+ * Dynamically queries Composio v3 REST at runtime to fetch all canonical tools
+ * for the user's active connected integrations.
+ * Returns formatted Google Gemini FunctionDeclaration schemas with zero hardcoding.
+ */
+export async function fetchDynamicToolsForConnectedApps(
+  connectedApps?: string[],
+  forceRefresh = false
+): Promise<any[]> {
+  const now = Date.now();
+  if (!forceRefresh && cachedDynamicTools && now - cachedDynamicToolsTimestamp < DYNAMIC_TOOLS_CACHE_TTL_MS) {
+    return cachedDynamicTools;
+  }
+
+  // 1. Attempt batch query via /dynamicTools endpoint on Cloudflare / Node proxy
+  try {
+    const proxyData = await callComposioProxy('/dynamicTools', 'GET');
+    if (proxyData && proxyData.ok && Array.isArray(proxyData.tools) && proxyData.tools.length > 0) {
+      cachedDynamicTools = proxyData.tools;
+      cachedDynamicToolsTimestamp = now;
+      console.log(
+        `[COMPOSIO DYNAMIC TOOLS] Fetched ${proxyData.tools.length} live tool(s) for [${(proxyData.toolkits || []).join(', ')}]`
+      );
+      return proxyData.tools;
+    }
+  } catch (err: any) {
+    console.warn('[COMPOSIO DYNAMIC TOOLS] Batch /dynamicTools failed, falling back to per-app queries:', err?.message || err);
+  }
+
+  // 2. Fallback: Query tools for each connected app individually
+  const appList =
+    connectedApps && connectedApps.length > 0
+      ? connectedApps
+      : (await getConnectedAccounts()).map((a) => a.appName);
+
+  const normalizedApps = Array.from(new Set(appList.map((a) => a.toLowerCase().trim()))).filter(Boolean);
+  const discoveredTools: any[] = [];
+
+  for (const app of normalizedApps) {
+    try {
+      const data = await callComposioProxy(`/tools?toolkit_slug=${encodeURIComponent(app)}`, 'GET');
+      const items = Array.isArray(data) ? data : data?.items || data?.tools || [];
+      for (const item of items) {
+        const slug = item.slug || item.name;
+        if (!slug) continue;
+
+        const rawParams = item.parameters || {};
+        discoveredTools.push({
+          name: `composio_${slug.toLowerCase()}`,
+          description: item.description || `Execute ${slug} on ${app.toUpperCase()} via Composio.`,
+          parameters: {
+            type: 'OBJECT',
+            description: rawParams.description || item.description || `Parameters for ${slug}`,
+            properties: rawParams.properties || {},
+            required: Array.isArray(rawParams.required) ? rawParams.required : [],
+          },
+        });
+      }
+    } catch (appErr) {
+      console.warn(`[COMPOSIO DYNAMIC TOOLS] Discovery skipped for ${app}:`, appErr);
+    }
+  }
+
+  if (discoveredTools.length > 0) {
+    cachedDynamicTools = discoveredTools;
+    cachedDynamicToolsTimestamp = now;
+  }
+
+  return discoveredTools;
+}
+
 export async function getGeminiTools(connectedAppNames?: string[]): Promise<any[]> {
   const tools: any[] = [];
   let apps = connectedAppNames;
@@ -1835,38 +1921,54 @@ export async function getGeminiTools(connectedAppNames?: string[]): Promise<any[
 
   const normalized = (apps || []).map((a) => a.toLowerCase().trim());
 
-  // 1. Match known schemas from COMPOSIO_GEMINI_TOOL_SCHEMAS
+  // 1. DYNAMIC DISCOVERY: Fetch live tools from Composio v3 at runtime (Zero Hardcoding)
+  try {
+    const liveTools = await fetchDynamicToolsForConnectedApps(normalized);
+    if (liveTools && liveTools.length > 0) {
+      tools.push(...liveTools);
+    }
+  } catch (dynErr) {
+    console.warn('[COMPOSIO DYNAMIC TOOLS] Live discovery failed, using curated schemas:', dynErr);
+  }
+
+  const existingNames = new Set(tools.map((t) => t.name.toLowerCase()));
+
+  // 2. CURATED SCHEMAS: Supplement with known schemas from COMPOSIO_GEMINI_TOOL_SCHEMAS
   for (const [toolKey, schema] of Object.entries(COMPOSIO_GEMINI_TOOL_SCHEMAS)) {
     const isAppMatch = normalized.some((app) => toolKey.toLowerCase().includes(app));
-    // Include if user explicitly connected the app, or if all core tools are requested
-    if (normalized.length === 0 || isAppMatch) {
+    if ((normalized.length === 0 || isAppMatch) && !existingNames.has(schema.name.toLowerCase())) {
       tools.push(schema);
+      existingNames.add(schema.name.toLowerCase());
     }
   }
 
-  // 2. Synthesize dynamic tools for any connected apps that lack a dedicated static declaration
+  // 3. FALLBACK SYNTHESIS: Generate generic action tool for any connected app missing specific declarations
   if (normalized.length > 0) {
     for (const app of normalized) {
       const hasSpecificTool = tools.some((t) => t.name.toLowerCase().includes(app));
       if (!hasSpecificTool) {
-        tools.push({
-          name: `composio_${app}_execute_action`,
-          description: `Execute an action or query on authenticated ${app.toUpperCase()} integration via Composio.`,
-          parameters: {
-            type: 'OBJECT',
-            properties: {
-              action_slug: {
-                type: 'STRING',
-                description: `Specific ${app.toUpperCase()} action slug to execute (e.g. ${app.toUpperCase()}_GET_INFO).`,
+        const genericName = `composio_${app}_execute_action`;
+        if (!existingNames.has(genericName)) {
+          tools.push({
+            name: genericName,
+            description: `Execute an action or query on authenticated ${app.toUpperCase()} integration via Composio.`,
+            parameters: {
+              type: 'OBJECT',
+              properties: {
+                action_slug: {
+                  type: 'STRING',
+                  description: `Specific ${app.toUpperCase()} action slug to execute (e.g. ${app.toUpperCase()}_GET_INFO).`,
+                },
+                parameters: {
+                  type: 'OBJECT',
+                  description: 'Arguments and configuration dictionary for the action.',
+                },
               },
-              parameters: {
-                type: 'OBJECT',
-                description: 'Arguments and configuration dictionary for the action.',
-              },
+              required: ['action_slug'],
             },
-            required: ['action_slug'],
-          },
-        });
+          });
+          existingNames.add(genericName);
+        }
       }
     }
   }
@@ -2130,6 +2232,8 @@ export const ComposioService = {
   disconnectAccount,
   getAvailableIntegrations,
   getGeminiTools,
+  fetchDynamicToolsForConnectedApps,
+  invalidateDynamicToolsCache,
   executeComposioAction,
   runAgentWithTools,
   subscribeToConnectionChanges,

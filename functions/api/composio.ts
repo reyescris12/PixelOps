@@ -108,6 +108,120 @@ export const onRequest = async (context: {
     cleanEndpoint = cleanEndpoint.replace(/^\/api\/v2/, '').replace(/^\/api\/v3/, '');
 
     const baseUrl = 'https://backend.composio.dev/api/v3';
+
+    // DYNAMIC TOOL RESOLVER: Discovers all active integrations for entityId,
+    // fetches their canonical tools from Composio v3, and returns them formatted
+    // as Google Gemini FunctionDeclaration schemas on-the-fly (Zero Hardcoding).
+    if (cleanEndpoint.startsWith('/dynamicTools') || cleanEndpoint.startsWith('/activeTools')) {
+      try {
+        const connRes = await fetch(
+          `${baseUrl}/connectedAccounts?entityId=${encodeURIComponent(entityId)}`,
+          {
+            headers: {
+              'x-api-key': apiKey,
+              'Content-Type': 'application/json',
+              Accept: 'application/json',
+            },
+          }
+        );
+
+        let activeAccounts: any[] = [];
+        if (connRes.ok) {
+          const connData: any = await connRes.json();
+          activeAccounts = Array.isArray(connData)
+            ? connData
+            : connData?.items || connData?.connectedAccounts || connData?.data || [];
+        }
+
+        const activeAppNames: string[] = Array.from(
+          new Set(
+            activeAccounts
+              .filter((a: any) => a.status === 'ACTIVE' || a.status === 'INITIATED')
+              .map((a: any) => (a.appName || a.app_name || '').toLowerCase().trim())
+              .filter(Boolean)
+          )
+        );
+
+        const dynamicTools: any[] = [];
+        await Promise.all(
+          activeAppNames.map(async (app) => {
+            try {
+              const toolsRes = await fetch(
+                `${baseUrl}/tools?toolkit_slug=${encodeURIComponent(app)}`,
+                {
+                  headers: {
+                    'x-api-key': apiKey,
+                    'Content-Type': 'application/json',
+                    Accept: 'application/json',
+                  },
+                }
+              );
+              if (toolsRes.ok) {
+                const toolsData: any = await toolsRes.json();
+                const items = Array.isArray(toolsData)
+                  ? toolsData
+                  : toolsData?.items || toolsData?.tools || [];
+
+                for (const item of items) {
+                  const slug = item.slug || item.name;
+                  if (!slug) continue;
+
+                  const rawParams = item.parameters || {};
+                  const parameters = {
+                    type: 'OBJECT',
+                    description: rawParams.description || item.description || `Parameters for ${slug}`,
+                    properties: rawParams.properties || {},
+                    required: Array.isArray(rawParams.required) ? rawParams.required : [],
+                  };
+
+                  dynamicTools.push({
+                    name: `composio_${slug.toLowerCase()}`,
+                    description: item.description || `Execute ${slug} on ${app.toUpperCase()} via Composio.`,
+                    parameters,
+                  });
+                }
+              }
+            } catch (toolFetchErr) {
+              console.warn(`[COMPOSIO CLOUDFLARE] Tool discovery for ${app} skipped:`, toolFetchErr);
+            }
+          })
+        );
+
+        console.log(
+          `[COMPOSIO CLOUDFLARE] Dynamic tools resolved for entity "${entityId}": ${dynamicTools.length} tool(s) across [${activeAppNames.join(', ')}]`
+        );
+
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            entityId,
+            toolkits: activeAppNames,
+            tools: dynamicTools,
+          }),
+          {
+            status: 200,
+            headers: {
+              'Content-Type': 'application/json',
+              ...CORS_HEADERS,
+            },
+          }
+        );
+      } catch (dynamicErr: any) {
+        return new Response(
+          JSON.stringify({
+            error: 'DYNAMIC_TOOLS_FETCH_FAILED',
+            message: dynamicErr?.message || 'Failed to dynamically fetch tools.',
+          }),
+          {
+            status: 500,
+            headers: {
+              'Content-Type': 'application/json',
+              ...CORS_HEADERS,
+            },
+          }
+        );
+      }
+    }
     
     // Enforce entityId scoping for connected_accounts and tool/action executions
     let targetUrl = `${baseUrl}${cleanEndpoint}`;

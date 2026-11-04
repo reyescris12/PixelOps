@@ -2237,6 +2237,102 @@ ROUNDTABLE RULES:
       cleanEndpoint = cleanEndpoint.replace(/^\/api\/v2/, '').replace(/^\/api\/v3/, '');
 
       const baseUrl = 'https://backend.composio.dev/api/v3';
+
+      // DYNAMIC TOOL RESOLVER: Discovers all active integrations for entityId,
+      // fetches their canonical tools from Composio v3, and returns them formatted
+      // as Google Gemini FunctionDeclaration schemas on-the-fly (Zero Hardcoding).
+      if (cleanEndpoint.startsWith('/dynamicTools') || cleanEndpoint.startsWith('/activeTools')) {
+        try {
+          const connRes = await fetch(
+            `${baseUrl}/connectedAccounts?entityId=${encodeURIComponent(entityId)}`,
+            {
+              headers: {
+                'x-api-key': apiKey,
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+              },
+            }
+          );
+
+          let activeAccounts: any[] = [];
+          if (connRes.ok) {
+            const connData: any = await connRes.json();
+            activeAccounts = Array.isArray(connData)
+              ? connData
+              : connData?.items || connData?.connectedAccounts || connData?.data || [];
+          }
+
+          const activeAppNames: string[] = Array.from(
+            new Set(
+              activeAccounts
+                .filter((a: any) => a.status === 'ACTIVE' || a.status === 'INITIATED')
+                .map((a: any) => (a.appName || a.app_name || '').toLowerCase().trim())
+                .filter(Boolean)
+            )
+          );
+
+          const dynamicTools: any[] = [];
+          await Promise.all(
+            activeAppNames.map(async (app) => {
+              try {
+                const toolsRes = await fetch(
+                  `${baseUrl}/tools?toolkit_slug=${encodeURIComponent(app)}`,
+                  {
+                    headers: {
+                      'x-api-key': apiKey,
+                      'Content-Type': 'application/json',
+                      Accept: 'application/json',
+                    },
+                  }
+                );
+                if (toolsRes.ok) {
+                  const toolsData: any = await toolsRes.json();
+                  const items = Array.isArray(toolsData)
+                    ? toolsData
+                    : toolsData?.items || toolsData?.tools || [];
+
+                  for (const item of items) {
+                    const slug = item.slug || item.name;
+                    if (!slug) continue;
+
+                    const rawParams = item.parameters || {};
+                    const parameters = {
+                      type: 'OBJECT',
+                      description: rawParams.description || item.description || `Parameters for ${slug}`,
+                      properties: rawParams.properties || {},
+                      required: Array.isArray(rawParams.required) ? rawParams.required : [],
+                    };
+
+                    dynamicTools.push({
+                      name: `composio_${slug.toLowerCase()}`,
+                      description: item.description || `Execute ${slug} on ${app.toUpperCase()} via Composio.`,
+                      parameters,
+                    });
+                  }
+                }
+              } catch (toolFetchErr) {
+                console.warn(`[COMPOSIO NODE] Tool discovery for ${app} skipped:`, toolFetchErr);
+              }
+            })
+          );
+
+          console.log(
+            `[COMPOSIO NODE PROXY] Dynamic tools resolved for entity "${entityId}": ${dynamicTools.length} tool(s) across [${activeAppNames.join(', ')}]`
+          );
+
+          return res.json({
+            ok: true,
+            entityId,
+            toolkits: activeAppNames,
+            tools: dynamicTools,
+          });
+        } catch (dynamicErr: any) {
+          return res.status(500).json({
+            error: 'DYNAMIC_TOOLS_FETCH_FAILED',
+            message: dynamicErr?.message || 'Failed to dynamically fetch tools.',
+          });
+        }
+      }
       let targetUrl = `${baseUrl}${cleanEndpoint}`;
       let modifiedBody = body ? { ...body } : undefined;
 
@@ -2326,6 +2422,199 @@ if (process.env.NODE_ENV !== 'production') {
       res.sendFile(path.join(distPath, 'index.html'));
     });
   }
+
+  
+  /**
+   * Dynamic Agent Execution Handler for Node Express
+   * Route: POST /api/agent/dispatch
+   * Dynamically pulls all active connected tools from Composio for the user's workspace
+   * and injects them directly into Gemini function declarations with zero hardcoding.
+   */
+  app.post('/api/agent/dispatch', async (req, res) => {
+    try {
+      const composioApiKey =
+        (req.headers['x-composio-api-key'] as string)?.trim() ||
+        process.env.COMPOSIO_API_KEY?.trim();
+      const geminiApiKey =
+        (req.headers['x-gemini-api-key'] as string)?.trim() ||
+        process.env.GEMINI_API_KEY?.trim();
+
+      const {
+        message,
+        entityId = (req.headers['x-entity-id'] as string) || req.body?.composioEntityId || 'commander_default',
+        agentName = 'Agent Vance',
+        activeAgentRole = 'Lead Strategist',
+        systemPrompt,
+        temperature = 0.7,
+      } = req.body || {};
+
+      if (!message || !message.trim()) {
+        return res.status(400).json({ error: 'Operational directive message is required.' });
+      }
+
+      const dynamicTools: any[] = [];
+      const activeAppNames: string[] = [];
+
+      if (composioApiKey && entityId) {
+        try {
+          const accountsRes = await fetch(
+            `https://backend.composio.dev/api/v3/connectedAccounts?entityId=${encodeURIComponent(entityId)}`,
+            {
+              headers: {
+                'x-api-key': composioApiKey,
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+              },
+            }
+          );
+
+          if (accountsRes.ok) {
+            const accountsData: any = await accountsRes.json();
+            const activeAccounts = Array.isArray(accountsData)
+              ? accountsData
+              : accountsData?.items || accountsData?.connectedAccounts || accountsData?.data || [];
+
+            for (const acc of activeAccounts) {
+              if (acc.status === 'ACTIVE' || acc.status === 'INITIATED') {
+                const name = (acc.appName || acc.app_name || '').toLowerCase().trim();
+                if (name && !activeAppNames.includes(name)) {
+                  activeAppNames.push(name);
+                }
+              }
+            }
+
+            await Promise.all(
+              activeAppNames.map(async (app) => {
+                try {
+                  const toolsRes = await fetch(
+                    `https://backend.composio.dev/api/v3/tools?toolkit_slug=${encodeURIComponent(app)}`,
+                    {
+                      headers: {
+                        'x-api-key': composioApiKey,
+                        'Content-Type': 'application/json',
+                        Accept: 'application/json',
+                      },
+                    }
+                  );
+
+                  if (toolsRes.ok) {
+                    const toolsData: any = await toolsRes.json();
+                    const items = Array.isArray(toolsData)
+                      ? toolsData
+                      : toolsData?.items || toolsData?.tools || [];
+
+                    for (const item of items) {
+                      const slug = item.slug || item.name;
+                      if (!slug) continue;
+
+                      const rawParams = item.parameters || {};
+                      dynamicTools.push({
+                        name: `composio_${slug.toLowerCase()}`,
+                        description: item.description || `Execute ${slug} on ${app.toUpperCase()} via Composio.`,
+                        parameters: {
+                          type: 'OBJECT',
+                          description: rawParams.description || item.description || `Parameters for ${slug}`,
+                          properties: rawParams.properties || {},
+                          required: Array.isArray(rawParams.required) ? rawParams.required : [],
+                        },
+                      });
+                    }
+                  }
+                } catch (appErr) {
+                  console.warn(`[NODE AGENT DISPATCH] Could not query tools for app ${app}:`, appErr);
+                }
+              })
+            );
+          }
+        } catch (connErr) {
+          console.warn('[NODE AGENT DISPATCH] Composio account discovery failed:', connErr);
+        }
+      }
+
+      const declaredToolNames = dynamicTools.map((t) => t.name).join(', ');
+      const systemInstruction = systemPrompt || `You are ${agentName} (${activeAgentRole}) in the PixelOps Command Center.
+Available Dynamically Injected Tools: ${declaredToolNames || 'No external tools connected'}.
+
+CRITICAL INTENT-DRIVEN TOOL SELECTION GUARDRAILS:
+Before invoking any tool from Composio, analyze the user's intent:
+- READ / LIST / SEARCH / AUDIT INTENT:
+  If the user asks to check, audit, list, search, get, fetch, read, inspect, or review:
+  You MUST select a LIST, GET, or SEARCH tool.
+  NEVER default to a write/create action when a read/list action is requested.
+- WRITE / CREATE / SEND / DELETE INTENT:
+  If the user explicitly asks to create, send, push, post, schedule, star, or delete:
+  You MUST select a CREATE, POST, SEND, or DELETE tool.
+- PARAMETER VALIDATION:
+  Ensure you correctly extract and validate required parameters from the user's directive before firing the tool.`;
+
+      const ai = getGeminiClient();
+      const turn1Response = await ai.models.generateContent({
+        model: 'gemini-3.8-flash',
+        contents: [{ role: 'user', parts: [{ text: message }] }],
+        config: {
+          systemInstruction,
+          temperature: Number(temperature),
+          tools: dynamicTools.length > 0 ? [{ functionDeclarations: dynamicTools }] : undefined,
+        },
+      });
+
+      const functionCalls = turn1Response.functionCalls;
+      if (functionCalls && functionCalls.length > 0) {
+        const fc = functionCalls[0];
+        const toolName = fc.name || '';
+        const toolArgs = (fc.args as Record<string, any>) || {};
+
+        console.log(`[NODE AGENT DISPATCH] Invoking tool: "${toolName}" with args:`, toolArgs);
+
+        let executionResult: any = null;
+        let executionSuccessful = false;
+
+        if (composioApiKey && (toolName.startsWith('composio_') || toolName.startsWith('COMPOSIO_'))) {
+          const rawAction = toolName.replace(/^composio_/i, '').toUpperCase();
+          try {
+            const execRes = await fetch(`https://backend.composio.dev/api/v3/tools/execute/${encodeURIComponent(rawAction)}`, {
+              method: 'POST',
+              headers: {
+                'x-api-key': composioApiKey,
+                'Content-Type': 'application/json',
+                Accept: 'application/json',
+              },
+              body: JSON.stringify({
+                parameters: toolArgs,
+                entityId,
+              }),
+            });
+
+            executionResult = await execRes.json();
+            executionSuccessful = execRes.ok;
+          } catch (execErr: any) {
+            executionResult = { error: execErr?.message || 'Tool execution network fault' };
+          }
+        }
+
+        return res.json({
+          success: true,
+          requiresToolExecution: false,
+          toolInvoked: toolName,
+          args: toolArgs,
+          executionResult,
+          executionSuccessful,
+          agentName,
+        });
+      }
+
+      return res.json({
+        success: true,
+        dialogue: turn1Response.text || '',
+        agentName,
+        activeToolkits: activeAppNames,
+        dynamicToolsCount: dynamicTools.length,
+      });
+    } catch (err: any) {
+      console.error('[NODE AGENT DISPATCH FAULT]', err);
+      return res.status(500).json({ error: 'AGENT_DISPATCH_FAULT', message: err?.message || String(err) });
+    }
+  });
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`PixelOps Command Server running on http://localhost:${PORT}`);

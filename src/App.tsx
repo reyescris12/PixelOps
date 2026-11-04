@@ -2473,6 +2473,19 @@ const CommandCenterContent: React.FC = () => {
             }}
           />
 
+          {/* Dedicated Sector Action Deck Tray (Docked cleanly below the diorama canvas so the room is unobstructed) */}
+          <div className="w-full max-w-4xl mx-auto px-2 sm:px-4 mt-2">
+            <RoomActionPlaybookPanel
+              currentRoom={currentRoom}
+              onExecutePlaybook={handleOpenPlaybookSetup}
+              variant="banner"
+              onOpenVfs={() => {
+                setIsWorkspaceFilesOpen(true);
+                playBeep('tap');
+              }}
+            />
+          </div>
+
           {/* Centered Amber Console Boxes below the Overworld Diorama */}
           <div className="mt-4">
             {activeTab === 'hq' && (

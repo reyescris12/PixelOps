@@ -7,10 +7,14 @@
  * - Pillar 2: 1-Click Cross-App Operator (WAR ROOM & SERVER VAULT)
  * - Pillar 3: Operative Progression & Loadout Deck (LOUNGE & ARMORY)
  * 
- * Scoped by active Safehouse Room, fast, mobile-friendly, and 100% user-agnostic.
+ * Designed for ZERO obstruction of the room diorama canvas:
+ * - Floating variant: Collapsed by default into an unobtrusive micro-pill in the corner;
+ *   smoothly expands on user tap and auto-closes on outside click or mission start.
+ * - Banner variant: Sits neatly outside/below the room canvas as a dedicated mission tray.
+ * - Pill variant: Sleek inline button for status bars and headers.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { RoomId } from '../engine/roomData';
 import {
   getPlaybooksForRoom,
@@ -47,6 +51,8 @@ import {
   Check,
   Copy,
   ChevronRight,
+  ChevronDown,
+  X,
   ExternalLink,
   Zap,
 } from 'lucide-react';
@@ -78,6 +84,34 @@ export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = (
     getLocalConnectedAccounts()
   );
   const [copiedDossier, setCopiedDossier] = useState(false);
+  const [isFloatingOpen, setIsFloatingOpen] = useState(false);
+  const floatingRef = useRef<HTMLDivElement>(null);
+
+  // Auto-collapse floating panel on room change so it never obstructs newly viewed sectors
+  useEffect(() => {
+    setIsFloatingOpen(false);
+  }, [currentRoom]);
+
+  // Click-outside and Escape key listener when floating HUD is open
+  useEffect(() => {
+    if (!isFloatingOpen) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (floatingRef.current && !floatingRef.current.contains(e.target as Node)) {
+        setIsFloatingOpen(false);
+      }
+    };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsFloatingOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isFloatingOpen]);
 
   // Sync connected accounts live
   useEffect(() => {
@@ -248,56 +282,61 @@ export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = (
   }
 
   // ==========================================
-  // FLOATING HUD VARIANT (Sector Specific Decks)
+  // BANNER VARIANT (Docked Out-of-the-Way Below Room Canvas)
   // ==========================================
-
-  // --- PILLAR 1: Pocket Recon & Watchtower (COMMS TOWER & BASEMENT) ---
-  if (currentRoom === 'comms_tower' || currentRoom === 'archive_basement') {
-    return (
-      <div
-        className={`absolute top-2 right-2 sm:right-3 z-30 pointer-events-auto font-mono-tabular ${className}`}
-      >
-        <div className="bg-[#0b1017]/95 border border-[#38bdf8] shadow-[0_0_20px_rgba(56,189,248,0.3)] p-2 sm:p-2.5 backdrop-blur-md flex flex-col gap-1.5 max-w-[280px] sm:max-w-[320px]">
-          {/* Deck Header */}
-          <div className="flex items-center justify-between gap-2 border-b border-[#1e344e] pb-1">
-            <span className="text-[10px] text-[#94a3b8] uppercase font-bold tracking-wider flex items-center gap-1">
-              <Radar className="w-3 h-3 text-[#38bdf8]" />
-              <span>WATCHTOWER RECON DECK</span>
-            </span>
-            <span className="text-[9px] px-1 bg-[#102236] text-[#38bdf8] border border-[#38bdf8]/40 font-bold">
-              {currentRoom === 'archive_basement' ? 'BASEMENT' : 'COMMS'}
-            </span>
+  if (variant === 'banner') {
+    // --- PILLAR 1: Comms Tower & Basement ---
+    if (currentRoom === 'comms_tower' || currentRoom === 'archive_basement') {
+      return (
+        <div className={`bg-[#080d14]/92 border border-[#38bdf8]/40 p-2 sm:p-2.5 backdrop-blur-sm font-mono-tabular text-xs ${className}`}>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#1b2b3d] pb-1.5 mb-1.5">
+            <div className="flex items-center gap-2">
+              <Radar className="w-3.5 h-3.5 text-[#38bdf8]" />
+              <span className="font-bold text-[#38bdf8] text-[11px] uppercase tracking-wider">
+                WATCHTOWER RECON WORKFLOWS
+              </span>
+              <span className="text-[9px] px-1 bg-[#102236] text-[#38bdf8] border border-[#38bdf8]/40 font-bold">
+                {currentRoom === 'archive_basement' ? 'BASEMENT' : 'COMMS TOWER'}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-[#94a3b8] hidden md:inline">
+                Zero-Prompt OSINT & Surveillance Automation
+              </span>
+              {currentRoom === 'archive_basement' && onOpenVfs && (
+                <button
+                  type="button"
+                  onClick={() => onOpenVfs('intel/')}
+                  className="px-2 py-0.5 bg-[#142333] hover:bg-[#1b324a] text-[#38bdf8] border border-[#38bdf8]/50 text-[10px] font-bold cursor-pointer transition-colors flex items-center gap-1"
+                >
+                  <FolderArchive className="w-3 h-3" />
+                  <span>[📂 VFS FILES]</span>
+                </button>
+              )}
+            </div>
           </div>
 
-          <div className="text-[10px] text-[#cbd5e1] leading-tight">
-            Deploy automated OSINT sweeps & continuous watchtower surveillance:
-          </div>
-
-          {/* 3 Universal 1-Tap Mission Buttons */}
-          <div className="flex flex-col gap-1.5 pt-0.5">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             {playbooks.map((pb) => {
               const target = storedTargets[pb.id]?.targetName || 'Default Target';
               return (
                 <button
                   key={pb.id}
                   type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
+                  onClick={() => {
                     playBeep('tap');
                     onExecutePlaybook(pb);
                   }}
                   disabled={isExecuting}
-                  className="w-full text-left p-1.5 bg-[#121c29] hover:bg-[#1a293d] border border-[#233852] hover:border-[#38bdf8] transition-all cursor-pointer flex items-center justify-between gap-1.5 group disabled:opacity-50"
+                  className="text-left p-2 bg-[#0e1622] hover:bg-[#152336] border border-[#1e2f45] hover:border-[#38bdf8] transition-all cursor-pointer flex items-center justify-between gap-2 group disabled:opacity-50"
                 >
                   <div className="min-w-0">
-                    <div className="text-[11px] font-bold text-[#f3ead8] flex items-center gap-1.5 truncate group-hover:text-[#38bdf8]">
+                    <div className="font-bold text-[11px] text-[#f3ead8] flex items-center gap-1.5 truncate group-hover:text-[#38bdf8]">
                       <span>{pb.icon}</span>
                       <span className="truncate">{pb.shortTitle}</span>
                     </div>
-                    <div className="text-[9px] text-[#94a3b8] truncate mt-0.5 flex items-center gap-1">
-                      <span>{pb.assignedOperativeName}</span>
-                      <span>·</span>
-                      <span className="text-[#fbbf24] truncate">[{target}]</span>
+                    <div className="text-[9px] text-[#94a3b8] truncate mt-0.5">
+                      Target: <span className="text-[#fbbf24]">[{target}]</span>
                     </div>
                   </div>
                   <ChevronRight className="w-3.5 h-3.5 text-[#64748b] group-hover:text-[#38bdf8] shrink-0" />
@@ -305,68 +344,46 @@ export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = (
               );
             })}
           </div>
-
-          {/* Basement VFS Files Link */}
-          {currentRoom === 'archive_basement' && onOpenVfs && (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                playBeep('tap');
-                onOpenVfs('intel/');
-              }}
-              className="mt-1 py-1 px-2 bg-[#142333] hover:bg-[#1b324a] text-[#38bdf8] border border-[#38bdf8]/50 text-[10px] font-bold cursor-pointer transition-colors flex items-center justify-center gap-1"
-            >
-              <FolderArchive className="w-3 h-3" />
-              <span>[📂 OPEN BASEMENT VFS FILES]</span>
-            </button>
-          )}
         </div>
-      </div>
-    );
-  }
+      );
+    }
 
-  // --- PILLAR 2: 1-Click Cross-App Operator (WAR ROOM & SERVER VAULT) ---
-  if (currentRoom === 'war_room' || currentRoom === 'server_vault') {
-    const gmailConnected = isAppConnected('gmail');
-    const calendarConnected = isAppConnected('googlecalendar') || isAppConnected('calendar');
-    const githubConnected = isAppConnected('github');
+    // --- PILLAR 2: War Room & Server Vault ---
+    if (currentRoom === 'war_room' || currentRoom === 'server_vault') {
+      const gmailOk = isAppConnected('gmail');
+      const calOk = isAppConnected('googlecalendar') || isAppConnected('calendar');
+      const ghOk = isAppConnected('github');
 
-    return (
-      <div
-        className={`absolute top-2 right-2 sm:right-3 z-30 pointer-events-auto font-mono-tabular ${className}`}
-      >
-        <div className="bg-[#0b1017]/95 border border-[#e59838] shadow-[0_0_20px_rgba(229,152,56,0.35)] p-2 sm:p-2.5 backdrop-blur-md flex flex-col gap-1.5 max-w-[280px] sm:max-w-[320px]">
-          {/* Deck Header */}
-          <div className="flex items-center justify-between gap-2 border-b border-[#3b2d18] pb-1">
-            <span className="text-[10px] text-[#94a3b8] uppercase font-bold tracking-wider flex items-center gap-1">
-              <Zap className="w-3 h-3 text-[#e59838]" />
-              <span>TACTICAL OPERATOR DECK</span>
-            </span>
-            <span className="text-[9px] px-1 bg-[#261d10] text-[#e59838] border border-[#e59838]/40 font-bold">
-              {currentRoom === 'war_room' ? 'WAR ROOM' : 'VAULT'}
+      return (
+        <div className={`bg-[#0b0c10]/92 border border-[#e59838]/40 p-2 sm:p-2.5 backdrop-blur-sm font-mono-tabular text-xs ${className}`}>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#2d2214] pb-1.5 mb-1.5">
+            <div className="flex items-center gap-2">
+              <Zap className="w-3.5 h-3.5 text-[#e59838]" />
+              <span className="font-bold text-[#e59838] text-[11px] uppercase tracking-wider">
+                TACTICAL OPERATOR WORKFLOWS
+              </span>
+              <span className="text-[9px] px-1 bg-[#261d10] text-[#e59838] border border-[#e59838]/40 font-bold">
+                {currentRoom === 'war_room' ? 'WAR ROOM' : 'SERVER VAULT'}
+              </span>
+            </div>
+            <span className="text-[10px] text-[#94a3b8] hidden md:inline">
+              1-Click Connected App Automations via Composio
             </span>
           </div>
 
-          <div className="text-[10px] text-[#cbd5e1] leading-tight">
-            1-Click automations connected to your personal apps via Composio:
-          </div>
-
-          {/* 3 Cross-App Playbook Buttons with Connection Dots */}
-          <div className="flex flex-col gap-1.5 pt-0.5">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
             {playbooks.map((pb) => {
               const target = storedTargets[pb.id]?.targetName || 'Default Target';
               let isConnected = false;
               let appBadge = 'APP';
-
               if (pb.id === 'triage_gmail') {
-                isConnected = gmailConnected;
+                isConnected = gmailOk;
                 appBadge = 'GMAIL';
               } else if (pb.id === 'calendar_brief') {
-                isConnected = calendarConnected;
+                isConnected = calOk;
                 appBadge = 'GCAL';
               } else if (pb.id === 'sync_github') {
-                isConnected = githubConnected;
+                isConnected = ghOk;
                 appBadge = 'GITHUB';
               }
 
@@ -374,26 +391,22 @@ export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = (
                 <button
                   key={pb.id}
                   type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
+                  onClick={() => {
                     playBeep('tap');
                     onExecutePlaybook(pb);
                   }}
                   disabled={isExecuting}
-                  className="w-full text-left p-1.5 bg-[#17140f] hover:bg-[#261e14] border border-[#3d2e1b] hover:border-[#e59838] transition-all cursor-pointer flex items-center justify-between gap-1.5 group disabled:opacity-50"
+                  className="text-left p-2 bg-[#14120e] hover:bg-[#211c14] border border-[#2e2315] hover:border-[#e59838] transition-all cursor-pointer flex items-center justify-between gap-2 group disabled:opacity-50"
                 >
                   <div className="min-w-0">
-                    <div className="text-[11px] font-bold text-[#f3ead8] flex items-center gap-1.5 truncate group-hover:text-[#e59838]">
+                    <div className="font-bold text-[11px] text-[#f3ead8] flex items-center gap-1.5 truncate group-hover:text-[#e59838]">
                       <span>{pb.icon}</span>
                       <span className="truncate">{pb.shortTitle}</span>
                     </div>
-                    <div className="text-[9px] text-[#94a3b8] truncate mt-0.5 flex items-center gap-1">
-                      <span>{pb.assignedOperativeName}</span>
-                      <span>·</span>
-                      <span className="text-[#fbbf24] truncate">[{target}]</span>
+                    <div className="text-[9px] text-[#94a3b8] truncate mt-0.5">
+                      Target: <span className="text-[#fbbf24]">[{target}]</span>
                     </div>
                   </div>
-
                   <div className="flex items-center gap-1.5 shrink-0">
                     <span
                       className={`text-[8px] font-bold px-1 py-0.2 border flex items-center gap-1 ${
@@ -416,6 +429,349 @@ export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = (
             })}
           </div>
         </div>
+      );
+    }
+
+    // --- PILLAR 3: Lounge & Armory ---
+    if (currentRoom === 'briefing_lounge' || currentRoom === 'armory') {
+      const agent = activeCrewAgent;
+      const clearanceLvl = (agent?.clearanceLevel || 1) as ClearanceLevelNumber;
+      const clearance = CLEARANCE_RANKS[clearanceLvl];
+      const xp = agent?.xp || 0;
+      const minXp = clearance.minXp;
+      const maxXp = clearance.maxXp;
+      const nextTargetXp = maxXp === Infinity ? 500 : maxXp;
+      const progressPct =
+        maxXp === Infinity
+          ? 100
+          : Math.min(100, Math.max(0, Math.round(((xp - minXp) / (maxXp - minXp)) * 100)));
+      const activeRibbons = (agent?.serviceRibbons || []) as ServiceRibbonId[];
+      const agentDisplayName = agent?.customName || agent?.defaultName || 'Operative';
+
+      return (
+        <div className={`bg-[#0c0d12]/92 border border-[#a855f7]/40 p-2 sm:p-2.5 backdrop-blur-sm font-mono-tabular text-xs ${className}`}>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#2b1b3d] pb-1.5 mb-1.5">
+            <div className="flex items-center gap-2">
+              <Award className="w-3.5 h-3.5 text-[#c084fc]" />
+              <span className="font-bold text-[#c084fc] text-[11px] uppercase tracking-wider">
+                OPERATIVE PROGRESSION & LOADOUT
+              </span>
+              <span className="text-[9px] px-1 bg-[#251336] text-[#c084fc] border border-[#a855f7]/40 font-bold">
+                {currentRoom === 'armory' ? 'ARMORY' : 'LOUNGE'}
+              </span>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleExportDossierCard}
+              className="py-1 px-2.5 bg-[#a855f7] hover:bg-[#9333ea] text-[#0d0914] text-[10px] font-bold border border-[#a855f7] cursor-pointer transition-colors flex items-center gap-1.5 shadow-[0_0_8px_rgba(168,85,247,0.3)]"
+            >
+              {copiedDossier ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+              <span>{copiedDossier ? 'COPIED!' : '[🪪 EXPORT DOSSIER CARD]'}</span>
+            </button>
+          </div>
+
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 p-2 bg-[#12111a] border border-[#231a33]">
+            <div className="flex items-center gap-3">
+              <span className="text-xl">🪪</span>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-[11px] text-[#f3ead8]">{agentDisplayName}</span>
+                  <span
+                    className="text-[9px] font-bold px-1.5 py-0.2 border"
+                    style={{
+                      color: clearance.terminalRGB,
+                      borderColor: `${clearance.terminalRGB}66`,
+                      backgroundColor: `${clearance.terminalRGB}15`,
+                    }}
+                  >
+                    {clearance.badge}
+                  </span>
+                </div>
+                <div className="text-[10px] font-semibold" style={{ color: clearance.terminalRGB }}>
+                  {clearance.title}
+                </div>
+              </div>
+            </div>
+
+            {/* XP Progress Bar */}
+            <div className="flex-1 max-w-xs">
+              <div className="flex items-center justify-between text-[9px] text-[#94a3b8] mb-0.5">
+                <span>CLEARANCE XP</span>
+                <span className="font-bold text-[#f3ead8]">
+                  {xp} / {nextTargetXp} XP ({progressPct}%)
+                </span>
+              </div>
+              <div className="w-full h-1.5 bg-[#1f192b] overflow-hidden border border-[#3d2956]">
+                <div
+                  className="h-full transition-all duration-500"
+                  style={{ width: `${progressPct}%`, backgroundColor: clearance.terminalRGB }}
+                />
+              </div>
+            </div>
+
+            {/* Ribbons */}
+            <div className="flex items-center gap-1">
+              {Object.entries(SERVICE_RIBBONS).map(([key, def]) => {
+                const isEarned = activeRibbons.includes(key as ServiceRibbonId);
+                return (
+                  <span
+                    key={key}
+                    className={`px-1.5 py-0.5 border text-[9px] flex items-center gap-0.5 ${
+                      isEarned
+                        ? 'bg-[#122319] text-[#4ade80] border-[#22c55e]/50 font-bold'
+                        : 'bg-[#10141c] text-[#475569] border-[#1e293b] opacity-40'
+                    }`}
+                    title={isEarned ? `${def.title}: ${def.description}` : `Locked: ${def.description}`}
+                  >
+                    <span>{def.icon}</span>
+                    <span className="hidden md:inline">{def.title}</span>
+                  </span>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return null;
+  }
+
+  // ==========================================
+  // FLOATING HUD VARIANT (Collapsible & Unobtrusive)
+  // ==========================================
+
+  // --- PILLAR 1: Pocket Recon & Watchtower (COMMS TOWER & BASEMENT) ---
+  if (currentRoom === 'comms_tower' || currentRoom === 'archive_basement') {
+    return (
+      <div
+        ref={floatingRef}
+        className={`absolute top-2 right-2 sm:right-3 z-30 pointer-events-auto font-mono-tabular ${className}`}
+      >
+        {!isFloatingOpen ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              playBeep('tap');
+              setIsFloatingOpen(true);
+            }}
+            className="px-2 py-1 bg-[#0b1017]/85 hover:bg-[#121c29] text-[#38bdf8] border border-[#38bdf8]/60 hover:border-[#38bdf8] text-[10px] font-bold backdrop-blur-sm cursor-pointer flex items-center gap-1.5 shadow-[0_2px_10px_rgba(0,0,0,0.6)] active:scale-95 transition-all"
+            title="Open Watchtower Recon Deck (3 workflows)"
+          >
+            <Radar className="w-3 h-3 text-[#38bdf8]" />
+            <span>[📡 RECON DECK (3) ▾]</span>
+          </button>
+        ) : (
+          <div className="bg-[#0b1017]/96 border border-[#38bdf8] shadow-[0_0_24px_rgba(56,189,248,0.35)] p-2 sm:p-2.5 backdrop-blur-md flex flex-col gap-1.5 max-w-[280px] sm:max-w-[320px] animate-in fade-in zoom-in-95 duration-150">
+            {/* Deck Header */}
+            <div className="flex items-center justify-between gap-2 border-b border-[#1e344e] pb-1">
+              <span className="text-[10px] text-[#94a3b8] uppercase font-bold tracking-wider flex items-center gap-1">
+                <Radar className="w-3 h-3 text-[#38bdf8]" />
+                <span>WATCHTOWER RECON DECK</span>
+              </span>
+              <div className="flex items-center gap-1">
+                <span className="text-[9px] px-1 bg-[#102236] text-[#38bdf8] border border-[#38bdf8]/40 font-bold">
+                  {currentRoom === 'archive_basement' ? 'BASEMENT' : 'COMMS'}
+                </span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsFloatingOpen(false);
+                    playBeep('tap');
+                  }}
+                  className="p-0.5 text-[#94a3b8] hover:text-[#f3ead8] hover:bg-[#1a293d] cursor-pointer transition-colors"
+                  title="Minimize deck"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="text-[10px] text-[#cbd5e1] leading-tight">
+              Deploy automated OSINT sweeps & continuous watchtower surveillance:
+            </div>
+
+            {/* 3 Universal 1-Tap Mission Buttons */}
+            <div className="flex flex-col gap-1.5 pt-0.5">
+              {playbooks.map((pb) => {
+                const target = storedTargets[pb.id]?.targetName || 'Default Target';
+                return (
+                  <button
+                    key={pb.id}
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsFloatingOpen(false);
+                      playBeep('tap');
+                      onExecutePlaybook(pb);
+                    }}
+                    disabled={isExecuting}
+                    className="w-full text-left p-1.5 bg-[#121c29] hover:bg-[#1a293d] border border-[#233852] hover:border-[#38bdf8] transition-all cursor-pointer flex items-center justify-between gap-1.5 group disabled:opacity-50"
+                  >
+                    <div className="min-w-0">
+                      <div className="text-[11px] font-bold text-[#f3ead8] flex items-center gap-1.5 truncate group-hover:text-[#38bdf8]">
+                        <span>{pb.icon}</span>
+                        <span className="truncate">{pb.shortTitle}</span>
+                      </div>
+                      <div className="text-[9px] text-[#94a3b8] truncate mt-0.5 flex items-center gap-1">
+                        <span>{pb.assignedOperativeName}</span>
+                        <span>·</span>
+                        <span className="text-[#fbbf24] truncate">[{target}]</span>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-3.5 h-3.5 text-[#64748b] group-hover:text-[#38bdf8] shrink-0" />
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Basement VFS Files Link */}
+            {currentRoom === 'archive_basement' && onOpenVfs && (
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setIsFloatingOpen(false);
+                  playBeep('tap');
+                  onOpenVfs('intel/');
+                }}
+                className="mt-1 py-1 px-2 bg-[#142333] hover:bg-[#1b324a] text-[#38bdf8] border border-[#38bdf8]/50 text-[10px] font-bold cursor-pointer transition-colors flex items-center justify-center gap-1"
+              >
+                <FolderArchive className="w-3 h-3" />
+                <span>[📂 OPEN BASEMENT VFS FILES]</span>
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // --- PILLAR 2: 1-Click Cross-App Operator (WAR ROOM & SERVER VAULT) ---
+  if (currentRoom === 'war_room' || currentRoom === 'server_vault') {
+    const gmailConnected = isAppConnected('gmail');
+    const calendarConnected = isAppConnected('googlecalendar') || isAppConnected('calendar');
+    const githubConnected = isAppConnected('github');
+
+    return (
+      <div
+        ref={floatingRef}
+        className={`absolute top-2 right-2 sm:right-3 z-30 pointer-events-auto font-mono-tabular ${className}`}
+      >
+        {!isFloatingOpen ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              playBeep('tap');
+              setIsFloatingOpen(true);
+            }}
+            className="px-2 py-1 bg-[#0b1017]/85 hover:bg-[#21170d] text-[#e59838] border border-[#e59838]/60 hover:border-[#e59838] text-[10px] font-bold backdrop-blur-sm cursor-pointer flex items-center gap-1.5 shadow-[0_2px_10px_rgba(0,0,0,0.6)] active:scale-95 transition-all"
+            title="Open Tactical Operator Deck (3 actions)"
+          >
+            <Zap className="w-3 h-3 text-[#e59838]" />
+            <span>[⚡ OPERATOR DECK (3) ▾]</span>
+          </button>
+        ) : (
+          <div className="bg-[#0b1017]/96 border border-[#e59838] shadow-[0_0_24px_rgba(229,152,56,0.35)] p-2 sm:p-2.5 backdrop-blur-md flex flex-col gap-1.5 max-w-[280px] sm:max-w-[320px] animate-in fade-in zoom-in-95 duration-150">
+            {/* Deck Header */}
+            <div className="flex items-center justify-between gap-2 border-b border-[#3b2d18] pb-1">
+              <span className="text-[10px] text-[#94a3b8] uppercase font-bold tracking-wider flex items-center gap-1">
+                <Zap className="w-3 h-3 text-[#e59838]" />
+                <span>TACTICAL OPERATOR DECK</span>
+              </span>
+              <div className="flex items-center gap-1">
+                <span className="text-[9px] px-1 bg-[#261d10] text-[#e59838] border border-[#e59838]/40 font-bold">
+                  {currentRoom === 'war_room' ? 'WAR ROOM' : 'VAULT'}
+                </span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsFloatingOpen(false);
+                    playBeep('tap');
+                  }}
+                  className="p-0.5 text-[#94a3b8] hover:text-[#f3ead8] hover:bg-[#261d10] cursor-pointer transition-colors"
+                  title="Minimize deck"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="text-[10px] text-[#cbd5e1] leading-tight">
+              1-Click automations connected to your personal apps via Composio:
+            </div>
+
+            {/* 3 Cross-App Playbook Buttons with Connection Dots */}
+            <div className="flex flex-col gap-1.5 pt-0.5">
+              {playbooks.map((pb) => {
+                const target = storedTargets[pb.id]?.targetName || 'Default Target';
+                let isConnected = false;
+                let appBadge = 'APP';
+
+                if (pb.id === 'triage_gmail') {
+                  isConnected = gmailConnected;
+                  appBadge = 'GMAIL';
+                } else if (pb.id === 'calendar_brief') {
+                  isConnected = calendarConnected;
+                  appBadge = 'GCAL';
+                } else if (pb.id === 'sync_github') {
+                  isConnected = githubConnected;
+                  appBadge = 'GITHUB';
+                }
+
+                return (
+                  <button
+                    key={pb.id}
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsFloatingOpen(false);
+                      playBeep('tap');
+                      onExecutePlaybook(pb);
+                    }}
+                    disabled={isExecuting}
+                    className="w-full text-left p-1.5 bg-[#17140f] hover:bg-[#261e14] border border-[#3d2e1b] hover:border-[#e59838] transition-all cursor-pointer flex items-center justify-between gap-1.5 group disabled:opacity-50"
+                  >
+                    <div className="min-w-0">
+                      <div className="text-[11px] font-bold text-[#f3ead8] flex items-center gap-1.5 truncate group-hover:text-[#e59838]">
+                        <span>{pb.icon}</span>
+                        <span className="truncate">{pb.shortTitle}</span>
+                      </div>
+                      <div className="text-[9px] text-[#94a3b8] truncate mt-0.5 flex items-center gap-1">
+                        <span>{pb.assignedOperativeName}</span>
+                        <span>·</span>
+                        <span className="text-[#fbbf24] truncate">[{target}]</span>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span
+                        className={`text-[8px] font-bold px-1 py-0.2 border flex items-center gap-1 ${
+                          isConnected
+                            ? 'bg-[#102919] text-[#4ade80] border-[#22c55e]/40'
+                            : 'bg-[#2b1f11] text-[#fbbf24] border-[#f59e0b]/40'
+                        }`}
+                      >
+                        <span
+                          className={`w-1 h-1 rounded-full ${
+                            isConnected ? 'bg-[#4ade80]' : 'bg-[#fbbf24]'
+                          }`}
+                        />
+                        <span>{appBadge}</span>
+                      </span>
+                      <ChevronRight className="w-3.5 h-3.5 text-[#64748b] group-hover:text-[#e59838]" />
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -439,125 +795,156 @@ export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = (
 
     return (
       <div
+        ref={floatingRef}
         className={`absolute top-2 right-2 sm:right-3 z-30 pointer-events-auto font-mono-tabular ${className}`}
       >
-        <div className="bg-[#0c1017]/95 border border-[#a855f7] shadow-[0_0_20px_rgba(168,85,247,0.35)] p-2 sm:p-2.5 backdrop-blur-md flex flex-col gap-1.5 max-w-[280px] sm:max-w-[320px]">
-          {/* Deck Header */}
-          <div className="flex items-center justify-between gap-2 border-b border-[#341d4e] pb-1">
-            <span className="text-[10px] text-[#94a3b8] uppercase font-bold tracking-wider flex items-center gap-1">
-              <Award className="w-3 h-3 text-[#c084fc]" />
-              <span>OPERATIVE PROGRESSION & LOADOUT</span>
-            </span>
-            <span className="text-[9px] px-1 bg-[#251336] text-[#c084fc] border border-[#a855f7]/40 font-bold">
-              {currentRoom === 'armory' ? 'ARMORY' : 'LOUNGE'}
-            </span>
-          </div>
-
-          {/* Active Agent Profile Card */}
-          <div className="p-1.5 bg-[#141221] border border-[#2b1f40] flex flex-col gap-1">
-            <div className="flex items-center justify-between">
-              <div className="text-[11px] font-bold text-[#f3ead8] flex items-center gap-1.5">
-                <span className="text-sm">🪪</span>
-                <span>{agentDisplayName}</span>
-                <span className="text-[9px] text-[#94a3b8]">({agent?.role})</span>
+        {!isFloatingOpen ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              playBeep('tap');
+              setIsFloatingOpen(true);
+            }}
+            className="px-2 py-1 bg-[#0b1017]/85 hover:bg-[#1e1329] text-[#c084fc] border border-[#a855f7]/60 hover:border-[#a855f7] text-[10px] font-bold backdrop-blur-sm cursor-pointer flex items-center gap-1.5 shadow-[0_2px_10px_rgba(0,0,0,0.6)] active:scale-95 transition-all"
+            title="Open Operative Progression Deck"
+          >
+            <Award className="w-3 h-3 text-[#c084fc]" />
+            <span>[🪪 {clearance.badge} · {xp} XP ▾]</span>
+          </button>
+        ) : (
+          <div className="bg-[#0c1017]/96 border border-[#a855f7] shadow-[0_0_24px_rgba(168,85,247,0.35)] p-2 sm:p-2.5 backdrop-blur-md flex flex-col gap-1.5 max-w-[280px] sm:max-w-[320px] animate-in fade-in zoom-in-95 duration-150">
+            {/* Deck Header */}
+            <div className="flex items-center justify-between gap-2 border-b border-[#341d4e] pb-1">
+              <span className="text-[10px] text-[#94a3b8] uppercase font-bold tracking-wider flex items-center gap-1">
+                <Award className="w-3 h-3 text-[#c084fc]" />
+                <span>OPERATIVE LOADOUT</span>
+              </span>
+              <div className="flex items-center gap-1">
+                <span className="text-[9px] px-1 bg-[#251336] text-[#c084fc] border border-[#a855f7]/40 font-bold">
+                  {currentRoom === 'armory' ? 'ARMORY' : 'LOUNGE'}
+                </span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsFloatingOpen(false);
+                    playBeep('tap');
+                  }}
+                  className="p-0.5 text-[#94a3b8] hover:text-[#f3ead8] hover:bg-[#251336] cursor-pointer transition-colors"
+                  title="Minimize deck"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
               </div>
-              <span
-                className="text-[9px] font-bold px-1.5 py-0.2 border"
-                style={{
-                  color: clearance.terminalRGB,
-                  borderColor: `${clearance.terminalRGB}66`,
-                  backgroundColor: `${clearance.terminalRGB}15`,
-                }}
-              >
-                {clearance.badge}
+            </div>
+
+            {/* Active Agent Profile Card */}
+            <div className="p-1.5 bg-[#141221] border border-[#2b1f40] flex flex-col gap-1">
+              <div className="flex items-center justify-between">
+                <div className="text-[11px] font-bold text-[#f3ead8] flex items-center gap-1.5">
+                  <span className="text-sm">🪪</span>
+                  <span>{agentDisplayName}</span>
+                  <span className="text-[9px] text-[#94a3b8]">({agent?.role})</span>
+                </div>
+                <span
+                  className="text-[9px] font-bold px-1.5 py-0.2 border"
+                  style={{
+                    color: clearance.terminalRGB,
+                    borderColor: `${clearance.terminalRGB}66`,
+                    backgroundColor: `${clearance.terminalRGB}15`,
+                  }}
+                >
+                  {clearance.badge}
+                </span>
+              </div>
+
+              <div className="text-[10px] font-semibold" style={{ color: clearance.terminalRGB }}>
+                {clearance.title}
+              </div>
+
+              {/* XP Progress Bar */}
+              <div className="mt-1">
+                <div className="flex items-center justify-between text-[9px] text-[#94a3b8] mb-0.5">
+                  <span>CLEARANCE XP</span>
+                  <span className="font-bold text-[#f3ead8]">
+                    {xp} / {nextTargetXp} XP ({progressPct}%)
+                  </span>
+                </div>
+                <div className="w-full h-1.5 bg-[#1f192b] overflow-hidden border border-[#3d2956]">
+                  <div
+                    className="h-full transition-all duration-500"
+                    style={{
+                      width: `${progressPct}%`,
+                      backgroundColor: clearance.terminalRGB,
+                    }}
+                  />
+                </div>
+              </div>
+
+              {/* Missions Completed Counter */}
+              <div className="text-[9px] text-[#94a3b8] flex items-center justify-between pt-0.5">
+                <span>Missions Verified:</span>
+                <strong className="text-[#4ade80]">{agent?.missionsCompleted || 0} completed</strong>
+              </div>
+            </div>
+
+            {/* Service Ribbons Bar */}
+            <div className="p-1.5 bg-[#0f1420] border border-[#1e273a] flex flex-col gap-1">
+              <div className="text-[9px] uppercase font-bold text-[#94a3b8] flex items-center justify-between">
+                <span>EARNED SERVICE RIBBONS</span>
+                <span className="text-[#38bdf8]">{activeRibbons.length}/4</span>
+              </div>
+              <div className="grid grid-cols-2 gap-1">
+                {Object.entries(SERVICE_RIBBONS).map(([key, def]) => {
+                  const isEarned = activeRibbons.includes(key as ServiceRibbonId);
+                  return (
+                    <div
+                      key={key}
+                      className={`p-1 border text-[9px] flex items-center gap-1 truncate ${
+                        isEarned
+                          ? 'bg-[#122319] text-[#4ade80] border-[#22c55e]/50 font-bold'
+                          : 'bg-[#10141c] text-[#475569] border-[#1e293b] opacity-60'
+                      }`}
+                      title={isEarned ? `${def.title}: ${def.description}` : `Locked: ${def.description}`}
+                    >
+                      <span>{def.icon}</span>
+                      <span className="truncate">{def.title}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Unlockable Cosmetic Loadout Preview */}
+            <div className="p-1.5 bg-[#12141c] border border-[#212738] text-[9px] text-[#94a3b8]">
+              <span className="text-[#c084fc] font-bold">CLEARANCE UNLOCK: </span>
+              <span className="text-[#cbd5e1]">
+                Preset: {clearance.unlockedThemePreset} · Sprites: {clearance.unlockedVariants.join(', ')}
               </span>
             </div>
 
-            <div className="text-[10px] font-semibold" style={{ color: clearance.terminalRGB }}>
-              {clearance.title}
-            </div>
-
-            {/* XP Progress Bar */}
-            <div className="mt-1">
-              <div className="flex items-center justify-between text-[9px] text-[#94a3b8] mb-0.5">
-                <span>CLEARANCE XP</span>
-                <span className="font-bold text-[#f3ead8]">
-                  {xp} / {nextTargetXp} XP ({progressPct}%)
-                </span>
-              </div>
-              <div className="w-full h-1.5 bg-[#1f192b] overflow-hidden border border-[#3d2956]">
-                <div
-                  className="h-full transition-all duration-500"
-                  style={{
-                    width: `${progressPct}%`,
-                    backgroundColor: clearance.terminalRGB,
-                  }}
-                />
-              </div>
-            </div>
-
-            {/* Missions Completed Counter */}
-            <div className="text-[9px] text-[#94a3b8] flex items-center justify-between pt-0.5">
-              <span>Missions Verified:</span>
-              <strong className="text-[#4ade80]">{agent?.missionsCompleted || 0} completed</strong>
-            </div>
+            {/* Export Dossier Card Button */}
+            <button
+              type="button"
+              onClick={handleExportDossierCard}
+              className="w-full py-1.5 px-2 bg-[#a855f7] text-[#0d0914] font-bold text-[11px] border border-[#a855f7] hover:bg-[#9333ea] active:translate-y-0.5 cursor-pointer transition-all flex items-center justify-center gap-1.5 shadow-[0_0_12px_rgba(168,85,247,0.35)]"
+              title="Export shareable Operative Dossier Card to clipboard and file"
+            >
+              {copiedDossier ? (
+                <>
+                  <Check className="w-3.5 h-3.5 text-[#0d0914]" />
+                  <span>DOSSIER CARD COPIED & DOWNLOADED!</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="w-3 h-3 fill-current" />
+                  <span>[🪪 EXPORT OPERATIVE DOSSIER CARD]</span>
+                </>
+              )}
+            </button>
           </div>
-
-          {/* Service Ribbons Bar */}
-          <div className="p-1.5 bg-[#0f1420] border border-[#1e273a] flex flex-col gap-1">
-            <div className="text-[9px] uppercase font-bold text-[#94a3b8] flex items-center justify-between">
-              <span>EARNED SERVICE RIBBONS</span>
-              <span className="text-[#38bdf8]">{activeRibbons.length}/4</span>
-            </div>
-            <div className="grid grid-cols-2 gap-1">
-              {Object.entries(SERVICE_RIBBONS).map(([key, def]) => {
-                const isEarned = activeRibbons.includes(key as ServiceRibbonId);
-                return (
-                  <div
-                    key={key}
-                    className={`p-1 border text-[9px] flex items-center gap-1 truncate ${
-                      isEarned
-                        ? 'bg-[#122319] text-[#4ade80] border-[#22c55e]/50 font-bold'
-                        : 'bg-[#10141c] text-[#475569] border-[#1e293b] opacity-60'
-                    }`}
-                    title={isEarned ? `${def.title}: ${def.description}` : `Locked: ${def.description}`}
-                  >
-                    <span>{def.icon}</span>
-                    <span className="truncate">{def.title}</span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {/* Unlockable Cosmetic Loadout Preview */}
-          <div className="p-1.5 bg-[#12141c] border border-[#212738] text-[9px] text-[#94a3b8]">
-            <span className="text-[#c084fc] font-bold">CLEARANCE UNLOCK: </span>
-            <span className="text-[#cbd5e1]">
-              Preset: {clearance.unlockedThemePreset} · Sprites: {clearance.unlockedVariants.join(', ')}
-            </span>
-          </div>
-
-          {/* Export Dossier Card Button */}
-          <button
-            type="button"
-            onClick={handleExportDossierCard}
-            className="w-full py-1.5 px-2 bg-[#a855f7] text-[#0d0914] font-bold text-[11px] border border-[#a855f7] hover:bg-[#9333ea] active:translate-y-0.5 cursor-pointer transition-all flex items-center justify-center gap-1.5 shadow-[0_0_12px_rgba(168,85,247,0.35)]"
-            title="Export shareable Operative Dossier Card to clipboard and file"
-          >
-            {copiedDossier ? (
-              <>
-                <Check className="w-3.5 h-3.5 text-[#0d0914]" />
-                <span>DOSSIER CARD COPIED & DOWNLOADED!</span>
-              </>
-            ) : (
-              <>
-                <Copy className="w-3 h-3 fill-current" />
-                <span>[🪪 EXPORT OPERATIVE DOSSIER CARD]</span>
-              </>
-            )}
-          </button>
-        </div>
+        )}
       </div>
     );
   }

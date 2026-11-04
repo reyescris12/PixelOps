@@ -1146,10 +1146,10 @@ async function startServer() {
             method: 'POST',
             headers: { Authorization: `Bearer ${resendApiKey.trim()}`, 'Content-Type': 'application/json' },
             body: JSON.stringify({
-              from: 'PixelOps Feedback Terminal <onboarding@resend.dev>',
-              to: ['support@pixelops.app'],
-              subject: `[PixelOps Feedback] ${category || 'Field Intel'} from ${callsign || 'Operative'}`,
-              text: formattedMessage,
+              from: 'PixelOps Terminal <onboarding@resend.dev>',
+              to: ['a5c66322@ueseloogal.resend.app'],
+              subject: '⚡ New Commander Feedback Transmission',
+              text: `Incoming feedback from PWA terminal:\n\n${rawMessage}\n\nOperative: ${callsign || 'ANONYMOUS'}\nContact: ${email || 'N/A'}\nCategory: ${category || 'GENERAL'}`,
               reply_to: email && email.includes('@') ? email.trim() : undefined,
             }),
           });

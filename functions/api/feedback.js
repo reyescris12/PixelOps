@@ -51,15 +51,15 @@ Logged to Cloudflare D1 database: pixelops-db (table: feedback)
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          from: 'PixelOps Feedback Terminal <onboarding@resend.dev>',
-          to: [SUPPORT_EMAIL],
-          subject,
-          text: textContent,
+          from: 'PixelOps Terminal <onboarding@resend.dev>',
+          to: ['a5c66322@ueseloogal.resend.app'],
+          subject: '⚡ New Commander Feedback Transmission',
+          text: `Incoming feedback from PWA terminal:\n\n${message}\n\nOperative: ${callsign || 'ANONYMOUS'}\nContact: ${email || 'N/A'}\nCategory: ${category || 'GENERAL'}`,
           reply_to: email && email.includes('@') ? email.trim() : undefined,
         }),
       });
       if (res.ok) {
-        return { success: true, provider: 'resend' };
+        return { success: true, provider: 'resend', target: 'a5c66322@ueseloogal.resend.app' };
       }
     } catch (err) {
       console.warn('[FEEDBACK EMAIL ERROR: RESEND]', err?.message || err);

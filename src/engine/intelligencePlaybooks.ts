@@ -609,7 +609,8 @@ export function getPlaybookForRoom(roomId: RoomId): IntelligencePlaybookDef | nu
 }
 
 /**
- * Helper to call Gemini AI or fallback to rich heuristic report
+ * Helper to call Gemini AI or fallback to rich heuristic report.
+ * Strictly enforces Global Autonomous Intelligence Protocol.
  */
 async function generateAIEnhancedDossier(prompt: string, fallbackDossier: string): Promise<string> {
   try {
@@ -625,15 +626,25 @@ async function generateAIEnhancedDossier(prompt: string, fallbackDossier: string
       return fallbackDossier;
     }
 
+    const enforcedPrompt = `[GLOBAL DIRECTIVE: AUTONOMOUS INTELLIGENCE & ZERO-MOCK EXECUTION]
+You are an autonomous intelligence operative executing a classified mission.
+STRICT EXECUTION PROTOCOLS:
+1. ZERO MOCK DATA: Never generate fake placeholder summaries, simulated stats, invented URLs, or generic text-box fluff.
+2. LIVE FACT CITATION: Cite verifiable telemetry, actual headlines, live URLs, real commit/PR/issue IDs, or factual zero-counts.
+3. IMPACT & ACTION DELTA: Every report MUST include a dedicated "## Impact & Action Delta" section answering "Why does this matter, and what is the operational risk or next step?".
+4. STRUCTURED SCHEMA: Output must start with valid YAML frontmatter (title, operative, target, date, threat_level, sources_consulted).
+
+${prompt}`;
+
     const response = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey.trim())}`,
       {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          contents: [{ role: 'user', parts: [{ text: enforcedPrompt }] }],
           generationConfig: {
-            temperature: 0.3,
+            temperature: 0.2,
           },
         }),
       }
@@ -689,12 +700,22 @@ async function runWiretapWatchPipeline(
   const threatLevel: 'ALPHA-CRITICAL' | 'BRAVO-ELEVATED' | 'CHARLIE-NOMINAL' =
     searchHits.length > 2 ? 'BRAVO-ELEVATED' : 'CHARLIE-NOMINAL';
 
-  const defaultDossier = `# Watchtower Wire-Tap Surveillance Brief
+  const defaultDossier = `---
+title: Watchtower Wire-Tap Surveillance Brief
+operative: Agent Nyx (OSINT & Recon Specialist)
+target: "${target.targetName}"
+date: ${dateStr}
+threat_level: ${threatLevel}
+sources_consulted:
+${searchHits.length > 0 ? searchHits.map((h: any) => `  - "${h.title || 'Live Endpoint'}" (${h.url || 'Web Grounding'})`).join('\n') : '  - Live Web Grounding (Verified Endpoint Responsive)'}
+---
+
+# Watchtower Wire-Tap Surveillance Brief
 **Target URL / Endpoint:** ${target.targetName}
 **Watch Condition:** ${target.targetScope}
 **Classification:** Confidential // Watchtower Surveillance
 **Date of Sweep:** ${dateStr}
-**Operative:** Agent Nyx (Deep Intel Recon)
+**Operative:** Agent Nyx (OSINT & Recon Specialist)
 **Operational Status:** **[ ${threatLevel} ]**
 
 ---
@@ -719,39 +740,54 @@ Public web grounding confirms active endpoint reachability. Telemetry has been b
 
 ---
 
-## 3. Verified Field Notes
+## 3. Verified Telemetry Notes & Fact-Checking Citations
 ${
   searchHits.length > 0
-    ? searchHits.map((h: any, i: number) => `${i + 1}. **${h.title || 'Signal Notice'}**: ${h.snippet || h.extract || 'Endpoint data confirmed.'}`).join('\n\n')
+    ? searchHits.map((h: any, i: number) => `### Citation [${i + 1}]: ${h.title || 'Signal Notice'}\n- **Source URL:** ${h.url || 'Live Web Endpoint'}\n- **Telemetry Extract:** "${h.snippet || h.extract || 'Endpoint data confirmed.'}"`).join('\n\n')
     : '- Primary telemetry scanned successfully.\n- Zero disruptive anomalies detected during this sweep interval.'
 }
+
+---
+
+## 4. Impact & Action Delta
+- **Operational Impact:** Establishes a verified, fact-checked baseline for ${target.targetName}. Enables automated differential detection against watch condition: "${target.targetScope}".
+- **Risk Assessment:** [${threatLevel}] ${threatLevel === 'BRAVO-ELEVATED' ? 'Active modifications detected that may require commercial realignment.' : 'Zero immediate disruptions detected across target endpoints.'}
+- **Immediate Tactical Next Step:** Arm Night Shift background watch to execute automated hourly differential sweeps and flag variance.
 
 ---
 *Confidential Watchtower Wire-Tap · Archived to Basement VFS -> ${targetPath}*
 `;
 
-  const aiPrompt = `You are Agent Nyx, an elite OSINT and competitive intelligence operative.
-Generate an executive Watchtower Wire-Tap Brief in clean GitHub Markdown:
+  const aiPrompt = `You are Operative Nyx (OSINT & Recon Specialist) operating under the PixelOps Autonomous Intelligence & Execution Protocol.
+Execution Style: Clandestine, analytical, signal-focused.
+Primary Function: External intelligence gathering, web reconnaissance, competitor tracking, and sentiment analysis.
+Output Standard: Classified dossiers featuring Threat Level ratings (ALPHA-CRITICAL, BRAVO-ELEVATED, CHARLIE-NOMINAL), key findings, and raw source attributions.
+
+MANDATORY RULES:
+1. NO MOCK DATA: Rely strictly on provided live telemetry. Do not invent pricing or endpoints.
+2. CITATIONS: Reference actual titles, snippets, or URLs from searchHits.
+3. IMPACT & ACTION DELTA: You MUST include section "## 4. Impact & Action Delta" explaining why this matters and the next tactical step.
+4. STRUCTURED SCHEMA: Begin with valid YAML frontmatter.
+
 Target URL: ${target.targetName}
 Watch Condition: ${target.targetScope}
 Date: ${dateStr}
 Search Telemetry: ${JSON.stringify(searchHits, null, 2)}
 
 Structure:
+---
+title: Watchtower Wire-Tap Surveillance Brief
+operative: Agent Nyx (OSINT & Recon Specialist)
+target: "${target.targetName}"
+date: ${dateStr}
+threat_level: ${threatLevel}
+sources_consulted: [...]
+---
+
 # Watchtower Wire-Tap Surveillance Brief
-**Target URL:** ${target.targetName}
-**Condition:** ${target.targetScope}
-**Date:** ${dateStr}
-**Operative:** Agent Nyx (Deep Intel Recon)
-**Status:** [ALPHA-CRITICAL / BRAVO-ELEVATED / CHARLIE-NOMINAL]
+... (1. Executive Surveillance Summary, 2. Delta Matrix Table, 3. Verified Telemetry Notes & Fact-Checking Citations, 4. Impact & Action Delta)
 
-Sections:
-1. Executive Surveillance Summary
-2. Delta Matrix Table (Endpoint, Tracked Metric, Detected Signal, Status, Action Directive)
-3. Verified Telemetry Notes
-4. Surveillance Directives & Next Steps
-
-Do not mention you are an AI. Speak in-character as Agent Nyx. Return pure Markdown.`;
+Return pure Markdown without conversational preamble.`;
 
   const finalDossier = await generateAIEnhancedDossier(aiPrompt, defaultDossier);
   await writeWorkspaceFile(targetPath, finalDossier, 'markdown', 'intel');
@@ -822,12 +858,22 @@ async function runDeepReconPipeline(
   const threatLevel: 'ALPHA-CRITICAL' | 'BRAVO-ELEVATED' | 'CHARLIE-NOMINAL' =
     searchHits.length > 2 ? 'BRAVO-ELEVATED' : 'CHARLIE-NOMINAL';
 
-  const defaultDossier = `# Intelligence Dossier: Deep Reconnaissance
+  const defaultDossier = `---
+title: Intelligence Dossier - Deep Reconnaissance
+operative: Agent Nyx (OSINT & Recon Specialist)
+target: "${target.targetName}"
+date: ${dateStr}
+threat_level: ${threatLevel}
+sources_consulted:
+${searchHits.length > 0 ? searchHits.map((h: any) => `  - "${h.title || 'OSINT Source'}" (${h.url || 'Web Source'})`).join('\n') : '  - Public Web Grounding Telemetry'}
+---
+
+# Intelligence Dossier: Deep Reconnaissance
 **Target Entity:** ${target.targetName}
 **Intelligence Scope:** ${target.targetScope}
 **Classification:** Confidential // Market Intelligence
 **Date:** ${dateStr}
-**Prepared By:** Agent Nyx (Deep Intel Recon)
+**Prepared By:** Agent Nyx (OSINT & Recon Specialist)
 **Threat & Opportunity Assessment:** **[ ${threatLevel} ]**
 
 ---
@@ -852,38 +898,54 @@ Analysis indicates active competitive maneuvering within this space. Marketing r
 
 ---
 
-## 3. Verified Field Notes & Findings
+## 3. Verified Field Notes & Fact-Checking Citations
 ${
   searchHits.length > 0
-    ? searchHits.map((h: any, i: number) => `${i + 1}. **${h.title || 'Signal Report'}**: ${h.snippet || h.extract || 'Relevant market activity confirmed.'}`).join('\n\n')
+    ? searchHits.map((h: any, i: number) => `### Citation [${i + 1}]: ${h.title || 'Signal Report'}\n- **Source URL:** ${h.url || 'Live Web Source'}\n- **Intelligence Extract:** "${h.snippet || h.extract || 'Relevant market activity confirmed.'}"`).join('\n\n')
     : `- Primary telemetry scanned across active public web endpoints.\n- Target ${target.targetName} operational perimeter verified.\n- Zero immediate disruptive anomalies detected.`
 }
+
+---
+
+## 4. Impact & Action Delta
+- **Operational Impact:** Identifies competitive inflection points and user sentiment deltas across ${target.targetName}, removing marketing noise to expose real vulnerabilities.
+- **Risk Assessment:** [${threatLevel}] Potential churn exposure if competing feature launches go unanswered in active sprint cycles.
+- **Immediate Tactical Next Step:** Brief safehouse operatives on counter-feature rollout and schedule continuous watchtower monitoring.
 
 ---
 *Confidential Executive Intelligence Dossier · Generated on ${dateStr} · Reference: OSINT-${cleanTarget}-${dateStr}*
 `;
 
-  const aiPrompt = `You are Agent Nyx, an elite OSINT and competitive intelligence operative.
-Generate an executive-ready intelligence dossier in clean GitHub Markdown:
+  const aiPrompt = `You are Operative Nyx (OSINT & Recon Specialist) operating under the PixelOps Autonomous Intelligence & Execution Protocol.
+Execution Style: Clandestine, analytical, signal-focused.
+Primary Function: External intelligence gathering, web reconnaissance, competitor tracking, and sentiment analysis.
+Output Standard: Classified dossiers (intel/dossier_[target]_[date].md) featuring Threat Level ratings (ALPHA-CRITICAL, BRAVO-ELEVATED, CHARLIE-NOMINAL), key findings, and raw source attributions.
+
+MANDATORY RULES:
+1. NO MOCK DATA: Rely strictly on provided live telemetry. Do not invent marketing fluff or imaginary features.
+2. FACT-CHECKING CITATIONS: Reference actual titles, snippets, or URLs from search extractions.
+3. IMPACT & ACTION DELTA: You MUST include section "## 4. Impact & Action Delta" explaining why this matters and the next tactical step.
+4. STRUCTURED SCHEMA: Begin with valid YAML frontmatter.
+
 Target Entity: ${target.targetName}
 Scope of Interest: ${target.targetScope}
 Current Date: ${dateStr}
 Live Web Search Extractions: ${JSON.stringify(searchHits, null, 2)}
 
 Structure:
+---
+title: Intelligence Dossier - Deep Reconnaissance
+operative: Agent Nyx (OSINT & Recon Specialist)
+target: "${target.targetName}"
+date: ${dateStr}
+threat_level: ${threatLevel}
+sources_consulted: [...]
+---
+
 # Intelligence Dossier: Deep Reconnaissance
-**Target Entity:** ${target.targetName}
-**Date:** ${dateStr}
-**Classification:** Confidential // Market Intelligence
-**Threat / Opportunity Level:** [ALPHA-CRITICAL / BRAVO-ELEVATED / CHARLIE-NOMINAL]
+... (1. Executive Summary & Strategic Takeaways, 2. Ingested OSINT Telemetry & Delta Matrix, 3. Verified Field Notes & Fact-Checking Citations, 4. Impact & Action Delta)
 
-Sections:
-1. Executive Summary & Strategic Takeaways
-2. Delta Matrix Table (Focus Area, Detected Modification, Strategic Impact, Threat/Opportunity, Countermeasure)
-3. Deep-Dive Field Findings
-4. Tactical Recommendations & Next Steps
-
-Do not mention you are an AI. Speak in-character as Agent Nyx. Return pure Markdown.`;
+Return pure Markdown without conversational preamble.`;
 
   const finalDossier = await generateAIEnhancedDossier(aiPrompt, defaultDossier);
   await writeWorkspaceFile(targetPath, finalDossier, 'markdown', 'intel');
@@ -954,7 +1016,18 @@ async function runMorningBriefingPipeline(
   onStageUpdate?.(2, `VFS & Dispatch: Logging briefing to Basement VFS drawer...`);
   await new Promise((r) => setTimeout(r, 400));
 
-  const defaultDossier = `# Executive Command Briefing: Operations SITREP
+  const defaultDossier = `---
+title: Executive Command Briefing - Operations SITREP
+operative: Agent Vance (Command Operations Chief)
+target: "${target.targetName}"
+date: ${dateStr}
+threat_level: CHARLIE-NOMINAL
+sources_consulted:
+  - Basement VFS Storage (${recentIntel.length} classified records)
+${gitIssues.length > 0 ? `  - GitHub Repository Pipeline (${gitIssues.length} open issues)` : '  - Operations Coordination Ledger'}
+---
+
+# Executive Command Briefing: Operations SITREP
 **Briefing Focus:** ${target.targetName}
 **Strategic Scope:** ${target.targetScope}
 **Date:** ${dateStr} // 08:00 LOCAL TIME
@@ -974,7 +1047,7 @@ All operational sectors report positive velocity. Key priorities, deliverable st
 
 ---
 
-## 2. Multi-Source Pipeline Digest
+## 2. Multi-Source Pipeline Digest & Fact-Checking Telemetry
 ### 📊 Active Focus & Priorities
 - **Target Area:** ${target.targetName}
 - **Monitored Scope:** ${target.targetScope}
@@ -989,41 +1062,55 @@ ${
 
 ${
   gitIssues.length > 0
-    ? `### 📡 Connected Repository Pipeline\n` + gitIssues.slice(0, 3).map((iss: any) => `- Issue #${iss.number || '?'}: **${iss.title || 'Task'}** (${iss.state})`).join('\n')
+    ? `### 📡 Connected Repository Pipeline Citations\n` + gitIssues.slice(0, 3).map((iss: any) => `- **Issue #${iss.number || '?'}: ${iss.title}** (${iss.state}) | Assignee: ${iss.assignee?.login || 'Unassigned'}`).join('\n')
     : ''
 }
 
 ---
 
-## 3. Daily Operational Directives
-1. **Strategic Execution:** Advance core deliverables outlined in ${target.targetName}.
-2. **Signal Surveillance:** Review new findings from the Watchtower wiretaps.
-3. **Security Parity:** Ensure dependencies and repositories maintain verified audit standards.
+## 3. Impact & Action Delta
+- **Operational Impact:** Centralizes strategic priorities for ${target.targetName}, unblocking tactical dependencies across safehouse operatives.
+- **Risk Assessment:** Identified deadline constraints and coordination dependencies across active task streams.
+- **Immediate Execution Queue:**
+  1. Advance primary deliverable targets in ${target.targetName}.
+  2. Coordinate watchtower surveillance sweeps with Agent Nyx.
+  3. Validate codebase stability and security patches with Agent Cipher.
 
 ---
 *Confidential Executive Briefing · Logged to Basement VFS -> ${targetPath}*
 `;
 
-  const aiPrompt = `You are a Chief Operations Officer and Executive Strategist.
-Synthesize an executive morning command briefing in professional GitHub Markdown on:
+  const aiPrompt = `You are Operative Vance (Command Operations Chief) operating under the PixelOps Autonomous Intelligence & Execution Protocol.
+Execution Style: Structured, authoritative, concise. Zero conversational delay.
+Primary Function: Workflow coordination, executive synthesis, and operational SITREPs.
+Output Standard: Executive command briefings summarizing multi-source telemetry with zero conversational delay.
+
+MANDATORY RULES:
+1. NO MOCK DATA: Ground every takeaway in verified VFS files or live connected issues.
+2. CITATIONS: Reference actual dossier names and issue numbers.
+3. IMPACT & ACTION DELTA: You MUST include section "## 3. Impact & Action Delta" detailing operational impact, risk, and immediate execution queue.
+4. STRUCTURED SCHEMA: Begin with valid YAML frontmatter.
+
 Focus: ${target.targetName}
 Scope & Priorities: ${target.targetScope}
 Date: ${dateStr}
 Recent VFS Intel Files: ${recentIntel.map((f) => f.path).join(', ')}
+Connected Git Issues: ${JSON.stringify(gitIssues.slice(0, 3))}
 
 Structure:
+---
+title: Executive Command Briefing - Operations SITREP
+operative: Agent Vance (Command Operations Chief)
+target: "${target.targetName}"
+date: ${dateStr}
+threat_level: CHARLIE-NOMINAL
+sources_consulted: [...]
+---
+
 # Executive Command Briefing: Operations SITREP
-**Briefing Focus:** ${target.targetName}
-**Date:** ${dateStr}
-**Classification:** Confidential // Executive Briefing
+... (1. Executive Situation Report, 2. Multi-Source Pipeline Digest & Fact-Checking Telemetry, 3. Impact & Action Delta)
 
-Sections:
-1. Executive Situation Report (SITREP)
-2. Multi-Source Pipeline Digest & Deliverables Breakdown
-3. Daily Operational Directives (prioritized, actionable tasks)
-4. Dispatch & Broadcast Status
-
-Do not mention you are an AI. Speak in-character as Agent Vance. Return pure Markdown.`;
+Return pure Markdown without conversational preamble.`;
 
   const finalDossier = await generateAIEnhancedDossier(aiPrompt, defaultDossier);
   await writeWorkspaceFile(targetPath, finalDossier, 'markdown', 'intel');
@@ -1098,34 +1185,42 @@ async function runTriageGmailPipeline(
   onStageUpdate?.(2, 'Extract Action Items: Parsing incoming requests into Strategy Board tasks...');
   await new Promise((r) => setTimeout(r, 500));
 
-  // Synthesize task queue items
-  const createdTasks: StrategyBoardTask[] = [
-    {
-      id: `task_gmail_${Date.now()}_1`,
-      title: `Review high-priority message: ${messages[0]?.subject || 'Client deliverable review'}`,
-      source: 'gmail',
-      sourceDetail: messages[0]?.from || 'Direct Inbox',
-      priority: 'high',
-      status: 'pending',
-      assignedAgent: 'Agent Vance',
-      createdAt: new Date().toISOString(),
-    },
-    {
-      id: `task_gmail_${Date.now()}_2`,
-      title: `Resolve incoming action items: ${target.targetScope.slice(0, 40)}`,
-      source: 'gmail',
-      sourceDetail: 'Automated Triage',
-      priority: 'medium',
-      status: 'pending',
-      assignedAgent: 'Agent Vance',
-      createdAt: new Date().toISOString(),
-    },
-  ];
-  addStrategyBoardTasks(createdTasks);
+  // Synthesize task queue items strictly from real verified messages if present
+  const createdTasks: StrategyBoardTask[] = [];
+  if (messages.length > 0) {
+    messages.slice(0, 3).forEach((msg: any, idx: number) => {
+      createdTasks.push({
+        id: `task_gmail_${Date.now()}_${idx + 1}`,
+        title: `Action Item: ${msg.subject || 'Incoming client/team message'}`,
+        source: 'gmail',
+        sourceDetail: msg.from || 'Direct Inbox',
+        priority: idx === 0 ? 'high' : 'medium',
+        status: 'pending',
+        assignedAgent: 'Agent Vance',
+        createdAt: new Date().toISOString(),
+      });
+    });
+  }
+
+  if (createdTasks.length > 0) {
+    addStrategyBoardTasks(createdTasks);
+  }
 
   onStageUpdate?.(3, `VFS Action Log: Populated ${createdTasks.length} tasks and archiving triage report to ${targetPath}...`);
 
-  const defaultDossier = `# Strategy Board Triage: Gmail Ingestion Report
+  const sourcesConsulted = gmailConnected ? ['Composio GMAIL_LIST_MESSAGES API'] : ['Composio Authentication Service'];
+
+  const defaultDossier = `---
+title: "Strategy Board Triage: Gmail Ingestion Report"
+operative: "Agent Vance (Command Operations Chief)"
+target: "${target.targetName}"
+date: "${dateStr}"
+threat_level: "${messages.length > 0 ? 'BRAVO-ELEVATED' : 'CHARLIE-NOMINAL'}"
+sources_consulted:
+${sourcesConsulted.map((s) => `  - "${s}"`).join('\n')}
+---
+
+# Strategy Board Triage: Gmail Ingestion Report
 **Criteria Filter:** ${target.targetName}
 **Triage Focus:** ${target.targetScope}
 **Date:** ${dateStr}
@@ -1134,28 +1229,66 @@ async function runTriageGmailPipeline(
 
 ---
 
-## 1. Triage Summary & Extracted Tasks
-Scanned user inbox for actionable requests. Extracted **${createdTasks.length}** high-priority action items and routed them directly to the active Strategy Board task queue.
+## 1. Triage Summary & Ingestion Verification
+${
+  gmailConnected
+    ? messages.length > 0
+      ? `Scanned user inbox for query "${target.targetName}". Extracted **${createdTasks.length}** live action items and routed them directly to the active Strategy Board task queue.`
+      : `Scanned user inbox for query "${target.targetName}". Zero unread messages or pending blockers detected. Inbox state verified clear; zero synthetic tasks generated.`
+    : `Gmail integration requires authentication. Composio OAuth prompt initiated for user account. Live triage deferred until authentication handshake completes.`
+}
 
-### 📋 Populated Strategy Board Tasks:
-${createdTasks.map((t) => `- [ ] **[${t.priority.toUpperCase()}]** ${t.title} *(Assigned: ${t.assignedAgent})*`).join('\n')}
+### 📋 Ingested Strategy Board Tasks:
+${
+  createdTasks.length > 0
+    ? createdTasks.map((t) => `- [ ] **[${t.priority.toUpperCase()}]** ${t.title} *(Source: ${t.sourceDetail} | Assigned: ${t.assignedAgent})*`).join('\n')
+    : `- Zero pending tasks ingested. State verified clear.`
+}
 
 ---
 
-## 2. Ingested Messages & Telemetry
+## 2. Ingested Messages & Telemetry Citations
 ${
   messages.length > 0
-    ? messages.map((m: any, i: number) => `${i + 1}. **From:** ${m.from || 'Sender'} | **Subject:** ${m.subject || 'Message'}\n   Snippet: ${m.snippet || 'Body preview available'}`).join('\n\n')
+    ? messages.map((m: any, i: number) => `${i + 1}. **From:** ${m.from || 'Verified Sender'} | **Subject:** ${m.subject || 'Message'}\n   **Snippet:** ${m.snippet || 'Body preview verified.'}`).join('\n\n')
     : gmailConnected
-    ? '- Zero unread blockers found. All active communications are up to date.'
-    : '- Gmail OAuth connection pending. Please authorize Gmail in the Armory Toolkits tab to enable live live synchronization.'
+    ? `- **Filter Telemetry:** Query \`${target.targetName}\` executed across authenticated account.\n- **Result:** 0 unread messages found matching scope.`
+    : `- **Authentication Telemetry:** OAuth connection unauthenticated. Please authorize Gmail in the Armory Toolkits tab to enable live data extraction.`
 }
+
+---
+
+## 3. Impact & Action Delta
+- **Why this matters:** Unfiltered inboxes conceal critical deliverables and operational roadblocks. Live triage eliminates silent communication failure.
+- **Operational Risk Assessment:** ${messages.length > 0 ? `BRAVO-ELEVATED: ${messages.length} unread communications require review to prevent response delay.` : `CHARLIE-NOMINAL: Zero unread communications matching filter criteria. Operational continuity intact.`}
+- **Immediate Execution Queue:**
+  1. ${createdTasks.length > 0 ? `Review the ${createdTasks.length} ingested tasks in the War Room Strategy Board.` : `Monitor inbound communications channel for next sync cycle.`}
+  2. Confirm task assignments and notify active operatives of priority queue updates.
+  3. Re-run triage sweep at next operational cycle.
 
 ---
 *Archived to Local VFS -> ${targetPath}*
 `;
 
-  await writeWorkspaceFile(targetPath, defaultDossier, 'markdown', 'intel');
+  const aiPrompt = `Generate a classified Gmail Triage and Strategy Board report conforming strictly to the Global Autonomous Intelligence Protocol.
+PERSONA: Agent Vance (Command Operations Chief) - Structured, authoritative, concise, zero fluff.
+RULES:
+1. NO MOCK DATA: Rely solely on the provided verified message telemetry and connection state.
+2. FACT CITATION: Cite actual senders, subjects, and factual message counts.
+3. IMPACT & ACTION DELTA: Include "## 3. Impact & Action Delta" detailing operational impact and execution next steps.
+4. SCHEMA: Start with YAML frontmatter.
+
+Filter: ${target.targetName}
+Scope: ${target.targetScope}
+Date: ${dateStr}
+Connected: ${gmailConnected}
+Messages Extracted: ${JSON.stringify(messages.slice(0, 5))}
+Tasks Generated: ${JSON.stringify(createdTasks)}
+
+Return pure Markdown without conversational preamble.`;
+
+  const finalDossier = await generateAIEnhancedDossier(aiPrompt, defaultDossier);
+  await writeWorkspaceFile(targetPath, finalDossier, 'markdown', 'intel');
 
   await appendCommandLedgerEntry({
     timestamp: new Date().toISOString(),
@@ -1174,7 +1307,7 @@ ${
     assignedOperativeName: 'Agent Vance',
     assignedRoom: 'war_room',
     targetPath,
-    dossierContent: defaultDossier,
+    dossierContent: finalDossier,
     stagesCompleted: [
       { stage: 'Composio Auth Check', detail: gmailConnected ? 'Gmail connected' : 'Auth requested', status: 'verified' },
       { stage: 'Fetch Unread Inbox', detail: `Ingested messages matching ${target.targetName}`, status: 'verified' },
@@ -1227,7 +1360,19 @@ async function runCalendarBriefPipeline(
 
   onStageUpdate?.(3, `VFS Briefing Log: Writing calendar briefing to ${targetPath}...`);
 
-  const defaultDossier = `# Executive Calendar Briefing: Today's Schedule & Talking Points
+  const sourcesConsulted = calConnected ? ['Composio GOOGLECALENDAR_LIST_EVENTS API'] : ['Composio Calendar Service'];
+
+  const defaultDossier = `---
+title: "Executive Calendar Briefing: Today's Schedule & Talking Points"
+operative: "Agent Vance (Command Operations Chief)"
+target: "${target.targetName}"
+date: "${dateStr}"
+threat_level: "CHARLIE-NOMINAL"
+sources_consulted:
+${sourcesConsulted.map((s) => `  - "${s}"`).join('\n')}
+---
+
+# Executive Calendar Briefing: Today's Schedule & Talking Points
 **Schedule Focus:** ${target.targetName}
 **Preparation Scope:** ${target.targetScope}
 **Date:** ${dateStr}
@@ -1236,28 +1381,59 @@ async function runCalendarBriefPipeline(
 
 ---
 
-## 1. Today's Strategic Meeting Overview
-Synthesized agenda and tactical talking points for today's commitments. Focus is calibrated to maximize executive leverage and alignment.
+## 1. Verified Strategic Schedule Overview
+Synthesized agenda and tactical talking points for verified calendar commitments. Scoped to maximize executive focus and eliminate meeting drift.
 
 ### 📅 Agenda & Discussion Targets:
 ${
   events.length > 0
-    ? events.map((ev: any, i: number) => `${i + 1}. **${ev.summary || 'Meeting'}** (${ev.start?.dateTime || 'Today'})\n   Attendees: ${(ev.attendees || []).map((a: any) => a.email).join(', ') || 'Internal team'}\n   Tactical Talking Point: Align on ${target.targetScope.slice(0, 35)} and confirm action owners.`).join('\n\n')
-    : `- **10:00 AM - Tactical Operations Sync**\n  - Key Objective: Review active deliverables and unblock blockers.\n  - Talking Point: Confirm completion timeline for ${target.targetName}.\n\n- **02:00 PM - Strategic Review & Architecture Alignment**\n  - Key Objective: Address high-impact deliverables.\n  - Talking Point: Ensure security and operational continuity standards are met.`
+    ? events.map((ev: any, i: number) => `${i + 1}. **${ev.summary || 'Scheduled Meeting'}** (${ev.start?.dateTime || ev.start?.date || 'Time TBD'})\n   **Attendees:** ${(ev.attendees || []).map((a: any) => a.email).join(', ') || 'Internal participants'}\n   **Tactical Objective:** Align on ${target.targetScope.slice(0, 50)} and lock operational deliverables.`).join('\n\n')
+    : calConnected
+    ? `- **Zero Scheduled Meetings:** Google Calendar confirmed 0 active appointments for target window "${target.targetName}". Focus remains 100% on asynchronous mission execution.`
+    : `- **Calendar OAuth Offline:** Live Google Calendar integration not authenticated. Connect Google Calendar via Armory Toolkits to pull active schedule.`
 }
 
 ---
 
 ## 2. Executive Preparation Checklist
-- [ ] Review meeting attendee backgrounds and deliverables status.
-- [ ] Align on core decision outcomes prior to opening remarks.
-- [ ] Log action items to Strategy Board immediately following adjournment.
+${
+  events.length > 0
+    ? `- [ ] Review participant profiles and confirm key decision milestones before start of call.\n- [ ] Enforce strict 30-minute agenda guardrails.\n- [ ] Capture all post-meeting action items into Strategy Board immediately.`
+    : `- [ ] Dedicated Focus Window: Leverage zero calendar overhead to advance high-impact engineering and recon objectives.\n- [ ] Review pending VFS dossiers in the Library archive.\n- [ ] Re-check sync status before evening standup.`
+}
+
+---
+
+## 3. Impact & Action Delta
+- **Why this matters:** Executive schedule management prevents cognitive overload and aligns daily effort with strategic priorities.
+- **Operational Risk Assessment:** ${events.length > 3 ? `BRAVO-ELEVATED: High meeting density (${events.length} sessions) risks context switching and execution delays.` : `CHARLIE-NOMINAL: Schedule density optimal. Focus capacity unconstrained.`}
+- **Immediate Execution Queue:**
+  1. ${events.length > 0 ? `Prepare briefing notes for "${events[0]?.summary || 'next upcoming meeting'}".` : `Dedicate sprint blocks to open Strategy Board priorities.`}
+  2. Maintain hard stops on all meetings to preserve deep-work bandwidth.
+  3. Log meeting decisions into local VFS command ledger.
 
 ---
 *Archived to Local VFS -> ${targetPath}*
 `;
 
-  await writeWorkspaceFile(targetPath, defaultDossier, 'markdown', 'intel');
+  const aiPrompt = `Generate an Executive Calendar Briefing conforming strictly to the Global Autonomous Intelligence Protocol.
+PERSONA: Agent Vance (Command Operations Chief) - Structured, authoritative, concise, zero fluff.
+RULES:
+1. NO MOCK DATA: Rely solely on verified events and authentic calendar telemetry. Do not invent appointments.
+2. FACT CITATION: Cite verified meeting summaries, start times, and attendee lists.
+3. IMPACT & ACTION DELTA: Include "## 3. Impact & Action Delta" detailing schedule impact, cognitive load risk, and immediate next steps.
+4. SCHEMA: Start with YAML frontmatter.
+
+Focus: ${target.targetName}
+Scope: ${target.targetScope}
+Date: ${dateStr}
+Calendar Connected: ${calConnected}
+Events Ingested: ${JSON.stringify(events.slice(0, 5))}
+
+Return pure Markdown without conversational preamble.`;
+
+  const finalDossier = await generateAIEnhancedDossier(aiPrompt, defaultDossier);
+  await writeWorkspaceFile(targetPath, finalDossier, 'markdown', 'intel');
 
   await appendCommandLedgerEntry({
     timestamp: new Date().toISOString(),
@@ -1276,10 +1452,10 @@ ${
     assignedOperativeName: 'Agent Vance',
     assignedRoom: 'war_room',
     targetPath,
-    dossierContent: defaultDossier,
+    dossierContent: finalDossier,
     stagesCompleted: [
       { stage: 'Calendar Auth Check', detail: calConnected ? 'Calendar connected' : 'Auth requested', status: 'verified' },
-      { stage: 'Event Retrieval', detail: `Ingested ${events.length || 2} agenda events`, status: 'verified' },
+      { stage: 'Event Retrieval', detail: `Ingested ${events.length} agenda events`, status: 'verified' },
       { stage: 'Talking Points Prep', detail: 'Drafted strategic talking points and objectives', status: 'verified' },
       { stage: 'VFS Briefing Log', detail: `Archived briefing to ${targetPath}`, status: 'completed' },
     ],
@@ -1351,36 +1527,54 @@ async function runSyncGithubPipeline(
 
   onStageUpdate?.(3, `Action Log Archive: Generating repository pulse report to ${targetPath}...`);
 
-  const threatLevel: 'ALPHA-CRITICAL' | 'BRAVO-ELEVATED' | 'CHARLIE-NOMINAL' =
-    cveHits.some((h) => (h.snippet || '').toLowerCase().includes('critical') || (h.snippet || '').toLowerCase().includes('cve-'))
-      ? 'BRAVO-ELEVATED'
-      : 'CHARLIE-NOMINAL';
+  const hasCriticalCve = cveHits.some(
+    (h) => (h.snippet || '').toLowerCase().includes('critical') || (h.snippet || '').toLowerCase().includes('cve-')
+  );
+  const threatLevel: 'ALPHA-CRITICAL' | 'BRAVO-ELEVATED' | 'CHARLIE-NOMINAL' = hasCriticalCve
+    ? 'ALPHA-CRITICAL'
+    : gitIssues.length > 5
+    ? 'BRAVO-ELEVATED'
+    : 'CHARLIE-NOMINAL';
 
-  const defaultDossier = `# GitHub Repository Pulse & Action Log
+  const sourcesConsulted: string[] = [];
+  if (owner && repo) sourcesConsulted.push('GitHub API (GITHUB_LIST_ISSUES)');
+  if (cveHits.length > 0) sourcesConsulted.push('Live Web Security Advisory / CVE Search');
+  if (sourcesConsulted.length === 0) sourcesConsulted.push('Composio GitHub Service Inspection');
+
+  const defaultDossier = `---
+title: "GitHub Repository Pulse & Security Audit"
+operative: "Agent Cipher (Code-Ops & Security Specialist)"
+target: "${target.targetName}"
+date: "${dateStr}"
+threat_level: "${threatLevel}"
+sources_consulted:
+${sourcesConsulted.map((s) => `  - "${s}"`).join('\n')}
+---
+
+# GitHub Repository Pulse & Security Audit
 **Target Repository:** ${target.targetName}
-**Audit Focus:** ${target.targetScope}
-**Classification:** Confidential // Security & Code-Ops Audit
+**Audit Scope:** ${target.targetScope}
+**Classification:** Restricted // Code-Ops & Technical Vulnerability Assessment
 **Date:** ${dateStr}
 **Operative:** Agent Cipher (Code-Ops Specialist)
 **Vulnerability Threat Status:** **[ ${threatLevel} ]**
 
 ---
 
-## 1. Repository Pulse & Velocity
-Telemetry report generated for **${target.targetName}**.
-Active components, pending issues, and dependency trees evaluated for operational health and stability.
-
-- **Monitored Scope:** ${target.targetScope}
-- **Active Issues / PRs Captured:** ${gitIssues.length > 0 ? `${gitIssues.length} items` : 'Live query completed'}
-- **Security Posture:** Static code audit + live CVE cross-reference verified.
+## 1. Repository Pulse & Telemetry
+Blunt telemetry audit executed for **${target.targetName}**.
+- **Scope Inspected:** ${target.targetScope}
+- **Open Issues & PR Blocker Count:** ${gitIssues.length} items retrieved from live API query.
+- **Vulnerability Advisory Cross-Check:** Completed against verified CVE indexes and web disclosures.
+- **Connection Diagnostics:** ${ghConnected ? 'GitHub OAuth verified active.' : owner ? 'Unauthenticated public repository query.' : 'Composio GitHub authentication required.'}
 
 ---
 
-## 2. Prioritized Action Items & Issues Matrix
+## 2. Issue Matrix & Blocker Citations
 ${
   gitIssues.length > 0
-    ? gitIssues.slice(0, 5).map((iss: any) => `- [ ] **Issue #${iss.number || '?'}: ${iss.title}** (${iss.state})\n  *Assignee:* ${iss.assignee?.login || 'Unassigned'} | *Labels:* ${(iss.labels || []).map((l: any) => l.name).join(', ') || 'None'}`).join('\n\n')
-    : `- [ ] **[PRIORITY 1] Review dependency lockfiles for unpinned sub-modules.**\n- [ ] **[PRIORITY 2] Enforce automated continuous security scanning in CI.**\n- [ ] **[PRIORITY 3] Audit inbound pull requests and resolve open blocker items.**`
+    ? gitIssues.slice(0, 5).map((iss: any) => `- [ ] **#${iss.number || '?'}: ${iss.title}** (${iss.state})\n  *Assignee:* ${iss.assignee?.login || 'Unassigned'} | *Labels:* ${(iss.labels || []).map((l: any) => l.name).join(', ') || 'None'}`).join('\n\n')
+    : `- Zero open issues or blocker tickets retrieved for repository \`${target.targetName}\`. Repository state verified clean.`
 }
 
 ---
@@ -1388,15 +1582,51 @@ ${
 ## 3. Advisory & CVE Cross-Reference
 ${
   cveHits.length > 0
-    ? cveHits.map((h: any, i: number) => `${i + 1}. **${h.title || 'Notice'}**: ${h.snippet || h.extract || 'Advisory checked.'}`).join('\n\n')
-    : `- Zero active zero-day exploits detected for ${target.targetName}.\n- Monitored dependencies reporting healthy security status.`
+    ? cveHits.map((h: any, i: number) => `${i + 1}. **${h.title || 'Security Advisory'}**\n   Citation: ${h.url || 'Web Advisory'}\n   Technical Note: ${h.snippet || h.extract || 'Advisory checked.'}`).join('\n\n')
+    : `- Zero active zero-day exploits or reported CVE advisories detected for \`${target.targetName}\`. Monitored dependency surface nominal.`
 }
+
+---
+
+## 4. Impact & Action Delta
+- **Technical Vulnerability Assessment:** ${
+  hasCriticalCve
+    ? 'CRITICAL ADVISORY DETECTED: Known CVE signatures matched. High probability of dependency exploitation or remote code vulnerability if unpatched.'
+    : gitIssues.length > 0
+    ? `OPERATIONAL BACKLOG DETECTED: ${gitIssues.length} open issues or PRs active. Code drift and blocker escalation risks present.`
+    : 'MINIMAL RISK: Zero open blockers or active exploit notices detected. Static posture intact.'
+}
+- **Actionable Remediation & Patch Guide:**
+  1. \`git checkout -b chore/security-audit-${dateStr}\`
+  2. Inspect dependency lockfile dependencies: run package-level audit (\`npm audit\` / \`cargo audit\` / \`pip-audit\`).
+  3. Validate automated CI/CD pipeline triggers and enforce merge gating.
+- **Immediate Execution Queue:**
+  1. ${gitIssues.length > 0 ? `Assign engineering resources to Issue #${gitIssues[0]?.number || '1'} (${gitIssues[0]?.title || 'top blocker'}).` : 'Schedule automated weekly dependency drift scan.'}
+  2. Update VFS security log and verify commit signatures.
 
 ---
 *Archived to Local VFS -> ${targetPath}*
 `;
 
-  await writeWorkspaceFile(targetPath, defaultDossier, 'markdown', 'intel');
+  const aiPrompt = `Generate a technical GitHub Repository Pulse and Security Audit report conforming strictly to the Global Autonomous Intelligence Protocol.
+PERSONA: Agent Cipher (Code-Ops & Security Specialist) - Blunt, highly technical, zero fluff.
+RULES:
+1. NO MOCK DATA: Rely solely on the provided verified repository telemetry, issue list, and CVE citations.
+2. FACT CITATION: Cite actual issue numbers, PR titles, author logins, and CVE advisory text.
+3. IMPACT & ACTION DELTA: Include "## 4. Impact & Action Delta" with technical vulnerability assessment, actionable patch guide (specific terminal commands), and immediate execution queue.
+4. SCHEMA: Start with YAML frontmatter.
+
+Target: ${target.targetName}
+Scope: ${target.targetScope}
+Date: ${dateStr}
+Threat Level: ${threatLevel}
+Git Issues: ${JSON.stringify(gitIssues.slice(0, 5))}
+CVE Hits: ${JSON.stringify(cveHits.slice(0, 3))}
+
+Return pure Markdown without conversational preamble.`;
+
+  const finalDossier = await generateAIEnhancedDossier(aiPrompt, defaultDossier);
+  await writeWorkspaceFile(targetPath, finalDossier, 'markdown', 'intel');
 
   await appendCommandLedgerEntry({
     timestamp: new Date().toISOString(),
@@ -1415,7 +1645,7 @@ ${
     assignedOperativeName: 'Agent Cipher',
     assignedRoom: 'server_vault',
     targetPath,
-    dossierContent: defaultDossier,
+    dossierContent: finalDossier,
     threatLevel,
     stagesCompleted: [
       { stage: 'Repository Verify', detail: `Validated ${target.targetName}`, status: 'verified' },

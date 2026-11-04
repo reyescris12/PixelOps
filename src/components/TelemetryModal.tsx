@@ -36,7 +36,7 @@ export const TelemetryModal: React.FC<TelemetryModalProps> = ({ isOpen, onClose 
   const avgDurationSec = totalRuns > 0 ? Math.round(summary.totalRuntimeMs / totalRuns / 1000) : 0;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md p-4 overflow-y-auto">
       <div className="w-full max-w-2xl rounded-2xl bg-[#0d1117] border border-emerald-500/40 p-5 sm:p-6 shadow-[0_0_30px_rgba(16,185,129,0.15)] flex flex-col gap-5 max-h-[90vh] overflow-y-auto font-mono">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-emerald-500/30 pb-4">

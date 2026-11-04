@@ -343,7 +343,7 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
   return (
     <AnimatePresence>
       <div
-        className="fixed inset-0 z-[120] flex items-center justify-center p-0 sm:p-3 md:p-4 bg-black/80 backdrop-blur-sm overflow-hidden"
+        className="fixed inset-0 z-[120] flex items-center justify-center p-0 sm:p-3 md:p-4 bg-black/90 backdrop-blur-md overflow-hidden"
         style={{
           paddingTop: 'max(0px, env(safe-area-inset-top, 0px))',
           paddingBottom: 'max(0px, env(safe-area-inset-bottom, 0px))',

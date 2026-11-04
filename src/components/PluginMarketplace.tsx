@@ -760,7 +760,7 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
 
       {/* Composio BYOK API Key Configuration Modal */}
       {isApiKeyModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200">
           <div className="w-full max-w-lg bg-[#141210] border-2 border-[#b47b38] shadow-[0_0_40px_rgba(229,152,56,0.35)] rounded-xs overflow-hidden font-mono-tabular">
             {/* Modal Header */}
             <div className="bg-[#231b12] border-b border-[#4a351d] px-4 py-2.5 flex items-center justify-between">
@@ -906,7 +906,7 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
 
       {/* Composio Live Connection Diagnostics Modal */}
       {isDiagnosticsOpen && (
-        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200">
           <div className="w-full max-w-xl bg-[#141210] border-2 border-[#2d6a4f] shadow-[0_0_40px_rgba(74,222,128,0.25)] rounded-xs overflow-hidden font-mono-tabular">
             {/* Modal Header */}
             <div className="bg-[#0f2416] border-b border-[#1e462b] px-4 py-2.5 flex items-center justify-between">

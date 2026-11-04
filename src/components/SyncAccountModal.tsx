@@ -410,7 +410,7 @@ export const SyncAccountModal: React.FC<SyncAccountModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/85 backdrop-blur-md">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4 bg-black/90 backdrop-blur-md">
       <div className="relative w-full max-w-2xl bg-zinc-950 border border-emerald-500/30 rounded-xl shadow-2xl shadow-emerald-950/40 flex flex-col max-h-[92vh] overflow-hidden text-zinc-100 font-mono">
         {/* Top Header */}
         <div className="flex items-center justify-between px-3 sm:px-4 py-3 border-b border-emerald-500/20 bg-zinc-900/60">

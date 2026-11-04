@@ -252,7 +252,7 @@ export const RoomSpawnerModal: React.FC<RoomSpawnerModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/80 backdrop-blur-sm select-none"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/90 backdrop-blur-md select-none"
       onClick={onClose}
     >
       <div

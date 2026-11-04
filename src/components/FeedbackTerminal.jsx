@@ -201,7 +201,7 @@ export const FeedbackTerminal = ({ isOpen, onClose }) => {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/85 backdrop-blur-xs font-mono select-none"
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-black/90 backdrop-blur-md font-mono select-none"
       role="dialog"
       aria-modal="true"
       aria-labelledby="feedback-terminal-title"

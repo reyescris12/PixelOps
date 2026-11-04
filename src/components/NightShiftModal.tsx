@@ -506,7 +506,7 @@ export const NightShiftModal: React.FC<NightShiftModalProps> = ({
   const hasSlackConnected = localConnectedAccounts.some((a) => a.appName.toLowerCase().includes('slack'));
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-3 sm:p-4 overflow-y-auto">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md p-3 sm:p-4 overflow-y-auto">
       <div className="w-full max-w-3xl rounded-2xl bg-[#0d1017] border border-slate-800 p-5 sm:p-6 shadow-2xl flex flex-col gap-4 max-h-[92vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between border-b border-slate-800/80 pb-3">

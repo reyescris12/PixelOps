@@ -180,7 +180,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start sm:items-center justify-center bg-black/75 backdrop-blur-sm p-2 sm:p-4 overflow-y-auto"
+      className="fixed inset-0 z-50 flex items-start sm:items-center justify-center bg-black/90 backdrop-blur-md p-2 sm:p-4 overflow-y-auto"
       style={{
         paddingTop: 'max(12px, env(safe-area-inset-top, 12px))',
         paddingBottom: 'max(12px, env(safe-area-inset-bottom, 12px))',

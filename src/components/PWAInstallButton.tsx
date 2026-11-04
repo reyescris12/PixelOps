@@ -29,7 +29,7 @@ export const PWAInstallButton: React.FC = () => {
       </button>
 
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md p-4">
           <div className="w-full max-w-sm rounded-2xl bg-[#111318] border border-slate-800 p-6 shadow-xl">
             <div className="flex items-center justify-between mb-3">
               <div className="flex items-center gap-2">

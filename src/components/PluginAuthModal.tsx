@@ -280,7 +280,7 @@ export const PluginAuthModal: React.FC<PluginAuthModalProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-2 sm:p-3 bg-black/80 backdrop-blur-sm animate-in fade-in duration-150 overflow-y-auto"
+      className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-2 sm:p-3 bg-black/90 backdrop-blur-md animate-in fade-in duration-150 overflow-y-auto"
       style={{
         paddingTop: 'max(10px, env(safe-area-inset-top, 10px))',
         paddingBottom: 'max(10px, env(safe-area-inset-bottom, 10px))',

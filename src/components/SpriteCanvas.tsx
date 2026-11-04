@@ -37,6 +37,8 @@ import {
   subscribeModuleRegistry,
 } from '../engine/moduleRegistry';
 import { RoomSpawnerModal } from './RoomSpawnerModal';
+import { RoomActionPlaybookPanel } from './RoomActionPlaybookPanel';
+import type { IntelligencePlaybookDef } from '../engine/intelligencePlaybooks';
 
 export type RoomId =
   | 'comms_tower'
@@ -1555,6 +1557,7 @@ interface SpriteCanvasProps {
   isMeetingActive?: boolean;
   activeSpeakerAgentIndex?: number | null;
   onCallMeeting?: () => void;
+  onExecutePlaybook?: (playbook: IntelligencePlaybookDef) => void;
 }
 
 const UPPER_DECK_ROOMS: RoomId[] = ['comms_tower', 'war_room', 'server_vault', 'armory'];
@@ -1648,6 +1651,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
   isMeetingActive = false,
   activeSpeakerAgentIndex = null,
   onCallMeeting,
+  onExecutePlaybook,
 }) => {
   const { theme, themeId, activeAgent, setActiveAgentId, playBeep } = useTheme();
   const { crewAgents, getCrewAgentByIndex, updateAgentRoom } = useCrew();
@@ -3040,6 +3044,15 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
           })()}
         </motion.div>
 
+        {/* Classified Safehouse Room Action Playbook Panel */}
+        {!isOverviewZoom && onExecutePlaybook && (
+          <RoomActionPlaybookPanel
+            currentRoom={currentRoom}
+            onExecutePlaybook={onExecutePlaybook}
+            variant="floating"
+          />
+        )}
+
         {/* Minimal Unboxed Edge Step Chevrons */}
         <button
           type="button"
@@ -3347,6 +3360,14 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
                 [&rarr; {getRoomMeta(targetRoom).shortBadge}]
               </button>
             ))}
+
+            {onExecutePlaybook && (
+              <RoomActionPlaybookPanel
+                currentRoom={currentRoom}
+                onExecutePlaybook={onExecutePlaybook}
+                variant="pill"
+              />
+            )}
 
             {currentRoomStations.map((st) => {
               const isCurrentStation =

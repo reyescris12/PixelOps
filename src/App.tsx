@@ -98,6 +98,13 @@ import { analyzePromptAmbiguity } from './engine/taskBriefEngine';
 import { TaskBriefModal, TaskBrief } from './components/TaskBriefModal';
 import { TerminalConsole } from './components/TerminalConsole';
 import { WorkspaceFileViewer } from './components/WorkspaceFileViewer';
+import { PlaybookModal } from './components/PlaybookModal';
+import { RoomActionPlaybookPanel } from './components/RoomActionPlaybookPanel';
+import {
+  IntelligencePlaybookDef,
+  PlaybookExecutionResult,
+  executeIntelligencePlaybook,
+} from './engine/intelligencePlaybooks';
 import { SyncAccountModal } from './components/SyncAccountModal';
 import { FeedbackTerminal } from './components/FeedbackTerminal';
 import {
@@ -241,6 +248,46 @@ const CommandCenterContent: React.FC = () => {
   const [isAgentFactoryOpen, setIsAgentFactoryOpen] = useState(false);
   const [isTerminalConsoleOpen, setIsTerminalConsoleOpen] = useState(false);
   const [isWorkspaceFilesOpen, setIsWorkspaceFilesOpen] = useState(false);
+  const [activePlaybook, setActivePlaybook] = useState<IntelligencePlaybookDef | null>(null);
+  const [isPlaybookModalOpen, setIsPlaybookModalOpen] = useState(false);
+  const [isPlaybookRunning, setIsPlaybookRunning] = useState(false);
+  const [playbookStageIndex, setPlaybookStageIndex] = useState(0);
+  const [playbookLogs, setPlaybookLogs] = useState<string[]>([]);
+  const [playbookResult, setPlaybookResult] = useState<PlaybookExecutionResult | null>(null);
+
+  const handleRunPlaybook = async (playbook: IntelligencePlaybookDef) => {
+    setActivePlaybook(playbook);
+    setIsPlaybookModalOpen(true);
+    setIsPlaybookRunning(true);
+    setPlaybookStageIndex(0);
+    setPlaybookLogs([`Mission Ingested: Deploying ${playbook.assignedOperativeName} to ${playbook.roomName}...`]);
+    setPlaybookResult(null);
+
+    handleMoveAgentToRoom(
+      playbook.assignedOperativeId,
+      playbook.assignedRoom,
+      playbook.assignedStationId,
+      playbook.shortTitle.toUpperCase()
+    );
+
+    setDialogueText(`[CLASSIFIED PLAYBOOK] Deploying ${playbook.assignedOperativeName} to ${playbook.roomBadge} for ${playbook.title}...`);
+
+    try {
+      const res = await executeIntelligencePlaybook(playbook.id, (stageIdx, log) => {
+        setPlaybookStageIndex(stageIdx);
+        setPlaybookLogs((prev) => [...prev, log]);
+      });
+      setPlaybookResult(res);
+      setDialogueText(`[DOSSIER ARCHIVED] ${playbook.assignedOperativeName} archived classified intelligence to ${res.targetPath}.`);
+      playBeep('complete');
+      refreshCommandLedger();
+    } catch (err: any) {
+      setPlaybookLogs((prev) => [...prev, `EXECUTION FAULT: ${err?.message || err}`]);
+      playBeep('error');
+    } finally {
+      setIsPlaybookRunning(false);
+    }
+  };
   const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
   const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
   const [syncStats, setSyncStats] = useState<SyncStats>(() => getSyncStats());
@@ -2218,6 +2265,11 @@ const CommandCenterContent: React.FC = () => {
                     [BOOST +{decryptionBoost}%]
                   </span>
                 )}
+                <RoomActionPlaybookPanel
+                  currentRoom={currentRoom}
+                  onExecutePlaybook={handleRunPlaybook}
+                  variant="pill"
+                />
                 {currentRoom === 'armory' && (
                   <button
                     type="button"
@@ -2366,6 +2418,7 @@ const CommandCenterContent: React.FC = () => {
             isMeetingActive={isMeetingActive}
             activeSpeakerAgentIndex={activeSpeakerAgentIndex}
             onCallMeeting={handleCallTownHallMeeting}
+            onExecutePlaybook={handleRunPlaybook}
           />
 
           {/* Centered Amber Console Boxes below the Overworld Diorama */}
@@ -2896,6 +2949,20 @@ const CommandCenterContent: React.FC = () => {
       <WorkspaceFileViewer
         isOpen={isWorkspaceFilesOpen}
         onClose={() => setIsWorkspaceFilesOpen(false)}
+      />
+
+      <PlaybookModal
+        isOpen={isPlaybookModalOpen}
+        onClose={() => setIsPlaybookModalOpen(false)}
+        playbook={activePlaybook}
+        isRunning={isPlaybookRunning}
+        activeStageIndex={playbookStageIndex}
+        stageLogs={playbookLogs}
+        result={playbookResult}
+        onOpenInVfs={(filePath) => {
+          setIsPlaybookModalOpen(false);
+          setIsWorkspaceFilesOpen(true);
+        }}
       />
 
       <SyncAccountModal

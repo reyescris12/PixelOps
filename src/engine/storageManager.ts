@@ -13,7 +13,7 @@ import { ledgerDb, WorkspaceFileDbEntry } from '../services/CommandLedgerDb';
 export interface WorkspaceFileRecord {
   id?: number;
   path: string;
-  category: 'reports' | 'logs' | 'config' | 'archive' | 'data' | string;
+  category: 'reports' | 'logs' | 'config' | 'archive' | 'data' | 'intel' | string;
   format: 'markdown' | 'json' | 'text' | 'csv' | string;
   content: string;
   sizeBytes: number;
@@ -32,6 +32,7 @@ const memoryFileMap = new Map<string, WorkspaceFileRecord>();
 export function resolveCategoryFromPath(path: string, explicitCategory?: string): string {
   if (explicitCategory) return explicitCategory;
   const clean = path.replace(/^[\\/]+/, '').toLowerCase();
+  if (clean.startsWith('intel/') || clean.startsWith('intel\\')) return 'intel';
   if (clean.startsWith('reports/') || clean.startsWith('reports\\')) return 'reports';
   if (clean.startsWith('logs/') || clean.startsWith('logs\\')) return 'logs';
   if (clean.startsWith('config/') || clean.startsWith('config\\')) return 'config';

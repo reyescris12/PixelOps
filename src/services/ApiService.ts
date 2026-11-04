@@ -3061,13 +3061,30 @@ export async function tryParseAndExecuteExternalToolDirective(params: {
     });
   }
 
-  // 2. GITHUB INTENT
+  // 2. GITHUB INTENT (FULL CRUD SPECTRUM: LIST/GET/STAR/CREATE)
   const isGithubStar = /\bstar\s+(?:the\s+)?(?:repo|repository)?\s*([a-zA-Z0-9_.-]+(?:\/[a-zA-Z0-9_.-]+)?)/i.test(lower);
-  const isGithubIssue =
-    /\b(github|create\s+issue|open\s+issue|file\s+an?\s+issue|bug\s+report|new\s+issue|repo\s+issue)\b/i.test(lower);
+  const isGithubListIssues = /\b(check\s+(my\s+|open\s+)?issues|list\s+(my\s+|open\s+)?issues|show\s+issues|get\s+issues|audit\s+issues|view\s+issues)\b/i.test(lower);
+  const isGithubListPRs = /\b(check\s+(open\s+)?prs|list\s+(open\s+)?prs|pull\s+requests|list\s+pull\s+requests|open\s+prs)\b/i.test(lower);
+  const isGithubGetRepo = /\b(check\s+repo|inspect\s+repo|repo\s+details|repo\s+info|repository\s+pulse|audit\s+repo)\b/i.test(lower);
+  const isGithubCreateIssue = /\b(create\s+issue|open\s+issue|file\s+an?\s+issue|new\s+issue|report\s+bug)\b/i.test(lower);
+  const isGithubGeneric = /\bgithub\b/i.test(lower);
 
-  if (isGithubStar || isGithubIssue) {
-    const actionName = isGithubStar ? 'GITHUB_STAR_A_REPOSITORY_FOR_THE_AUTHENTICATED_USER' : 'GITHUB_CREATE_AN_ISSUE';
+  if (isGithubStar || isGithubListIssues || isGithubListPRs || isGithubGetRepo || isGithubCreateIssue || isGithubGeneric) {
+    let actionName = 'GITHUB_LIST_ISSUES';
+    if (isGithubStar) {
+      actionName = 'GITHUB_STAR_A_REPOSITORY_FOR_THE_AUTHENTICATED_USER';
+    } else if (isGithubListPRs) {
+      actionName = 'GITHUB_LIST_PULL_REQUESTS';
+    } else if (isGithubGetRepo) {
+      actionName = 'GITHUB_GET_A_REPOSITORY';
+    } else if (isGithubCreateIssue) {
+      actionName = 'GITHUB_CREATE_AN_ISSUE';
+    } else if (isGithubListIssues) {
+      actionName = 'GITHUB_LIST_ISSUES';
+    } else {
+      // Default to read/list action rather than write/create!
+      actionName = 'GITHUB_LIST_ISSUES';
+    }
     const appSlug = 'github';
 
     params.onFunctionCallTriggered?.({
@@ -3086,7 +3103,7 @@ export async function tryParseAndExecuteExternalToolDirective(params: {
         id: `card-${Date.now()}`,
         timestamp: new Date().toISOString(),
         prompt: params.prompt,
-        dialogue: `${params.activeAgentName} (${params.activeAgentRole}): Missing target repository. Please specify the target repository in 'owner/repo' format (e.g. 'my-org/my-project') so I can access your repository.`,
+        dialogue: `${params.activeAgentName} (${params.activeAgentRole}): Missing target repository. Please specify the target repository in 'owner/repo' format (e.g. 'facebook/react' or 'my-org/my-project') so I can access the repository.`,
         cardTitle: 'GITHUB OPERATION: REPO REQUIRED',
         actionCategory: 'External Tools',
         steps: [
@@ -3102,9 +3119,15 @@ export async function tryParseAndExecuteExternalToolDirective(params: {
     const owner = repoMatch[1];
     const repo = repoMatch[2];
 
-    if (isGithubStar) {
+    if (actionName === 'GITHUB_STAR_A_REPOSITORY_FOR_THE_AUTHENTICATED_USER') {
       actionArgs = { owner, repo };
-    } else {
+    } else if (actionName === 'GITHUB_GET_A_REPOSITORY') {
+      actionArgs = { owner, repo };
+    } else if (actionName === 'GITHUB_LIST_PULL_REQUESTS') {
+      actionArgs = { owner, repo, state: 'open' };
+    } else if (actionName === 'GITHUB_LIST_ISSUES') {
+      actionArgs = { owner, repo, state: 'open' };
+    } else if (actionName === 'GITHUB_CREATE_AN_ISSUE') {
       const titleMatch = rawPrompt.match(/(?:titled?|title|named?|issue)\s*[:"']\s*([^"'\n\r]+)["']?/i);
       const title = titleMatch ? titleMatch[1].trim() : `[Ops Directive] ${rawPrompt.slice(0, 48)}`;
 
@@ -3132,13 +3155,14 @@ export async function tryParseAndExecuteExternalToolDirective(params: {
     });
   }
 
-  // 3. SLACK INTENT
-  const isSlack =
+  // 3. SLACK INTENT (LIST/POST)
+  const isSlackList = /\b(list\s+channels|show\s+channels|check\s+channels|slack\s+channels)\b/i.test(lower);
+  const isSlackPost =
     /\b(slack|post\s+to\s+slack|send\s+to\s+slack|broadcast\s+to\s+slack)\b/i.test(lower) ||
     (/#([a-zA-Z0-9_-]+)/i.test(rawPrompt) && /\b(message|post|send|broadcast|notify|alert)\b/i.test(lower));
 
-  if (isSlack) {
-    const actionName = 'SLACK_CHAT_POST_MESSAGE';
+  if (isSlackList || isSlackPost) {
+    const actionName = isSlackList ? 'SLACK_LIST_CHANNELS' : 'SLACK_CHAT_POST_MESSAGE';
     const appSlug = 'slack';
 
     params.onFunctionCallTriggered?.({
@@ -3149,20 +3173,21 @@ export async function tryParseAndExecuteExternalToolDirective(params: {
       taskTag: 'SLACK',
     });
 
-    const channelMatch = rawPrompt.match(/#([a-zA-Z0-9_-]+)/i);
-    const channel = channelMatch ? `#${channelMatch[1]}` : '#general';
+    let actionArgs: Record<string, any> = {};
 
-    // Step 1: Drafting Agent generates synthesized message content
-    const draftedText = await draftExternalMessageContent({
-      targetChannel: 'slack',
-      prompt: rawPrompt,
-      agentName: params.activeAgentName,
-      agentRole: params.activeAgentRole,
-      themeId: params.themeId,
-    });
-    const text = draftedText;
+    if (!isSlackList) {
+      const channelMatch = rawPrompt.match(/#([a-zA-Z0-9_-]+)/i);
+      const channel = channelMatch ? `#${channelMatch[1]}` : '#general';
 
-    const actionArgs = { channel, text, message: text };
+      const draftedText = await draftExternalMessageContent({
+        targetChannel: 'slack',
+        prompt: rawPrompt,
+        agentName: params.activeAgentName,
+        agentRole: params.activeAgentRole,
+        themeId: params.themeId,
+      });
+      actionArgs = { channel, text: draftedText, message: draftedText };
+    }
 
     return await executeAndFormatExternalTool({
       appSlug,
@@ -3175,12 +3200,13 @@ export async function tryParseAndExecuteExternalToolDirective(params: {
     });
   }
 
-  // 4. GOOGLE CALENDAR INTENT
+  // 4. GOOGLE CALENDAR INTENT (LIST/CREATE)
+  const isCalendarList = /\b(check\s+(my\s+)?calendar|list\s+(my\s+)?events|what\s+meetings|today's\s+meetings|agenda|schedule\s+today|check\s+schedule)\b/i.test(lower);
   const isCalendar =
     /\b(calendar|gcal|schedule\s+(a\s+)?(meeting|briefing|event|call|session)|book\s+(a\s+)?(meeting|slot|briefing))\b/i.test(lower);
 
-  if (isCalendar) {
-    const actionName = 'GOOGLECALENDAR_CREATE_EVENT';
+  if (isCalendarList || isCalendar) {
+    const actionName = isCalendarList ? 'GOOGLECALENDAR_LIST_EVENTS' : 'GOOGLECALENDAR_CREATE_EVENT';
     const appSlug = 'googlecalendar';
 
     params.onFunctionCallTriggered?.({
@@ -3191,19 +3217,25 @@ export async function tryParseAndExecuteExternalToolDirective(params: {
       taskTag: 'CALENDAR',
     });
 
-    const titleMatch = rawPrompt.match(/(?:titled?|named?|event|meeting|briefing)\s*[:"']\s*([^"'\n\r]+)["']?/i);
-    const summary = titleMatch ? titleMatch[1].trim() : `Tactical Briefing: ${params.activeAgentName}`;
+    let actionArgs: Record<string, any> = {};
 
-    const tomorrow = new Date(Date.now() + 86400000);
-    const startTime = tomorrow.toISOString();
-    const endTime = new Date(tomorrow.getTime() + 3600000).toISOString();
+    if (isCalendarList) {
+      actionArgs = { max_results: 5 };
+    } else {
+      const titleMatch = rawPrompt.match(/(?:titled?|named?|event|meeting|briefing)\s*[:"']\s*([^"'\n\r]+)["']?/i);
+      const summary = titleMatch ? titleMatch[1].trim() : `Tactical Briefing: ${params.activeAgentName}`;
 
-    const actionArgs = {
-      summary,
-      description: `PixelOps Mission Briefing initiated by ${params.activeAgentName} (${params.activeAgentRole}). Directive: ${rawPrompt}`,
-      start_time: startTime,
-      end_time: endTime,
-    };
+      const tomorrow = new Date(Date.now() + 86400000);
+      const startTime = tomorrow.toISOString();
+      const endTime = new Date(tomorrow.getTime() + 3600000).toISOString();
+
+      actionArgs = {
+        summary,
+        description: `PixelOps Mission Briefing initiated by ${params.activeAgentName} (${params.activeAgentRole}). Directive: ${rawPrompt}`,
+        start_time: startTime,
+        end_time: endTime,
+      };
+    }
 
     return await executeAndFormatExternalTool({
       appSlug,
@@ -3216,10 +3248,11 @@ export async function tryParseAndExecuteExternalToolDirective(params: {
     });
   }
 
-  // 5. NOTION INTENT
+  // 5. NOTION INTENT (SEARCH/CREATE)
+  const isNotionSearch = /\b(search\s+notion|check\s+notion|list\s+notion|find\s+notion)\b/i.test(lower);
   const isNotion = /\b(notion|create\s+(a\s+)?notion\s+page|notion\s+doc)\b/i.test(lower);
-  if (isNotion) {
-    const actionName = 'NOTION_CREATE_PAGE';
+  if (isNotionSearch || isNotion) {
+    const actionName = isNotionSearch ? 'NOTION_SEARCH' : 'NOTION_CREATE_PAGE';
     const appSlug = 'notion';
 
     params.onFunctionCallTriggered?.({
@@ -3230,18 +3263,21 @@ export async function tryParseAndExecuteExternalToolDirective(params: {
       taskTag: 'NOTION',
     });
 
-    const titleMatch = rawPrompt.match(/(?:titled?|title|named?|page)\s*[:"']\s*([^"'\n\r]+)["']?/i);
-    const title = titleMatch ? titleMatch[1].trim() : `Mission Brief: ${params.activeAgentName}`;
-    // Step 1: Drafting Agent generates synthesized Notion page content
-    const content = await draftExternalMessageContent({
-      targetChannel: 'notion',
-      prompt: rawPrompt,
-      agentName: params.activeAgentName,
-      agentRole: params.activeAgentRole,
-      themeId: params.themeId,
-    });
-
-    const actionArgs = { title, content };
+    let actionArgs: Record<string, any> = {};
+    if (isNotionSearch) {
+      actionArgs = { query: rawPrompt.replace(/notion/gi, '').trim() || 'Mission' };
+    } else {
+      const titleMatch = rawPrompt.match(/(?:titled?|title|named?|page)\s*[:"']\s*([^"'\n\r]+)["']?/i);
+      const title = titleMatch ? titleMatch[1].trim() : `Mission Brief: ${params.activeAgentName}`;
+      const content = await draftExternalMessageContent({
+        targetChannel: 'notion',
+        prompt: rawPrompt,
+        agentName: params.activeAgentName,
+        agentRole: params.activeAgentRole,
+        themeId: params.themeId,
+      });
+      actionArgs = { title, content };
+    }
 
     return await executeAndFormatExternalTool({
       appSlug,
@@ -3254,10 +3290,11 @@ export async function tryParseAndExecuteExternalToolDirective(params: {
     });
   }
 
-  // 6. LINEAR INTENT
+  // 6. LINEAR INTENT (LIST/CREATE)
+  const isLinearList = /\b(list\s+linear|check\s+linear|linear\s+issues|show\s+linear)\b/i.test(lower);
   const isLinear = /\b(linear|linear\s+ticket|linear\s+issue|file\s+(a\s+)?linear)\b/i.test(lower);
-  if (isLinear) {
-    const actionName = 'LINEAR_CREATE_ISSUE';
+  if (isLinearList || isLinear) {
+    const actionName = isLinearList ? 'LINEAR_LIST_ISSUES' : 'LINEAR_CREATE_ISSUE';
     const appSlug = 'linear';
 
     params.onFunctionCallTriggered?.({
@@ -3679,23 +3716,23 @@ export async function generateLocalHeuristicCard(params: {
   }
 
   // ==========================================
-  // 7. GENERAL DIRECTIVE EXECUTION
+  // 7. UNRECOGNIZED FIELD DIRECTIVE (STANDBY / NO MOCK SUCCESS)
   // ==========================================
-  const dialogue = `${params.activeAgentName} (${params.activeAgentRole}): Directive executed. Processed "${rawPrompt}". All sector parameters verified and recorded in the Command Center ledger.`;
+  const dialogue = `${params.activeAgentName} (${params.activeAgentRole}): Directive "${rawPrompt}" does not match an active local execution trigger (search, run code, git, storage, or telemetry). Connect Gemini API in Settings or specify an explicit operative tool directive.`;
 
   return {
     id: `card-${Date.now()}`,
     prompt: rawPrompt,
     dialogue,
-    cardTitle: 'Directive Execution',
+    cardTitle: 'Directive Analysis (Standby)',
     actionCategory: 'Operations',
     steps: [
       { label: 'Directive Ingested', detail: `Analyzed parameters for: "${rawPrompt.slice(0, 48)}"`, status: 'completed' },
-      { label: 'Task Execution', detail: `${params.activeAgentName} executed requested task`, status: 'verified' },
-      { label: 'Ledger Synchronized', detail: 'State recorded in local client database', status: 'completed' },
+      { label: 'Tool Signature Match', detail: 'No local client action matched input syntax', status: 'queued' },
+      { label: 'Standby Status', detail: 'Awaiting explicit tool command or cloud LLM dispatch', status: 'completed' },
     ],
     toolCalls: executedTools,
-    tokenEstimate: Math.max(50, Math.round(rawPrompt.length / 4) + 40),
+    tokenEstimate: Math.max(30, Math.round(rawPrompt.length / 4) + 20),
     agentName: params.activeAgentName,
     themeId: params.themeId,
     timestamp: new Date().toISOString(),
@@ -4521,71 +4558,118 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
       });
 
       try {
-        // Turn 1 Request: Prompt + Dynamic Tool Declarations
-        const turn1Payload: any = {
-          systemInstruction: {
-            parts: [{ text: systemInstruction }],
-          },
-          contents: [{ role: 'user', parts: userParts }],
-          generationConfig: {
-            temperature: Number(params.temperature || 0.7),
-          },
-        };
+        const promptLower = (params.prompt || '').toLowerCase();
+        const hasToolIntent =
+          /\b(search|find|check|audit|look\s*up|price|pricing|ticker|cost|rate|market|quote|issue|pull\s*request|pr|repo|repository|github|commit|git|cve|vulnerability|deprecat|version|changelog|release|email|gmail|calendar|event|schedule|slack|channel|notion|linear|task|file|write|read|save|dossier|brief|report|weather|fetch|query)\b/i.test(
+            promptLower
+          );
 
-        if (activeDeclarations.length > 0) {
-          turn1Payload.tools = [{ functionDeclarations: activeDeclarations }];
-        }
+        // Multi-Turn Execution & Self-Correcting Tool Loop (up to 3 turns)
+        const MAX_TOOL_TURNS = 3;
+        let turnCount = 0;
+        const conversationHistory: any[] = [{ role: 'user', parts: userParts }];
+        const allExecutedTools: ExecutedToolCall[] = [];
+        let finalCandidate: any = null;
+        let lastFunctionCalls: any[] = [];
 
-        const turn1Res = await executeSafeOperation(
-          async (signal) => {
-            return await fetch(geminiUrl, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(turn1Payload),
-              signal,
-            });
-          },
-          {
-            timeoutMs: 16000,
-            maxRetries: 2,
-            operationName: 'gemini_turn1_dispatch',
+        while (turnCount < MAX_TOOL_TURNS) {
+          turnCount++;
+
+          const currentPayload: any = {
+            systemInstruction: {
+              parts: [{ text: systemInstruction }],
+            },
+            contents: conversationHistory,
+            generationConfig: {
+              temperature: Number(params.temperature || 0.7),
+            },
+          };
+
+          if (activeDeclarations.length > 0) {
+            currentPayload.tools = [{ functionDeclarations: activeDeclarations }];
+            // Enforce function-calling behavior on Turn 1 when operational tool intent is present
+            if (turnCount === 1 && hasToolIntent) {
+              currentPayload.toolConfig = {
+                functionCallingConfig: {
+                  mode: 'ANY',
+                },
+              };
+            }
           }
-        );
 
-        if (!turn1Res.ok) {
-          if (turn1Res.status === 401 || turn1Res.status === 403) {
-            throw createRetroAgentError({
-              code: 'INVALID_API_KEY',
-              themeId: params.themeId,
-              technicalDetail: `Gemini HTTP ${turn1Res.status} API_KEY_INVALID from Google Cloud`,
-              failedPrompt: params.prompt,
-            });
+          let turnRes = await executeSafeOperation(
+            async (signal) => {
+              return await fetch(geminiUrl, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(currentPayload),
+                signal,
+              });
+            },
+            {
+              timeoutMs: 16000,
+              maxRetries: 1,
+              operationName: `gemini_turn_${turnCount}_dispatch`,
+            }
+          );
+
+          // If mode 'ANY' was rejected or unhandled by API, retry gracefully with default AUTO mode
+          if (!turnRes.ok && currentPayload.toolConfig) {
+            delete currentPayload.toolConfig;
+            turnRes = await executeSafeOperation(
+              async (signal) => {
+                return await fetch(geminiUrl, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(currentPayload),
+                  signal,
+                });
+              },
+              {
+                timeoutMs: 16000,
+                maxRetries: 1,
+                operationName: `gemini_turn_${turnCount}_retry_auto`,
+              }
+            );
           }
-          if (turn1Res.status === 429) {
-            throw createRetroAgentError({
-              code: 'RATE_LIMIT',
-              themeId: params.themeId,
-              technicalDetail: 'Gemini HTTP 429 RESOURCE_EXHAUSTED (Rate limit reached)',
-              failedPrompt: params.prompt,
-              retryAfterSeconds: 15,
-            });
+
+          if (!turnRes.ok) {
+            if (turnRes.status === 401 || turnRes.status === 403) {
+              throw createRetroAgentError({
+                code: 'INVALID_API_KEY',
+                themeId: params.themeId,
+                technicalDetail: `Gemini HTTP ${turnRes.status} API_KEY_INVALID from Google Cloud`,
+                failedPrompt: params.prompt,
+              });
+            }
+            if (turnRes.status === 429) {
+              throw createRetroAgentError({
+                code: 'RATE_LIMIT',
+                themeId: params.themeId,
+                technicalDetail: 'Gemini HTTP 429 RESOURCE_EXHAUSTED (Rate limit reached)',
+                failedPrompt: params.prompt,
+                retryAfterSeconds: 15,
+              });
+            }
+            // For other non-ok codes, fall back to local heuristic card
+            return generateLocalHeuristicCard(params);
           }
-          // For other non-ok codes, fall back to local heuristic card
-          return generateLocalHeuristicCard(params);
-        }
 
-        const turn1Data = await turn1Res.json();
-        const candidate = turn1Data?.candidates?.[0];
-        const parts = candidate?.content?.parts || [];
-        const functionCalls = parts
-          .filter((p: any) => p.functionCall)
-          .map((p: any) => p.functionCall);
+          const turnData = await turnRes.json();
+          finalCandidate = turnData?.candidates?.[0];
+          const parts = finalCandidate?.content?.parts || [];
+          lastFunctionCalls = parts
+            .filter((p: any) => p.functionCall)
+            .map((p: any) => p.functionCall);
 
-        // Turn 1 Interception: If Gemini triggered function calls, run them client-side
-        if (functionCalls.length > 0) {
-          const primaryCall = functionCalls[0];
+          // If Gemini did not call any functions on this turn, break from the tool loop
+          if (lastFunctionCalls.length === 0) {
+            break;
+          }
+
+          // Execute requested tools client-side
+          const primaryCall = lastFunctionCalls[0];
           const primaryDest = resolveToolWorkflowDestination(primaryCall.name);
-
           params.onFunctionCallTriggered?.({
             toolName: primaryCall.name,
             args: primaryCall.args || {},
@@ -4595,48 +4679,62 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
           });
 
           const handlerOutputs = await Promise.all(
-            functionCalls.map((fc: any) => executeFunctionCallHandler(fc))
+            lastFunctionCalls.map((fc: any) => executeFunctionCallHandler(fc))
           );
 
-          const functionResponses = handlerOutputs.map((out) => ({
-            id: out.id,
-            name: out.name,
-            response: out.response,
-          }));
+          for (const out of handlerOutputs) {
+            allExecutedTools.push(out.executedToolMeta);
+          }
 
-          const executedTools: ExecutedToolCall[] = handlerOutputs.map(
-            (out) => out.executedToolMeta
-          );
-
-          const functionResponseParts = functionResponses.map((fr) => {
-            const isError = fr.response?.successful === false || Boolean(fr.response?.error);
+          // Build function responses with self-correcting error directives
+          const functionResponseParts = handlerOutputs.map((out) => {
+            const isError = out.response?.successful === false || Boolean(out.response?.error);
+            const errMsg = out.response?.error?.message || out.response?.error || 'Tool execution encountered an error.';
             if (isError) {
               return {
                 functionResponse: {
-                  id: fr.id,
-                  name: fr.name,
+                  name: out.name,
                   response: {
                     status: 'EXECUTION_ERROR',
-                    error: fr.response?.error || 'Tool execution encountered an error.',
+                    error: errMsg,
                     self_correction_directive:
-                      'Tool execution failed. Do NOT hallucinate mock data or simulated responses. ' +
-                      'Analyze the error, report the factual error diagnosis, and explain the concrete operational remedy in "## Impact & Action Delta".',
-                    details: fr.response,
+                      `Tool execution failed with error: "${errMsg}". ` +
+                      `Do NOT invent fake mock data. Analyze the error, adjust your arguments ` +
+                      `(e.g., ensure owner and repo are separated, query parameters match schema, or select a get/list tool), ` +
+                      `and retry with corrected arguments or report the verified error in "## Impact & Action Delta".`,
+                    details: out.response,
                   },
                 },
               };
             }
             return {
               functionResponse: {
-                id: fr.id,
-                name: fr.name,
-                response: fr.response,
+                name: out.name,
+                response: {
+                  status: 'SUCCESS',
+                  data: out.response,
+                },
               },
             };
           });
 
-          // Turn 2 Request: Send functionResponse data back to Gemini with STRUCTURED_CARD_SCHEMA
-          const turn2Payload = {
+          // Record assistant tool calls and user functionResponse in conversation history
+          conversationHistory.push(finalCandidate.content);
+          conversationHistory.push({ role: 'user', parts: functionResponseParts });
+
+          // If any tool failed and we haven't reached max turns, allow Gemini to self-correct in next turn
+          const hasError = handlerOutputs.some(
+            (out) => out.response?.successful === false || Boolean(out.response?.error)
+          );
+          if (!hasError) {
+            // All tools succeeded; break to run synthesis turn
+            break;
+          }
+        }
+
+        // Synthesis Turn: If tools were executed, synthesize verified report with STRUCTURED_CARD_SCHEMA
+        if (allExecutedTools.length > 0) {
+          const synthesisPayload = {
             systemInstruction: {
               parts: [
                 {
@@ -4652,11 +4750,7 @@ MANDATORY AUTONOMOUS INTELLIGENCE PROTOCOL:
                 },
               ],
             },
-            contents: [
-              { role: 'user', parts: userParts },
-              candidate.content,
-              { role: 'user', parts: functionResponseParts },
-            ],
+            contents: conversationHistory,
             generationConfig: {
               temperature: Number(params.temperature || 0.7),
               responseMimeType: 'application/json',
@@ -4664,25 +4758,25 @@ MANDATORY AUTONOMOUS INTELLIGENCE PROTOCOL:
             },
           };
 
-          const turn2Res = await executeSafeOperation(
+          const synthRes = await executeSafeOperation(
             async (signal) => {
               return await fetch(geminiUrl, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(turn2Payload),
+                body: JSON.stringify(synthesisPayload),
                 signal,
               });
             },
             {
               timeoutMs: 16000,
-              maxRetries: 2,
-              operationName: 'gemini_turn2_dispatch',
+              maxRetries: 1,
+              operationName: 'gemini_synthesis_dispatch',
             }
           );
 
-          if (turn2Res && turn2Res.ok) {
-            const turn2Data = await turn2Res.json();
-            const rawJson = turn2Data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '{}';
+          if (synthRes && synthRes.ok) {
+            const synthData = await synthRes.json();
+            const rawJson = synthData?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '{}';
             try {
               const parsed = JSON.parse(rawJson);
               const card: AgentExecutionCard = {
@@ -4692,7 +4786,7 @@ MANDATORY AUTONOMOUS INTELLIGENCE PROTOCOL:
                 cardTitle: parsed.cardTitle || 'Tool Operation Complete',
                 actionCategory: parsed.actionCategory || 'Live Telemetry',
                 steps: Array.isArray(parsed.steps) ? parsed.steps : [],
-                toolCalls: executedTools,
+                toolCalls: allExecutedTools,
                 tokenEstimate: Math.max(64, Math.round(((params.prompt || '').length + rawJson.length) / 4)),
                 agentName: params.activeAgentName,
                 themeId: params.themeId,
@@ -4701,32 +4795,33 @@ MANDATORY AUTONOMOUS INTELLIGENCE PROTOCOL:
               };
               return await ensureReportPersistedAndAnnotated(card, params);
             } catch {
-              // Fall through to return structured executedTools card
+              // Fall through to fallbackCard
             }
           }
 
-          // Fallback if Turn 2 synthesis timed out
+          // Fallback if synthesis timed out or failed to parse JSON
           const dateStr = new Date().toISOString().split('T')[0];
+          const primaryTool = allExecutedTools[0];
           const fallbackDialogue = `---
-title: "Operational Telemetry Report: ${executedTools[0]?.toolName || 'Tool Execution'}"
+title: "Operational Telemetry Report: ${primaryTool?.toolName || 'Tool Execution'}"
 operative: "${params.activeAgentName} (${params.activeAgentRole})"
-target: "${params.prompt.slice(0, 40)}"
+target: "${(params.prompt || '').slice(0, 40)}"
 date: "${dateStr}"
 threat_level: "CHARLIE-NOMINAL"
 sources_consulted:
-  - "${executedTools[0]?.toolName || 'Live Subsystem'}"
+  - "${primaryTool?.toolName || 'Live Subsystem'}"
 ---
 
 # Operational Telemetry: Verified Live Output
 **Operative:** ${params.activeAgentName}
-**Tool Invoked:** \`${executedTools[0]?.toolName || 'function_call'}\`
+**Tool Invoked:** \`${primaryTool?.toolName || 'function_call'}\`
 **Telemetry Status:** Verified Live Response
 
 ---
 
 ## 1. Verified Telemetry Digest
-- **Summary:** ${executedTools[0]?.resultSummary || 'Telemetry stream verified.'}
-- **Target Room:** ${executedTools[0]?.targetRoom || 'Safehouse Hub'}
+- **Summary:** ${primaryTool?.resultSummary || 'Telemetry stream verified.'}
+- **Target Room:** ${primaryTool?.targetRoom || 'Safehouse Hub'}
 
 ---
 
@@ -4742,11 +4837,11 @@ sources_consulted:
             cardTitle: 'Tool Telemetry Verified',
             actionCategory: 'Live Telemetry',
             steps: [
-              { label: 'Tool Dispatched', detail: executedTools[0]?.toolName || 'Function call', status: 'completed' },
-              { label: 'Output Verified', detail: executedTools[0]?.resultSummary || 'Received live response', status: 'verified' },
+              { label: 'Tool Dispatched', detail: primaryTool?.toolName || 'Function call', status: 'completed' },
+              { label: 'Output Verified', detail: primaryTool?.resultSummary || 'Received live response', status: 'verified' },
               { label: 'Ledger Synced', detail: 'Logged to client memory', status: 'completed' },
             ],
-            toolCalls: executedTools,
+            toolCalls: allExecutedTools,
             tokenEstimate: 130,
             agentName: params.activeAgentName,
             themeId: params.themeId,
@@ -4757,11 +4852,82 @@ sources_consulted:
         }
 
         // Direct Turn without Function Calling: First check for structured [AGENT_ACTION: tool_name] tag
-        const textContent = parts.map((p: any) => p.text || '').join('\n').trim();
+        const candidateParts = finalCandidate?.content?.parts || [];
+        const textContent = candidateParts.map((p: any) => p.text || '').join('\n').trim();
         const actionCard = await parseAndExecuteAgentActionTags(textContent, params);
         if (actionCard) {
           return actionCard;
         }
+
+        // If user prompt carried operational tool intent but Gemini returned pure text, auto-route to live tools
+        if (hasToolIntent) {
+          const externalMatch = await tryParseAndExecuteExternalToolDirective(params);
+          if (externalMatch) {
+            return externalMatch;
+          }
+
+          if (/\b(search|price|pricing|ticker|cost|rate|market|quote|cve|vulnerability|changelog|release|wiretap)\b/i.test(promptLower)) {
+            try {
+              const handlerOut = await executeFunctionCallHandler({
+                name: 'live_web_search',
+                args: { query: params.prompt },
+              });
+              const searchResults: Array<{ title: string; snippet: string; url: string }> =
+                handlerOut.response?.results || [];
+              if (searchResults.length > 0) {
+                const searchTool = handlerOut.executedToolMeta;
+                const searchDialogue = `---
+title: "Live Web Intelligence: ${(params.prompt || '').slice(0, 40)}"
+operative: "${params.activeAgentName} (${params.activeAgentRole})"
+target: "${(params.prompt || '').slice(0, 40)}"
+date: "${new Date().toISOString().split('T')[0]}"
+threat_level: "CHARLIE-NOMINAL"
+sources_consulted:
+  - "Live Web & Real-Time Market Recon Node"
+---
+
+# Live Reconnaissance Sweep: Verified Results
+**Operative:** ${params.activeAgentName}
+**Target Query:** \`${params.prompt}\`
+**Verified Citations:** ${searchResults.length} sources
+
+---
+
+## 1. Verified Telemetry Digest
+${searchResults.map((s: { title: string; snippet: string; url: string }, idx: number) => `${idx + 1}. **[${s.title}](${s.url})**\n   ${s.snippet}`).join('\n\n')}
+
+---
+
+## 2. Impact & Action Delta
+- **Operational Risk:** Live reconnaissance query executed across verified web indexes.
+- **Immediate Next Step:** Ingest cited findings into mission planning or safehouse VFS archives.
+`;
+                const searchCard: AgentExecutionCard = {
+                  id: `card-${Date.now()}`,
+                  prompt: params.prompt,
+                  dialogue: searchDialogue,
+                  cardTitle: `Live Intel: ${(params.prompt || '').slice(0, 36)}`,
+                  actionCategory: 'Live Telemetry',
+                  steps: [
+                    { label: 'Wiretap Ingested', detail: `Query: "${(params.prompt || '').slice(0, 40)}"`, status: 'completed' },
+                    { label: 'Web Sweep Verified', detail: `Fetched ${searchResults.length} live search citations`, status: 'verified' },
+                    { label: 'Archive Recorded', detail: 'Persisted to local telemetry memory', status: 'completed' },
+                  ],
+                  toolCalls: [searchTool],
+                  tokenEstimate: 160,
+                  agentName: params.activeAgentName,
+                  themeId: params.themeId,
+                  timestamp: new Date().toISOString(),
+                  hasAttachment: Boolean(params.attachment),
+                };
+                return await ensureReportPersistedAndAnnotated(searchCard, params);
+              }
+            } catch (searchErr) {
+              console.warn('[ApiService] Auto-routed live web search fallback failed:', searchErr);
+            }
+          }
+        }
+
         let parsedDirect: any = null;
         try {
           parsedDirect = JSON.parse(textContent);
@@ -4774,7 +4940,7 @@ sources_consulted:
             id: `card-${Date.now()}`,
             prompt: params.prompt || `Attached visual intel`,
             dialogue: parsedDirect.dialogue,
-            cardTitle: parsedDirect.cardTitle || 'Field Directive Execution',
+            cardTitle: parsedDirect.cardTitle || 'Field Directive Assessment',
             actionCategory: parsedDirect.actionCategory || 'Operations',
             steps: Array.isArray(parsedDirect.steps) ? (parsedDirect.steps as ExecutionStep[]) : [],
             toolCalls: [],
@@ -4786,12 +4952,15 @@ sources_consulted:
           };
         }
 
-        let finalDialogue = textContent || 'Directive executed. Standing by for next command.';
-        let finalCardTitle = 'Field Directive Execution';
+        let finalDialogue = textContent;
+        if (!finalDialogue) {
+          finalDialogue = `${params.activeAgentName} (${params.activeAgentRole}): Directive "${(params.prompt || '').slice(0, 48)}" ingested. Telemetry channels synchronized. Standing by for specific operational tool assignment.`;
+        }
+        let finalCardTitle = 'Field Directive Assessment';
         let finalActionCategory = 'Operations';
         let finalSteps: ExecutionStep[] = [
-          { label: 'Directive Ingested', detail: 'Parsed command parameters', status: 'completed' },
-          { label: 'Action Completed', detail: `${params.activeAgentName} completed assigned task`, status: 'verified' },
+          { label: 'Directive Ingested', detail: `Parsed parameters for: "${(params.prompt || '').slice(0, 48)}"`, status: 'completed' },
+          { label: 'Intelligence Assessment', detail: `${params.activeAgentName} evaluated directive context`, status: 'verified' },
           { label: 'Ledger Synchronized', detail: 'Saved to local mission ledger', status: 'completed' },
         ];
         const finalTools: ExecutedToolCall[] = [];

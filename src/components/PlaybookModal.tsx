@@ -29,6 +29,7 @@ import {
   Zap,
   Calendar,
   GitBranch,
+  Clock,
 } from 'lucide-react';
 import {
   IntelligencePlaybookDef,
@@ -38,6 +39,7 @@ import {
   loadUserPlaybookTargets,
   saveUserPlaybookTarget,
   dispatchMorningBriefingEmail,
+  schedulePlaybookInNightShift,
   scheduleWiretapInNightShift,
 } from '../engine/intelligencePlaybooks';
 import {
@@ -157,6 +159,12 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
     }
   }, [playbook, isOpen]);
 
+  useEffect(() => {
+    if (result?.emailDispatched && recipientEmail.trim()) {
+      setEmailStatus(`AUTOMATIC BROADCAST TRANSMITTED: Briefing sent to ${recipientEmail.trim()}`);
+    }
+  }, [result, recipientEmail]);
+
   if (!isOpen || !playbook) return null;
 
   const presets = DEFAULT_TARGET_PRESETS[playbook.id] || [];
@@ -220,20 +228,32 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
   };
 
   const handleArmNightShift = () => {
+    let cleanedTargetName = targetName.trim();
+    if (
+      playbook.id === 'triage_gmail' &&
+      (!cleanedTargetName ||
+        cleanedTargetName.toLowerCase().startsWith('commander_') ||
+        cleanedTargetName.toLowerCase().startsWith('conn_') ||
+        /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(cleanedTargetName))
+    ) {
+      cleanedTargetName = 'is:unread';
+    }
+
     const finalTarget: UserPlaybookTarget = {
-      targetName: targetName.trim() || 'Monitored Target',
+      targetName: cleanedTargetName || (playbook.id === 'triage_gmail' ? 'is:unread' : 'Monitored Target'),
       targetScope: targetScope.trim() || 'Continuous Watch Scope',
-      watchCondition: watchCondition.trim() || 'Delta or pricing modification',
+      watchCondition: watchCondition.trim() || undefined,
+      recipientEmail: recipientEmail.trim() || undefined,
     };
     saveUserPlaybookTarget(playbook.id, finalTarget);
-    const ok = scheduleWiretapInNightShift(finalTarget);
+    const ok = schedulePlaybookInNightShift(playbook.id, finalTarget);
     if (ok) {
-      setNightShiftStatus('NIGHT SHIFT ARMED: Target queued for autonomous hourly sweeps!');
+      setNightShiftStatus(`AUTO-WATCH ARMED: "${finalTarget.targetName}" queued for autonomous background sweeps in Night Shift!`);
       playBeep('complete');
     } else {
-      setNightShiftStatus('NOTICE: Target updated in watchtower registry.');
+      setNightShiftStatus('NOTICE: Target parameters saved to local registry.');
     }
-    setTimeout(() => setNightShiftStatus(null), 4000);
+    setTimeout(() => setNightShiftStatus(null), 4500);
   };
 
   const handleConnectApp = async () => {
@@ -508,21 +528,36 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
                     />
                   </div>
 
-                  {/* Wiretap Condition */}
-                  {playbook.id === 'wiretap_watch' && (
-                    <div className="space-y-1">
-                      <label className="text-[10px] uppercase font-bold text-[#38bdf8]">
-                        Watch Condition (e.g. Price drop below $X, changelog update):
-                      </label>
-                      <input
-                        type="text"
-                        value={watchCondition}
-                        onChange={(e) => setWatchCondition(e.target.value)}
-                        placeholder="e.g. Price drops below $99, new version released, or landing page redesign"
-                        className="w-full px-3 py-1.5 bg-[#070b10] border border-[#2c3d54] text-xs text-[#f3ead8] outline-none focus:border-[#38bdf8] transition-colors"
-                      />
-                    </div>
-                  )}
+                  {/* Auto-Watch Trigger / Recurrence Criteria */}
+                  <div className="space-y-1">
+                    <label className="text-[10px] uppercase font-bold text-[#38bdf8] flex items-center gap-1.5">
+                      <Clock className="w-3 h-3 text-[#38bdf8]" />
+                      <span>
+                        {playbook.id === 'wiretap_watch'
+                          ? 'Watch Trigger / Alert Condition:'
+                          : 'Auto-Watch Trigger / Recurrence Criteria (Optional):'}
+                      </span>
+                    </label>
+                    <input
+                      type="text"
+                      value={watchCondition}
+                      onChange={(e) => setWatchCondition(e.target.value)}
+                      placeholder={
+                        playbook.id === 'wiretap_watch'
+                          ? 'e.g. Price drops below $99, new version released, or landing page redesign'
+                          : playbook.id === 'deep_recon'
+                          ? 'e.g. Breaking news, executive changes, funding rounds, or product launches'
+                          : playbook.id === 'morning_briefing'
+                          ? 'e.g. Daily morning SITREP at 08:00, or breaking industry shifts'
+                          : playbook.id === 'triage_gmail'
+                          ? 'e.g. Urgent deliverables, client requests, invoice notifications'
+                          : playbook.id === 'calendar_brief'
+                          ? "e.g. Today's upcoming syncs, VIP meeting prep, agenda changes"
+                          : 'e.g. Critical P0/P1 issues, new pull requests, or security CVEs'
+                      }
+                      className="w-full px-3 py-1.5 bg-[#070b10] border border-[#2c3d54] text-xs text-[#f3ead8] outline-none focus:border-[#38bdf8] transition-colors"
+                    />
+                  </div>
 
                   {playbook.supportsActionDispatch && (
                     <div className="space-y-1">
@@ -559,16 +594,15 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
                   )}
 
                   <div className="pt-2 flex flex-wrap items-center justify-between gap-2">
-                    {playbook.id === 'wiretap_watch' ? (
-                      <button
-                        type="button"
-                        onClick={handleArmNightShift}
-                        className="px-3 py-2 bg-[#142638] text-[#38bdf8] font-bold text-xs border border-[#38bdf8]/50 hover:bg-[#1e3852] cursor-pointer transition-colors flex items-center gap-1.5"
-                      >
-                        <Moon className="w-3.5 h-3.5" />
-                        <span>[🌙 ARM NIGHT SHIFT AUTO-WATCH]</span>
-                      </button>
-                    ) : <div />}
+                    <button
+                      type="button"
+                      onClick={handleArmNightShift}
+                      className="px-3 py-2 bg-[#142638] text-[#38bdf8] font-bold text-xs border border-[#38bdf8]/50 hover:bg-[#1e3852] cursor-pointer transition-colors flex items-center gap-1.5"
+                      title="Arm autonomous background monitoring schedule in Night Shift"
+                    >
+                      <Moon className="w-3.5 h-3.5" />
+                      <span>[🌙 ARM AUTO-WATCH SCHEDULE]</span>
+                    </button>
 
                     <button
                       type="button"
@@ -728,6 +762,12 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
                   <div className="text-[10px] text-[#94a3b8] mt-0.5">
                     Transmit this executive intelligence dossier to your email inbox via connected Gmail integration.
                   </div>
+                  {result.emailDispatched && (
+                    <div className="mt-1 flex items-center gap-1.5 text-[10px] text-[#4ade80] font-bold">
+                      <Check className="w-3 h-3 text-[#4ade80]" />
+                      <span>Automatically broadcasted to {recipientEmail || 'designated email'}</span>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto">
@@ -744,7 +784,11 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
                     disabled={isSendingEmail}
                     className="px-3 py-1 bg-[#38bdf8] text-[#070f1a] font-bold text-xs border border-[#38bdf8] hover:bg-[#7dd3fc] cursor-pointer transition-colors whitespace-nowrap disabled:opacity-50"
                   >
-                    {isSendingEmail ? 'DISPATCHING...' : playbook.actionDispatchLabel || '[✉️ SEND BRIEFING]'}
+                    {isSendingEmail
+                      ? 'DISPATCHING...'
+                      : result.emailDispatched
+                      ? '[✉️ RESEND BROADCAST]'
+                      : playbook.actionDispatchLabel || '[✉️ SEND BRIEFING]'}
                   </button>
                 </div>
               </div>

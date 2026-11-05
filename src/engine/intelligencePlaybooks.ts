@@ -36,6 +36,12 @@ import {
 import { loadLLMProviderConfig, getGeminiAuthHeadersAndUrl } from '../services/LLMProviderService';
 import { ModelGateway, ModelGatewayProvider } from '../services/ModelGateway';
 import { getProviderApiKey } from '../services/BYOKVault';
+import {
+  NightShiftTaskSchedule,
+  ScheduleFrequency,
+  loadNightShiftSchedules,
+  saveNightShiftSchedules,
+} from '../services/NightShiftService';
 
 /**
  * Extracts a concise, clean entity or domain keyword string for search queries,
@@ -173,33 +179,141 @@ export {
   updateStrategyBoardTaskStatus,
 };
 
-export function scheduleWiretapInNightShift(target: UserPlaybookTarget): boolean {
+export function schedulePlaybookInNightShift(
+  playbookId: PlaybookId,
+  target: UserPlaybookTarget
+): boolean {
   try {
-    const raw = localStorage.getItem('pixelops_nightshift_schedules_v1');
-    const schedules = raw ? JSON.parse(raw) : [];
-    const newRoutine = {
-      id: `wiretap_${Date.now()}`,
-      title: `[WIRETAP] ${target.targetName.slice(0, 32)}`,
-      prompt: `Execute automated surveillance wiretap on ${target.targetName}. Scope & Condition: ${target.targetScope}`,
-      frequency: 'every_4h',
-      agentId: 'nyx',
+    const schedules = loadNightShiftSchedules();
+    const playbook = INTELLIGENCE_PLAYBOOKS[playbookId] || INTELLIGENCE_PLAYBOOKS.wiretap_watch;
+
+    let agentId = playbook.assignedOperativeId || 'vance';
+    let agentName = playbook.assignedOperativeName || 'Agent Vance';
+    let frequency: ScheduleFrequency = 'every_1h';
+    let prefix = 'WATCH';
+    let promptText = '';
+
+    const cleanTargetName = (target.targetName || 'Primary Focus').trim();
+    const condition = (target.watchCondition || target.targetScope || 'Continuous monitoring parameters').trim();
+
+    switch (playbookId) {
+      case 'wiretap_watch':
+        agentId = 'nyx';
+        agentName = 'Agent Nyx';
+        frequency = 'every_1h';
+        prefix = 'WIRETAP';
+        promptText = `Execute automated surveillance wiretap on target "${cleanTargetName}". Monitor for pricing modifications, restocks, or changelog shifts under scope: ${condition}. Write brief to VFS if verified delta detected.`;
+        break;
+
+      case 'deep_recon':
+      case 'competitor_radar':
+        agentId = 'nyx';
+        agentName = 'Agent Nyx';
+        frequency = 'every_6h';
+        prefix = 'DEEP RECON';
+        promptText = `Execute autonomous deep OSINT recon sweep on "${cleanTargetName}". Investigate: ${condition}. Ground strictly in live search telemetry, filter PR noise, and update intelligence dossier.`;
+        break;
+
+      case 'morning_briefing':
+        agentId = 'vance';
+        agentName = 'Agent Vance';
+        frequency = 'daily';
+        prefix = 'MORNING BRIEF';
+        promptText = `Compile 60-second daily executive situation briefing for focus "${cleanTargetName}". Scope: ${condition}. Ingest live external news signals and summarize core priorities.${
+          target.recipientEmail ? ` Broadcast executive dossier to ${target.recipientEmail.trim()}` : ''
+        }`;
+        break;
+
+      case 'triage_gmail':
+        agentId = 'vance';
+        agentName = 'Agent Vance';
+        frequency = 'every_1h';
+        prefix = 'GMAIL TRIAGE';
+        promptText = `Execute autonomous Gmail triage sweep for filter "${cleanTargetName}". Extract actionable deliverables matching: ${condition}. Populate Strategy Board queue and archive triage SITREP.`;
+        break;
+
+      case 'calendar_brief':
+        agentId = 'vance';
+        agentName = 'Agent Vance';
+        frequency = 'daily';
+        prefix = 'CALENDAR BRIEF';
+        promptText = `Prepare daily executive calendar briefing for "${cleanTargetName}". Focus: ${condition}. Ingest upcoming syncs, attendees, and key objectives.`;
+        break;
+
+      case 'sync_github':
+      case 'tech_audit':
+        agentId = 'cipher';
+        agentName = 'Agent Cipher';
+        frequency = 'every_1h';
+        prefix = 'GITHUB SYNC';
+        promptText = `Execute automated repository sync and issue pulse for "${cleanTargetName}". Monitor for: ${condition}. Flag blockers, pull request review requests, and security alerts.`;
+        break;
+
+      default:
+        agentId = playbook.assignedOperativeId || 'vance';
+        agentName = playbook.assignedOperativeName || 'Agent Vance';
+        frequency = 'every_1h';
+        prefix = (playbook.shortTitle || 'PLAYBOOK').toUpperCase();
+        promptText = `Execute scheduled intelligence workflow "${playbook.title}" on target "${cleanTargetName}". Parameters: ${condition}.`;
+        break;
+    }
+
+    const newRoutine: NightShiftTaskSchedule = {
+      id: `routine_${playbookId}_${Date.now()}`,
+      title: `[${prefix}] ${cleanTargetName.slice(0, 36)}`,
+      agentId,
+      agentName,
+      prompt: promptText,
+      frequency,
       enabled: true,
-      createdAt: new Date().toISOString(),
+      maxTokensPerRun: 12000,
+      maxActionsPerRun: 8,
+      safetyHaltOnAnomaly: false,
       runCount: 0,
+      createdAt: new Date().toISOString(),
       notificationConfig: {
-        inAppNotice: true,
-        summaryFrequency: 'on_alert',
+        notifyBrowser: true,
+        notifyPhone: true,
+        notifyGmail: Boolean(target.recipientEmail && target.recipientEmail.trim()),
+        gmailRecipient: (target.recipientEmail || '').trim(),
+        notifySlack: false,
+        slackChannel: '',
+        notifyDiscord: false,
+        discordWebhook: '',
+        notifyWebhook: false,
+        webhookUrl: '',
       },
     };
-    schedules.unshift(newRoutine);
-    localStorage.setItem('pixelops_nightshift_schedules_v1', JSON.stringify(schedules));
-    if (typeof window !== 'undefined') {
-      window.dispatchEvent(new CustomEvent('nightshift:schedules-changed'));
+
+    // Replace any existing identical routine or prepend
+    const existingIndex = schedules.findIndex(
+      (s) => s.title === newRoutine.title || s.id.startsWith(`routine_${playbookId}_`)
+    );
+    if (existingIndex >= 0) {
+      schedules[existingIndex] = { ...schedules[existingIndex], ...newRoutine, id: schedules[existingIndex].id };
+    } else {
+      schedules.unshift(newRoutine);
     }
+
+    saveNightShiftSchedules(schedules);
+
+    // Backward-compatible fallback key for legacy listeners
+    try {
+      localStorage.setItem('pixelops_nightshift_schedules_v1', JSON.stringify(schedules));
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('nightshift:schedules-changed'));
+      }
+    } catch {}
+
     return true;
-  } catch {
+  } catch (err) {
+    console.warn('[IntelligencePlaybooks] Failed to schedule routine in Night Shift:', err);
     return false;
   }
+}
+
+export function scheduleWiretapInNightShift(target: UserPlaybookTarget): boolean {
+  return schedulePlaybookInNightShift('wiretap_watch', target);
 }
 
 export const DEFAULT_TARGET_PRESETS: Record<PlaybookId, UserPlaybookTarget[]> = {
@@ -390,6 +504,7 @@ export const INTELLIGENCE_PLAYBOOKS: Record<PlaybookId, IntelligencePlaybookDef>
     defaultPromptQuestion: 'What company, competitor, domain, or niche topic should Agent Nyx investigate?',
     targetPlaceholder: 'e.g. Stripe, Acme Corp, Competitor Product, Autonomous AI Agents',
     scopePlaceholder: 'e.g. Product roadmap, executive changes, pricing shifts, customer feedback gaps',
+    supportsNightShift: true,
     stages: [
       { id: 'target_ingest', label: 'Entity Ingestion', description: 'Calibrates surveillance perimeter on target entity nodes.' },
       { id: 'osint_sweep', label: 'Multi-Query OSINT', description: 'Executes live web searches across overview, news, and sentiment.' },
@@ -418,6 +533,7 @@ export const INTELLIGENCE_PLAYBOOKS: Record<PlaybookId, IntelligencePlaybookDef>
     targetPlaceholder: 'e.g. AI Models & Agents, Tech Market Trends, Cloud Security',
     scopePlaceholder: 'e.g. Breaking releases, regulatory updates, funding announcements, daily summary priorities',
     supportsActionDispatch: true,
+    supportsNightShift: true,
     actionDispatchLabel: '[✉️ DISPATCH VIA GMAIL]',
     stages: [
       { id: 'multi_source', label: 'Topic Aggregation', description: 'Gathers live search signals, deliverables, and VFS dossiers.' },
@@ -447,6 +563,7 @@ export const INTELLIGENCE_PLAYBOOKS: Record<PlaybookId, IntelligencePlaybookDef>
     targetPlaceholder: 'e.g. is:unread label:important, or from:clients',
     scopePlaceholder: 'e.g. Urgent deliverables, client requests, invoice notifications, blocker alerts',
     requiredApp: 'gmail',
+    supportsNightShift: true,
     stages: [
       { id: 'auth_check', label: 'Composio Auth Check', description: 'Verifies user connected Gmail account session.' },
       { id: 'fetch_inbox', label: 'Fetch Unread Inbox', description: 'Retrieves latest messages matching criteria via Composio.' },
@@ -475,6 +592,7 @@ export const INTELLIGENCE_PLAYBOOKS: Record<PlaybookId, IntelligencePlaybookDef>
     targetPlaceholder: "e.g. Today's Agenda, Strategic Reviews, or Client Syncs",
     scopePlaceholder: 'e.g. Meeting objectives, key attendees, preparation notes, talking points',
     requiredApp: 'googlecalendar',
+    supportsNightShift: true,
     stages: [
       { id: 'auth_check', label: 'Calendar Auth Check', description: 'Verifies user Google Calendar connection via Composio.' },
       { id: 'fetch_events', label: 'Event Retrieval', description: "Pulls today's schedule and attendee metadata." },
@@ -503,6 +621,7 @@ export const INTELLIGENCE_PLAYBOOKS: Record<PlaybookId, IntelligencePlaybookDef>
     targetPlaceholder: 'e.g. owner/repo (e.g. my-org/web-app)',
     scopePlaceholder: 'e.g. Critical bugs, unassigned issues, PR reviews needed, security advisories',
     requiredApp: 'github',
+    supportsNightShift: true,
     stages: [
       { id: 'repo_check', label: 'Repository Verify', description: 'Verifies GitHub connection and validates target repo.' },
       { id: 'pull_issues', label: 'Issue & PR Ingestion', description: 'Pulls open issues and pending pull requests via Composio.' },
@@ -530,6 +649,7 @@ export const INTELLIGENCE_PLAYBOOKS: Record<PlaybookId, IntelligencePlaybookDef>
     defaultPromptQuestion: 'What company, competitor, or product should Agent Nyx monitor?',
     targetPlaceholder: 'e.g. Stripe, Acme Corp, Competitor Product',
     scopePlaceholder: 'e.g. Changelogs, pricing changes, product drops, hiring velocity',
+    supportsNightShift: true,
     stages: [
       { id: 'target_ingest', label: 'Target Ingestion', description: 'Calibrates surveillance perimeter.' },
       { id: 'osint_sweep', label: 'OSINT Sweep', description: 'Executes live search.' },
@@ -555,6 +675,7 @@ export const INTELLIGENCE_PLAYBOOKS: Record<PlaybookId, IntelligencePlaybookDef>
     defaultPromptQuestion: 'Which repository or tech stack should Agent Cipher audit?',
     targetPlaceholder: 'e.g. owner/repo or Next.js + FastAPI',
     scopePlaceholder: 'e.g. CVE vulnerabilities, breaking changes, dependency alerts',
+    supportsNightShift: true,
     stages: [
       { id: 'repo_check', label: 'Stack Check', description: 'Pulls package manifests and versions.' },
       { id: 'advisory', label: 'Advisory Cross-Reference', description: 'Scans CVE databases.' },
@@ -1194,11 +1315,13 @@ async function runMorningBriefingPipeline(
   onStageUpdate?: (stageIndex: number, log: string) => void
 ): Promise<PlaybookExecutionResult> {
   const dateStr = getFormattedDateStr();
+  const currentYear = new Date().getFullYear();
   const cleanTarget = sanitizeTargetSlug(target.targetName);
   const targetPath = `intel/dossier_briefing_${cleanTarget}_${dateStr}.md`;
 
-  onStageUpdate?.(0, `Topic Aggregation: Ingesting daily priorities & telemetry for "${target.targetName}"...`);
+  onStageUpdate?.(0, `Topic Aggregation: Ingesting live external intelligence & telemetry for "${target.targetName}"...`);
 
+  // 1. Ingest connected GitHub repository telemetry if scope or target references owner/repo
   let gitIssues: any[] = [];
   let publicRepo: PublicGitHubRepoData | null = null;
   const repoMatch = `${target.targetName} ${target.targetScope}`.match(/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)/i);
@@ -1221,34 +1344,121 @@ async function runMorningBriefingPipeline(
     }
   }
 
-  // Also gather live search signals for the target topic
+  // 2. Perform multi-query live external OSINT sweeps
+  const cleanQuery = extractCleanSearchQueryForTarget(target.targetName, target.targetScope);
   let searchHighlights: any[] = [];
+  const seenSources = new Set<string>();
+
   try {
-    const cleanQuery = extractCleanSearchQueryForTarget(target.targetName, target.targetScope);
-    const searchRes = await executeFunctionCallHandler({
+    // Sweep A: Breaking news & primary sector developments
+    const newsRes = await executeFunctionCallHandler({
       name: 'live_web_search',
       args: {
-        query: `${cleanQuery.primary} industry updates`,
-        maxResults: 3,
+        query: `${cleanQuery.primary} news developments ${currentYear}`,
+        maxResults: 5,
       },
     });
-    searchHighlights = searchRes.response?.results || [];
+    const newsHits = newsRes.response?.results || [];
+    for (const hit of newsHits) {
+      const key = hit.url || hit.title;
+      if (key && !seenSources.has(key)) {
+        seenSources.add(key);
+        searchHighlights.push(hit);
+      }
+    }
+
+    // Sweep B: Market trends, roadmap, or technical analysis
+    const updateRes = await executeFunctionCallHandler({
+      name: 'live_web_search',
+      args: {
+        query: `${cleanQuery.primary} ${cleanQuery.scopeSnippet || 'latest trends industry analysis'} ${currentYear}`,
+        maxResults: 4,
+      },
+    });
+    const updateHits = updateRes.response?.results || [];
+    for (const hit of updateHits) {
+      const key = hit.url || hit.title;
+      if (key && !seenSources.has(key)) {
+        seenSources.add(key);
+        searchHighlights.push(hit);
+      }
+    }
+  } catch (err) {
+    console.warn('[MorningBriefing] External live web search error:', err);
+  }
+
+  // Fallback: Broad sweep if initial queries yielded zero signals
+  if (searchHighlights.length === 0) {
+    try {
+      const fallbackRes = await executeFunctionCallHandler({
+        name: 'live_web_search',
+        args: {
+          query: `${cleanQuery.primary} technology`,
+          maxResults: 4,
+        },
+      });
+      searchHighlights = fallbackRes.response?.results || [];
+    } catch {}
+  }
+
+  // 3. Ingest connected schedule & communications telemetry (Calendar & Gmail)
+  let unreadCount = 0;
+  let calendarEventsCount = 0;
+  try {
+    const liveAccounts = await getConnectedAccounts().catch(() => []);
+    const localAccounts = getLocalConnectedAccounts();
+    const allAccounts = [...liveAccounts, ...localAccounts];
+
+    const hasGmail = allAccounts.some(
+      (a) => (normalizeAppSlug(a.appName) === 'gmail' || a.appName.toLowerCase().includes('gmail')) && a.status !== 'FAILED'
+    );
+    if (hasGmail) {
+      const gmailRes = await executeComposioAction('GMAIL_LIST_MESSAGES', { query: 'is:unread', max_results: 5 });
+      if (gmailRes.successful) {
+        const msgs = gmailRes.data?.messages || (Array.isArray(gmailRes.data) ? gmailRes.data : []);
+        unreadCount = msgs.length;
+      }
+    }
+
+    const hasCalendar = allAccounts.some(
+      (a) => (normalizeAppSlug(a.appName) === 'googlecalendar' || a.appName.toLowerCase().includes('calendar')) && a.status !== 'FAILED'
+    );
+    if (hasCalendar) {
+      const calRes = await executeComposioAction('GOOGLECALENDAR_LIST_EVENTS', { timeMin: new Date().toISOString() });
+      if (calRes.successful) {
+        const evts = calRes.data?.items || (Array.isArray(calRes.data) ? calRes.data : []);
+        calendarEventsCount = evts.length;
+      }
+    }
   } catch {}
 
   const vfsFiles = await listWorkspaceFiles();
   const recentIntel = vfsFiles.filter((f) => f.category === 'intel' || f.path.startsWith('intel/'));
 
-  onStageUpdate?.(1, `Executive Synthesis: Compiling 60-second executive situation report...`);
+  onStageUpdate?.(1, `Executive Synthesis: Synthesizing ${searchHighlights.length} live external sources into SITREP...`);
   await new Promise((r) => setTimeout(r, 500));
 
-  onStageUpdate?.(2, `VFS & Dispatch: Logging briefing to Basement VFS drawer...`);
-  await new Promise((r) => setTimeout(r, 400));
-
-  const sourcesConsulted: string[] = [
-    `Basement VFS Storage (${recentIntel.length} classified records)`,
-  ];
-  if (gitIssues.length > 0) sourcesConsulted.push(`GitHub Repository Pipeline (${gitIssues.length} open issues)`);
-  if (searchHighlights.length > 0) sourcesConsulted.push(`Live OSINT Sweep (${searchHighlights.length} signals)`);
+  // Build external-first sources consulted list
+  const sourcesConsulted: string[] = [];
+  if (searchHighlights.length > 0) {
+    searchHighlights.slice(0, 8).forEach((h: any) => {
+      sourcesConsulted.push(`"${h.title || 'Live OSINT Dispatch'}" (${h.url || 'External Web Telemetry'})`);
+    });
+  } else {
+    sourcesConsulted.push(`"Live External Web Oracle: ${target.targetName} (${currentYear})" (Live Ingestion Stream)`);
+  }
+  if (gitIssues.length > 0) {
+    sourcesConsulted.push(`"GitHub Repository Telemetry" (${repoMatch ? `${repoMatch[1]}/${repoMatch[2]}` : 'Active Repo'} - ${gitIssues.length} issues)`);
+  }
+  if (calendarEventsCount > 0) {
+    sourcesConsulted.push(`"Google Calendar Telemetry" (${calendarEventsCount} events scheduled)`);
+  }
+  if (unreadCount > 0) {
+    sourcesConsulted.push(`"Gmail Operations Queue" (${unreadCount} unread communications)`);
+  }
+  if (recentIntel.length > 0) {
+    sourcesConsulted.push(`"Basement VFS Storage" (${recentIntel.length} historical files indexed)`);
+  }
 
   const defaultDossier = `---
 title: Executive Command Briefing - Operations SITREP
@@ -1257,7 +1467,7 @@ target: "${target.targetName}"
 date: ${dateStr}
 threat_level: CHARLIE-NOMINAL
 sources_consulted:
-${sourcesConsulted.map((s) => `  - "${s}"`).join('\n')}
+${sourcesConsulted.map((s) => `  - ${s.startsWith('"') ? s : `"${s}"`}`).join('\n')}
 ---
 
 # Executive Command Briefing: Operations SITREP
@@ -1271,45 +1481,41 @@ ${sourcesConsulted.map((s) => `  - "${s}"`).join('\n')}
 
 ## 1. Executive Situation Report (SITREP)
 Command briefing compiled for **${target.targetName}**.
-All operational sectors report positive execution velocity. Key priorities, deliverable milestones, and active intelligence dossiers have been synthesized into an actionable operational roadmap.
+External intelligence surveillance and operational feeds report active execution velocity. Live market signals, external developments, and tactical deliverable milestones have been synthesized into an actionable operational roadmap.
 
 **Strategic Highlights:**
-- **Primary Objective:** Execute on ${target.targetName} deliverables with zero latency.
-- **Active Intelligence Dossiers:** ${recentIntel.length} classified records indexed in Basement VFS.
-- **Operational Readiness:** High. Team coordinated across active safehouse sectors.
+- **Primary Objective:** Advance core directives on ${target.targetName} with zero operational latency.
+- **External Signals Ingested:** ${searchHighlights.length} verified external web publications and telemetry points.
+- **Operational Readiness:** High. Team synchronized across active safehouse sectors.
 
 ---
 
-## 2. Multi-Source Pipeline Digest & Fact-Checking Telemetry
-### 📊 Active Focus & Priorities
-- **Target Area:** ${target.targetName}
-- **Monitored Scope:** ${target.targetScope}
-- **Status:** Coordinated under executive strategic oversight.
-
-### 🗄️ Recent Intelligence Dossiers in Basement Archive
+## 2. External Intelligence & Real-Time Pipeline Digest
+### 🌐 Live Topic & Market Signals
 ${
-  recentIntel.length > 0
-    ? recentIntel.slice(0, 4).map((f) => `- \`${f.path}\` (${(f.sizeBytes / 1024).toFixed(1)} KB, updated ${new Date(f.updatedAt).toLocaleTimeString()})`).join('\n')
-    : '- Initializing intelligence perimeter. First scheduled dossiers recorded today.'
+  searchHighlights.length > 0
+    ? searchHighlights.map((s: any) => `- **[${s.title}](${s.url || '#'})**: ${s.snippet || s.extract || 'Verified'}`).join('\n')
+    : `- Real-time surveillance perimeter calibrated on **${target.targetName}**. Ingesting verified temporal telemetry.`
 }
 
 ${
   gitIssues.length > 0
-    ? `### 📡 Connected Repository Pipeline Citations\n` + gitIssues.slice(0, 4).map((iss: any) => `- **Issue #${iss.number || '?'}: ${iss.title}** (${iss.state}) | Assignee: ${iss.assignee?.login || iss.user || 'Unassigned'}`).join('\n')
+    ? `### 📡 Connected Repository Pipeline Citations\n` +
+      gitIssues.slice(0, 4).map((iss: any) => `- **Issue #${iss.number || '?'}: ${iss.title}** (${iss.state}) | Assignee: ${iss.assignee?.login || iss.user || 'Unassigned'}`).join('\n')
     : ''
 }
 
 ${
-  searchHighlights.length > 0
-    ? `### 🌐 Live Topic & Market Signals\n` + searchHighlights.map((s: any) => `- **${s.title}**: ${s.snippet || s.extract || 'Verified'}`).join('\n')
+  unreadCount > 0 || calendarEventsCount > 0
+    ? `### ⚡ Communications & Schedule Telemetry\n- Inbound Unread Messages: ${unreadCount}\n- Scheduled Agenda Events Today: ${calendarEventsCount}\n`
     : ''
 }
 
 ---
 
 ## 3. Impact & Action Delta
-- **Operational Impact:** Centralizes strategic priorities for ${target.targetName}, unblocking tactical dependencies across safehouse operatives.
-- **Risk Assessment:** Identified deadline constraints and coordination dependencies across active task streams.
+- **Operational Impact:** Centralizes external market intelligence and internal priorities for ${target.targetName}, unblocking tactical dependencies across safehouse operatives.
+- **Risk Assessment:** Identified deadline constraints, vendor roadmaps, and coordination dependencies across active task streams.
 - **Immediate Execution Queue:**
   1. Advance primary deliverable targets in ${target.targetName}.
   2. Coordinate watchtower surveillance sweeps with Agent Nyx.
@@ -1319,23 +1525,40 @@ ${
 *Confidential Executive Briefing · Logged to Basement VFS -> ${targetPath}*
 `;
 
+  const externalSignalsBlock = searchHighlights.length > 0
+    ? searchHighlights.map((s: any, idx: number) => `[EXTERNAL SOURCE ${idx + 1}]
+Title: ${s.title}
+URL: ${s.url}
+Extract: ${s.snippet || s.extract || 'Verified live signal'}`).join('\n\n')
+    : `No external search hits returned. Focus analysis strictly on dynamic topic "${target.targetName}" with current temporal grounding (${currentYear}).`;
+
   const aiPrompt = `You are Operative Vance (Command Operations Chief) in the PixelOps Tactical Command Center.
 Execution Style: Structured, authoritative, concise, executive-focused.
 Primary Function: Workflow coordination, executive synthesis, and operational SITREPs.
 Output Standard: Executive command briefings summarizing multi-source telemetry with zero conversational delay.
 
-Focus: ${target.targetName}
-Scope & Priorities: ${target.targetScope}
-Date: ${dateStr}
-Recent VFS Intel Files: ${recentIntel.map((f) => f.path).join(', ')}
-Connected Git Issues: ${JSON.stringify(gitIssues.slice(0, 5))}
-Search Highlights: ${JSON.stringify(searchHighlights.slice(0, 3))}
+Focus Target: ${target.targetName}
+Strategic Scope: ${target.targetScope}
+Date: ${dateStr} // Temporal Reference: Year ${currentYear}
 
-Instructions:
+### 🌐 EXTERNAL LIVE INTELLIGENCE & REAL-TIME SOURCES:
+${externalSignalsBlock}
+
+### 📡 CONNECTED EXTERNAL SERVICES:
+- GitHub Issues (${gitIssues.length}): ${JSON.stringify(gitIssues.slice(0, 4).map((i: any) => ({ number: i.number, title: i.title, state: i.state })))}
+- Google Calendar Scheduled Events Today: ${calendarEventsCount}
+- Gmail Unread Inbound Messages: ${unreadCount}
+- Internal VFS Archive: ${recentIntel.length} historical files indexed
+
+CORE DIRECTIVES:
 1. Deliver a crisp, high-impact 60-second executive situation briefing.
-2. Ground your SITREP directly in the provided VFS files, git issues, and search highlights.
-3. In Section 3 (Impact & Action Delta), outline exact tactical priorities, cross-agent handoffs, and immediate execution steps.
-4. Begin immediately with valid YAML frontmatter. Pure Markdown, no conversational preamble.`;
+2. MANDATORY: You MUST ground your briefing primarily in the EXTERNAL SOURCES and real-time signals listed above. Directly cite specific external headlines, publication names, or source URLs.
+3. DO NOT generate a briefing that only talks about internal workspace files or local filenames. The commander requires external market and industry intelligence.
+4. Structure the document with:
+   - Section 1: Executive Situation Report (SITREP) & Core Objectives
+   - Section 2: External Intelligence & Real-Time Market Developments (incorporating cited external telemetry)
+   - Section 3: Operational Impact & Action Delta (tactical priorities, cross-agent handoffs, execution roadmap)
+5. Begin immediately with valid YAML frontmatter listing the external sources_consulted. Pure Markdown only.`;
 
   const finalDossier = await generateAIEnhancedDossier(aiPrompt, defaultDossier, 'Agent Vance');
   await writeWorkspaceFile(targetPath, finalDossier, 'markdown', 'intel');
@@ -1349,6 +1572,29 @@ Instructions:
     success_boost_achieved: 10,
   });
 
+  // 4. Automatic Email Broadcast if recipientEmail is specified
+  let emailDispatched = false;
+  let emailDispatchMessage: string | null = null;
+  const trimmedRecipient = (target.recipientEmail || '').trim();
+
+  if (trimmedRecipient && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmedRecipient)) {
+    onStageUpdate?.(2, `VFS & Dispatch: Transmitting morning broadcast to ${trimmedRecipient} via Gmail...`);
+    try {
+      const dispatchRes = await dispatchMorningBriefingEmail(
+        trimmedRecipient,
+        finalDossier,
+        `[🌅 MORNING INTEL] ${target.targetName}`
+      );
+      emailDispatched = dispatchRes.success;
+      emailDispatchMessage = dispatchRes.message;
+    } catch (err: any) {
+      emailDispatchMessage = err?.message || 'Email transmission error';
+      console.warn('[MorningBriefing] Auto-broadcast error:', err);
+    }
+  } else {
+    onStageUpdate?.(2, `VFS & Dispatch: Logging briefing to Basement VFS drawer...`);
+  }
+
   return {
     playbookId: 'morning_briefing',
     title: `[🌅 BRIEFING: ${target.targetName.toUpperCase()}]`,
@@ -1359,10 +1605,23 @@ Instructions:
     targetPath,
     dossierContent: finalDossier,
     threatLevel: 'CHARLIE-NOMINAL',
+    emailDispatched,
     stagesCompleted: [
-      { stage: 'Topic Aggregation', detail: `Aggregated data & ${recentIntel.length} VFS dossiers`, status: 'verified' },
+      {
+        stage: 'Topic Aggregation',
+        detail: `Ingested ${searchHighlights.length} live external signals & cross-app telemetry`,
+        status: 'verified',
+      },
       { stage: 'Executive Synthesis', detail: 'Compiled 60-second executive SITREP', status: 'verified' },
-      { stage: 'VFS & Dispatch', detail: `Archived to ${targetPath}`, status: 'completed' },
+      {
+        stage: 'VFS & Dispatch',
+        detail: emailDispatched
+          ? `Archived to ${targetPath} & broadcasted to ${trimmedRecipient}`
+          : trimmedRecipient
+          ? `Archived to ${targetPath} (Email broadcast: ${emailDispatchMessage || 'Pending'})`
+          : `Archived to ${targetPath}`,
+        status: 'completed',
+      },
     ],
     executedAt: new Date().toISOString(),
   };

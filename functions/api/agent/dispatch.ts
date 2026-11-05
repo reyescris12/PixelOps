@@ -386,7 +386,54 @@ DYNAMIC REAL-TIME QUERY FORMULATION & NUMERICAL EXTRACTION PROTOCOL:
       });
     }
 
-    // 5. Final Synthesis Fallback if loop hit turn limit
+    // 5. Explicit Tool Success Check for Live Real-Time Queries
+    const isRealTime = /\b(price|pricing|cost|costs|rate|rates|fee|fees|tier|tiers|subscription|market\s+price|market\s+data|stock\s+price|stock\s+quote|ticker|crypto|token|coin|btc|eth|sol|bitcoin|ethereum|solana|valuation|mrr|arr|revenue|quote|live ticker|current price)\b/i.test(message);
+
+    const verifiedPrices: string[] = [];
+    for (const t of executedToolsRecord) {
+      if (t.success && t.result) {
+        const raw = JSON.stringify(t.result);
+        const pMatches = raw.match(/(?:[\$€£]|USD\s?)\s?\d+(?:,\d{3})*(?:\.\d{1,4})?/gi) || [];
+        for (const p of pMatches) {
+          if (!verifiedPrices.includes(p)) verifiedPrices.push(p);
+        }
+      }
+    }
+
+    if (isRealTime && verifiedPrices.length === 0) {
+      // Live tool call failed or cannot be parsed to yield verified real-time numerical payload.
+      // Abort metric generation immediately without querying the LLM for speculative numbers.
+      finalDialogue = `---
+title: "Operational Telemetry: Feed Unreachable"
+operative: "${agentName} (${activeAgentRole})"
+target: "${message.slice(0, 40)}"
+date: "${new Date().toISOString()}"
+threat_level: "CHARLIE-NOMINAL"
+sources_consulted:
+  - "Live Data Oracle"
+---
+
+# Operational Telemetry: Metric Generation Aborted
+**Target Directive:** \`${message}\`
+**Verification Status:** [TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]
+
+---
+
+## 1. Operational Diagnostic
+[TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]
+
+The live data tool call failed or cannot be parsed to extract a verifiable real-time numerical payload for "${message}".
+In accordance with strict anti-hallucination protocols, speculative metric estimation and stale model training weight outputs are completely aborted.
+
+---
+
+## 2. Impact & Action Delta
+- **Operational Risk:** Real-time metrics cannot be authenticated against live oracles. Stale memorized values are suppressed.
+- **Immediate Next Step:** Re-attempt query with an explicit ticker or verify external feed connectivity.
+`;
+    }
+
+    // Final Synthesis Fallback if loop hit turn limit
     if (!finalDialogue) {
       try {
         const finalRes = await fetch(
@@ -460,28 +507,17 @@ Result status: ${topTool?.success ? 'Success - live payload processed.' : `Execu
     }
 
     // 6. Quantitative Verification Gate & Hallucination Guard (Anti-Hallucination Assertion)
-    const isQuantitative = /\b(price|pricing|cost|costs|rate|rates|fee|fees|tier|tiers|subscription|market\s+price|market\s+data|stock\s+price|stock\s+quote|ticker|crypto|token|coin|btc|eth|sol|bitcoin|ethereum|solana|valuation|mrr|arr|revenue|quote|live ticker|current price)\b/i.test(message);
-
-    if (isQuantitative) {
-      const verifiedPrices: string[] = [];
-      for (const t of executedToolsRecord) {
-        if (t.success && t.result) {
-          const raw = JSON.stringify(t.result);
-          const pMatches = raw.match(/(?:[\$€£]|USD\s?)\s?\d+(?:,\d{3})*(?:\.\d{1,4})?/gi) || [];
-          verifiedPrices.push(...pMatches);
-        }
-      }
-
+    if (isRealTime) {
       const priceRegex = /(?:[\$€£]|USD\s?)\s?\d+(?:,\d{3})*(?:\.\d{1,4})?/gi;
       if (verifiedPrices.length === 0) {
         if (priceRegex.test(finalDialogue)) {
           finalDialogue = finalDialogue.replace(
             priceRegex,
-            '[Telemetry retrieval failed—live market feed unreachable]'
+            '[TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]'
           );
         }
-        if (!finalDialogue.includes('Telemetry retrieval failed—live market feed unreachable')) {
-          finalDialogue = `> [!WARNING]\n> **MANDATORY LIVE DATA VERIFICATION GUARD:**\n> Telemetry retrieval failed—live market feed unreachable. In accordance with zero-tolerance hallucination safeguards, unverified estimates and stale model weights for "${message.slice(0, 48)}" have been withheld.\n\n${finalDialogue}`;
+        if (!finalDialogue.includes('[TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]')) {
+          finalDialogue = `> [!WARNING]\n> **MANDATORY LIVE DATA VERIFICATION GUARD:**\n> [TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]\n\n${finalDialogue}`;
         }
       } else {
         // Assert current November 2026 temporal parameters

@@ -3654,19 +3654,28 @@ export async function generateLocalHeuristicCard(params: {
 
       if (resultsList.length > 0) {
         const topResult = resultsList[0];
-        const cleanSnippet = cleanWikiSnippet(topResult.snippet || '');
-        const dialogue = `${params.activeAgentName}: Intelligence synthesis for "${searchQuery}":\n\n**${topResult.title}**\n${cleanSnippet}\n\n${resultsList.length > 1 ? `*Related Intelligence: ${resultsList.slice(1).map((r: any) => r.title).join(', ')}*` : ''}`;
+        const isRealTime = isRealTimeDataQuery(rawPrompt);
+        const autoCheck = validateRealTimeToolSuccess(executedTools);
 
-        return {
+        let cleanSnippet = cleanWikiSnippet(topResult.snippet || '');
+        if (isRealTime && !autoCheck.isValid) {
+          cleanSnippet = '[TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]';
+        }
+
+        const dialogue = isRealTime && !autoCheck.isValid
+          ? `${params.activeAgentName}: [TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]\n\nNo authenticated live market feed could be established for "${rawPrompt}". In accordance with strict anti-hallucination protocols, metric generation is aborted.`
+          : `${params.activeAgentName}: Intelligence synthesis for "${searchQuery}":\n\n**${topResult.title}**\n${cleanSnippet}\n\n${resultsList.length > 1 ? `*Related Intelligence: ${resultsList.slice(1).map((r: any) => r.title).join(', ')}*` : ''}`;
+
+        const searchCard: AgentExecutionCard = {
           id: `card-${Date.now()}`,
           prompt: rawPrompt,
           dialogue,
-          cardTitle: `Intel: ${topResult.title || searchQuery}`,
+          cardTitle: isRealTime && !autoCheck.isValid ? 'Live Telemetry Unreachable' : `Intel: ${topResult.title || searchQuery}`,
           actionCategory: 'Web Search',
           steps: [
             { label: 'Web Query Dispatched', detail: `Searched verified open web sources for "${searchQuery}"`, status: 'completed' },
-            { label: 'Source Ingestion', detail: `Retrieved article: ${topResult.title}`, status: 'verified' },
-            { label: 'Briefing Synthesized', detail: 'Extracted key intelligence into mission report', status: 'completed' },
+            { label: 'Tool Success Check', detail: isRealTime && !autoCheck.isValid ? '[TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]' : `Retrieved article: ${topResult.title}`, status: isRealTime && !autoCheck.isValid ? 'completed' : 'verified' },
+            { label: 'Briefing Synthesized', detail: isRealTime && !autoCheck.isValid ? 'Suppressed speculative number generation' : 'Extracted key intelligence into mission report', status: 'completed' },
           ],
           toolCalls: executedTools,
           tokenEstimate: Math.max(70, Math.round(cleanSnippet.length / 4) + 40),
@@ -3675,6 +3684,7 @@ export async function generateLocalHeuristicCard(params: {
           timestamp: new Date().toISOString(),
           hasAttachment: Boolean(params.attachment),
         };
+        return verifyQuantitativeTelemetryGate(searchCard, rawPrompt, executedTools);
       }
     } catch {
       // Fall through
@@ -3952,55 +3962,86 @@ export async function parseAndExecuteAgentActionTags(
 }
 
 /**
+ * Detects whether a directive requires live, real-time data
+ * (crypto prices, stock tickers, rates, valuation, market metrics, SaaS tiers).
+ */
+export function isRealTimeDataQuery(text: string): boolean {
+  return /\b(price|pricing|cost|costs|rate|rates|fee|fees|tier|tiers|subscription|plan|plans|market\s+price|market\s+data|stock\s+price|stock\s+quote|ticker|crypto|token|coin|btc|eth|sol|bitcoin|ethereum|solana|xrp|doge|bnb|ada|valuation|mrr|arr|revenue|earnings|quote|live ticker|current price|how much does|what is the price|current valuation|market cap)\b/i.test(
+    text || ''
+  );
+}
+
+/**
+ * Validates that a tool execution returned a valid live response object containing:
+ * 1. A verifiable live timestamp (e.g. fetchedAt, timestamp, date)
+ * 2. A real-time numerical payload (e.g. extracted prices, rates, currency figures)
+ */
+export function validateRealTimeToolSuccess(executedTools: ExecutedToolCall[]): {
+  isValid: boolean;
+  verifiedPrices: string[];
+  liveTimestamp?: string;
+} {
+  const verifiedPrices: string[] = [];
+  let liveTimestamp: string | undefined = undefined;
+
+  for (const tool of executedTools) {
+    const payload = tool.livePayload;
+    if (payload && (payload.status === 'ok' || payload.status === 'SUCCESS')) {
+      if (payload.fetchedAt || payload.timestamp) {
+        liveTimestamp = payload.fetchedAt || payload.timestamp;
+      }
+      if (Array.isArray(payload.extractedMetrics?.prices) && payload.extractedMetrics.prices.length > 0) {
+        for (const p of payload.extractedMetrics.prices) {
+          if (!verifiedPrices.includes(p)) verifiedPrices.push(p);
+        }
+      }
+      if (Array.isArray(payload.results)) {
+        for (const r of payload.results) {
+          const m = extractNumericalMetrics(`${r.title || ''} ${r.snippet || ''} ${r.extract || ''}`);
+          for (const p of m.prices) {
+            if (!verifiedPrices.includes(p)) verifiedPrices.push(p);
+          }
+        }
+      }
+    }
+    const m = extractNumericalMetrics(tool.resultSummary || '');
+    for (const p of m.prices) {
+      if (!verifiedPrices.includes(p)) verifiedPrices.push(p);
+    }
+  }
+
+  return {
+    isValid: verifiedPrices.length > 0,
+    verifiedPrices,
+    liveTimestamp,
+  };
+}
+
+/**
  * Mandatory Live Data Verification & Hallucination Guard
  * Enforces a strict verification gate before any quantitative claim is rendered to the UI:
  * 1. Zero-Tolerance for Stale Memorized Values:
  *    When asked about live pricing, current metrics, or active market conditions, agents cannot rely on internal model weights.
  *    They must successfully execute a live search or API tool call and parse the explicit numerical result.
- * 2. Execution Failure Fallback:
- *    If a tool call fails or cannot retrieve live data for a specific asset, the agent must not guess or estimate.
- *    It must explicitly state: "Telemetry retrieval failed—live market feed unreachable" rather than hallucinating a plausible number.
- * 3. Assertion Check:
- *    Before returning a final payload containing numbers, dates, or stats, cross-reference that the data matches current
- *    temporal parameters (e.g., matching November 2026 live feeds).
+ * 2. Explicit Tool Success Check:
+ *    Verify that a valid tool response object (containing a live timestamp and real-time numerical payload)
+ *    was successfully returned before allowing metric drafting.
+ * 3. Transparent Failure Mode:
+ *    If the live data tool call fails or cannot be parsed, output the standardized operational warning:
+ *    `[TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]`
  */
 export function verifyQuantitativeTelemetryGate(
   card: AgentExecutionCard,
   prompt: string,
   executedTools: ExecutedToolCall[] = []
 ): AgentExecutionCard {
-  const promptLower = (prompt || '').toLowerCase();
-  const isQuantitativeOrMarket = /\b(price|pricing|cost|costs|rate|rates|fee|fees|tier|tiers|subscription|plan|plans|market\s+price|market\s+data|stock\s+price|stock\s+quote|ticker|crypto|token|coin|btc|eth|sol|bitcoin|ethereum|solana|xrp|doge|valuation|mrr|arr|revenue|earnings|quote|live ticker|current price|how much does|what is the price)\b/i.test(promptLower);
+  const isQuantitativeOrMarket = isRealTimeDataQuery(prompt);
 
   if (!isQuantitativeOrMarket) {
     return card;
   }
 
-  // 1. Gather all verified prices and metrics from live tool execution payloads
-  const verifiedPrices = new Set<string>();
-  const verifiedPercentages = new Set<string>();
-
-  for (const tool of executedTools) {
-    const payload = tool.livePayload;
-    if (payload) {
-      if (Array.isArray(payload.extractedMetrics?.prices)) {
-        for (const p of payload.extractedMetrics.prices) verifiedPrices.add(p);
-      }
-      if (Array.isArray(payload.extractedMetrics?.percentages)) {
-        for (const pct of payload.extractedMetrics.percentages) verifiedPercentages.add(pct);
-      }
-      if (Array.isArray(payload.results)) {
-        for (const r of payload.results) {
-          const m = extractNumericalMetrics(`${r.title || ''} ${r.snippet || ''} ${r.extract || ''}`);
-          for (const p of m.prices) verifiedPrices.add(p);
-          for (const pct of m.percentages) verifiedPercentages.add(pct);
-        }
-      }
-    }
-    const m = extractNumericalMetrics(tool.resultSummary || '');
-    for (const p of m.prices) verifiedPrices.add(p);
-    for (const pct of m.percentages) verifiedPercentages.add(pct);
-  }
+  const { isValid, verifiedPrices } = validateRealTimeToolSuccess(executedTools);
 
   // Currency/price pattern: $49.99, $1,200, €80, £15, USD 450, etc.
   const priceRegex = /(?:[\$€£]|USD\s?|EUR\s?|GBP\s?)\s?\d+(?:,\d{3})*(?:\.\d{1,4})?(?:\s?(?:\/mo|\/month|\/yr|\/year|\/user|\/seat|\/token|k|M|B|billion|million))?|\b\d+(?:,\d{3})*(?:\.\d{1,4})?\s?(?:USD|EUR|GBP|cents)/gi;
@@ -4008,26 +4049,25 @@ export function verifyQuantitativeTelemetryGate(
   let updatedDialogue = card.dialogue || '';
   const priceMatchesInDialogue = updatedDialogue.match(priceRegex) || [];
 
-  // RULE 1 & 2: If no live verified prices were returned by the tool matrix,
-  // suppress any hallucinated prices from model weights and enforce mandatory fallback string!
-  if (verifiedPrices.size === 0) {
+  // RULE 1 & 3: If no live verified prices were returned by the tool matrix,
+  // suppress any hallucinated prices from model weights and enforce mandatory standardized operational warning!
+  if (!isValid || verifiedPrices.length === 0) {
     if (priceMatchesInDialogue.length > 0) {
-      // Intercept and replace hallucinated prices with mandatory failure fallback
       updatedDialogue = updatedDialogue.replace(
         priceRegex,
-        '[Telemetry retrieval failed—live market feed unreachable]'
+        '[TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]'
       );
     }
 
-    if (!updatedDialogue.includes('Telemetry retrieval failed—live market feed unreachable')) {
-      updatedDialogue = `> [!WARNING]\n> **MANDATORY LIVE DATA VERIFICATION GUARD:**\n> Telemetry retrieval failed—live market feed unreachable. In accordance with zero-tolerance hallucination safeguards, unverified estimates and stale model weights for "${(prompt || '').slice(0, 48)}" have been withheld.\n\n${updatedDialogue}`;
+    if (!updatedDialogue.includes('[TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]')) {
+      updatedDialogue = `> [!WARNING]\n> **ANTI-HALLUCINATION GUARD:**\n> [TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]\n\n${updatedDialogue}`;
     }
 
     const updatedSteps: ExecutionStep[] = [
-      ...(card.steps || []).filter((s) => !s.label.includes('Verification Gate')),
+      ...(card.steps || []).filter((s) => !s.label.includes('Verification Gate') && !s.label.includes('Telemetry Gate')),
       {
-        label: 'Quantitative Verification Gate',
-        detail: 'Telemetry retrieval failed—live market feed unreachable',
+        label: 'Quantitative Telemetry Gate',
+        detail: '[TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]',
         status: 'completed',
       },
     ];
@@ -4039,21 +4079,20 @@ export function verifyQuantitativeTelemetryGate(
     };
   }
 
-  // RULE 3: Temporal & Quantitative Cross-Reference Check
+  // RULE 2 & ASSERTION CHECK: Temporal & Quantitative Cross-Reference Check
   // Check that temporal parameters match November 2026 live feeds
-  // Sanitize stale past years (2020-2025) if referenced as active quotes
   updatedDialogue = updatedDialogue.replace(/\b(as of|in|for|during)\s+(202[0-5])\b/gi, '$1 November 2026 (Live Feed)');
 
   if (!updatedDialogue.includes('November 2026')) {
-    const topPrices = Array.from(verifiedPrices).slice(0, 3).join(', ');
+    const topPrices = verifiedPrices.slice(0, 3).join(', ');
     updatedDialogue = `${updatedDialogue}\n\n---\n*Verified against live November 2026 telemetry oracle. Verified Live Quotation: ${topPrices}*`;
   }
 
   const updatedSteps: ExecutionStep[] = [
-    ...(card.steps || []).filter((s) => !s.label.includes('Verification Gate')),
+    ...(card.steps || []).filter((s) => !s.label.includes('Verification Gate') && !s.label.includes('Telemetry Gate')),
     {
-      label: 'Quantitative Verification Gate',
-      detail: `Verified against live November 2026 feed [${Array.from(verifiedPrices).slice(0, 2).join(', ')}]`,
+      label: 'Quantitative Telemetry Gate',
+      detail: `Verified against live November 2026 feed [${verifiedPrices.slice(0, 2).join(', ')}]`,
       status: 'verified',
     },
   ];
@@ -4902,6 +4941,66 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
           }
         }
 
+        // EXPLICIT TOOL SUCCESS CHECK: For live real-time queries (crypto, stocks, tickers, SaaS tiers),
+        // verify that a valid tool response object (containing live timestamp & real-time numerical payload)
+        // was successfully returned BEFORE the agent is allowed to draft its response.
+        const isRealTime = isRealTimeDataQuery(params.prompt || '');
+        if (isRealTime) {
+          const toolCheck = validateRealTimeToolSuccess(allExecutedTools);
+          if (!toolCheck.isValid) {
+            // Live data tool call failed or could not retrieve an authenticated real-time numerical payload.
+            // ABORT metric generation immediately to prevent speculative hallucinations!
+            const dateStr = new Date().toISOString();
+            const failureDialogue = `---
+title: "Operational Telemetry: Feed Unreachable"
+operative: "${params.activeAgentName} (${params.activeAgentRole})"
+target: "${(params.prompt || '').slice(0, 40)}"
+date: "${dateStr}"
+threat_level: "CHARLIE-NOMINAL"
+sources_consulted:
+  - "Live Data Oracle"
+---
+
+# Operational Telemetry: Metric Generation Aborted
+**Target Directive:** \`${params.prompt}\`
+**Verification Status:** [TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]
+
+---
+
+## 1. Operational Diagnostic
+[TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]
+
+The live data tool call failed or cannot be parsed to extract a verifiable real-time numerical payload for "${params.prompt}".
+In accordance with strict anti-hallucination protocols, speculative metric estimation and stale model training weight outputs are completely aborted.
+
+---
+
+## 2. Impact & Action Delta
+- **Operational Risk:** Real-time metrics cannot be authenticated against live oracles. Stale memorized values are suppressed.
+- **Immediate Next Step:** Re-attempt query with an explicit ticker or verify external feed connectivity.
+`;
+            const failureCard: AgentExecutionCard = {
+              id: `card-${Date.now()}`,
+              prompt: params.prompt || `Real-time query`,
+              dialogue: failureDialogue,
+              cardTitle: 'Live Telemetry Unreachable',
+              actionCategory: 'Live Telemetry',
+              steps: [
+                { label: 'Directive Ingested', detail: `Query: "${(params.prompt || '').slice(0, 40)}"`, status: 'completed' },
+                { label: 'Tool Success Check', detail: '[TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]', status: 'completed' },
+                { label: 'Anti-Hallucination Guard', detail: 'Aborted speculative number generation', status: 'verified' },
+              ],
+              toolCalls: allExecutedTools,
+              tokenEstimate: 120,
+              agentName: params.activeAgentName,
+              themeId: params.themeId,
+              timestamp: dateStr,
+              hasAttachment: Boolean(params.attachment),
+            };
+            return await ensureReportPersistedAndAnnotated(failureCard, params);
+          }
+        }
+
         // Synthesis Turn: If tools were executed, synthesize verified report with STRUCTURED_CARD_SCHEMA
         if (allExecutedTools.length > 0) {
           const synthesisPayload = {
@@ -5096,6 +5195,57 @@ ${searchResults.map((s: { title: string; snippet: string; url: string }, idx: nu
               console.warn('[ApiService] Auto-routed live web search fallback failed:', searchErr);
             }
           }
+        }
+
+        if (isRealTime && !validateRealTimeToolSuccess(allExecutedTools).isValid) {
+          const dateStr = new Date().toISOString();
+          const failureDialogue = `---
+title: "Operational Telemetry: Feed Unreachable"
+operative: "${params.activeAgentName} (${params.activeAgentRole})"
+target: "${(params.prompt || '').slice(0, 40)}"
+date: "${dateStr}"
+threat_level: "CHARLIE-NOMINAL"
+sources_consulted:
+  - "Live Data Oracle"
+---
+
+# Operational Telemetry: Metric Generation Aborted
+**Target Directive:** \`${params.prompt}\`
+**Verification Status:** [TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]
+
+---
+
+## 1. Operational Diagnostic
+[TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]
+
+The live data tool call failed or could not retrieve an authenticated real-time numerical payload for "${params.prompt}".
+In accordance with strict anti-hallucination protocols, speculative metric estimation and stale model training weight outputs are completely aborted.
+
+---
+
+## 2. Impact & Action Delta
+- **Operational Risk:** Real-time metrics cannot be authenticated against live oracles. Stale memorized values are suppressed.
+- **Immediate Next Step:** Re-attempt query with an explicit ticker or verify external feed connectivity.
+`;
+          const failureCard: AgentExecutionCard = {
+            id: `card-${Date.now()}`,
+            prompt: params.prompt || `Real-time query`,
+            dialogue: failureDialogue,
+            cardTitle: 'Live Telemetry Unreachable',
+            actionCategory: 'Live Telemetry',
+            steps: [
+              { label: 'Directive Ingested', detail: `Query: "${(params.prompt || '').slice(0, 40)}"`, status: 'completed' },
+              { label: 'Tool Success Check', detail: '[TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]', status: 'completed' },
+              { label: 'Anti-Hallucination Guard', detail: 'Aborted speculative number generation', status: 'verified' },
+            ],
+            toolCalls: allExecutedTools,
+            tokenEstimate: 120,
+            agentName: params.activeAgentName,
+            themeId: params.themeId,
+            timestamp: dateStr,
+            hasAttachment: Boolean(params.attachment),
+          };
+          return await ensureReportPersistedAndAnnotated(failureCard, params);
         }
 
         let parsedDirect: any = null;

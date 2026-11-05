@@ -740,7 +740,7 @@ Public web grounding confirms active endpoint reachability. Telemetry has been b
 **Key Observations:**
 - **Endpoint Status:** Active and responding to public telemetry.
 - **Delta Indicator:** ${searchHits.length > 0 ? 'Signals detected matching watch parameters.' : 'Nominal baseline established. Zero critical pricing anomalies.'}
-- **Detected Numerical Baseline:** ${extractedMetrics.prices.length > 0 ? `Captured Price: ${extractedMetrics.prices.join(', ')}` : extractedMetrics.percentages.length > 0 ? `Captured Variance: ${extractedMetrics.percentages.join(', ')}` : isPricingOrMarketTarget ? 'Telemetry retrieval failed—live market feed unreachable' : 'Real-time telemetry nominal.'}
+- **Detected Numerical Baseline:** ${extractedMetrics.prices.length > 0 ? `Captured Price: ${extractedMetrics.prices.join(', ')}` : extractedMetrics.percentages.length > 0 ? `Captured Variance: ${extractedMetrics.percentages.join(', ')}` : isPricingOrMarketTarget ? '[TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]' : 'Real-time telemetry nominal.'}
 - **Recommended Action:** Enable Night Shift auto-watch to monitor this endpoint on scheduled background intervals.
 
 ---
@@ -748,8 +748,8 @@ Public web grounding confirms active endpoint reachability. Telemetry has been b
 ## 2. Ingested Endpoint Signals & Pricing Delta
 | Endpoint / Resource | Tracked Metric | Detected Signal / Value | Status | Action Directive |
 | :--- | :--- | :--- | :--- | :--- |
-| **${target.targetName}** | ${target.targetScope.slice(0, 24)} | ${extractedMetrics.prices.length > 0 ? `Verified Price: ${extractedMetrics.prices.slice(0, 2).join(' | ')}` : extractedMetrics.percentages.length > 0 ? `Observed Delta: ${extractedMetrics.percentages[0]}` : isPricingOrMarketTarget ? 'Telemetry retrieval failed—live market feed unreachable' : 'Telemetry verified via live November 2026 search'} | Ingested | Flag pricing/restock shifts |
-| **Packaging & Tiers** | Pricing Elasticity | ${extractedMetrics.prices.length > 1 ? `Alternative Tiers: ${extractedMetrics.prices.slice(1, 4).join(', ')}` : isPricingOrMarketTarget ? 'Telemetry retrieval failed—live market feed unreachable' : 'Standard November 2026 rate card indexed'} | Monitored | Compare against subsequent sweeps |
+| **${target.targetName}** | ${target.targetScope.slice(0, 24)} | ${extractedMetrics.prices.length > 0 ? `Verified Price: ${extractedMetrics.prices.slice(0, 2).join(' | ')}` : extractedMetrics.percentages.length > 0 ? `Observed Delta: ${extractedMetrics.percentages[0]}` : isPricingOrMarketTarget ? '[TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]' : 'Telemetry verified via live November 2026 search'} | Ingested | Flag pricing/restock shifts |
+| **Packaging & Tiers** | Pricing Elasticity | ${extractedMetrics.prices.length > 1 ? `Alternative Tiers: ${extractedMetrics.prices.slice(1, 4).join(', ')}` : isPricingOrMarketTarget ? '[TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]' : 'Standard November 2026 rate card indexed'} | Monitored | Compare against subsequent sweeps |
 
 ---
 
@@ -777,7 +777,7 @@ Primary Function: External intelligence gathering, web reconnaissance, competito
 Output Standard: Classified dossiers featuring Threat Level ratings (ALPHA-CRITICAL, BRAVO-ELEVATED, CHARLIE-NOMINAL), key findings, and raw source attributions.
 
 MANDATORY RULES:
-1. NO MOCK DATA & MANDATORY VERIFICATION GATE: Rely strictly on provided live telemetry. Do not invent pricing, metrics, or endpoints. If asked about live pricing or market conditions, you are strictly forbidden from relying on internal model weights. If no verified price was retrieved from live tools, you MUST explicitly state: "Telemetry retrieval failed—live market feed unreachable".
+1. NO MOCK DATA & MANDATORY VERIFICATION GATE: Rely strictly on provided live telemetry. Do not invent pricing, metrics, or endpoints. If asked about live pricing or market conditions, you are strictly forbidden from relying on internal model weights. If no verified price was retrieved from live tools, you MUST explicitly state: "[TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]".
 2. STRUCTURED PRICE/DATA EXTRACTION: If numerical prices or financial figures were found (${extractedMetrics.prices.join(', ') || 'verified numerical indicators'}), you MUST parse and incorporate the actual numerical values into the Section 2 Telemetry Table. NEVER substitute them with vague phrases like "pricing nominal" or "standard baseline".
 3. ASSERTION CHECK & TEMPORAL PARAMETERS: Ensure all citations and temporal references match November 2026 live feeds.
 4. CITATIONS: Reference actual titles, snippets, or URLs from searchHits.
@@ -908,7 +908,7 @@ Analysis indicates active competitive maneuvering within this space. Marketing r
 
 **Key Intelligence Insights:**
 - **Market Velocity:** Rapid iteration cycles detected within target perimeter.
-- **Verified Numerical Signals:** ${extractedMetrics.prices.length > 0 ? `Active Price Points: ${extractedMetrics.prices.join(', ')}` : extractedMetrics.versions.length > 0 ? `Target Version: ${extractedMetrics.versions[0]}` : isPricingOrMarketTarget ? 'Telemetry retrieval failed—live market feed unreachable' : 'Market signals verified via live November 2026 sweep.'}
+- **Verified Numerical Signals:** ${extractedMetrics.prices.length > 0 ? `Active Price Points: ${extractedMetrics.prices.join(', ')}` : extractedMetrics.versions.length > 0 ? `Target Version: ${extractedMetrics.versions[0]}` : isPricingOrMarketTarget ? '[TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]' : 'Market signals verified via live November 2026 sweep.'}
 - **Strategic Threat / Opportunity:** Significant opportunities exist to outpace target by capitalizing on user feedback gaps, pricing frictions, or feature limitations.
 - **Recommended Posture:** Maintain active signal monitoring; execute countermeasures outlined in Section 4.
 
@@ -918,7 +918,7 @@ Analysis indicates active competitive maneuvering within this space. Marketing r
 | Focus Area | Detected Modification / Signal | Strategic Impact | Threat / Opportunity | Recommended Countermeasure |
 | :--- | :--- | :--- | :--- | :--- |
 | **Product & Features** | ${extractedMetrics.versions.length > 0 ? `Version ${extractedMetrics.versions[0]} deployed with updated capabilities` : 'Recent additions and workflow modifications identified'} | Feature parity pressure | Elevated | Differentiate on speed, reliability, and user-centric workflows. |
-| **Pricing & Monetization** | ${extractedMetrics.prices.length > 0 ? `Active market price point: ${extractedMetrics.prices.slice(0, 2).join(' / ')}` : isPricingOrMarketTarget ? 'Telemetry retrieval failed—live market feed unreachable' : 'Market tier adjustments and packaging realignment'} | Pricing elasticity friction | Moderate | Offer transparent, predictable, and superior value tiering. |
+| **Pricing & Monetization** | ${extractedMetrics.prices.length > 0 ? `Active market price point: ${extractedMetrics.prices.slice(0, 2).join(' / ')}` : isPricingOrMarketTarget ? '[TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]' : 'Market tier adjustments and packaging realignment'} | Pricing elasticity friction | Moderate | Offer transparent, predictable, and superior value tiering. |
 | **User & Market Sentiment** | ${extractedMetrics.percentages.length > 0 ? `Market sentiment index: ${extractedMetrics.percentages[0]} satisfaction` : 'Community discussions highlight demand for flexible integrations'} | High Opportunity | Advantage | Emphasize interoperability, privacy, and frictionless adoption. |
 
 ---
@@ -947,7 +947,7 @@ Primary Function: External intelligence gathering, web reconnaissance, competito
 Output Standard: Classified dossiers (intel/dossier_[target]_[date].md) featuring Threat Level ratings (ALPHA-CRITICAL, BRAVO-ELEVATED, CHARLIE-NOMINAL), key findings, and raw source attributions.
 
 MANDATORY RULES:
-1. NO MOCK DATA & MANDATORY VERIFICATION GATE: Rely strictly on provided live telemetry. Do not invent marketing fluff, imaginary features, or estimated prices. If asked about live pricing or market conditions, you are strictly forbidden from relying on internal model weights. If no verified price was retrieved from live tools, you MUST explicitly state: "Telemetry retrieval failed—live market feed unreachable".
+1. NO MOCK DATA & MANDATORY VERIFICATION GATE: Rely strictly on provided live telemetry. Do not invent marketing fluff, imaginary features, or estimated prices. If asked about live pricing or market conditions, you are strictly forbidden from relying on internal model weights. If no verified price was retrieved from live tools, you MUST explicitly state: "[TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]".
 2. STRUCTURED PRICE/DATA EXTRACTION: You MUST parse the actual numerical prices (${extractedMetrics.prices.join(', ') || 'verified telemetry'}), percentages (${extractedMetrics.percentages.join(', ') || 'verified delta'}), and version numbers (${extractedMetrics.versions.join(', ') || 'verified releases'}) into the Section 2 Delta Matrix table. Never replace real numbers with generic text.
 3. ASSERTION CHECK & TEMPORAL PARAMETERS: Ensure all citations and temporal references match November 2026 live feeds.
 4. FACT-CHECKING CITATIONS: Reference actual titles, snippets, or URLs from search extractions.

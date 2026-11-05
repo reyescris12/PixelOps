@@ -844,6 +844,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
               )}
 
+              {/* GROQ LPU INFERENCE */}
+              {llmConfig.providerId === 'groq' && (
+                <div className="rounded-xl border border-orange-900/60 bg-[#170e0a] p-3 flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-xs font-bold text-slate-100 flex items-center gap-1.5">
+                        <span>Groq Cloud LPU Inference</span>
+                        <span className="text-[10px] px-1.5 py-0.2 rounded bg-orange-950 border border-orange-500/50 text-orange-300 font-mono-tabular">
+                          GROQ LPU
+                        </span>
+                      </h4>
+                      <p className="text-[11px] text-slate-400">Sub-second real-time inference with Llama 3.3 and DeepSeek R1.</p>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-orange-300/80 leading-relaxed">
+                    Powered by Groq LPUs. Configure your Groq API key (gsk_...) in the API Key (BYOK) tab for instantaneous streaming.
+                  </p>
+                </div>
+              )}
+
               {/* OLLAMA AIR-GAPPED */}
               {llmConfig.providerId === 'ollama' && (
                 <div className="rounded-xl border border-slate-800 bg-[#0d0f17] p-3 flex flex-col gap-2">

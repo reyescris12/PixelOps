@@ -22,6 +22,8 @@ import {
   disconnectSubscriptionAccount,
 } from './LLMProviderService';
 
+import { ModelGateway } from './ModelGateway';
+
 // Alias executeAgentDirective as executeAgentCommand for backward/forward compatibility
 export const executeAgentCommand = executeAgentDirective;
 export const executeAgentRoundtableMeeting = executeRoundtableMeeting;
@@ -38,6 +40,7 @@ export {
   initiateGoogleSignIn,
   connectUserSubscriptionAccount,
   disconnectSubscriptionAccount,
+  ModelGateway,
 };
 
 export default {
@@ -54,4 +57,5 @@ export default {
   initiateGoogleSignIn,
   connectUserSubscriptionAccount,
   disconnectSubscriptionAccount,
+  ModelGateway,
 };

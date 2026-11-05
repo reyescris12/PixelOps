@@ -1,6 +1,6 @@
 import { ThemeId } from '../context/ThemeContext';
 
-export type LLMProviderType = 'gemini' | 'openai' | 'anthropic' | 'ollama';
+export type LLMProviderType = 'gemini' | 'openai' | 'anthropic' | 'groq' | 'ollama';
 
 export type AuthMode = 'subscription' | 'apikey';
 
@@ -8,6 +8,7 @@ export type SubscriptionPlanType =
   | 'google_ai_pro'
   | 'openai_plus_pro'
   | 'anthropic_claude_pro'
+  | 'groq_lpu'
   | 'ollama_local';
 
 export interface ConnectedSubscriptionAccount {
@@ -73,6 +74,18 @@ export const DEFAULT_PROVIDER_CONFIGS: Record<
       'claude-3-opus-20240229',
     ],
   },
+  groq: {
+    label: 'Groq Cloud (LPU)',
+    defaultModel: 'llama-3.3-70b-versatile',
+    defaultEndpoint: 'https://api.groq.com/openai/v1',
+    placeholderKey: 'gsk_...',
+    availableModels: [
+      'llama-3.3-70b-versatile',
+      'llama-3.1-8b-instant',
+      'mixtral-8x7b-32768',
+      'deepseek-r1-distill-llama-70b',
+    ],
+  },
   ollama: {
     label: 'Local Ollama Endpoint',
     defaultModel: 'llama3.3',
@@ -135,6 +148,23 @@ export const SUBSCRIPTION_PLANS: Record<
       'claude-3-5-sonnet-20241022',
       'claude-3-5-haiku-20241022',
       'claude-3-opus-20240229',
+    ],
+  },
+  groq: {
+    planName: 'Groq Cloud High-Speed Inference',
+    providerTitle: 'Groq Account',
+    badge: 'GROQ LPU',
+    description:
+      'Sub-second real-time reasoning with Llama 3.3 and DeepSeek R1 models powered by Groq LPUs.',
+    features: [
+      'Ultra high-speed generation (500+ tok/s)',
+      'Llama 3.3 70B & DeepSeek R1 reasoning',
+      'OpenAI-compatible chat completions interface',
+    ],
+    recommendedModels: [
+      'llama-3.3-70b-versatile',
+      'llama-3.1-8b-instant',
+      'deepseek-r1-distill-llama-70b',
     ],
   },
   ollama: {
@@ -884,6 +914,7 @@ export async function testLLMProviderConnection(
           'x-api-key': key.trim(),
           'anthropic-version': '2023-06-01',
           'Content-Type': 'application/json',
+          'anthropic-dangerous-direct-browser-access': 'true',
           'dangerously-allow-browser': 'true',
         },
         body: JSON.stringify({
@@ -905,6 +936,46 @@ export async function testLLMProviderConnection(
       return {
         ok: true,
         message: data?.content?.[0]?.text?.trim() || 'Anthropic connection verified.',
+        model,
+      };
+    }
+
+    if (pId === 'groq') {
+      const key = config.apiKey?.trim();
+      if (!key) {
+        return {
+          ok: false,
+          error: 'Groq API key is missing. Please enter your Groq API key (gsk_...) above.',
+        };
+      }
+
+      const model = config.modelName || 'llama-3.3-70b-versatile';
+      const endpoint = config.endpoint || 'https://api.groq.com/openai/v1';
+      const res = await fetch(`${endpoint}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${key.trim()}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model,
+          messages: [{ role: 'user', content: 'Respond with a short tactical readiness confirmation.' }],
+          max_tokens: 30,
+        }),
+        signal: AbortSignal.timeout(25000),
+      });
+
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        return {
+          ok: false,
+          error: data?.error?.message || `HTTP ${res.status}: Groq authentication failed`,
+          model,
+        };
+      }
+      return {
+        ok: true,
+        message: data?.choices?.[0]?.message?.content?.trim() || 'Groq LPU connection verified.',
         model,
       };
     }

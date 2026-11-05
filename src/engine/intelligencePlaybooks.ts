@@ -152,44 +152,23 @@ export interface PlaybookExecutionResult {
   scheduledNightShift?: boolean;
 }
 
-export interface StrategyBoardTask {
-  id: string;
-  title: string;
-  source: 'gmail' | 'github' | 'calendar' | 'user' | 'recon';
-  sourceDetail?: string;
-  priority: 'high' | 'medium' | 'low';
-  status: 'pending' | 'in_progress' | 'completed';
-  assignedAgent: string;
-  createdAt: string;
-}
+import {
+  StrategyBoardTask,
+  STORAGE_STRATEGY_TASKS_KEY,
+  loadStrategyBoardTasks,
+  saveStrategyBoardTasks,
+  addStrategyBoardTasks,
+  updateStrategyBoardTaskStatus,
+} from '../services/StrategyBoardService';
 
-export const STORAGE_STRATEGY_TASKS_KEY = 'pixelops_strategy_tasks_v1';
-
-export function loadStrategyBoardTasks(): StrategyBoardTask[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_STRATEGY_TASKS_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-export function saveStrategyBoardTasks(tasks: StrategyBoardTask[]): void {
-  try {
-    localStorage.setItem(STORAGE_STRATEGY_TASKS_KEY, JSON.stringify(tasks));
-  } catch {}
-}
-
-export function addStrategyBoardTasks(newTasks: StrategyBoardTask[]): void {
-  const current = loadStrategyBoardTasks();
-  const merged = [...newTasks, ...current].slice(0, 50);
-  saveStrategyBoardTasks(merged);
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent('strategy:tasks-updated', { detail: { tasks: merged } }));
-  }
-}
+export type { StrategyBoardTask };
+export {
+  STORAGE_STRATEGY_TASKS_KEY,
+  loadStrategyBoardTasks,
+  saveStrategyBoardTasks,
+  addStrategyBoardTasks,
+  updateStrategyBoardTaskStatus,
+};
 
 export function scheduleWiretapInNightShift(target: UserPlaybookTarget): boolean {
   try {
@@ -1001,6 +980,22 @@ Instructions:
     success_boost_achieved: 10,
   });
 
+  // Autonomous Inter-Agent Handoff: Route elevated signals directly to Vance's Strategy Board queue
+  if (threatLevel === 'BRAVO-ELEVATED' || searchHits.length > 0) {
+    addStrategyBoardTasks([
+      {
+        id: `handoff_wiretap_${Date.now()}`,
+        title: `[OSINT HANDOFF] Triage Operative Nyx's wiretap findings for "${target.targetName}"`,
+        source: 'recon',
+        sourceDetail: targetPath,
+        priority: threatLevel === 'BRAVO-ELEVATED' ? 'high' : 'medium',
+        status: 'pending',
+        assignedAgent: 'Agent Vance',
+        createdAt: new Date().toISOString(),
+      },
+    ]);
+  }
+
   return {
     playbookId: 'wiretap_watch',
     title: `[📡 WIRE-TAP: ${target.targetName.slice(0, 24).toUpperCase()}]`,
@@ -1153,6 +1148,20 @@ Instructions:
     result_summary: `Deep recon completed on "${target.targetName}". Archived to ${targetPath}.`,
     success_boost_achieved: 10,
   });
+
+  // Autonomous Inter-Agent Handoff: Hand off to Vance for executive SITREP triage
+  addStrategyBoardTasks([
+    {
+      id: `handoff_recon_vance_${Date.now()}`,
+      title: `[OSINT HANDOFF] Triage Operative Nyx's recon dossier for "${target.targetName}"`,
+      source: 'recon',
+      sourceDetail: targetPath,
+      priority: threatLevel === 'BRAVO-ELEVATED' ? 'high' : 'medium',
+      status: 'pending',
+      assignedAgent: 'Agent Vance',
+      createdAt: new Date().toISOString(),
+    },
+  ]);
 
   return {
     playbookId: 'deep_recon',
@@ -1909,6 +1918,22 @@ Instructions:
     result_summary: `GitHub repo pulse completed for "${target.targetName}". Archived to ${targetPath}.`,
     success_boost_achieved: 10,
   });
+
+  // Autonomous Inter-Agent Handoff: Hand off repo blockers / CVEs to Vance
+  if (gitIssues.length > 0 || hasCriticalCve) {
+    addStrategyBoardTasks([
+      {
+        id: `handoff_github_vance_${Date.now()}`,
+        title: `[CODE-OPS HANDOFF] Review ${gitIssues.length} issues and security patch guide for "${target.targetName}"`,
+        source: 'github',
+        sourceDetail: targetPath,
+        priority: hasCriticalCve ? 'high' : 'medium',
+        status: 'pending',
+        assignedAgent: 'Agent Vance',
+        createdAt: new Date().toISOString(),
+      },
+    ]);
+  }
 
   return {
     playbookId: 'sync_github',

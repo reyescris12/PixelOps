@@ -3,6 +3,7 @@
 import { getProviderApiKey, hasProviderApiKey, SUPPORTED_VAULT_PROVIDERS } from './BYOKVault';
 
 export type ModelGatewayProvider = 'gemini' | 'anthropic' | 'openai' | 'groq';
+export type InferenceTier = 'fast' | 'reasoning';
 
 export interface ModelGatewayMessage {
   role: 'user' | 'assistant' | 'system' | 'model';
@@ -22,12 +23,34 @@ export class ModelGateway {
     return SUPPORTED_VAULT_PROVIDERS[provider]?.defaultModel || 'gemini-3.8-flash';
   }
 
+  /**
+   * Dual-Speed Inference Routing:
+   * Returns a sub-200ms lightweight model for 'fast' path (sprite dialogues, short pings, triage),
+   * or a deep frontier model for 'reasoning' path (classified dossiers, security audits, planning).
+   */
+  static getModelForTier(provider: ModelGatewayProvider, tier: InferenceTier = 'reasoning'): string {
+    if (provider === 'gemini') {
+      return tier === 'fast' ? 'gemini-3.1-flash-lite' : 'gemini-3.8-flash';
+    }
+    if (provider === 'openai') {
+      return tier === 'fast' ? 'gpt-4o-mini' : 'gpt-4o';
+    }
+    if (provider === 'anthropic') {
+      return tier === 'fast' ? 'claude-3-5-haiku-20241022' : 'claude-3-5-sonnet-20241022';
+    }
+    if (provider === 'groq') {
+      return 'llama-3.3-70b-versatile';
+    }
+    return this.getDefaultModel(provider);
+  }
+
   static async executePrompt(
     provider: ModelGatewayProvider,
     model: string,
     apiKey: string,
     systemPrompt: string,
-    messages: (ModelGatewayMessage | any)[]
+    messages: (ModelGatewayMessage | any)[],
+    tier?: InferenceTier
   ): Promise<string> {
     // Resolve API key if not provided directly
     let effectiveKey = (apiKey || '').trim() || this.resolveApiKey(provider);
@@ -36,14 +59,23 @@ export class ModelGateway {
       throw new Error(`[UPLINK ERROR]: Missing API Key for provider: ${provider}`);
     }
 
+    // Dynamically route model if tier is specified
+    let targetModel = model;
+    if (tier && (!targetModel || targetModel === this.getDefaultModel(provider))) {
+      targetModel = this.getModelForTier(provider, tier);
+    }
+    if (!targetModel) {
+      targetModel = tier ? this.getModelForTier(provider, tier) : this.getDefaultModel(provider);
+    }
+
     switch (provider) {
       case 'gemini':
-        return await this.callGemini(model, effectiveKey, systemPrompt, messages);
+        return await this.callGemini(targetModel, effectiveKey, systemPrompt, messages);
       case 'anthropic':
-        return await this.callAnthropic(model, effectiveKey, systemPrompt, messages);
+        return await this.callAnthropic(targetModel, effectiveKey, systemPrompt, messages);
       case 'openai':
       case 'groq':
-        return await this.callOpenAICompatible(provider, model, effectiveKey, systemPrompt, messages);
+        return await this.callOpenAICompatible(provider, targetModel, effectiveKey, systemPrompt, messages);
       default:
         throw new Error(`Unsupported provider: ${provider}`);
     }

@@ -46,6 +46,8 @@ import {
   synthesizeComprehensiveReport,
   uploadReportToWorkspaceFiles,
 } from './ReportService';
+import { writeWorkspaceFile } from '../engine/storageManager';
+import { addStrategyBoardTasks } from './StrategyBoardService';
 
 export {
   executeSafeOperation,
@@ -948,6 +950,56 @@ export async function executeFunctionCallHandler(fc: {
       const directive = String(args.directive || 'Continue operational workflow.');
       const findings = String(args.findings_to_pass || '');
 
+      // 1. Commit to Strategy Board queue for target agent
+      try {
+        const taskId = `delegated_${Date.now()}`;
+        addStrategyBoardTasks([
+          {
+            id: taskId,
+            title: `[DELEGATED] ${directive.slice(0, 70)}`,
+            source: 'recon',
+            sourceDetail: `Handoff: ${findings.slice(0, 30) || 'Active workflow'}`,
+            priority: 'high',
+            status: 'pending',
+            assignedAgent: targetAgent.startsWith('Agent') ? targetAgent : `Agent ${targetAgent}`,
+            createdAt: new Date().toISOString(),
+          },
+        ]);
+      } catch {}
+
+      // 2. Commit Handoff Artifact to VFS
+      const dateStr = new Date().toISOString().slice(0, 10);
+      const handoffPath = `intel/handoff_${targetAgent.toLowerCase().replace(/[^a-z0-9]/g, '_')}_${dateStr}.md`;
+      try {
+        const handoffContent = `---
+title: "Autonomous Agent Handoff Dossier"
+target_agent: "${targetAgent}"
+date: "${dateStr}"
+timestamp: "${new Date().toISOString()}"
+directive: "${directive}"
+---
+
+# Autonomous Agent Handoff Dossier
+**Target Operative:** ${targetAgent}
+**Dispatched At:** ${new Date().toLocaleString()}
+
+## Directive
+${directive}
+
+## Transferred Findings & Context
+${findings || 'No additional telemetry findings attached.'}
+`;
+        await writeWorkspaceFile(handoffPath, handoffContent, 'markdown', 'intel');
+      } catch {}
+
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('pixelops:agent-delegation', {
+            detail: { targetAgent, directive, findings, handoffPath },
+          })
+        );
+      }
+
       const summary = `Task chained and handed off to Operative ${targetAgent.toUpperCase()}: "${directive.slice(0, 50)}..."`;
       return {
         id: fc.id,
@@ -957,6 +1009,7 @@ export async function executeFunctionCallHandler(fc: {
           target_agent: targetAgent,
           directive,
           findings,
+          handoffPath,
           dispatchedAt: new Date().toISOString(),
         },
         executedToolMeta: {
@@ -964,7 +1017,7 @@ export async function executeFunctionCallHandler(fc: {
           toolName: name,
           args,
           resultSummary: summary,
-          livePayload: { target_agent: targetAgent, directive, findings },
+          livePayload: { target_agent: targetAgent, directive, findings, handoffPath },
           targetRoom: dest.targetRoom,
           targetStationId: dest.targetStationId,
         },

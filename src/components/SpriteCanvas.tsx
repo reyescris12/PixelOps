@@ -39,6 +39,7 @@ import {
 import { RoomSpawnerModal } from './RoomSpawnerModal';
 import { RoomActionPlaybookPanel } from './RoomActionPlaybookPanel';
 import type { IntelligencePlaybookDef } from '../engine/intelligencePlaybooks';
+import { getOperativeReadiness } from '../services/OperativeReadinessService';
 
 export type RoomId =
   | 'comms_tower'
@@ -2544,6 +2545,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
             );
 
             const opState = resolveAgentOperationalState(st, meta.idleTag);
+            const readiness = getOperativeReadiness(crewMember.customName || crewMember.id);
             const resolvedStatusText = isWalkingTransitionActive
               ? st.statusTag.startsWith('TO ')
                 ? st.statusTag
@@ -2552,6 +2554,8 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
               ? 'SPEAKING'
               : isAgentExecuting
               ? (opState.activeSkill ? `BOUND: ${opState.activeSkill.shortCode}` : 'EXECUTING')
+              : readiness.pendingCount > 0
+              ? readiness.statusBadge
               : opState.operationalBadge;
 
             return (
@@ -3128,12 +3132,15 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
               const isSpeaker =
                 isMeetingActive && activeSpeakerAgentIndex === idx;
               const isExec = (isExecuting && isSelected) || isSpeaker;
+              const readiness = getOperativeReadiness(crew.customName || crew.id);
               const statusLabel = st.isMoving
                 ? st.statusTag
                 : isSpeaker
                 ? 'SPEAKING'
                 : isExec
                 ? 'EXECUTING'
+                : readiness.pendingCount > 0
+                ? readiness.statusBadge
                 : st.statusTag === 'COFFEE BREAK'
                 ? 'COMM BREAK'
                 : st.statusTag;

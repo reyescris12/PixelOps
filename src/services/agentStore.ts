@@ -11,12 +11,162 @@ import {
   hasProviderApiKey,
   getProviderDisplayName,
 } from './BYOKVault';
+import {
+  OPENROUTER_FREE_MODELS,
+  OPENROUTER_FLAGSHIP_MODELS,
+  OPENROUTER_SUPPORTED_MODELS,
+  getOpenRouterKey,
+} from './OpenRouterAuth';
+import {
+  PUTER_SUPPORTED_MODELS,
+  isPuterSignedIn,
+} from './PuterAuth';
 
-export type AgentProvider = 'gemini' | 'anthropic' | 'openai' | 'groq';
+export type AgentProvider = 'gemini' | 'anthropic' | 'openai' | 'groq' | 'openrouter' | 'puter';
 
 export interface AgentModelConfig {
   provider: AgentProvider;
   model: string;
+}
+
+export interface AgentAvailableProviderMeta {
+  id: AgentProvider;
+  name: string;
+  badge: string;
+  connectionType: 'byok' | 'sso_openrouter' | 'sso_puter';
+  isConnected: boolean;
+  statusLabel: string;
+  storageKey: string;
+  defaultModel: string;
+  availableModels: Array<{ id: string; name: string; isFree?: boolean; badge?: string; context?: string }>;
+}
+
+/**
+ * Returns dynamic list of AI providers and models reflecting live BYOK keys,
+ * OpenRouter connection (highlighting free models), and Puter zero-key status.
+ */
+export function getAvailableAgentProvidersAndModels(): AgentAvailableProviderMeta[] {
+  const orKey = getOpenRouterKey();
+  const isOpenRouterConnected = Boolean(orKey);
+  const isPuterConnected =
+    (typeof localStorage !== 'undefined' && localStorage.getItem('pixelops_ai_sso_mode') === 'puter') ||
+    (typeof localStorage !== 'undefined' && localStorage.getItem('pixelops_puter_signed_in') === 'true');
+
+  const providers: AgentAvailableProviderMeta[] = [
+    // 1. OpenRouter (Free models + Flagships)
+    {
+      id: 'openrouter',
+      name: 'OpenRouter (300+)',
+      badge: isOpenRouterConnected ? '12+ FREE MODELS' : 'FREE MODELS',
+      connectionType: 'sso_openrouter',
+      isConnected: isOpenRouterConnected,
+      statusLabel: isOpenRouterConnected ? 'Connected (PKCE SSO)' : 'Key / Connect Required',
+      storageKey: 'pixelops_openrouter_key',
+      defaultModel: 'google/gemini-2.5-flash:free',
+      availableModels: [
+        ...OPENROUTER_FREE_MODELS.map((m) => ({
+          id: m.id,
+          name: m.name,
+          isFree: true,
+          badge: 'FREE',
+          context: m.context,
+        })),
+        ...OPENROUTER_FLAGSHIP_MODELS.map((m) => ({
+          id: m.id,
+          name: m.name,
+          isFree: false,
+          badge: 'FLAGSHIP',
+          context: m.context,
+        })),
+      ],
+    },
+    // 2. Puter.js Zero-Key AI
+    {
+      id: 'puter',
+      name: 'Puter.js (Zero-Key)',
+      badge: 'ZERO-KEY AI',
+      connectionType: 'sso_puter',
+      isConnected: isPuterConnected || true, // Puter runs zero-key in browser
+      statusLabel: isPuterConnected ? 'Active (Zero-Key)' : 'Ready (Zero-Key)',
+      storageKey: 'Puter.js SDK',
+      defaultModel: 'google/gemini-2.5-flash',
+      availableModels: PUTER_SUPPORTED_MODELS.map((m) => ({
+        id: m.id,
+        name: m.name,
+        isFree: true,
+        badge: 'ZERO-KEY',
+        context: m.context,
+      })),
+    },
+    // 3. Google Gemini (BYOK)
+    {
+      id: 'gemini',
+      name: 'Google Gemini',
+      badge: 'GEMINI 3.8 / 3.1',
+      connectionType: 'byok',
+      isConnected: hasProviderApiKey('gemini'),
+      statusLabel: hasProviderApiKey('gemini') ? 'Key Linked' : 'Key Required in Vault',
+      storageKey: 'pixelops_gemini_api_key',
+      defaultModel: 'gemini-3.8-flash',
+      availableModels: [
+        { id: 'gemini-3.8-flash', name: 'Gemini 3.8 Flash (Default)', badge: 'BYOK', context: 'Fast frontier multimodal' },
+        { id: 'gemini-3.1-flash-lite', name: 'Gemini 3.1 Flash-Lite', badge: 'BYOK', context: 'Ultra-low latency triage' },
+        { id: 'gemini-3.5-flash-lite', name: 'Gemini 3.5 Flash-Lite', badge: 'BYOK', context: 'Balanced speed and context' },
+      ],
+    },
+    // 4. Anthropic Claude (BYOK)
+    {
+      id: 'anthropic',
+      name: 'Anthropic Claude',
+      badge: 'CLAUDE 3.5',
+      connectionType: 'byok',
+      isConnected: hasProviderApiKey('anthropic'),
+      statusLabel: hasProviderApiKey('anthropic') ? 'Key Linked' : 'Key Required in Vault',
+      storageKey: 'pixelops_anthropic_api_key',
+      defaultModel: 'claude-3-5-sonnet-20241022',
+      availableModels: [
+        { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet', badge: 'BYOK', context: 'Premier reasoning & coding' },
+        { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku', badge: 'BYOK', context: 'Fast lightweight model' },
+        { id: 'claude-3-opus-20240229', name: 'Claude 3 Opus', badge: 'BYOK', context: 'Complex deep analysis' },
+      ],
+    },
+    // 5. OpenAI GPT (BYOK)
+    {
+      id: 'openai',
+      name: 'OpenAI GPT',
+      badge: 'GPT-4O / O3-MINI',
+      connectionType: 'byok',
+      isConnected: hasProviderApiKey('openai'),
+      statusLabel: hasProviderApiKey('openai') ? 'Key Linked' : 'Key Required in Vault',
+      storageKey: 'pixelops_openai_api_key',
+      defaultModel: 'gpt-4o',
+      availableModels: [
+        { id: 'gpt-4o', name: 'GPT-4o', badge: 'BYOK', context: 'Flagship multimodal' },
+        { id: 'gpt-4o-mini', name: 'GPT-4o Mini', badge: 'BYOK', context: 'Fast lightweight intelligence' },
+        { id: 'o3-mini', name: 'o3-mini', badge: 'BYOK', context: 'Stem reasoning specialist' },
+        { id: 'o1', name: 'o1', badge: 'BYOK', context: 'Deep reasoning chain' },
+      ],
+    },
+    // 6. Groq Cloud (BYOK)
+    {
+      id: 'groq',
+      name: 'Groq Cloud (LPU)',
+      badge: 'LLAMA 3.3 70B',
+      connectionType: 'byok',
+      isConnected: hasProviderApiKey('groq'),
+      statusLabel: hasProviderApiKey('groq') ? 'Key Linked' : 'Key Required in Vault',
+      storageKey: 'pixelops_groq_api_key',
+      defaultModel: 'llama-3.3-70b-versatile',
+      availableModels: [
+        { id: 'llama-3.3-70b-versatile', name: 'Llama 3.3 70B Versatile', badge: 'BYOK', context: 'High-speed open frontier' },
+        { id: 'llama-3.1-8b-instant', name: 'Llama 3.1 8B Instant', badge: 'BYOK', context: 'Sub-100ms ultra rapid' },
+        { id: 'mixtral-8x7b-32768', name: 'Mixtral 8x7B', badge: 'BYOK', context: 'MoE high efficiency' },
+        { id: 'deepseek-r1-distill-llama-70b', name: 'DeepSeek R1 Distill 70B', badge: 'BYOK', context: 'Distilled reasoning' },
+      ],
+    },
+  ];
+
+  return providers;
 }
 
 export const STORAGE_AGENT_MODELS_KEY = 'pixelops_agent_models_v1';
@@ -117,8 +267,12 @@ export function saveAgentModelConfig(
 ): void {
   if (!agentId) return;
 
-  const validModel =
-    model || SUPPORTED_VAULT_PROVIDERS[provider]?.defaultModel || 'gemini-3.8-flash';
+  let validModel = model;
+  if (!validModel) {
+    if (provider === 'openrouter') validModel = 'google/gemini-2.5-flash:free';
+    else if (provider === 'puter') validModel = 'google/gemini-2.5-flash';
+    else validModel = SUPPORTED_VAULT_PROVIDERS[provider as keyof typeof SUPPORTED_VAULT_PROVIDERS]?.defaultModel || 'gemini-3.8-flash';
+  }
 
   // 1. Save to dedicated agent models store
   const current = getAllAgentModelConfigs();
@@ -153,12 +307,23 @@ export function validateAgentProviderKey(provider: AgentProvider): {
   valid: boolean;
   message?: string;
 } {
+  if (provider === 'puter') {
+    return { valid: true };
+  }
+  if (provider === 'openrouter') {
+    const hasOr = Boolean(getOpenRouterKey());
+    if (hasOr) return { valid: true };
+    return {
+      valid: false,
+      message: 'OpenRouter not connected. Connect via 1-Click Power SSO in Settings [⚙️] to unlock free models.',
+    };
+  }
   const hasKey = hasProviderApiKey(provider);
   if (hasKey) {
     return { valid: true };
   }
   const name = getProviderDisplayName(provider);
-  const meta = SUPPORTED_VAULT_PROVIDERS[provider];
+  const meta = SUPPORTED_VAULT_PROVIDERS[provider as keyof typeof SUPPORTED_VAULT_PROVIDERS];
   return {
     valid: false,
     message: `API Key required for ${name} (${meta?.storageKey || 'safehouse vault'}). Please configure it in Settings [⚙️].`,

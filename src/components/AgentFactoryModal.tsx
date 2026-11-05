@@ -12,7 +12,10 @@ import {
 } from '../context/CrewContext';
 import { RoomId, ROOM_ORDER, ROOM_METADATA, AgentSpriteFigure } from './SpriteCanvas';
 import { SUPPORTED_VAULT_PROVIDERS } from '../services/BYOKVault';
-import { AgentProvider } from '../services/agentStore';
+import {
+  AgentProvider,
+  getAvailableAgentProvidersAndModels,
+} from '../services/agentStore';
 
 const SPRITE_CATEGORIES: Array<'All' | SpriteVariantCategory> = [
   'All',
@@ -97,9 +100,13 @@ export const AgentFactoryModal: React.FC<AgentFactoryModalProps> = ({
       ? SPRITE_VARIANT_LIST
       : SPRITE_VARIANT_LIST.filter((v) => v.category === selectedCategory);
 
+  const availableProviders = getAvailableAgentProvidersAndModels();
+  const currentProviderMeta =
+    availableProviders.find((p) => p.id === provider) || availableProviders[0];
+
   const selectedMeta = SPRITE_VARIANTS[spriteVariant] || SPRITE_VARIANTS.trenchcoat;
   const selectedRoleMeta = FUNCTIONAL_ROLE_PROFILES[functionalRole] || FUNCTIONAL_ROLE_PROFILES.coder;
-  const selectedProviderMeta = SUPPORTED_VAULT_PROVIDERS[provider] || SUPPORTED_VAULT_PROVIDERS.gemini;
+  const selectedProviderMeta = currentProviderMeta;
 
   const handleSelectRolePreset = (pId: FunctionalCapabilityId) => {
     playBeep('tap');
@@ -115,8 +122,8 @@ export const AgentFactoryModal: React.FC<AgentFactoryModalProps> = ({
   const handleSelectProvider = (pId: AgentProvider) => {
     playBeep('tap');
     setProvider(pId);
-    const meta = SUPPORTED_VAULT_PROVIDERS[pId];
-    setModel(meta?.defaultModel || 'gemini-3.8-flash');
+    const provMeta = availableProviders.find((p) => p.id === pId);
+    setModel(provMeta?.defaultModel || 'google/gemini-2.5-flash:free');
   };
 
   const toggleTool = (toolId: string) => {
@@ -266,33 +273,50 @@ export const AgentFactoryModal: React.FC<AgentFactoryModalProps> = ({
 
           {/* AI Model & Provider Engine */}
           <div className="p-3 rounded-xl bg-[#090d12] border border-amber-500/30 flex flex-col gap-2">
-            <span className="font-bold text-amber-200 flex items-center gap-1.5 text-xs">
-              <Cpu className="w-3.5 h-3.5 text-amber-400" />
-              <span>◈ AI Model & Provider Gateway</span>
+            <span className="font-bold text-amber-200 flex items-center justify-between text-xs">
+              <div className="flex items-center gap-1.5">
+                <Cpu className="w-3.5 h-3.5 text-amber-400" />
+                <span>◈ AI Model & Provider Gateway</span>
+              </div>
+              <span className="text-[10px] text-amber-400/80 font-mono">
+                {currentProviderMeta.isConnected ? '🟢 Credentials Ready' : '⚠️ Credentials Required'}
+              </span>
             </span>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-              {(Object.keys(SUPPORTED_VAULT_PROVIDERS) as AgentProvider[]).map((pId) => {
-                const meta = SUPPORTED_VAULT_PROVIDERS[pId];
-                const isSelected = provider === pId;
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+              {availableProviders.map((pMeta) => {
+                const isSelected = provider === pMeta.id;
                 return (
                   <button
-                    key={pId}
+                    key={pMeta.id}
                     type="button"
-                    onClick={() => handleSelectProvider(pId)}
-                    className={`p-2 rounded-lg border text-left cursor-pointer transition-colors ${
+                    onClick={() => handleSelectProvider(pMeta.id)}
+                    className={`p-2 rounded-lg border text-left cursor-pointer transition-colors flex flex-col justify-between gap-1 ${
                       isSelected
-                        ? 'bg-amber-500/20 border-amber-400 text-amber-100 font-bold'
+                        ? 'bg-amber-500/20 border-amber-400 text-amber-100 font-bold shadow-[0_0_8px_rgba(251,191,36,0.25)]'
                         : 'bg-[#111722] border-amber-500/20 text-amber-300/70 hover:border-amber-400/50'
                     }`}
                   >
-                    <div className="text-[11px]">{meta.name.split(' ')[0]}</div>
-                    <div className="text-[9px] text-amber-400/80">{meta.badge}</div>
+                    <div className="flex items-center justify-between text-[11px]">
+                      <span>{pMeta.name}</span>
+                      <span
+                        className={`w-2 h-2 rounded-full ${
+                          pMeta.isConnected ? 'bg-emerald-400 shadow-[0_0_6px_#10b981]' : 'bg-amber-400'
+                        }`}
+                        title={pMeta.isConnected ? 'Connected & Ready' : 'Key / Connection Required'}
+                      />
+                    </div>
+                    <div className="flex items-center justify-between text-[9px] text-amber-400/80 font-mono">
+                      <span>{pMeta.badge}</span>
+                      <span className={pMeta.isConnected ? 'text-emerald-400 font-semibold' : 'text-amber-400/80'}>
+                        {pMeta.isConnected ? 'Ready' : 'Unlinked'}
+                      </span>
+                    </div>
                   </button>
                 );
               })}
             </div>
             <div className="flex items-center gap-2 pt-1 border-t border-amber-500/20">
-              <span className="text-[10px] text-amber-300/80 uppercase font-semibold">Model:</span>
+              <span className="text-[10px] text-amber-300/80 uppercase font-semibold shrink-0">Model:</span>
               <select
                 value={model}
                 onChange={(e) => {
@@ -302,8 +326,8 @@ export const AgentFactoryModal: React.FC<AgentFactoryModalProps> = ({
                 className="flex-1 px-2 py-1 rounded bg-[#111722] border border-amber-500/30 text-amber-100 text-xs font-mono outline-none cursor-pointer"
               >
                 {selectedProviderMeta.availableModels.map((m) => (
-                  <option key={m} value={m} className="bg-[#111722] text-amber-100">
-                    {m} {m === selectedProviderMeta.defaultModel ? '(Default)' : ''}
+                  <option key={m.id} value={m.id} className="bg-[#111722] text-amber-100">
+                    {m.isFree ? `[FREE] ${m.name}` : m.name} {m.id === selectedProviderMeta.defaultModel ? '(Default)' : ''}
                   </option>
                 ))}
               </select>

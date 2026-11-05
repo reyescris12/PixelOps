@@ -7,7 +7,7 @@ import {
   hasProviderApiKey,
   getProviderDisplayName,
 } from './BYOKVault';
-import { getAgentModelConfig } from './agentStore';
+import { getAgentModelConfig, AgentProvider } from './agentStore';
 import { ModelGateway } from './ModelGateway';
 import { workstationSupportsTool } from './PlacedGearService';
 import { loadCustomPlugins, executeCustomPlugin } from './PluginMarketplaceService';
@@ -4575,7 +4575,7 @@ export async function executeAgentDirective(params: {
   enabledPlugins: string[];
   attachment?: { data: string; mimeType: string; name: string } | null;
   temperature: number;
-  agentProvider?: 'gemini' | 'anthropic' | 'openai' | 'groq';
+  agentProvider?: AgentProvider;
   agentModel?: string;
   providerTokenStatus?: Record<string, { valid: boolean; accountHandle: string }>;
   onFunctionCallTriggered?: (info: {
@@ -4627,36 +4627,64 @@ export async function executeAgentDirective(params: {
       // Check active LLM provider configuration (per-agent override or global)
       const llmConfig = loadLLMProviderConfig();
       const agentConfig = getAgentModelConfig(params.activeAgentName);
-      let targetProvider: 'gemini' | 'anthropic' | 'openai' | 'groq' =
-        params.agentProvider || agentConfig.provider || (llmConfig.providerId as any) || 'gemini';
+      const isPuterMode = typeof localStorage !== 'undefined' && localStorage.getItem('pixelops_ai_sso_mode') === 'puter';
+      const openRouterKey = typeof localStorage !== 'undefined' ? (localStorage.getItem('pixelops_openrouter_key') || '').trim() : '';
+      const isOpenRouterMode = Boolean(openRouterKey) && (typeof localStorage !== 'undefined' && localStorage.getItem('pixelops_ai_sso_mode') === 'openrouter');
 
-      let targetApiKey = getProviderApiKey(targetProvider);
+      let targetProvider: AgentProvider =
+        params.agentProvider || agentConfig.provider || (isOpenRouterMode ? 'openrouter' : isPuterMode ? 'puter' : (llmConfig.providerId as any) || 'gemini');
+
+      let targetApiKey =
+        targetProvider === 'openrouter'
+          ? openRouterKey
+          : targetProvider === 'puter'
+          ? 'puter_zero_key'
+          : getProviderApiKey(targetProvider as any);
 
       // Smart fallback: If assigned provider has no key, check if another provider has a configured key
       if (!targetApiKey || targetApiKey === 'MY_GEMINI_API_KEY') {
-        const candidateProviders: ('gemini' | 'groq' | 'openai' | 'anthropic')[] = [
-          (llmConfig.providerId as any) || 'gemini',
-          'gemini',
-          'groq',
-          'openai',
-          'anthropic',
-        ];
-        for (const cp of candidateProviders) {
-          const k = getProviderApiKey(cp);
-          if (k && k !== 'MY_GEMINI_API_KEY') {
-            targetProvider = cp;
-            targetApiKey = k;
-            break;
+        if (targetProvider !== 'openrouter' && targetProvider !== 'puter') {
+          if (isOpenRouterMode && openRouterKey) {
+            targetProvider = 'openrouter';
+            targetApiKey = openRouterKey;
+          } else if (isPuterMode) {
+            targetProvider = 'puter';
+            targetApiKey = 'puter_zero_key';
+          } else {
+            const candidateProviders: ('gemini' | 'groq' | 'openai' | 'anthropic')[] = [
+              (llmConfig.providerId as any) || 'gemini',
+              'gemini',
+              'groq',
+              'openai',
+              'anthropic',
+            ];
+            for (const cp of candidateProviders) {
+              const k = getProviderApiKey(cp);
+              if (k && k !== 'MY_GEMINI_API_KEY') {
+                targetProvider = cp;
+                targetApiKey = k;
+                break;
+              }
+            }
           }
         }
       }
 
       const providerMeta =
-        SUPPORTED_VAULT_PROVIDERS[targetProvider] || SUPPORTED_VAULT_PROVIDERS.gemini;
+        targetProvider === 'openrouter'
+          ? { name: 'OpenRouter', badge: 'OPENROUTER', storageKey: 'pixelops_openrouter_key', defaultModel: 'google/gemini-2.5-flash:free' }
+          : targetProvider === 'puter'
+          ? { name: 'Puter.js', badge: 'PUTER ZERO-KEY', storageKey: 'Puter.js SDK', defaultModel: 'google/gemini-2.5-flash' }
+          : SUPPORTED_VAULT_PROVIDERS[targetProvider as keyof typeof SUPPORTED_VAULT_PROVIDERS] || SUPPORTED_VAULT_PROVIDERS.gemini;
+
       const targetModel: string =
         params.agentModel ||
         agentConfig.model ||
-        (targetProvider === 'gemini' ? normalizeGeminiModel(llmConfig.modelName) : undefined) ||
+        (targetProvider === 'openrouter'
+          ? (typeof localStorage !== 'undefined' ? localStorage.getItem('pixelops_openrouter_model') : null) || 'google/gemini-2.5-flash:free'
+          : targetProvider === 'gemini'
+          ? normalizeGeminiModel(llmConfig.modelName)
+          : undefined) ||
         providerMeta.defaultModel ||
         'gemini-3.8-flash';
 
@@ -4672,13 +4700,11 @@ export async function executeAgentDirective(params: {
         }
       }
 
-      const isPuterMode = typeof localStorage !== 'undefined' && localStorage.getItem('pixelops_ai_sso_mode') === 'puter';
-      const openRouterKey = typeof localStorage !== 'undefined' ? (localStorage.getItem('pixelops_openrouter_key') || '').trim() : '';
-      const isOpenRouterMode = Boolean(openRouterKey) && (typeof localStorage !== 'undefined' && localStorage.getItem('pixelops_ai_sso_mode') === 'openrouter');
-
       const hasActiveAuth =
+        targetProvider === 'puter' ||
+        (targetProvider === 'openrouter' && Boolean(openRouterKey)) ||
         isPuterMode ||
-        Boolean(openRouterKey) ||
+        (isOpenRouterMode && Boolean(openRouterKey)) ||
         (targetProvider === 'gemini'
           ? Boolean(geminiAuthInfo.headers['x-goog-api-key']) ||
             (Boolean(targetApiKey) && targetApiKey !== 'MY_GEMINI_API_KEY') ||
@@ -4767,7 +4793,7 @@ export async function executeAgentDirective(params: {
       }
 
       // Multi-Provider Execution Gateway: Route to Puter, OpenRouter, OpenAI, Groq, or Anthropic
-      if (isPuterMode && !targetApiKey) {
+      if (targetProvider === 'puter' || (isPuterMode && !targetApiKey && targetProvider === 'gemini')) {
         try {
           const puterModel = targetModel || 'google/gemini-2.5-flash';
           const puterReply = await ModelGateway.callPuterModel(
@@ -4808,8 +4834,8 @@ export async function executeAgentDirective(params: {
 
       if (targetProvider !== 'gemini' || (isOpenRouterMode && !targetApiKey)) {
         try {
-          if (targetProvider === 'openai' || targetProvider === 'groq' || (targetProvider as any) === 'openrouter' || (isOpenRouterMode && !targetApiKey)) {
-            const isOr = (targetProvider as any) === 'openrouter' || (isOpenRouterMode && !targetApiKey);
+          if (targetProvider === 'openai' || targetProvider === 'groq' || targetProvider === 'openrouter' || (isOpenRouterMode && !targetApiKey)) {
+            const isOr = targetProvider === 'openrouter' || (isOpenRouterMode && !targetApiKey);
             const openAITools = activeDeclarations.map((d) => ({
               type: 'function' as const,
               function: {
@@ -4825,7 +4851,7 @@ export async function executeAgentDirective(params: {
             ];
 
             const effectiveModel = isOr
-              ? (localStorage.getItem('pixelops_openrouter_model') || 'google/gemini-2.5-flash:free')
+              ? (targetModel || (localStorage.getItem('pixelops_openrouter_model') || 'google/gemini-2.5-flash:free'))
               : targetModel;
 
             const reqBody: any = {

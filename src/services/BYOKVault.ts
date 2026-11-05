@@ -367,8 +367,15 @@ export function getProviderApiKey(provider: 'gemini' | 'anthropic' | 'openai' | 
 /**
  * Checks if a valid API key or credential exists for a specific provider
  */
-export function hasProviderApiKey(provider: 'gemini' | 'anthropic' | 'openai' | 'groq'): boolean {
-  const key = getProviderApiKey(provider);
+export function hasProviderApiKey(provider: string): boolean {
+  if (provider === 'puter') {
+    return true; // Puter.js is zero-key SSO
+  }
+  if (provider === 'openrouter') {
+    const key = typeof localStorage !== 'undefined' ? (localStorage.getItem('pixelops_openrouter_key') || '').trim() : '';
+    return key.length > 5;
+  }
+  const key = getProviderApiKey(provider as any);
   if (!key) return false;
   if (provider === 'gemini') {
     return key !== 'MY_GEMINI_API_KEY' && key.length > 5;
@@ -379,7 +386,9 @@ export function hasProviderApiKey(provider: 'gemini' | 'anthropic' | 'openai' | 
 /**
  * Returns user-friendly provider display name
  */
-export function getProviderDisplayName(provider: 'gemini' | 'anthropic' | 'openai' | 'groq'): string {
-  return SUPPORTED_VAULT_PROVIDERS[provider]?.name || provider;
+export function getProviderDisplayName(provider: string): string {
+  if (provider === 'openrouter') return 'OpenRouter';
+  if (provider === 'puter') return 'Puter.js (Zero-Key)';
+  return SUPPORTED_VAULT_PROVIDERS[provider as keyof typeof SUPPORTED_VAULT_PROVIDERS]?.name || provider;
 }
 

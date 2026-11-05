@@ -17,6 +17,52 @@ export interface PuterUser {
   uuid?: string;
 }
 
+export interface PuterModelOption {
+  id: string;
+  name: string;
+  tag: 'ZERO_KEY';
+  context: string;
+}
+
+export const PUTER_SUPPORTED_MODELS: PuterModelOption[] = [
+  {
+    id: 'google/gemini-2.5-flash',
+    name: 'Gemini 2.5 Flash',
+    tag: 'ZERO_KEY',
+    context: 'Fast multimodal zero-key inference',
+  },
+  {
+    id: 'claude-3-5-sonnet',
+    name: 'Claude 3.5 Sonnet',
+    tag: 'ZERO_KEY',
+    context: 'Top-tier reasoning & coding via Puter',
+  },
+  {
+    id: 'gpt-4o',
+    name: 'OpenAI GPT-4o',
+    tag: 'ZERO_KEY',
+    context: 'Flagship multimodal intelligence via Puter',
+  },
+  {
+    id: 'gpt-4o-mini',
+    name: 'OpenAI GPT-4o Mini',
+    tag: 'ZERO_KEY',
+    context: 'Ultra-fast lightweight reasoning',
+  },
+  {
+    id: 'deepseek-reasoner',
+    name: 'DeepSeek R1',
+    tag: 'ZERO_KEY',
+    context: 'Deep chain-of-thought open reasoning',
+  },
+  {
+    id: 'deepseek-chat',
+    name: 'DeepSeek V3',
+    tag: 'ZERO_KEY',
+    context: 'High-throughput conversational AI',
+  },
+];
+
 let puterLoadPromise: Promise<any> | null = null;
 
 /**

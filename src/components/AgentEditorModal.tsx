@@ -17,7 +17,11 @@ import {
   hasProviderApiKey,
   getProviderDisplayName,
 } from '../services/BYOKVault';
-import { AgentProvider } from '../services/agentStore';
+import {
+  AgentProvider,
+  getAvailableAgentProvidersAndModels,
+  AgentAvailableProviderMeta,
+} from '../services/agentStore';
 
 interface AgentEditorModalProps {
   agent: CrewAgentState | null;
@@ -125,11 +129,15 @@ export const AgentEditorModal: React.FC<AgentEditorModalProps> = ({
     setAssignedTools(profile.recommendedTools);
   };
 
+  const availableProviders = getAvailableAgentProvidersAndModels();
+  const currentProviderMeta =
+    availableProviders.find((p) => p.id === provider) || availableProviders[0];
+
   const handleSelectProvider = (newProvider: AgentProvider) => {
     playBeep('tap');
     setProvider(newProvider);
-    const meta = SUPPORTED_VAULT_PROVIDERS[newProvider];
-    setModel(meta?.defaultModel || 'gemini-3.8-flash');
+    const provMeta = availableProviders.find((p) => p.id === newProvider);
+    setModel(provMeta?.defaultModel || 'google/gemini-2.5-flash:free');
   };
 
   const handleFormSubmit = (e: React.FormEvent) => {
@@ -149,8 +157,8 @@ export const AgentEditorModal: React.FC<AgentEditorModalProps> = ({
     onClose();
   };
 
-  const hasVaultKey = hasProviderApiKey(provider);
-  const selectedProviderMeta = SUPPORTED_VAULT_PROVIDERS[provider] || SUPPORTED_VAULT_PROVIDERS.gemini;
+  const hasVaultKey = currentProviderMeta.isConnected;
+  const selectedProviderMeta = currentProviderMeta;
   const selectedSpriteMeta = SPRITE_VARIANTS[spriteVariant] || SPRITE_VARIANTS.trenchcoat;
   const selectedRoleMeta = FUNCTIONAL_ROLE_PROFILES[functionalRole] || FUNCTIONAL_ROLE_PROFILES.general_assistant;
 
@@ -263,16 +271,14 @@ export const AgentEditorModal: React.FC<AgentEditorModalProps> = ({
                   </div>
 
                   {/* Provider Selector Cards */}
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
-                    {(Object.keys(SUPPORTED_VAULT_PROVIDERS) as AgentProvider[]).map((pId) => {
-                      const pMeta = SUPPORTED_VAULT_PROVIDERS[pId];
-                      const isSelected = provider === pId;
-                      const hasKey = hasProviderApiKey(pId);
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 mb-3">
+                    {availableProviders.map((pMeta) => {
+                      const isSelected = provider === pMeta.id;
                       return (
                         <button
-                          key={pId}
+                          key={pMeta.id}
                           type="button"
-                          onClick={() => handleSelectProvider(pId)}
+                          onClick={() => handleSelectProvider(pMeta.id)}
                           className={`p-2 border text-left cursor-pointer transition-all flex flex-col justify-between gap-1 rounded-xs ${
                             isSelected
                               ? 'bg-[#281a0e] border-[#e59838] text-white shadow-[0_0_10px_rgba(229,152,56,0.3)]'
@@ -281,17 +287,20 @@ export const AgentEditorModal: React.FC<AgentEditorModalProps> = ({
                         >
                           <div className="flex items-center justify-between text-[10px] font-bold">
                             <span className={isSelected ? 'text-[#e59838]' : 'text-[#f3ead8]'}>
-                              {pMeta.name.split(' ')[0]}
+                              {pMeta.name}
                             </span>
                             <span
                               className={`w-2 h-2 rounded-full ${
-                                hasKey ? 'bg-emerald-400' : 'bg-amber-400'
+                                pMeta.isConnected ? 'bg-emerald-400 shadow-[0_0_6px_#10b981]' : 'bg-amber-400'
                               }`}
-                              title={hasKey ? 'Key Configured in Vault' : 'Key Missing in Vault'}
+                              title={pMeta.isConnected ? 'Connected & Ready' : 'Key / Connection Required'}
                             />
                           </div>
-                          <div className="text-[9px] text-[#8c7a65] font-mono-tabular">
-                            {pMeta.badge}
+                          <div className="flex items-center justify-between text-[9px] text-[#8c7a65] font-mono-tabular">
+                            <span>{pMeta.badge}</span>
+                            <span className={pMeta.isConnected ? 'text-emerald-400 font-semibold' : 'text-amber-400/80'}>
+                              {pMeta.isConnected ? 'Active' : 'Unlinked'}
+                            </span>
                           </div>
                         </button>
                       );
@@ -301,8 +310,14 @@ export const AgentEditorModal: React.FC<AgentEditorModalProps> = ({
                   {/* Model Selector Dropdown & Key Status */}
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-[#3d2b18] items-center">
                     <div>
-                      <label className="block text-[10px] text-[#9c8265] uppercase mb-1 font-semibold">
-                        Model Architecture
+                      <label className="block text-[10px] text-[#9c8265] uppercase mb-1 font-semibold flex items-center justify-between">
+                        <span>Model Architecture</span>
+                        {provider === 'openrouter' && (
+                          <span className="text-[9px] text-emerald-400 font-bold">12+ Free Models Available</span>
+                        )}
+                        {provider === 'puter' && (
+                          <span className="text-[9px] text-emerald-400 font-bold">Zero-Key Access</span>
+                        )}
                       </label>
                       <select
                         value={model}
@@ -313,8 +328,8 @@ export const AgentEditorModal: React.FC<AgentEditorModalProps> = ({
                         className="w-full px-2.5 py-1.5 bg-[#090807] border border-[#5e4326] focus:border-[#e59838] text-[#f3ead8] text-xs font-mono-tabular outline-none cursor-pointer"
                       >
                         {selectedProviderMeta.availableModels.map((m) => (
-                          <option key={m} value={m} className="bg-[#121110] text-[#f3ead8]">
-                            {m} {m === selectedProviderMeta.defaultModel ? '(Default)' : ''}
+                          <option key={m.id} value={m.id} className="bg-[#121110] text-[#f3ead8]">
+                            {m.isFree ? `[FREE] ${m.name}` : m.name} {m.id === selectedProviderMeta.defaultModel ? '(Default)' : ''}
                           </option>
                         ))}
                       </select>
@@ -327,12 +342,22 @@ export const AgentEditorModal: React.FC<AgentEditorModalProps> = ({
                       {hasVaultKey ? (
                         <div className="flex items-center gap-1.5 text-xs text-emerald-400 font-mono-tabular bg-emerald-950/30 border border-emerald-800/40 px-2 py-1 rounded-xs">
                           <CheckCircle2 size={13} className="shrink-0" />
-                          <span>Key linked ({selectedProviderMeta.storageKey})</span>
+                          <span className="truncate">
+                            {provider === 'puter'
+                              ? 'Puter Zero-Key Active'
+                              : provider === 'openrouter'
+                              ? 'OpenRouter SSO Linked (300+ models)'
+                              : `Key linked (${selectedProviderMeta.storageKey})`}
+                          </span>
                         </div>
                       ) : (
                         <div className="flex items-center gap-1.5 text-[11px] text-amber-400 font-mono-tabular bg-amber-950/40 border border-amber-800/60 px-2 py-1 rounded-xs">
                           <AlertTriangle size={13} className="shrink-0" />
-                          <span>No key in Vault! Open Settings [⚙️] to configure.</span>
+                          <span className="truncate">
+                            {provider === 'openrouter'
+                              ? 'OpenRouter unlinked. Connect in Settings [⚙️].'
+                              : `No key in Vault! Configure in Settings [⚙️].`}
+                          </span>
                         </div>
                       )}
                     </div>

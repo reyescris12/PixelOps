@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { useTheme } from './ThemeContext';
 import type { RoomId } from '../components/SpriteCanvas';
+import type { AgentProvider } from '../services/agentStore';
 
 export type SpriteVariant =
   | 'trenchcoat'
@@ -572,7 +573,7 @@ export interface CrewAgentState {
   missionsCompleted: number;
   clearanceLevel: ClearanceLevelNumber;
   serviceRibbons: string[];
-  provider?: 'gemini' | 'anthropic' | 'openai' | 'groq';
+  provider?: AgentProvider;
   model?: string;
 }
 
@@ -592,7 +593,7 @@ export interface RecruitedAgentPayload {
   missionsCompleted?: number;
   clearanceLevel?: ClearanceLevelNumber;
   serviceRibbons?: string[];
-  provider?: 'gemini' | 'anthropic' | 'openai' | 'groq';
+  provider?: AgentProvider;
   model?: string;
 }
 
@@ -615,7 +616,7 @@ interface CrewContextValue {
       spriteVariant?: SpriteVariant;
       xp?: number;
       missionsCompleted?: number;
-      provider?: 'gemini' | 'anthropic' | 'openai' | 'groq';
+      provider?: AgentProvider;
       model?: string;
     }
   ) => void;
@@ -631,7 +632,7 @@ interface CrewContextValue {
     spriteVariant: SpriteVariant;
     currentRoom: RoomId;
     assignedTools?: string[];
-    provider?: 'gemini' | 'anthropic' | 'openai' | 'groq';
+    provider?: AgentProvider;
     model?: string;
   }) => string;
   dismissAgent: (id: string) => void;
@@ -704,7 +705,7 @@ interface StoredAgentCustomization {
   missionsCompleted?: number;
   clearanceLevel?: ClearanceLevelNumber;
   serviceRibbons?: string[];
-  provider?: 'gemini' | 'anthropic' | 'openai' | 'groq';
+  provider?: AgentProvider;
   model?: string;
 }
 
@@ -986,7 +987,7 @@ export const CrewProvider: React.FC<{ children: React.ReactNode }> = ({ children
         spriteVariant?: SpriteVariant;
         xp?: number;
         missionsCompleted?: number;
-        provider?: 'gemini' | 'anthropic' | 'openai' | 'groq';
+        provider?: AgentProvider;
         model?: string;
       }
     ) => {
@@ -1077,7 +1078,7 @@ export const CrewProvider: React.FC<{ children: React.ReactNode }> = ({ children
       spriteVariant: SpriteVariant;
       currentRoom: RoomId;
       assignedTools?: string[];
-      provider?: 'gemini' | 'anthropic' | 'openai' | 'groq';
+      provider?: AgentProvider;
       model?: string;
     }): string => {
       const newId = `rec_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;

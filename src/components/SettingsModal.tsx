@@ -68,6 +68,8 @@ import {
   disconnectOpenRouter,
   testOpenRouterConnection,
   OPENROUTER_SUPPORTED_MODELS,
+  OPENROUTER_FREE_MODELS,
+  OPENROUTER_FLAGSHIP_MODELS,
 } from '../services/OpenRouterAuth';
 
 interface SettingsModalProps {
@@ -738,29 +740,86 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   ) : (
                     <div className="flex flex-col gap-2">
                       {/* Model Selector Pills */}
-                      <div className="flex flex-col gap-1">
-                        <label className="text-[10px] text-slate-400 font-mono-tabular uppercase">
-                          Selected Model
-                        </label>
-                        <div className="flex flex-wrap gap-1">
-                          {OPENROUTER_SUPPORTED_MODELS.map((m) => {
-                            const isSelected = openRouterModel === m.id;
-                            return (
-                              <button
-                                key={m.id}
-                                type="button"
-                                onClick={() => handleOpenRouterSelectModel(m.id)}
-                                className={`px-2 py-0.5 rounded text-[10px] font-mono-tabular border cursor-pointer transition-colors ${
-                                  isSelected
-                                    ? 'bg-indigo-900/70 border-indigo-400 text-indigo-200 font-bold'
-                                    : 'bg-[#151329] border-slate-800 text-slate-400 hover:text-slate-200'
-                                }`}
-                                title={m.context}
-                              >
-                                {m.name}
-                              </button>
-                            );
-                          })}
+                      <div className="flex flex-col gap-2">
+                        <div className="flex items-center justify-between">
+                          <label className="text-[10px] text-slate-400 font-mono-tabular uppercase font-semibold">
+                            OpenRouter Models
+                          </label>
+                          <div className="flex items-center gap-1.5 text-[10px] font-mono-tabular">
+                            <span className="text-emerald-400 font-bold">12+ Free Models</span>
+                            <span className="text-slate-600">·</span>
+                            <span className="text-indigo-400 truncate max-w-[200px]" title={openRouterModel}>
+                              Active: {openRouterModel}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Free Tier Models */}
+                        <div className="flex flex-col gap-1 p-2 rounded bg-emerald-950/20 border border-emerald-900/40">
+                          <div className="text-[9px] text-emerald-400 font-mono-tabular font-bold uppercase tracking-wider flex items-center justify-between">
+                            <span className="flex items-center gap-1.5">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                              <span>Zero-Cost Free Models (No Credits Required)</span>
+                            </span>
+                            <span className="text-[9px] text-emerald-500/80">100% Free Tier</span>
+                          </div>
+                          <div className="flex flex-wrap gap-1">
+                            {OPENROUTER_FREE_MODELS.map((m) => {
+                              const isSelected = openRouterModel === m.id;
+                              return (
+                                <button
+                                  key={m.id}
+                                  type="button"
+                                  onClick={() => handleOpenRouterSelectModel(m.id)}
+                                  className={`px-2 py-0.5 rounded text-[10px] font-mono-tabular border cursor-pointer transition-colors flex items-center gap-1 ${
+                                    isSelected
+                                      ? 'bg-emerald-900 border-emerald-400 text-emerald-100 font-bold shadow-[0_0_8px_rgba(16,185,129,0.35)]'
+                                      : 'bg-[#151329] border-emerald-900/40 text-emerald-300/80 hover:border-emerald-500/60 hover:text-emerald-200'
+                                  }`}
+                                  title={m.context}
+                                >
+                                  <span className="text-[8px] px-1 rounded bg-emerald-950 text-emerald-400 font-semibold border border-emerald-800/40">
+                                    FREE
+                                  </span>
+                                  <span>{m.name.replace(' (Free)', '')}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+
+                        {/* Flagship Models */}
+                        <div className="flex flex-col gap-1 p-2 rounded bg-indigo-950/20 border border-indigo-900/40">
+                          <div className="text-[9px] text-indigo-400 font-mono-tabular font-bold uppercase tracking-wider flex items-center justify-between">
+                            <span className="flex items-center gap-1.5">
+                              <span className="w-1.5 h-1.5 rounded-full bg-indigo-400" />
+                              <span>Flagship Frontier Models (Credits Required)</span>
+                            </span>
+                            <span className="text-[9px] text-indigo-400/70">Paid Tier</span>
+                          </div>
+                          <div className="flex flex-wrap gap-1">
+                            {OPENROUTER_FLAGSHIP_MODELS.map((m) => {
+                              const isSelected = openRouterModel === m.id;
+                              return (
+                                <button
+                                  key={m.id}
+                                  type="button"
+                                  onClick={() => handleOpenRouterSelectModel(m.id)}
+                                  className={`px-2 py-0.5 rounded text-[10px] font-mono-tabular border cursor-pointer transition-colors flex items-center gap-1 ${
+                                    isSelected
+                                      ? 'bg-indigo-900/80 border-indigo-400 text-indigo-100 font-bold shadow-[0_0_8px_rgba(99,102,241,0.35)]'
+                                      : 'bg-[#151329] border-indigo-900/40 text-indigo-300/70 hover:border-indigo-500/60 hover:text-indigo-200'
+                                  }`}
+                                  title={m.context}
+                                >
+                                  <span className="text-[8px] px-1 rounded bg-indigo-950 text-indigo-400 font-semibold border border-indigo-800/40">
+                                    PAID
+                                  </span>
+                                  <span>{m.name}</span>
+                                </button>
+                              );
+                            })}
+                          </div>
                         </div>
                       </div>
 

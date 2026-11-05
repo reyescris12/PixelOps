@@ -11,7 +11,7 @@ import { getAgentModelConfig, AgentProvider } from './agentStore';
 import { ModelGateway } from './ModelGateway';
 import { workstationSupportsTool } from './PlacedGearService';
 import { loadCustomPlugins, executeCustomPlugin } from './PluginMarketplaceService';
-import { getLast50Commands, ledgerDb } from './CommandLedgerDb';
+import { getLast50Commands, ledgerDb, recordAgentMemory, getAgentMemoriesForAgent } from './CommandLedgerDb';
 import { getPluginCredential } from '../engine/pluginAuthManager';
 import {
   COMPOSIO_BASE_URL,
@@ -2360,22 +2360,55 @@ ${findings || 'No additional telemetry findings attached.'}
     if (name === 'memory_vector_lookup' || name === 'memory_lookup') {
       const query = String(args.query || '').trim().toLowerCase();
       const agentId = args.agentId ? String(args.agentId).toLowerCase() : null;
-      const limit = Math.min(10, Math.max(1, Number(args.limit) || 5));
+      const limit = Math.min(25, Math.max(1, Number(args.limit) || 10));
+
+      const isGeneralQuery =
+        !query ||
+        [
+          'all',
+          'everything',
+          'recent',
+          'history',
+          'past',
+          'memories',
+          '*',
+          'what do you remember',
+          'previous',
+          'notes',
+          'last',
+        ].includes(query);
+
+      const queryTokens = query.split(/\s+/).filter((t) => t.length > 2);
 
       let matchingCommands: any[] = [];
       try {
         const commands = await getLast50Commands();
-        matchingCommands = commands.filter((cmd) => {
-          if (agentId && !cmd.involved_agent.toLowerCase().includes(agentId)) {
-            return false;
+        const agentFiltered = commands.filter((cmd) => {
+          if (!agentId) return true;
+          const a = cmd.involved_agent.toLowerCase();
+          return a.includes(agentId) || agentId.includes(a);
+        });
+
+        if (isGeneralQuery) {
+          matchingCommands = agentFiltered.slice(0, limit);
+        } else {
+          matchingCommands = agentFiltered.filter((cmd) => {
+            const input = cmd.command_input.toLowerCase();
+            const res = cmd.result_summary.toLowerCase();
+            const tool = cmd.tool_used.toLowerCase();
+            return (
+              input.includes(query) ||
+              res.includes(query) ||
+              tool.includes(query) ||
+              (queryTokens.length > 0 && queryTokens.some((tok) => input.includes(tok) || res.includes(tok)))
+            );
+          }).slice(0, limit);
+
+          // If no specific match, fallback to latest records
+          if (matchingCommands.length === 0) {
+            matchingCommands = agentFiltered.slice(0, Math.min(5, limit));
           }
-          if (!query) return true;
-          return (
-            cmd.command_input.toLowerCase().includes(query) ||
-            cmd.result_summary.toLowerCase().includes(query) ||
-            cmd.tool_used.toLowerCase().includes(query)
-          );
-        }).slice(0, limit);
+        }
       } catch {
         matchingCommands = [];
       }
@@ -2383,23 +2416,40 @@ ${findings || 'No additional telemetry findings attached.'}
       let matchingMemories: any[] = [];
       try {
         const memories = await ledgerDb.agent_memories.toArray();
-        matchingMemories = memories.filter((mem) => {
-          if (agentId && mem.agentId.toLowerCase() !== agentId) {
-            return false;
+        const agentFilteredMem = memories
+          .filter((mem) => {
+            if (!agentId) return true;
+            const a = mem.agentId.toLowerCase();
+            return a.includes(agentId) || agentId.includes(a);
+          })
+          .reverse();
+
+        if (isGeneralQuery) {
+          matchingMemories = agentFilteredMem.slice(0, limit);
+        } else {
+          matchingMemories = agentFilteredMem.filter((mem) => {
+            const p = mem.prompt.toLowerCase();
+            const s = mem.summary.toLowerCase();
+            return (
+              p.includes(query) ||
+              s.includes(query) ||
+              (queryTokens.length > 0 && queryTokens.some((tok) => p.includes(tok) || s.includes(tok)))
+            );
+          }).slice(0, limit);
+
+          // If no specific match found, fallback to latest memories so agent always recalls context
+          if (matchingMemories.length === 0) {
+            matchingMemories = agentFilteredMem.slice(0, Math.min(5, limit));
           }
-          if (!query) return true;
-          return (
-            mem.prompt.toLowerCase().includes(query) ||
-            mem.summary.toLowerCase().includes(query)
-          );
-        }).slice(0, limit);
+        }
       } catch {
         matchingMemories = [];
       }
 
+      const totalFound = matchingCommands.length + matchingMemories.length;
       const memoryPayload = {
         status: 'ok',
-        query,
+        query: query || 'all_records',
         agentId,
         matchedCommandsCount: matchingCommands.length,
         matchedMemoriesCount: matchingMemories.length,
@@ -2408,10 +2458,9 @@ ${findings || 'No additional telemetry findings attached.'}
         queriedAt: new Date().toISOString(),
       };
 
-      const totalFound = matchingCommands.length + matchingMemories.length;
       const summary = totalFound > 0
-        ? `Memory Lookup ("${query}"): Found ${totalFound} historical notes across command ledger`
-        : `Memory Lookup ("${query}"): No matching records found in active memory`;
+        ? `Memory Lookup ("${query || 'all'}"): Retrieved ${totalFound} historical memory and command records`
+        : `Memory Lookup: Active ledger accessed (0 historical records yet recorded)`;
 
       return {
         id: fc.id,
@@ -4676,6 +4725,25 @@ export async function ensureReportPersistedAndAnnotated(
   const verifiedCard = verifyQuantitativeTelemetryGate(card, prompt, card.toolCalls || []);
   const dialogue = verifiedCard.dialogue || '';
 
+  // Auto-record every completed interaction into persistent long-term memory (Dexie DB + Sync)
+  if (prompt && dialogue && !dialogue.includes('CONNECTION ERROR:') && !dialogue.includes('AUTH_ERROR')) {
+    try {
+      const agentId = (params.activeAgentName || 'operative').toLowerCase().replace(/\s+/g, '_');
+      const cleanSummary = dialogue
+        .replace(/\[AGENT_ACTION:[\s\S]*?\[\/AGENT_ACTION\]/gi, '')
+        .replace(/\[AGENT_STATUS:\s*(COMPLETE|WORKING)\]/gi, '')
+        .replace(/\n*📁 \*\*\[WORKSPACE REPORT UPLOADED\]\*\*[\s\S]*$/, '')
+        .trim()
+        .slice(0, 600);
+
+      recordAgentMemory({
+        agentId,
+        prompt: prompt.slice(0, 400),
+        summary: cleanSummary || 'Directive completed.',
+      }).catch((err) => console.warn('[ApiService] Failed to auto-persist agent memory:', err));
+    } catch {}
+  }
+
   const isReport = isReportDirective(prompt);
   if (!isReport) {
     return verifiedCard;
@@ -5034,13 +5102,52 @@ export async function executeAgentDirective(params: {
       }
 
       const declaredToolNames = activeDeclarations.map((d) => d.name).join(', ');
+
+      // Load and augment long-term memory log from params and Dexie DB
+      let effectiveMemoryLog: Array<{ timestamp?: string; prompt: string; summary: string }> =
+        Array.isArray(params.agentMemoryLog) ? [...params.agentMemoryLog] : [];
+
+      if (effectiveMemoryLog.length < 15) {
+        try {
+          const agentKey = (params.activeAgentName || '').toLowerCase().replace(/\s+/g, '_');
+          const allDbMems = await ledgerDb.agent_memories.toArray();
+          const matchedDbMems = allDbMems
+            .filter((m) => {
+              if (!m.agentId) return true;
+              const aid = m.agentId.toLowerCase();
+              return aid.includes(agentKey) || agentKey.includes(aid) || !agentKey;
+            })
+            .reverse();
+
+          for (const dbm of matchedDbMems) {
+            if (!effectiveMemoryLog.some((em) => em.prompt === dbm.prompt)) {
+              effectiveMemoryLog.push({
+                timestamp: dbm.timestamp,
+                prompt: dbm.prompt,
+                summary: dbm.summary,
+              });
+            }
+            if (effectiveMemoryLog.length >= 40) break;
+          }
+        } catch {}
+      }
+
       const memoryContextStr =
-        Array.isArray(params.agentMemoryLog) && params.agentMemoryLog.length > 0
-          ? `\n\nYour Individual Memory Log (Recent tasks completed):\n` +
-            params.agentMemoryLog
-              .slice(0, 5)
-              .map((m: any) => `- [${m.timestamp}] Directive: "${m.prompt}" -> Summary: ${m.summary}`)
-              .join('\n')
+        effectiveMemoryLog.length > 0
+          ? `\n\n### PERSISTENT LONG-TERM MEMORY LEDGER (Your Past Experience & Instructions):
+You have continuous persistent long-term memory. You remember all past conversations, completed tasks, findings, and user preferences recorded below:
+${effectiveMemoryLog
+  .slice(0, 30)
+  .map(
+    (m: any, i: number) =>
+      `[Memory #${i + 1} | ${m.timestamp ? new Date(m.timestamp).toLocaleString() : 'Recorded'}]\n• Directive: "${m.prompt}"\n• Result / Facts: ${m.summary}`
+  )
+  .join('\n\n')}
+
+CRITICAL MEMORY RECALL INSTRUCTION:
+- You remember everything the user has ever told you and all tasks in this memory ledger.
+- If the user asks what you remember, references past directives, asks about previous work, or follow-up questions, actively draw upon and cite these memories.
+- NEVER say you don't have memory or cannot recall past interactions.`
           : '';
 
       // Clean-slate system instruction: Purged of all restrictive protocols, conflicting rules, and bloated constraints
@@ -5051,6 +5158,10 @@ export async function executeAgentDirective(params: {
 
       if (declaredToolNames) {
         systemInstruction += `\n\n### Available Tools & Integrations:\n${declaredToolNames}\nWhen executing external or connected tool operations (e.g. GitHub, Slack, Gmail, Google Calendar, Notion, Linear, web search, code sandbox, file storage), you can invoke them directly or emit a structured action tag in your response:\n[AGENT_ACTION: <tool_name>] { "param": "value" } [/AGENT_ACTION]`;
+      }
+
+      if (memoryContextStr) {
+        systemInstruction += `\n${memoryContextStr}`;
       }
 
       // Multi-Provider Execution Gateway: Route to Puter, OpenRouter, OpenAI, Groq, or Anthropic

@@ -19,6 +19,7 @@ interface DispatchRequest {
   activeAgentRole?: string;
   systemPrompt?: string;
   temperature?: number;
+  agentMemoryLog?: Array<{ timestamp?: string; prompt: string; summary: string }>;
 }
 
 const CORS_HEADERS = {
@@ -61,6 +62,7 @@ export async function onRequestPost(context: { request: Request; env: Env }): Pr
       activeAgentRole = 'Lead Strategist',
       systemPrompt,
       temperature = 0.7,
+      agentMemoryLog = [],
     } = body;
 
     if (!message || !message.trim()) {
@@ -266,9 +268,21 @@ DYNAMIC REAL-TIME QUERY FORMULATION & NUMERICAL EXTRACTION PROTOCOL:
 - STRUCTURED PRICE/DATA EXTRACTION (RULE 3):
   * Whenever tool outputs or search snippets return raw financial or metric data (prices, percentage deltas, version strings, dollar amounts), you MUST parse the actual numerical values directly into your telemetry table rather than falling back to general conceptual descriptions.`;
 
-    const systemInstruction = systemPrompt
+    const memoryContextStr =
+      Array.isArray(agentMemoryLog) && agentMemoryLog.length > 0
+        ? `\n\n### PERSISTENT LONG-TERM MEMORY LEDGER:\nYou have persistent memory of past directives and completed tasks:\n${agentMemoryLog
+            .slice(0, 30)
+            .map((m: any, i: number) => `[Memory #${i + 1} | ${m.timestamp || 'Recorded'}] Directive: "${m.prompt}" -> Summary: ${m.summary}`)
+            .join('\n\n')}\n\nActively cite and recall these memories whenever relevant.`
+        : '';
+
+    let systemInstruction = systemPrompt
       ? `${baseSystemInstruction}\n\n[USER-SPECIFIED AGENT DIRECTIVES]\n${systemPrompt}`
       : baseSystemInstruction;
+
+    if (memoryContextStr) {
+      systemInstruction += memoryContextStr;
+    }
 
     // 4. Hardened Multi-Turn Execution & Self-Correcting Tool Loop
     const conversationHistory: any[] = [

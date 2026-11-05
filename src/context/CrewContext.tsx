@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, useCallback, use
 import { useTheme } from './ThemeContext';
 import type { RoomId } from '../components/SpriteCanvas';
 import type { AgentProvider } from '../services/agentStore';
+import { recordAgentMemory, clearAgentMemoriesForAgent } from '../services/CommandLedgerDb';
 
 export type SpriteVariant =
   | 'trenchcoat'
@@ -1017,11 +1018,18 @@ export const CrewProvider: React.FC<{ children: React.ReactNode }> = ({ children
         summary: entry.summary,
       };
 
+      // Persist to IndexedDB long-term memory table
+      recordAgentMemory({
+        agentId: id,
+        prompt: entry.prompt,
+        summary: entry.summary,
+      }).catch((err) => console.warn('[CrewContext] Failed to persist agent memory in Dexie:', err));
+
       if (id.startsWith('rec_')) {
         setRecruitedAgents((prev) =>
           prev.map((r) =>
             r.id === id
-              ? { ...r, memoryLog: [newEntry, ...(r.memoryLog || [])].slice(0, 30) }
+              ? { ...r, memoryLog: [newEntry, ...(r.memoryLog || [])].slice(0, 100) }
               : r
           )
         );
@@ -1033,7 +1041,7 @@ export const CrewProvider: React.FC<{ children: React.ReactNode }> = ({ children
             ...prev,
             [id]: {
               ...current,
-              memoryLog: [newEntry, ...oldLog].slice(0, 30),
+              memoryLog: [newEntry, ...oldLog].slice(0, 100),
             },
           };
         });
@@ -1043,6 +1051,11 @@ export const CrewProvider: React.FC<{ children: React.ReactNode }> = ({ children
   );
 
   const clearAgentMemory = useCallback((id: string) => {
+    // Clear in persistent Dexie DB
+    clearAgentMemoriesForAgent(id).catch((err) =>
+      console.warn('[CrewContext] Failed to clear agent memories in Dexie:', err)
+    );
+
     if (id.startsWith('rec_')) {
       setRecruitedAgents((prev) =>
         prev.map((r) => (r.id === id ? { ...r, memoryLog: [] } : r))

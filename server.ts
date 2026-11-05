@@ -1671,11 +1671,13 @@ async function startServer() {
       const declaredToolNames = activeDeclarations.map((d) => d.name).join(', ');
       const memoryContextStr =
         Array.isArray(agentMemoryLog) && agentMemoryLog.length > 0
-          ? `\n\nYour Individual Memory Log (Recent tasks completed):\n` +
+          ? `\n\n### PERSISTENT LONG-TERM MEMORY LEDGER (Your Past Experience & Instructions):\n` +
+            `You have continuous persistent long-term memory. You remember all past conversations, completed tasks, findings, and user preferences recorded below:\n` +
             agentMemoryLog
-              .slice(0, 5)
-              .map((m: any) => `- [${m.timestamp}] Directive: "${m.prompt}" -> Summary: ${m.summary}`)
-              .join('\n')
+              .slice(0, 30)
+              .map((m: any, i: number) => `[Memory #${i + 1} | ${m.timestamp ? new Date(m.timestamp).toLocaleString() : 'Recorded'}]\n• Directive: "${m.prompt}"\n• Result / Facts: ${m.summary}`)
+              .join('\n\n') +
+            `\n\nCRITICAL MEMORY RECALL INSTRUCTION:\n- You remember everything the user has ever told you and all tasks in this memory ledger.\n- If the user asks what you remember, references past directives, asks about previous work, or follow-up questions, actively draw upon and cite these memories.\n- NEVER say you don't have memory or cannot recall past interactions.`
           : '';
 
       const systemInstruction = agentSystemPrompt
@@ -1853,11 +1855,13 @@ When the user asks to search the web, look up real-world facts, news, flights, c
 
       const memoryContextStr =
         Array.isArray(agentMemoryLog) && agentMemoryLog.length > 0
-          ? `\n\nYour Individual Memory Log (Recent tasks completed):\n` +
+          ? `\n\n### PERSISTENT LONG-TERM MEMORY LEDGER (Your Past Experience & Instructions):\n` +
+            `You have continuous persistent long-term memory. You remember all past conversations, completed tasks, findings, and user preferences recorded below:\n` +
             agentMemoryLog
-              .slice(0, 5)
-              .map((m: any) => `- [${m.timestamp}] Directive: "${m.prompt}" -> Summary: ${m.summary}`)
-              .join('\n')
+              .slice(0, 30)
+              .map((m: any, i: number) => `[Memory #${i + 1} | ${m.timestamp ? new Date(m.timestamp).toLocaleString() : 'Recorded'}]\n• Directive: "${m.prompt}"\n• Result / Facts: ${m.summary}`)
+              .join('\n\n') +
+            `\n\nCRITICAL MEMORY RECALL INSTRUCTION:\n- You remember everything the user has ever told you and all tasks in this memory ledger.\n- If the user asks what you remember, references past directives, asks about previous work, or follow-up questions, actively draw upon and cite these memories.\n- NEVER say you don't have memory or cannot recall past interactions.`
           : '';
 
       const systemInstruction = agentSystemPrompt
@@ -2348,11 +2352,13 @@ ROUNDTABLE RULES:
 
       const memoryContextStr =
         Array.isArray(agentMemoryLog) && agentMemoryLog.length > 0
-          ? `\n\nYour Individual Memory Log (Recent tasks completed):\n` +
+          ? `\n\n### PERSISTENT LONG-TERM MEMORY LEDGER (Your Past Experience & Instructions):\n` +
+            `You have continuous persistent long-term memory. You remember all past conversations, completed tasks, findings, and user preferences recorded below:\n` +
             agentMemoryLog
-              .slice(0, 5)
-              .map((m: any) => `- [${m.timestamp}] Directive: "${m.prompt}" -> Summary: ${m.summary}`)
-              .join('\n')
+              .slice(0, 30)
+              .map((m: any, i: number) => `[Memory #${i + 1} | ${m.timestamp ? new Date(m.timestamp).toLocaleString() : 'Recorded'}]\n• Directive: "${m.prompt}"\n• Result / Facts: ${m.summary}`)
+              .join('\n\n') +
+            `\n\nCRITICAL MEMORY RECALL INSTRUCTION:\n- You remember everything the user has ever told you and all tasks in this memory ledger.\n- If the user asks what you remember, references past directives, asks about previous work, or follow-up questions, actively draw upon and cite these memories.\n- NEVER say you don't have memory or cannot recall past interactions.`
           : '';
 
       const systemInstruction = agentSystemPrompt

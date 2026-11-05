@@ -190,6 +190,11 @@ export async function appendAgentMemoryEntry(entry: {
 }
 
 /**
+ * Alias for appendAgentMemoryEntry for convenient semantic recording.
+ */
+export const recordAgentMemory = appendAgentMemoryEntry;
+
+/**
  * Retrieves isolated memory logs for a specific agent from IndexedDB.
  */
 export async function getAgentMemoriesForAgent(agentId: string): Promise<AgentMemoryDbEntry[]> {

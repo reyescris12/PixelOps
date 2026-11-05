@@ -59,6 +59,8 @@ export function loadLLMProviderConfig(): LLMProviderConfig {
         localStorage.getItem('pixelops_gemini_api_key') ||
         localStorage.getItem('gemini_api_key') ||
         localStorage.getItem('apiKey') ||
+        (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GEMINI_API_KEY) ||
+        (typeof import.meta !== 'undefined' && (import.meta as any).env?.GEMINI_API_KEY) ||
         (typeof globalThis !== 'undefined' && (globalThis as any).process?.env?.GEMINI_API_KEY) ||
         (typeof globalThis !== 'undefined' && (globalThis as any).process?.env?.VITE_GEMINI_API_KEY) ||
         '';

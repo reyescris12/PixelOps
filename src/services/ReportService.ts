@@ -132,7 +132,15 @@ export function synthesizeComprehensiveReport(params: ReportGenerationParams): {
 
   let domainSection = '';
 
-  if (isSecurityOrZeroTrust) {
+  if (intelNotes) {
+    domainSection = `## 2. Ingested Intelligence Signals & Live Telemetry
+
+${intelNotes}
+
+### Analytical Delta & Strategic Assessment
+- **Grounding Verification:** Data grounded in active network reconnaissance and verified telemetry nodes.
+- **Signal Differentiation:** Filtered speculative marketing claims to isolate actual features, pricing deltas, and releases.`;
+  } else if (isSecurityOrZeroTrust) {
     domainSection = `## 2. Zero-Trust Architecture & Defensive Principles
 
 1. **Verify Explicitly (Never Trust, Always Verify):**

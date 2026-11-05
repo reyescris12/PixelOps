@@ -708,11 +708,35 @@ async function executeBackendWebSearch(query: string): Promise<any> {
     }
   }
 
+  // Extract concise core search keywords without noise or query pollution
+  let cleanCore = cleanQ
+    .replace(/^(?:vance|cipher|nyx|agent\s+\w+|operative\s+\w+)[,:\s-]+/i, '')
+    .replace(/^(?:please\s+)?(?:search(?:\s+the\s+web)?(?:\s+for)?|look\s+up|find(?:\s+out)?(?:\s+about)?|research|investigate|query|browse|google|fetch|check(?:\s+the)?)\s+/i, '')
+    .replace(/\s+(?:and\s+)?(?:compile|write|generate|draft|save|create|put|summarize|give\s+me|report|output).*$/i, '')
+    .replace(/["'`“”]/g, '')
+    .trim();
+
+  const urlMatch = cleanCore.match(/https?:\/\/([^\s\/$.?#].[^\s]*)/i);
+  if (urlMatch) {
+    try {
+      const u = new URL(urlMatch[0]);
+      const host = u.hostname.replace(/^www\./i, '');
+      const brand = host.split('.')[0];
+      const pathPart = u.pathname.replace(/^\/+|\/+$/g, '').replace(/[-_/]/g, ' ');
+      cleanCore = `${brand} ${pathPart}`.trim();
+    } catch {}
+  } else {
+    cleanCore = cleanCore.replace(/\.(com|org|io|dev|app|ai|so|co|net)\b/gi, ' ');
+  }
+  cleanCore = cleanCore.replace(/\b(monitor|surveillance|shifts|tracking|updates|news|recon|sweep|intel|for|the|and|check|against|condition|baseline|2026)\b/gi, ' ');
+  cleanCore = cleanCore.replace(/[^a-zA-Z0-9\s_-]/g, ' ').replace(/\s+/g, ' ').trim();
+  const searchTerm = cleanCore && cleanCore.length > 2 ? cleanCore : cleanQ;
+
   // Algolia HackerNews Search
   if (results.length < 3) {
     try {
       const hnRes = await fetch(
-        `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(cleanQ)}&tags=story&hitsPerPage=3`
+        `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(searchTerm)}&tags=story&hitsPerPage=3`
       );
       if (hnRes.ok) {
         const hnData: any = await hnRes.json();
@@ -731,7 +755,7 @@ async function executeBackendWebSearch(query: string): Promise<any> {
   if (results.length < 2) {
     try {
       const wikiRes = await fetch(
-        `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(cleanQ)}&utf8=&format=json&origin=*&srlimit=2`
+        `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(searchTerm)}&utf8=&format=json&origin=*&srlimit=2`
       );
       if (wikiRes.ok) {
         const wikiData: any = await wikiRes.json();

@@ -30,6 +30,57 @@ import {
   extractNumericalMetrics,
   ExtractedNumericalMetrics,
 } from '../services/ApiService';
+import { loadLLMProviderConfig } from '../services/LLMProviderService';
+
+/**
+ * Extracts a concise, clean entity or domain keyword string for search queries,
+ * eliminating URL syntax, boilerplate words, and query pollution.
+ */
+export function extractCleanSearchQueryForTarget(
+  targetName: string,
+  targetScope?: string
+): { primary: string; scopeSnippet: string } {
+  let name = String(targetName || '').trim();
+  const scope = String(targetScope || '').trim();
+
+  // 1. If targetName is a URL: extract domain and relevant path segment
+  const urlMatch = name.match(/https?:\/\/([^\s\/$.?#].[^\s]*)/i);
+  if (urlMatch) {
+    try {
+      const u = new URL(urlMatch[0]);
+      const host = u.hostname.replace(/^www\./i, '');
+      const brand = host.split('.')[0];
+      const pathPart = u.pathname.replace(/^\/+|\/+$/g, '').replace(/[-_/]/g, ' ');
+      name = `${brand} ${pathPart}`.trim();
+    } catch {}
+  } else {
+    name = name.replace(/\.(com|org|io|dev|app|ai|so|co|net)\b/gi, ' ');
+  }
+
+  // 2. Clean out punctuation and symbols
+  name = name.replace(/[^a-zA-Z0-9\s_-]/g, ' ').replace(/\s+/g, ' ').trim();
+
+  // 3. Detect intent from target name and scope
+  const combined = `${name} ${scope}`.toLowerCase();
+  const isPricingOrMarket = /\b(price|pricing|cost|costs|rate|rates|fee|fees|tier|tiers|subscription|market|ticker|crypto|token|coin|btc|eth|sol)\b/i.test(combined);
+  const isChangelogOrRelease = /\b(release|releases|changelog|version|patch|update|updates|cve|vulnerability)\b/i.test(combined);
+
+  let query = name;
+  if (isPricingOrMarket) {
+    if (!/\b(price|pricing|cost)\b/i.test(query)) {
+      query = `${query} pricing`;
+    }
+  } else if (isChangelogOrRelease) {
+    if (!/\b(release|changelog|update)\b/i.test(query)) {
+      query = `${query} updates`;
+    }
+  }
+
+  return {
+    primary: query.trim() || 'Technology Analysis',
+    scopeSnippet: scope.slice(0, 50),
+  };
+}
 
 export type PlaybookId =
   | 'wiretap_watch'
@@ -618,16 +669,15 @@ export function getPlaybookForRoom(roomId: RoomId): IntelligencePlaybookDef | nu
  */
 async function generateAIEnhancedDossier(prompt: string, fallbackDossier: string): Promise<string> {
   try {
-    let apiKey = '';
-    try {
-      apiKey =
-        localStorage.getItem('pixelops_gemini_api_key') ||
-        localStorage.getItem('gemini_api_key') ||
-        '';
-    } catch {}
-
-    if (!apiKey || apiKey.trim() === '' || apiKey === 'MY_GEMINI_API_KEY') {
-      return fallbackDossier;
+    const config = loadLLMProviderConfig();
+    let apiKey = (config.apiKey || '').trim();
+    if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
+      try {
+        apiKey =
+          localStorage.getItem('pixelops_gemini_api_key') ||
+          localStorage.getItem('gemini_api_key') ||
+          '';
+      } catch {}
     }
 
     const enforcedPrompt = `[GLOBAL DIRECTIVE: AUTONOMOUS INTELLIGENCE & ZERO-MOCK EXECUTION]
@@ -640,26 +690,49 @@ STRICT EXECUTION PROTOCOLS:
 
 ${prompt}`;
 
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey.trim())}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{ role: 'user', parts: [{ text: enforcedPrompt }] }],
-          generationConfig: {
-            temperature: 0.2,
-          },
-        }),
-      }
-    );
+    if (apiKey && apiKey !== 'MY_GEMINI_API_KEY') {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey.trim())}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: [{ text: enforcedPrompt }] }],
+            generationConfig: {
+              temperature: 0.2,
+            },
+          }),
+        }
+      );
 
-    if (response.ok) {
-      const data = await response.json();
-      const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
-      if (text && text.trim().length > 100) {
-        return text.trim();
+      if (response.ok) {
+        const data = await response.json();
+        const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        if (text && text.trim().length > 100) {
+          return text.trim();
+        }
       }
+    } else {
+      // If client key is not set, attempt Cloudflare backend proxy dispatch
+      try {
+        const proxyRes = await fetch('/api/agent/dispatch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            message: enforcedPrompt,
+            agentName: 'Agent Vance',
+            activeAgentRole: 'Command Operations Chief',
+            systemPrompt: 'You are an autonomous intelligence operative compiling a classified dossier. Adhere strictly to the structured schema.',
+            temperature: 0.2,
+          }),
+        });
+        if (proxyRes.ok) {
+          const proxyData = await proxyRes.json();
+          if (proxyData.dialogue && proxyData.dialogue.trim().length > 100) {
+            return proxyData.dialogue.trim();
+          }
+        }
+      } catch {}
     }
   } catch (err) {
     console.warn('[OSINT DOSSIER GENERATION NOTICE] Using structured heuristic dossier:', err);
@@ -685,10 +758,11 @@ async function runWiretapWatchPipeline(
   let searchHits: any[] = [];
   let extractedMetrics: ExtractedNumericalMetrics = { prices: [], percentages: [], versions: [], rawNumbers: [] };
   try {
+    const cleanQuery = extractCleanSearchQueryForTarget(target.targetName, target.targetScope);
     const searchRes = await executeFunctionCallHandler({
       name: 'live_web_search',
       args: {
-        query: `${target.targetName} ${target.targetScope} price updates 2026`,
+        query: cleanQuery.primary,
         maxResults: 4,
       },
     });
@@ -855,10 +929,11 @@ async function runDeepReconPipeline(
   let searchHits: any[] = [];
   let extractedMetrics: ExtractedNumericalMetrics = { prices: [], percentages: [], versions: [], rawNumbers: [] };
   try {
+    const cleanQuery = extractCleanSearchQueryForTarget(target.targetName, target.targetScope);
     const searchRes = await executeFunctionCallHandler({
       name: 'live_web_search',
       args: {
-        query: `${target.targetName} ${target.targetScope.split(',')[0] || ''} updates news 2026`,
+        query: cleanQuery.primary,
         maxResults: 4,
       },
     });
@@ -1541,10 +1616,11 @@ async function runSyncGithubPipeline(
   onStageUpdate?.(2, 'Blocker & CVE Check: Scanning for breaking deprecations and critical vulnerabilities...');
   let cveHits: any[] = [];
   try {
+    const vulnTarget = repo || target.targetName.split('/').pop() || target.targetName;
     const searchRes = await executeFunctionCallHandler({
       name: 'live_web_search',
       args: {
-        query: `${target.targetName} vulnerability security advisory CVE 2026`,
+        query: `${vulnTarget} vulnerability advisory`,
         maxResults: 3,
       },
     });

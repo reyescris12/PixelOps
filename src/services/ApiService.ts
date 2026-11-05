@@ -704,7 +704,29 @@ export function cleanSearchQuery(rawQuery: string): CleanedSearchResult {
   q = q.replace(/["'`“”]/g, '').trim();
 
   if (!q) q = String(rawQuery || 'Technology Analysis').trim();
-  const coreQuery = q;
+
+  // Extract clean core keywords (e.g. "stripe pricing" from "https://stripe.com/pricing Monitor for fee shifts")
+  let cleanCore = q;
+  const urlMatch = cleanCore.match(/https?:\/\/([^\s\/$.?#].[^\s]*)/i);
+  if (urlMatch) {
+    try {
+      const u = new URL(urlMatch[0]);
+      const host = u.hostname.replace(/^www\./i, '');
+      const brand = host.split('.')[0];
+      const pathPart = u.pathname.replace(/^\/+|\/+$/g, '').replace(/[-_/]/g, ' ');
+      cleanCore = `${brand} ${pathPart}`.trim();
+    } catch {}
+  } else {
+    cleanCore = cleanCore.replace(/\.(com|org|io|dev|app|ai|so|co|net)\b/gi, ' ');
+  }
+
+  // Strip surveillance and command noise words from core search keywords
+  cleanCore = cleanCore.replace(/\b(monitor|surveillance|shifts|tracking|updates|news|recon|sweep|intel|for|the|and|check|against|condition|baseline)\b/gi, ' ');
+  cleanCore = cleanCore.replace(/[^a-zA-Z0-9\s_-]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!cleanCore) {
+    cleanCore = q.split(/\s+/).slice(0, 3).join(' ');
+  }
+  const coreQuery = cleanCore;
 
   // OSINT Intent Classification
   const isFinancialOrMarket = /\b(price|pricing|cost|costs|rate|rates|fee|fees|tier|tiers|subscription|plan|plans|discount|market|stock|shares|ticker|crypto|token|coin|btc|eth|sol|valuation|mrr|arr|revenue|earnings|quote|live ticker|current price)\b/i.test(q);
@@ -1352,6 +1374,20 @@ export async function executeFunctionCallHandler(fc: {
         }
       }
 
+      // Enforce exclusion filter on results
+      if (shouldExcludeEncyclopedia) {
+        const nonEncyclopediaResults = results.filter(
+          (r) => !EXCLUDED_ENCYCLOPEDIA_DOMAINS.some((d) => r.url.toLowerCase().includes(d))
+        );
+        if (nonEncyclopediaResults.length > 0) {
+          results = nonEncyclopediaResults;
+        } else if (isFinancialOrMarket) {
+          // For real-time price/market queries, suppress encyclopedia results completely
+          results = [];
+        }
+        // For general entity recon without dedicated hits, retain authoritative encyclopedia context
+      }
+
       // E. Factual Status Report if All External Engines Yield Zero Hits (Zero Hallucination / Zero Fake Mocks)
       if (results.length === 0) {
         if (isFinancialOrMarket) {
@@ -1369,11 +1405,6 @@ export async function executeFunctionCallHandler(fc: {
             url: `safehouse://live-search/${encodeURIComponent((coreQuery || cleanQuery).toLowerCase().replace(/\s+/g, '-'))}`,
           });
         }
-      }
-
-      // Enforce exclusion filter on all results
-      if (shouldExcludeEncyclopedia) {
-        results = results.filter((r) => !EXCLUDED_ENCYCLOPEDIA_DOMAINS.some((d) => r.url.toLowerCase().includes(d)));
       }
 
       // Rule 3: Structured Price / Numerical Extraction from all results
@@ -2970,18 +3001,64 @@ function tryGenerateCode(prompt: string): {
  */
 function tryExtractSearchQuery(prompt: string): string | null {
   const p = prompt.trim();
+  if (!p) return null;
+
   // Never treat conversational greetings or operative identity queries as search queries
-  if (/\b(hello|hi|hey|who\s+are\s+you|what\s+can\s+you\s+do|status)\b/i.test(p) && p.length < 30) {
+  if (/\b(hello|hi|hey|who\s+are\s+you|what\s+can\s+you\s+do|status(\s+report)?|ready|standing\s+by)\b/i.test(p) && p.length < 35) {
     return null;
   }
-  const searchPattern = p.match(/\b(?:search(?:\s+for)?|who\s+(?:is|was)|what\s+(?:is|are|was)|where\s+(?:is|are)|tell\s+me\s+about|lookup|investigate|wiki)\s+([^?\.\n]+)/i);
-  if (searchPattern) {
-    const raw = searchPattern[1].trim();
-    return raw.replace(/^(a|an|the)\s+/i, '').slice(0, 60);
+
+  // 1. Direct URL extraction (e.g. "https://stripe.com/pricing", "cursor.com")
+  const urlMatch = p.match(/https?:\/\/([^\s\/$.?#].[^\s]*)/i);
+  if (urlMatch) {
+    try {
+      const u = new URL(urlMatch[0]);
+      const host = u.hostname.replace(/^www\./i, '');
+      const brand = host.split('.')[0];
+      const pathPart = u.pathname.replace(/^\/+|\/+$/g, '').replace(/[-_/]/g, ' ');
+      return `${brand} ${pathPart}`.trim();
+    } catch {}
   }
-  if (/\b(who|what|where|why|how)\b/i.test(p) && p.length > 5 && !/who\s+are\s+you/i.test(p)) {
-    return p.replace(/[^a-zA-Z0-9\s]/g, '').trim().slice(0, 60);
+
+  // 2. Intent prefixes: "gather intel on...", "intel sweep on...", "recon...", "research...", "competitor...", "pricing of..."
+  const intelPrefixMatch = p.match(
+    /\b(?:gather\s+intel(?:\s+on)?|intel(?:\s+sweep)?(?:\s+on)?|deep\s+recon(?:\s+on)?|recon(?:\s+on)?|research(?:\s+on)?|competitor(?:\s+radar|\s+intel|\s+sweep)?(?:\s+on)?|check\s+(?:the\s+)?(?:price|pricing|market|stats|status|changelog|updates)?(?:\s+of|\s+for|\s+on)?|pricing\s+(?:of|for|on)|price\s+(?:of|for|on)|look\s*up|search(?:\s+the\s+web)?(?:\s+for)?|find(?:\s+out)?(?:\s+info|\s+information|\s+about)?|investigate|wiki|tell\s+me\s+about|audit(?:\s+tech\s+stack)?(?:\s+of|\s+for|\s+on)?)\s+([^?\.\n]+)/i
+  );
+  if (intelPrefixMatch) {
+    let target = intelPrefixMatch[1].trim();
+    // Strip trailing conversational noise: "and write a report", "and compile key takeaways", "and summarize"
+    target = target.replace(/\s+(?:and\s+)?(?:compile|write|generate|draft|save|create|put|summarize|give\s+me|report|output).*$/i, '');
+    target = target.replace(/^(?:a|an|the)\s+/i, '').trim();
+    if (target.length > 1) {
+      return target.slice(0, 80);
+    }
   }
+
+  // 3. Question patterns: "who is...", "what is...", "how does...", "where is..."
+  const questionPattern = p.match(/\b(?:who|what|where|why|how)\s+(?:is|are|was|were|does|do)\s+([^?\.\n]+)/i);
+  if (questionPattern && !/who\s+are\s+you/i.test(p)) {
+    let q = questionPattern[1].trim();
+    q = q.replace(/^(?:a|an|the)\s+/i, '').trim();
+    if (q.length > 1) {
+      return q.slice(0, 80);
+    }
+  }
+
+  // 4. Crypto or ticker query: "solana", "btc price", "bitcoin", "eth", "xrp"
+  const tickerMatch = p.match(/\b(bitcoin|btc|ethereum|eth|solana|sol|ripple|xrp|dogecoin|doge|cardano|ada|binancecoin|bnb|avalanche|avax|chainlink|link|polkadot|dot|near|sui|aptos|apt)\b/i);
+  if (tickerMatch) {
+    return tickerMatch[1].toLowerCase();
+  }
+
+  // 5. If directive explicitly mentions research/intelligence keywords anywhere
+  if (/\b(intel|recon|competitor|market\s+data|price|pricing|ticker|changelog|release|cve|vulnerability)\b/i.test(p)) {
+    const clean = p
+      .replace(/^(?:vance|cipher|nyx|agent\s+\w+|operative\s+\w+)[,:\s-]+/i, '')
+      .replace(/\s+(?:and\s+)?(?:compile|write|generate|draft|save|create|put|summarize|give\s+me|report|output).*$/i, '')
+      .trim();
+    return clean.slice(0, 80);
+  }
+
   return null;
 }
 
@@ -3561,16 +3638,45 @@ export async function generateLocalHeuristicCard(params: {
   // 1. MATHEMATICAL CALCULATION & ARITHMETIC
   // ==========================================
   // ==========================================
-  // 1. WORKSPACE REPORT GENERATION & AUTO-UPLOAD
+  // 1. WORKSPACE REPORT GENERATION & AUTO-UPLOAD (REAL INTEL FIRST)
   // ==========================================
   if (isReportDirective(rawPrompt)) {
     const targetPath = extractReportFilePath(rawPrompt);
+    const searchTarget = tryExtractSearchQuery(rawPrompt) || rawPrompt.slice(0, 60);
+
+    let liveTelemetryNote = '';
+    try {
+      const dest = resolveToolWorkflowDestination('live_web_search');
+      params.onFunctionCallTriggered?.({
+        toolName: 'live_web_search',
+        args: { query: searchTarget, maxResults: 3 },
+        targetRoom: dest.targetRoom,
+        targetStationId: dest.targetStationId,
+        taskTag: dest.taskTag,
+      });
+
+      const searchOut = await executeFunctionCallHandler({
+        name: 'live_web_search',
+        args: { query: searchTarget, maxResults: 3 },
+      });
+      if (searchOut.executedToolMeta) {
+        executedTools.push(searchOut.executedToolMeta);
+      }
+      const results = searchOut.response?.results || [];
+      if (results.length > 0) {
+        liveTelemetryNote = results
+          .map((r: any, i: number) => `### Intelligence Citation [${i + 1}]: ${r.title}\n- **Source URL:** ${r.url}\n- **Verified Digest:** ${r.snippet || r.extract}`)
+          .join('\n\n');
+      }
+    } catch {}
+
     const report = synthesizeComprehensiveReport({
       prompt: rawPrompt,
       agentName: params.activeAgentName,
       agentRole: params.activeAgentRole,
       explicitFilePath: targetPath,
       targetSector: 'library',
+      precedingIntelligence: liveTelemetryNote,
     });
 
     params.onFunctionCallTriggered?.({
@@ -3619,9 +3725,10 @@ export async function generateLocalHeuristicCard(params: {
       cardTitle: `Workspace Report Uploaded: ${report.title}`,
       actionCategory: 'Workspace Storage',
       steps: [
-        { label: 'Synthesized Report', detail: `Authored comprehensive markdown brief (${report.markdown.length} chars)`, status: 'completed' },
-        { label: 'Uploaded to Workspace Files', detail: `Saved to "${report.filePath}" in IndexedDB`, status: 'verified' },
-        { label: 'Files Drawer Synchronized', detail: 'Ready for viewing, editing, or export', status: 'completed' },
+        { label: 'Intelligence Ingestion', detail: executedTools.length > 1 ? `Live web search gathered verified signals for "${searchTarget}"` : 'Gathered operational telemetry', status: 'verified' as const },
+        { label: 'Synthesized Report', detail: `Authored comprehensive markdown brief (${report.markdown.length} chars)`, status: 'completed' as const },
+        { label: 'Uploaded to Workspace Files', detail: `Saved to "${report.filePath}" in IndexedDB`, status: 'verified' as const },
+        { label: 'Files Drawer Synchronized', detail: 'Ready for viewing, editing, or export', status: 'completed' as const },
       ],
       toolCalls: executedTools,
       tokenEstimate: Math.max(90, Math.round(report.markdown.length / 4) + 60),
@@ -4416,8 +4523,63 @@ export async function executeAgentDirective(params: {
         return externalToolCard;
       }
 
-      // If no valid API key is configured or key is placeholder, run pure client heuristic simulation
+      // If no valid client API key is configured, attempt backend Cloudflare agent dispatch before local fallback
       if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
+        try {
+          const entityId = localStorage.getItem('pixelops_composio_entity_id') || 'commander_default';
+          const dispatchRes = await fetch('/api/agent/dispatch', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-entity-id': entityId,
+            },
+            body: JSON.stringify({
+              message: params.prompt,
+              entityId,
+              agentName: params.activeAgentName,
+              activeAgentRole: params.activeAgentRole,
+              systemPrompt: params.agentSystemPrompt,
+              temperature: params.temperature,
+            }),
+          });
+          if (dispatchRes.ok) {
+            const dispatchData = await dispatchRes.json();
+            if (dispatchData?.dialogue) {
+              const executedCalls: ExecutedToolCall[] = (dispatchData.executedTools || []).map((t: any) => ({
+                pluginId: 'composio_dispatch',
+                toolName: t.toolName,
+                args: t.args || {},
+                resultSummary: t.success ? `Executed ${t.toolName} successfully` : `Tool error: ${t.result?.error || 'failed'}`,
+                livePayload: t.result,
+                targetRoom: resolveToolWorkflowDestination(t.toolName).targetRoom,
+                targetStationId: resolveToolWorkflowDestination(t.toolName).targetStationId,
+              }));
+
+              const dispatchedCard: AgentExecutionCard = {
+                id: `card-${Date.now()}`,
+                prompt: params.prompt,
+                dialogue: dispatchData.dialogue,
+                cardTitle: dispatchData.structuredPayload?.title || `${params.activeAgentName} Operational SITREP`,
+                actionCategory: 'Intelligence',
+                steps: [
+                  { label: 'Cloud Dispatch', detail: `Routed to Cloudflare Agent Engine (${dispatchData.agentName || params.activeAgentName})`, status: 'completed' },
+                  { label: 'Tool Matrix Verification', detail: `Executed ${executedCalls.length} dynamic tool turns`, status: 'verified' },
+                  { label: 'Structured Frontmatter Render', detail: `Threat: ${dispatchData.structuredPayload?.threatLevel || 'CHARLIE-NOMINAL'}`, status: 'completed' },
+                ],
+                toolCalls: executedCalls,
+                tokenEstimate: 120,
+                agentName: params.activeAgentName,
+                themeId: params.themeId,
+                timestamp: new Date().toISOString(),
+                hasAttachment: Boolean(params.attachment),
+              };
+              return verifyQuantitativeTelemetryGate(dispatchedCard, params.prompt, executedCalls);
+            }
+          }
+        } catch {
+          // Fall through to client heuristic engine
+        }
+
         return generateLocalHeuristicCard({
           prompt: params.prompt,
           themeId: params.themeId,

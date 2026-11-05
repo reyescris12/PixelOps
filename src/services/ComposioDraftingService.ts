@@ -47,6 +47,7 @@ CRITICAL TASK:
             body: JSON.stringify({
               systemInstruction: { parts: [{ text: draftingSystemPrompt }] },
               contents: [{ role: 'user', parts: [{ text: `Draft the dispatch content for this directive: "${prompt}"` }] }],
+              tools: [{ googleSearch: {} }],
               generationConfig: { temperature: 0.7, maxOutputTokens: 1200 },
             }),
             signal,

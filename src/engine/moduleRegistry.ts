@@ -17,7 +17,7 @@ export const AVAILABLE_SKILLS: SkillModuleDef[] = [
     shortCode: 'WEB_SEARCH',
     category: 'research',
     description:
-      'Enables live web queries, Wikipedia searches, and real-time documentation extraction.',
+      'Enables live web queries, real-time web search via Jina Reader, and documentation extraction.',
     systemPromptModifier:
       'OPERATIONAL CAPABILITY ACTIVE: [WEB_SEARCH]. Retrieve live factual knowledge and documentation nodes.',
     providedTools: ['live_web_search'],

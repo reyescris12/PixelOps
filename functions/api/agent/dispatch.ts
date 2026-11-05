@@ -290,9 +290,11 @@ DYNAMIC REAL-TIME QUERY FORMULATION & NUMERICAL EXTRACTION PROTOCOL:
         },
       };
 
+      const toolsPayload: any[] = [{ googleSearch: {} }];
       if (dynamicTools.length > 0) {
-        geminiPayload.tools = [{ functionDeclarations: dynamicTools.map(sanitizeGeminiFunctionSchema) }];
+        toolsPayload.push({ functionDeclarations: dynamicTools.map(sanitizeGeminiFunctionSchema) });
       }
+      geminiPayload.tools = toolsPayload;
 
       console.log(
         `[AGENT DISPATCH] Turn ${turnCount}: Dispatching to Gemini for "${agentName}". Active toolkits: [${activeAppNames.join(', ')}] | Dynamic tools: ${dynamicTools.length}`
@@ -532,6 +534,7 @@ Synthesize your final operational report now:
               generationConfig: {
                 temperature: Number(temperature),
               },
+              tools: [{ googleSearch: {} }],
             }),
           }
         );
@@ -706,6 +709,29 @@ async function executeBackendWebSearch(query: string): Promise<any> {
         }
       } catch {}
     }
+
+    if (results.length === 0) {
+      try {
+        const cgRes = await fetch(
+          `https://api.coingecko.com/api/v3/simple/price?ids=${matchedCoin.symbol.toLowerCase()}&vs_currencies=usd&include_24hr_change=true`
+        );
+        if (cgRes.ok) {
+          const cgData: any = await cgRes.json();
+          const coinKey = Object.keys(cgData)[0];
+          if (coinKey && cgData[coinKey]?.usd) {
+            const usdPrice = cgData[coinKey].usd;
+            const change24h = cgData[coinKey].usd_24h_change
+              ? `${cgData[coinKey].usd_24h_change >= 0 ? '+' : ''}${cgData[coinKey].usd_24h_change.toFixed(2)}%`
+              : '0.00%';
+            results.push({
+              title: `${matchedCoin.name} (${matchedCoin.symbol}) Live CoinGecko Price`,
+              snippet: `Current Price: $${usdPrice.toLocaleString()} USD | 24h Change: ${change24h}. Verified CoinGecko live feed.`,
+              url: `https://www.coingecko.com/en/coins/${coinKey}`,
+            });
+          }
+        }
+      } catch {}
+    }
   }
 
   // Extract concise core search keywords without noise or query pollution
@@ -751,19 +777,22 @@ async function executeBackendWebSearch(query: string): Promise<any> {
     } catch {}
   }
 
-  // Wikipedia Reference
-  if (results.length < 2) {
+  // Live Web Search via Jina Reader (Real-Time Web Scraping)
+  if (results.length < 3) {
     try {
-      const wikiRes = await fetch(
-        `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(searchTerm)}&utf8=&format=json&origin=*&srlimit=2`
-      );
-      if (wikiRes.ok) {
-        const wikiData: any = await wikiRes.json();
-        for (const hit of wikiData?.query?.search || []) {
+      const jinaRes = await fetch(`https://s.jina.ai/${encodeURIComponent(searchTerm)}`, {
+        headers: { Accept: 'application/json', 'X-No-Cache': 'true' },
+      });
+      if (jinaRes.ok) {
+        const jinaData: any = await jinaRes.json();
+        const items = Array.isArray(jinaData?.data) ? jinaData.data : [];
+        for (const item of items) {
+          if (results.length >= 4) break;
+          if (!item || (!item.title && !item.url)) continue;
           results.push({
-            title: hit.title,
-            snippet: String(hit.snippet || '').replace(/<[^>]+>/g, ''),
-            url: `https://en.wikipedia.org/wiki/${encodeURIComponent(String(hit.title).replace(/ /g, '_'))}`,
+            title: item.title || item.url || 'Web Intelligence Node',
+            snippet: String(item.description || item.content || '').slice(0, 320),
+            url: item.url || `https://s.jina.ai/${encodeURIComponent(searchTerm)}`,
           });
         }
       }

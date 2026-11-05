@@ -32,7 +32,7 @@ const AVAILABLE_TOOLS_CATALOG: Array<{ id: string; label: string; description: s
   {
     id: 'live_web_search',
     label: 'Live Web Search',
-    description: 'Query live Wikipedia knowledge nodes and real-world web search indexes.',
+    description: 'Query live web search indexes via Jina Reader, financial oracles, and GitHub.',
   },
   {
     id: 'weather_lookup',

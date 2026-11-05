@@ -51,8 +51,8 @@ function getPluginGuidance(pluginId: string): { label: string; placeholder: stri
   if (clean.includes('search') || clean.includes('wiki')) {
     return {
       label: 'Search API Key / Token',
-      placeholder: 'Optional: Enter SerpApi, Tavily, or leave blank for Wiki REST',
-      hint: 'Leave blank to utilize the default free Wikipedia/DuckDuckGo client endpoints, or provide a BYOK key for live web scraping.',
+      placeholder: 'Optional: Enter SerpApi, Tavily, or leave blank for Jina Reader Live Search',
+      hint: 'Leave blank to utilize the default free Jina Reader / DuckDuckGo client endpoints, or provide a BYOK key for live web scraping.',
     };
   }
   if (clean.includes('github')) {

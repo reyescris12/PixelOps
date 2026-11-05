@@ -2458,7 +2458,10 @@ export async function runAgentWithTools(
     contents: prompt,
     config: {
       systemInstruction: 'You are an elite tactical agent. Use your assigned tools when requested.',
-      tools: composioTools.length > 0 ? [{ functionDeclarations: composioTools }] : undefined,
+      tools:
+        composioTools.length > 0
+          ? [{ googleSearch: {} }, { functionDeclarations: composioTools }]
+          : [{ googleSearch: {} }],
     },
   });
 

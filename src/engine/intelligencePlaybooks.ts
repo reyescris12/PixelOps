@@ -698,6 +698,7 @@ ${prompt}`;
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             contents: [{ role: 'user', parts: [{ text: enforcedPrompt }] }],
+            tools: [{ googleSearch: {} }],
             generationConfig: {
               temperature: 0.2,
             },

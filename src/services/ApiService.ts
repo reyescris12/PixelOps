@@ -839,7 +839,7 @@ function synthesizeDomainIntel(query: string): {
 
 /**
  * Real JavaScript Execution Handler for Gemini Function Calls.
- * Fetches live external data (Open-Meteo weather API, Wikipedia live web search API, GitHub REST API, etc.)
+ * Fetches live external data (Open-Meteo weather API, Jina live web search API, Binance/Coinbase/CoinGecko oracles, GitHub REST API, etc.)
  * and returns structured payload to route back to Gemini in Turn 2.
  */
 export async function executeFunctionCallHandler(fc: {
@@ -1042,7 +1042,7 @@ export async function executeFunctionCallHandler(fc: {
       }
     }
 
-    // 2. Live Web Search via Multi-Engine Intelligence (Real-Time Binance/Coinbase Oracles + Algolia HN Wire + GitHub Public Index + Wikipedia)
+    // 2. Live Web Search via Multi-Engine Intelligence (Real-Time Binance/Coinbase/CoinGecko Oracles + Algolia HN Wire + GitHub Public Index + Jina Reader)
     if (name === 'live_web_search') {
       const rawQuery = String(args.query || 'Technology Analysis').trim();
       const limit = Math.min(5, Math.max(1, Number(args.maxResults) || 3));
@@ -1310,82 +1310,86 @@ export async function executeFunctionCallHandler(fc: {
         }
       }
 
-      // D. Wikipedia Knowledge Base (If not excluded or if other sources need authoritative encyclopedia context)
-      if (results.length < limit && (!shouldExcludeEncyclopedia || results.length === 0)) {
-        let rawHits: any[] = [];
-        const wikiSearchTerm = coreQuery && coreQuery.length > 2 ? coreQuery : fallbackQuery;
-        const primaryWikiUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(
-          wikiSearchTerm
-        )}&utf8=&format=json&origin=*&srlimit=${limit}`;
+      // D. Live Real-Time Web Search via Jina Reader Engine (https://s.jina.ai/)
+      if (results.length < limit) {
+        const jinaSearchTerm = coreQuery && coreQuery.length > 2 ? coreQuery : fallbackQuery;
+        const jinaUrl = `https://s.jina.ai/${encodeURIComponent(jinaSearchTerm)}`;
 
-        rawHits = await executeSafeOperation(
+        const jinaData = await executeSafeOperation(
           async (signal) => {
-            const wikiRes = await fetch(primaryWikiUrl, { signal });
-            const wikiData = await wikiRes.json();
-            return (wikiData?.query?.search || []) as any[];
+            const res = await fetch(jinaUrl, {
+              headers: {
+                Accept: 'application/json',
+                'X-No-Cache': 'true',
+              },
+              signal,
+            });
+            if (res.ok) {
+              const text = await res.text();
+              try {
+                return JSON.parse(text);
+              } catch {
+                return { rawText: text };
+              }
+            }
+            return null;
           },
           {
-            timeoutMs: 5000,
+            timeoutMs: 6500,
             maxRetries: 1,
-            fallbackValue: [],
-            operationName: 'live_web_search_wiki_primary',
+            fallbackValue: null,
+            operationName: 'live_web_search_jina_reader',
           }
         );
 
-        for (const hit of rawHits) {
-          if (results.length >= limit) break;
-          results.push({
-            title: hit.title,
-            snippet: String(hit.snippet || '').replace(/<[^>]+>/g, ''),
-            extract: '',
-            url: `https://en.wikipedia.org/wiki/${encodeURIComponent(
-              String(hit.title).replace(/ /g, '_')
-            )}`,
-          });
-        }
+        if (jinaData) {
+          if (Array.isArray(jinaData.data)) {
+            for (const item of jinaData.data) {
+              if (results.length >= limit) break;
+              if (!item || (!item.title && !item.url)) continue;
+              const title = item.title || item.url || 'Web Intelligence Node';
+              const snippet = String(item.description || item.content || '').slice(0, 320);
+              const extract = String(item.content || item.description || '').slice(0, 500);
+              results.push({
+                title,
+                snippet,
+                extract,
+                url: item.url || jinaUrl,
+              });
+            }
+          } else if (typeof jinaData.rawText === 'string' && jinaData.rawText.length > 50) {
+            const sections = jinaData.rawText.split(/\n(?=Title:|\#\#\s+)/);
+            for (const sec of sections) {
+              if (results.length >= limit) break;
+              const titleMatch = sec.match(/(?:Title:\s*|\#\#\s*)([^\n]+)/i);
+              const urlMatch = sec.match(/(?:URL Source:\s*|\[.*?\]\()([^\s\)\n]+)/i);
+              const title = titleMatch ? titleMatch[1].trim() : 'Live Web Intel';
+              const url = urlMatch ? urlMatch[1].trim() : jinaUrl;
+              const cleanContent = sec
+                .replace(/Title:[^\n]+/i, '')
+                .replace(/URL Source:[^\n]+/i, '')
+                .replace(/Markdown Content:/i, '')
+                .trim()
+                .slice(0, 350);
 
-        // Enrich top Wikipedia result if available
-        if (results.length > 0 && results[0]?.title && results[0].url.includes('wikipedia.org')) {
-          try {
-            const summaryUrl = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(
-              results[0].title.replace(/ /g, '_')
-            )}`;
-            const summaryRes = await executeSafeOperation(
-              async (signal) => {
-                const res = await fetch(summaryUrl, { signal });
-                if (res.ok) return await res.json();
-                return null;
-              },
-              {
-                timeoutMs: 4000,
-                maxRetries: 1,
-                fallbackValue: null,
-                operationName: 'live_web_search_wiki_summary',
-              }
-            );
-
-            if (summaryRes && summaryRes.extract) {
-              results[0].extract = summaryRes.extract;
-              if (summaryRes.description) {
-                results[0].snippet = `${summaryRes.description}. ${results[0].snippet}`;
+              if (cleanContent.length > 20) {
+                results.push({
+                  title,
+                  snippet: cleanContent,
+                  extract: cleanContent,
+                  url,
+                });
               }
             }
-          } catch {}
+          }
         }
       }
 
       // Enforce exclusion filter on results
       if (shouldExcludeEncyclopedia) {
-        const nonEncyclopediaResults = results.filter(
+        results = results.filter(
           (r) => !EXCLUDED_ENCYCLOPEDIA_DOMAINS.some((d) => r.url.toLowerCase().includes(d))
         );
-        if (nonEncyclopediaResults.length > 0) {
-          results = nonEncyclopediaResults;
-        } else if (isFinancialOrMarket) {
-          // For real-time price/market queries, suppress encyclopedia results completely
-          results = [];
-        }
-        // For general entity recon without dedicated hits, retain authoritative encyclopedia context
       }
 
       // E. Factual Status Report if All External Engines Yield Zero Hits (Zero Hallucination / Zero Fake Mocks)
@@ -1400,7 +1404,7 @@ export async function executeFunctionCallHandler(fc: {
         } else {
           results.push({
             title: `${cleanQuery} - Search Verification Complete`,
-            snippet: `Live multi-engine sweep completed for "${cleanQuery}". No active public intelligence nodes matched the query across Algolia Tech Wire, GitHub Public Index, or Reference Knowledge Base.`,
+            snippet: `Live multi-engine sweep completed for "${cleanQuery}". No active public intelligence nodes matched the query across Algolia Tech Wire, GitHub Public Index, or Jina Live Web Index.`,
             extract: `Operational telemetry: Web search sweep for "${cleanQuery}" returned zero verified results from live endpoints. In accordance with zero-tolerance hallucination protocols, fictional summaries are strictly withheld.`,
             url: `safehouse://live-search/${encodeURIComponent((coreQuery || cleanQuery).toLowerCase().replace(/\s+/g, '-'))}`,
           });
@@ -1421,8 +1425,8 @@ export async function executeFunctionCallHandler(fc: {
       const liveResult = {
         status: isMarketUnreachable ? 'UNREACHABLE' : 'ok',
         source: shouldExcludeEncyclopedia
-          ? 'Live Real-Time Market & OSINT Uplink (DuckDuckGo + Financial Feeds)'
-          : 'Live Web Multi-Engine Uplink (Wikipedia + DuckDuckGo + Safehouse Intel Node)',
+          ? 'Live Real-Time Market & OSINT Uplink (Jina Reader + Financial Feeds)'
+          : 'Live Web Multi-Engine Uplink (Jina Reader + Real-Time Financial Oracles + Algolia Tech Wire)',
         query: cleanQuery,
         rawQuery,
         shouldExcludeEncyclopedia,
@@ -2180,10 +2184,10 @@ export const DEFAULT_PLUGINS: PluginConnector[] = [
     id: 'web_search',
     name: 'Web Search & Extraction',
     serviceLabel: 'Live Web & Docs Recon',
-    description: 'Enables live web queries, Wikipedia searches, and documentation lookups.',
+    description: 'Enables live web queries, Jina Reader live web searches, and documentation lookups.',
     toolFunctionName: 'live_web_search',
     connected: true,
-    accountHandle: 'engine://live-wiki-rest',
+    accountHandle: 'engine://live-jina-reader',
     lastSync: 'Live client endpoint',
   },
   {
@@ -2794,9 +2798,9 @@ export const ROUNDTABLE_SCHEMA = {
 };
 
 /**
- * Helper to clean Wikipedia HTML snippet tags
+ * Helper to clean HTML snippet tags from web search results
  */
-function cleanWikiSnippet(snippet: string): string {
+function cleanWebSnippet(snippet: string): string {
   return (snippet || '')
     .replace(/<[^>]+>/g, '')
     .replace(/&quot;/g, '"')
@@ -2806,6 +2810,7 @@ function cleanWikiSnippet(snippet: string): string {
     .replace(/&gt;/g, '>')
     .trim();
 }
+const cleanWikiSnippet = cleanWebSnippet;
 
 /**
  * Helper to evaluate mathematical calculations safely
@@ -4388,20 +4393,29 @@ export async function ensureReportPersistedAndAnnotated(
 
   try {
     const targetPath = extractReportFilePath(prompt);
-    let contentToSave = dialogue;
+    let contentToSave = dialogue
+      .replace(/\[AGENT_ACTION:[\s\S]*?\[\/AGENT_ACTION\]/gi, '')
+      .replace(/\[AGENT_STATUS:\s*(COMPLETE|WORKING)\]/gi, '')
+      .replace(/\n*📁 \*\*\[WORKSPACE REPORT UPLOADED\]\*\*[\s\S]*$/, '')
+      .trim();
 
     // If dialogue does not have markdown headings or is very brief, synthesize full tactical report
-    if (!dialogue.includes('# ') || dialogue.length < 240) {
+    if (!contentToSave.includes('# ') || contentToSave.length < 240) {
       const synthesized = synthesizeComprehensiveReport({
         prompt,
         agentName: params.activeAgentName,
         agentRole: params.activeAgentRole,
-        existingDialogue: dialogue,
+        existingDialogue: contentToSave,
         explicitFilePath: targetPath,
         targetSector: params.targetSector || 'library',
       });
       contentToSave = synthesized.markdown;
     }
+
+    contentToSave = contentToSave
+      .replace(/\[AGENT_ACTION:[\s\S]*?\[\/AGENT_ACTION\]/gi, '')
+      .replace(/\[AGENT_STATUS:\s*(COMPLETE|WORKING)\]/gi, '')
+      .trim();
 
     const fileRec = await uploadReportToWorkspaceFiles({
       path: targetPath,
@@ -4703,19 +4717,8 @@ ${personaSpecialization}
 You have direct access to local execution tools: ${declaredToolNames || 'local execution engine'}.
 Think step-by-step, execute tasks logically, call tools whenever you need live data or operations, and return structured results.`;
 
-      const actionProtocolDirective = `CRITICAL OPERATIONAL DIRECTIVE:
-You are an autonomous tactical operative. You do NOT just generate conversational text—you execute tasks.
-When given an operational task, you MUST either invoke the appropriate function call OR format your operational action using a strict execution tag before any conversational commentary, like this:
-
-[AGENT_ACTION: <tool_name>]
-{
-  "param1": "value"
-}
-[/AGENT_ACTION]
-
-Available tools: ${declaredToolNames || 'weather_lookup, live_web_search, code_sandbox_eval, fs_storage_manager, memory_vector_lookup'}.
-If no tool is required, conclude your operational status using:
-[AGENT_STATUS: COMPLETE] or [AGENT_STATUS: WORKING]`;
+      const operationalExecutionDirective = `CRITICAL OPERATIONAL DIRECTIVE:
+You are an autonomous tactical operative. Execute tasks using your available function-calling tools and native Google Search grounding. Do NOT output raw [AGENT_ACTION: ...] execution tags, pseudo-commands, or code block execution wrappers. When live data or workspace operations are needed, use function calls or native search grounding directly, and synthesize your findings into clean, structured Markdown reports.`;
 
       const userAgnosticDirective = `STRICT USER-AGNOSTIC & TARGET-DRIVEN DIRECTIVE:
 - ALL OPERATIONS MUST BE GROUNDED IN USER TARGETS: Process data, perform audits, and gather intelligence strictly based on the target companies, domains, repositories, tech stacks, or topics provided dynamically by the active user session.
@@ -4731,7 +4734,7 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
         structuredPersona,
         userAgnosticDirective,
         operationalRealTaskConstraint,
-        actionProtocolDirective,
+        operationalExecutionDirective,
         personaInstruction,
         params.agentSystemPrompt,
         memoryContextStr,
@@ -5103,17 +5106,12 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
             },
           };
 
+          // Enable Native Gemini Google Search Grounding on every turn
+          const toolsPayload: any[] = [{ googleSearch: {} }];
           if (activeDeclarations.length > 0) {
-            currentPayload.tools = [{ functionDeclarations: activeDeclarations.map(sanitizeGeminiFunctionSchema) }];
-            // Enforce function-calling behavior on Turn 1 when operational tool intent is present
-            if (turnCount === 1 && hasToolIntent) {
-              currentPayload.toolConfig = {
-                functionCallingConfig: {
-                  mode: 'ANY',
-                },
-              };
-            }
+            toolsPayload.push({ functionDeclarations: activeDeclarations.map(sanitizeGeminiFunctionSchema) });
           }
+          currentPayload.tools = toolsPayload;
 
           let turnRes = await executeSafeOperation(
             async (signal) => {
@@ -5594,13 +5592,19 @@ In accordance with strict anti-hallucination protocols, speculative metric estim
         ];
         const finalTools: ExecutedToolCall[] = [];
 
-        // Auto-Upload to Workspace Files whenever prompt requests report or response contains markdown brief
+        // Auto-Upload to Workspace Files ONLY after all API/tool fetches have resolved
         if (isReportDirective(params.prompt || '') || (finalDialogue.includes('# ') && finalDialogue.length > 200)) {
           try {
             const targetPath = extractReportFilePath(params.prompt || '');
+            const cleanReportMarkdown = finalDialogue
+              .replace(/\[AGENT_ACTION:[\s\S]*?\[\/AGENT_ACTION\]/gi, '')
+              .replace(/\[AGENT_STATUS:\s*(COMPLETE|WORKING)\]/gi, '')
+              .replace(/\n*📁 \*\*\[WORKSPACE REPORT UPLOADED\]\*\*[\s\S]*$/, '')
+              .trim();
+
             const fileRec = await uploadReportToWorkspaceFiles({
               path: targetPath,
-              content: finalDialogue,
+              content: cleanReportMarkdown,
               agentName: params.activeAgentName,
               agentRole: params.activeAgentRole,
             });

@@ -959,13 +959,13 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
                     <div className="p-2 bg-[#0c0e17] border border-[#1e2438]">
                       <strong className="text-[#f3ead8]">Active Recommended Engine:</strong>
                       <div className="mt-1 p-2 bg-[#172554] border border-[#3b82f6] text-[#93c5fd]">
-                        <span className="font-bold text-[#60a5fa]">gemini-3.1-flash-lite</span>
+                        <span className="font-bold text-[#60a5fa]">gemini-2.5-flash</span>
                         <p className="text-[11px] text-[#bfdbfe] mt-0.5">
                           Ultra-low latency, blazing fast time-to-first-token, full function calling tool integration, and high accuracy for code, markdown reports, and web search synthesis.
                         </p>
                       </div>
                       <ul className="list-disc list-inside mt-2 space-y-0.5 text-[11px]">
-                        <li><strong>Google Gemini:</strong> <span className="text-[#4ade80] font-semibold">gemini-3.1-flash-lite</span> (Active Default), gemini-1.5-pro</li>
+                        <li><strong>Google Gemini:</strong> <span className="text-[#4ade80] font-semibold">gemini-2.5-flash</span> (Active Default), gemini-1.5-pro</li>
                         <li><strong>OpenAI:</strong> gpt-4o, gpt-4o-mini</li>
                         <li><strong>Anthropic:</strong> claude-3-5-sonnet-20241022</li>
                         <li><strong>Local Ollama:</strong> llama3, mistral (localhost:11434, air-gapped)</li>
@@ -1330,10 +1330,10 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
               <div className="space-y-3">
                 <div className="p-3.5 bg-[#121520] border border-[#2b354f] space-y-1.5">
                   <h4 className="text-xs font-bold text-[#38bdf8] uppercase">
-                    1. Use Google Gemini 3.1 Flash Lite for Sub-Second Responses
+                    1. Use Google Gemini 2.5 Flash for Sub-Second Responses
                   </h4>
                   <p className="text-xs text-[#cbd5e1]">
-                    When using BYOK or the Pro Pass, <code className="text-[#4ade80]">gemini-3.1-flash-lite</code> is the default active engine. It offers the fastest time-to-first-token while retaining full tool calling capabilities and high accuracy for code, markdown reports, and web search synthesis.
+                    When using BYOK or the Pro Pass, <code className="text-[#4ade80]">gemini-2.5-flash</code> is the default active engine. It offers the fastest time-to-first-token while retaining full tool calling capabilities and high accuracy for code, markdown reports, and web search synthesis.
                   </p>
                 </div>
 

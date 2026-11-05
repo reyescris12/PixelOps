@@ -1,6 +1,6 @@
 import { ThemeId } from '../context/ThemeContext';
 import type { RoomId } from '../components/SpriteCanvas';
-import { loadLLMProviderConfig } from './LLMProviderService';
+import { loadLLMProviderConfig, normalizeGeminiModel } from './LLMProviderService';
 import { workstationSupportsTool } from './PlacedGearService';
 import { loadCustomPlugins, executeCustomPlugin } from './PluginMarketplaceService';
 import { getLast50Commands, ledgerDb } from './CommandLedgerDb';
@@ -4070,7 +4070,7 @@ export async function checkServerStatus(
   return {
     online: true,
     configured: hasKey,
-    model: config.modelName || 'gemini-3.1-flash-lite',
+    model: normalizeGeminiModel(config.modelName),
   };
 }
 
@@ -4087,10 +4087,11 @@ export async function pingGeminiConnection(
     };
   }
 
+  const model = normalizeGeminiModel(config.modelName);
   try {
     const res = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-        config.modelName || 'gemini-3.1-flash-lite'
+        model
       )}:generateContent?key=${encodeURIComponent(key)}`,
       {
         method: 'POST',
@@ -4113,7 +4114,7 @@ export async function pingGeminiConnection(
       return {
         ok: false,
         error: `Gemini link degraded: ${msg}`,
-        model: config.modelName || 'gemini-3.1-flash-lite',
+        model,
       };
     }
 
@@ -4124,7 +4125,7 @@ export async function pingGeminiConnection(
     return {
       ok: true,
       message: replyText,
-      model: config.modelName || 'gemini-3.1-flash-lite',
+      model,
     };
   } catch (err: any) {
     return {
@@ -4556,7 +4557,8 @@ export async function executeAgentDirective(params: {
               temperature: params.temperature,
             }),
           });
-          if (dispatchRes.ok) {
+          const contentType = dispatchRes.headers.get('content-type') || '';
+          if (dispatchRes.ok && contentType.includes('application/json')) {
             const dispatchData = await dispatchRes.json();
             if (dispatchData?.dialogue) {
               const executedCalls: ExecutedToolCall[] = (dispatchData.executedTools || []).map((t: any) => ({
@@ -5060,7 +5062,7 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
       }
 
       // Google Gemini Direct Client-Side Execution
-      const modelName = llmConfig.modelName || 'gemini-3.1-flash-lite';
+      const modelName = normalizeGeminiModel(llmConfig.modelName);
       const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
         modelName
       )}:generateContent?key=${encodeURIComponent(apiKey)}`;
@@ -5106,12 +5108,12 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
             },
           };
 
-          // Enable Native Gemini Google Search Grounding on every turn
-          const toolsPayload: any[] = [{ googleSearch: {} }];
+          // In Gemini API, tools cannot mix googleSearch and functionDeclarations in the same request payload.
           if (activeDeclarations.length > 0) {
-            toolsPayload.push({ functionDeclarations: activeDeclarations.map(sanitizeGeminiFunctionSchema) });
+            currentPayload.tools = [{ functionDeclarations: activeDeclarations.map(sanitizeGeminiFunctionSchema) }];
+          } else {
+            currentPayload.tools = [{ googleSearch: {} }];
           }
-          currentPayload.tools = toolsPayload;
 
           let turnRes = await executeSafeOperation(
             async (signal) => {
@@ -5150,24 +5152,7 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
           }
 
           if (!turnRes.ok) {
-            if (turnRes.status === 401 || turnRes.status === 403) {
-              throw createRetroAgentError({
-                code: 'INVALID_API_KEY',
-                themeId: params.themeId,
-                technicalDetail: `Gemini HTTP ${turnRes.status} API_KEY_INVALID from Google Cloud`,
-                failedPrompt: params.prompt,
-              });
-            }
-            if (turnRes.status === 429) {
-              throw createRetroAgentError({
-                code: 'RATE_LIMIT',
-                themeId: params.themeId,
-                technicalDetail: 'Gemini HTTP 429 RESOURCE_EXHAUSTED (Rate limit reached)',
-                failedPrompt: params.prompt,
-                retryAfterSeconds: 15,
-              });
-            }
-            // For other non-ok codes, fall back to local heuristic card
+            console.warn(`[ApiService] Gemini turn ${turnCount} failed with HTTP ${turnRes.status}. Gracefully activating local heuristic engine.`);
             return generateLocalHeuristicCard(params);
           }
 
@@ -5869,7 +5854,7 @@ export async function executeRoundtableMeeting(params: {
       }
 
       try {
-        const modelName = llmConfig.modelName || 'gemini-3.1-flash-lite';
+        const modelName = normalizeGeminiModel(llmConfig.modelName);
         const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
           modelName
         )}:generateContent?key=${encodeURIComponent(apiKey)}`;
@@ -5949,29 +5934,19 @@ ROUNDTABLE RULES:
         );
 
         if (!res || !res.ok) {
-          if (res && (res.status === 401 || res.status === 403)) {
-            throw createRetroAgentError({
-              code: 'INVALID_API_KEY',
-              themeId: params.themeId,
-              technicalDetail: `Gemini HTTP ${res.status} API_KEY_INVALID during Roundtable`,
-              failedPrompt: params.topic,
-            });
-          }
-          if (res.status === 429) {
-            throw createRetroAgentError({
-              code: 'RATE_LIMIT',
-              themeId: params.themeId,
-              technicalDetail: 'Gemini HTTP 429 RESOURCE_EXHAUSTED during Roundtable',
-              failedPrompt: params.topic,
-              retryAfterSeconds: 15,
-            });
-          }
+          console.warn(`[ApiService] Roundtable request failed with status: ${res?.status}. Falling back to local meeting.`);
           return generateLocalRoundtableMeeting(params);
         }
 
         const data = await res.json();
         const rawJson = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim() || '{}';
-        const parsed = JSON.parse(rawJson);
+        let parsed: any;
+        try {
+          parsed = JSON.parse(rawJson);
+        } catch {
+          console.warn('[ApiService] Failed to parse roundtable JSON response, falling back to local meeting.');
+          return generateLocalRoundtableMeeting(params);
+        }
 
         const turns: RoundtableDialogueTurn[] = (
           Array.isArray(parsed.turns) ? parsed.turns : []

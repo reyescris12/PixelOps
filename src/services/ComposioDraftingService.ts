@@ -1,6 +1,6 @@
 import { ThemeId } from '../context/ThemeContext';
 import { executeSafeOperation } from './SafetyService';
-import { loadLLMProviderConfig } from './LLMProviderService';
+import { loadLLMProviderConfig, normalizeGeminiModel } from './LLMProviderService';
 
 /**
  * Two-Step Drafting Agent Architecture for External Composio Tools
@@ -34,7 +34,7 @@ CRITICAL TASK:
 - Include all necessary operational details, findings, professional greetings, and sign-offs appropriate for ${targetChannel.toUpperCase()}.
 - Return ONLY the drafted message text with no introductory meta-commentary.`;
 
-      const modelName = config.modelName || 'gemini-3.1-flash-lite';
+      const modelName = normalizeGeminiModel(config.modelName);
       const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
         modelName
       )}:generateContent?key=${encodeURIComponent(apiKey)}`;

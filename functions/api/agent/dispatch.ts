@@ -290,11 +290,12 @@ DYNAMIC REAL-TIME QUERY FORMULATION & NUMERICAL EXTRACTION PROTOCOL:
         },
       };
 
-      const toolsPayload: any[] = [{ googleSearch: {} }];
+      // In Gemini API, functionDeclarations and googleSearch cannot be mixed in the same request
       if (dynamicTools.length > 0) {
-        toolsPayload.push({ functionDeclarations: dynamicTools.map(sanitizeGeminiFunctionSchema) });
+        geminiPayload.tools = [{ functionDeclarations: dynamicTools.map(sanitizeGeminiFunctionSchema) }];
+      } else {
+        geminiPayload.tools = [{ googleSearch: {} }];
       }
-      geminiPayload.tools = toolsPayload;
 
       console.log(
         `[AGENT DISPATCH] Turn ${turnCount}: Dispatching to Gemini for "${agentName}". Active toolkits: [${activeAppNames.join(', ')}] | Dynamic tools: ${dynamicTools.length}`

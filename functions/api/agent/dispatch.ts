@@ -759,6 +759,38 @@ async function executeBackendWebSearch(query: string): Promise<any> {
   cleanCore = cleanCore.replace(/[^a-zA-Z0-9\s_-]/g, ' ').replace(/\s+/g, ' ').trim();
   const searchTerm = cleanCore && cleanCore.length > 2 ? cleanCore : cleanQ;
 
+  // 0. Google News Live RSS Feed (Real-Time Google Search Index)
+  try {
+    const gnRes = await fetch(
+      `https://news.google.com/rss/search?q=${encodeURIComponent(cleanQ)}&hl=en-US&gl=US&ceid=US:en`,
+      { headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) PixelOps-Agent/2.0' } }
+    );
+    if (gnRes.ok) {
+      const xml = await gnRes.text();
+      const matches = xml.match(/<item>[\s\S]*?<\/item>/g) || [];
+      for (const m of matches.slice(0, 3)) {
+        if (results.length >= 4) break;
+        const rawTitle = m.match(/<title>([\s\S]*?)<\/title>/i)?.[1] || '';
+        const cleanTitle = rawTitle
+          .replace(/<!\[CDATA\[(.*?)\]\]>/g, '$1')
+          .replace(/&quot;/g, '"')
+          .replace(/&#39;/g, "'")
+          .replace(/&amp;/g, '&')
+          .trim();
+        const rawLink = m.match(/<link>([\s\S]*?)<\/link>/i)?.[1] || '';
+        const pubDate = m.match(/<pubDate>([\s\S]*?)<\/pubDate>/i)?.[1] || '';
+        const sourceName = m.match(/<source[^>]*>([\s\S]*?)<\/source>/i)?.[1] || 'Google News';
+        if (cleanTitle) {
+          results.push({
+            title: cleanTitle,
+            snippet: `${cleanTitle} (${sourceName} | ${pubDate})`,
+            url: rawLink || `https://news.google.com/search?q=${encodeURIComponent(cleanTitle)}`,
+          });
+        }
+      }
+    }
+  } catch {}
+
   // 1. DuckDuckGo Instant Knowledge API
   if (results.length < 3) {
     try {

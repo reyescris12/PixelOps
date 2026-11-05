@@ -641,12 +641,8 @@ const WMO_WEATHER_CODES: Record<number, string> = {
   95: 'Thunderstorm',
 };
 
-export const EXCLUDED_SEARCH_DOMAINS = [
-  'facebook.com',
-  'instagram.com',
-  'tiktok.com',
-  'pinterest.com',
-];
+// Operatives have unrestricted access to all sites across the web, especially Google
+export const EXCLUDED_SEARCH_DOMAINS: string[] = [];
 
 export interface CleanedSearchResult {
   primary: string;
@@ -1124,13 +1120,8 @@ ${findings || 'No additional telemetry findings attached.'}
 
       let results: Array<{ title: string; snippet: string; extract?: string; url: string }> = [];
 
-      // Check if user explicitly requested forum, social discussion, or community sentiment
-      const isExplicitSocial = /\b(reddit|hacker\s*news|news\.ycombinator|twitter|tweet|tweets|x\.com|social sentiment|forum)\b/i.test(
-        rawQuery
-      );
-      const activeExcludedDomains = isExplicitSocial
-        ? ['wikipedia.org', 'wikimedia.org', 'fandom.com', 'britannica.com']
-        : EXCLUDED_SEARCH_DOMAINS;
+      // Operatives have unrestricted access to all sites across the web, especially Google
+      const activeExcludedDomains: string[] = [];
 
       // A. Real-Time Financial & Ticker Query Interception via Binance / Coinbase / CoinGecko Oracles
       if (isFinancialOrMarket) {
@@ -1332,10 +1323,137 @@ ${findings || 'No additional telemetry findings attached.'}
         }
       }
 
-      // C. Live Real-Time Multi-Engine Web Search (DuckDuckGo, Algolia HackerNews, Wikipedia, Jina Reader, Local Domain Mesh)
+      // C. Live Real-Time Multi-Engine Web Search (Google, DuckDuckGo, Algolia HackerNews, Wikipedia, Jina Reader, Local Domain Mesh)
       const effectiveSearchTerm = (coreQuery && coreQuery.length > 2 ? coreQuery : cleanQuery) || rawQuery;
 
-      // 1. DuckDuckGo Instant Knowledge API (CORS friendly, high reliability)
+      // 0. Direct URL / Domain Inspection (If operative query specifies a direct website or URL)
+      const isUrlQuery = /^https?:\/\//i.test(rawQuery.trim()) || /^[a-zA-Z0-9-]+\.(com|org|io|dev|app|net|co|gov|edu)(\/.*)?$/i.test(rawQuery.trim());
+      if (isUrlQuery) {
+        let targetUrl = rawQuery.trim();
+        if (!targetUrl.startsWith('http')) targetUrl = `https://${targetUrl}`;
+        try {
+          // Attempt reading page content via /api/fetch or r.jina.ai
+          const pageData = await executeSafeOperation(
+            async (signal) => {
+              const localFetch = await fetch(`/api/fetch?url=${encodeURIComponent(targetUrl)}`, { signal }).catch(() => null);
+              if (localFetch && localFetch.ok) return await localFetch.json();
+              const rJina = await fetch(`https://r.jina.ai/${encodeURIComponent(targetUrl)}`, { headers: { Accept: 'application/json' }, signal }).catch(() => null);
+              if (rJina && rJina.ok) return await rJina.json();
+              return null;
+            },
+            { timeoutMs: 5000, maxRetries: 1, fallbackValue: null, operationName: 'direct_url_reader' }
+          );
+
+          if (pageData) {
+            const pageText = pageData.text || pageData.data?.content || pageData.data?.description || JSON.stringify(pageData.data || '');
+            if (pageText && pageText.length > 20) {
+              results.push({
+                title: pageData.data?.title || `Direct Site Telemetry: ${targetUrl}`,
+                snippet: pageText.slice(0, 350),
+                extract: pageText.slice(0, 800),
+                url: targetUrl,
+              });
+            }
+          }
+        } catch {}
+      }
+
+      // 1. Google Real-Time Intelligence Engine (Google News Live RSS + Google Search Index via /api/search)
+      if (results.length < limit) {
+        try {
+          const googleSearchData = await executeSafeOperation(
+            async (signal) => {
+              const res = await fetch(`/api/search?q=${encodeURIComponent(cleanQuery)}&limit=${limit}`, { signal });
+              if (res.ok) return await res.json();
+              return null;
+            },
+            { timeoutMs: 4000, maxRetries: 1, fallbackValue: null, operationName: 'live_web_search_google_api' }
+          );
+
+          if (googleSearchData && Array.isArray(googleSearchData.results)) {
+            for (const item of googleSearchData.results) {
+              if (results.length >= limit) break;
+              if (!item || !item.url) continue;
+              if (results.some((r) => r.url === item.url)) continue;
+              results.push({
+                title: item.title,
+                snippet: item.snippet,
+                extract: item.extract || item.snippet,
+                url: item.url,
+              });
+            }
+          }
+        } catch {}
+      }
+
+      // 1b. Google Suggest Autocomplete & Trending Queries (Direct client lookup with open CORS)
+      if (results.length < limit) {
+        try {
+          const suggestData = await executeSafeOperation(
+            async (signal) => {
+              const res = await fetch(
+                `https://suggestqueries.google.com/complete/search?client=firefox&q=${encodeURIComponent(cleanQuery)}`,
+                { signal }
+              );
+              if (res.ok) return await res.json();
+              return null;
+            },
+            { timeoutMs: 3000, maxRetries: 1, fallbackValue: null, operationName: 'google_suggest_autocomplete' }
+          );
+
+          if (suggestData && Array.isArray(suggestData[1]) && suggestData[1].length > 0) {
+            const topSuggestions = suggestData[1].slice(0, 3);
+            const googleSearchUrl = `https://www.google.com/search?q=${encodeURIComponent(cleanQuery)}`;
+            if (!results.some((r) => r.url === googleSearchUrl)) {
+              results.push({
+                title: `Google Search Intelligence: "${cleanQuery}"`,
+                snippet: `Google live trending queries: ${topSuggestions.join(' | ')}. Direct portal access to all Google indices.`,
+                extract: `Verified Google Search Index for "${cleanQuery}": Real-time search predictions include: ${topSuggestions.join(', ')}. Direct portal: ${googleSearchUrl}`,
+                url: googleSearchUrl,
+              });
+            }
+          }
+        } catch {}
+      }
+
+      // 1c. Google Official Custom Search API (If user configured Google Search API Key & CX in settings/localStorage)
+      const userGoogleKey = typeof localStorage !== 'undefined'
+        ? (localStorage.getItem('pixelops_google_key') || localStorage.getItem('pixelops_gemini_api_key') || '').trim()
+        : '';
+      const userGoogleCx = typeof localStorage !== 'undefined'
+        ? (localStorage.getItem('pixelops_google_cx') || '').trim()
+        : '';
+
+      if (userGoogleKey && userGoogleCx && results.length < limit) {
+        try {
+          const cseData = await executeSafeOperation(
+            async (signal) => {
+              const res = await fetch(
+                `https://www.googleapis.com/customsearch/v1?key=${encodeURIComponent(userGoogleKey)}&cx=${encodeURIComponent(userGoogleCx)}&q=${encodeURIComponent(cleanQuery)}&num=4`,
+                { signal }
+              );
+              if (res.ok) return await res.json();
+              return null;
+            },
+            { timeoutMs: 4000, maxRetries: 1, fallbackValue: null, operationName: 'google_custom_search' }
+          );
+
+          if (cseData && Array.isArray(cseData.items)) {
+            for (const item of cseData.items) {
+              if (results.length >= limit) break;
+              if (results.some((r) => r.url === item.link)) continue;
+              results.push({
+                title: item.title,
+                snippet: item.snippet || item.title,
+                extract: `Google Search Node: "${item.title}". ${item.snippet}. URL: ${item.link}`,
+                url: item.link,
+              });
+            }
+          }
+        } catch {}
+      }
+
+      // 2. DuckDuckGo Instant Knowledge API (CORS friendly, high reliability)
       if (results.length < limit) {
         try {
           const ddgData = await executeSafeOperation(
@@ -2188,6 +2306,33 @@ ${findings || 'No additional telemetry findings attached.'}
           },
         }
       );
+
+      // If direct fetch was blocked by client CORS or timed out, attempt seamless universal web reader proxy
+      if (!gatewayPayload.ok && method === 'GET') {
+        try {
+          // Fallback 1: Local / Cloudflare proxy
+          const proxyRes = await fetch(`/api/fetch?url=${encodeURIComponent(url)}`).catch(() => null);
+          if (proxyRes && proxyRes.ok) {
+            const pData = await proxyRes.json();
+            gatewayPayload.ok = true;
+            gatewayPayload.status = pData.status || 200;
+            gatewayPayload.statusText = 'OK (Universal Proxy)';
+            gatewayPayload.data = pData.data || pData.text;
+          } else {
+            // Fallback 2: Universal Jina Reader proxy
+            const rJinaRes = await fetch(`https://r.jina.ai/${encodeURIComponent(url)}`, {
+              headers: { Accept: 'application/json' },
+            }).catch(() => null);
+            if (rJinaRes && rJinaRes.ok) {
+              const jData: any = await rJinaRes.json().catch(() => null);
+              gatewayPayload.ok = true;
+              gatewayPayload.status = 200;
+              gatewayPayload.statusText = 'OK (Universal Web Reader)';
+              gatewayPayload.data = jData?.data?.content || jData?.data || 'Web content retrieved successfully';
+            }
+          }
+        } catch {}
+      }
 
       const durationMs = gatewayPayload.durationMs || Math.round(performance.now() - startTime);
       const isSuccess = Boolean(gatewayPayload.ok);

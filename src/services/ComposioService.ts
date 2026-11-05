@@ -418,7 +418,7 @@ export async function pingComposio(): Promise<{ ok: boolean; status: number; lat
 
     if (customKey) {
       const controller = new AbortController();
-      const tid = setTimeout(() => controller.abort(), 6000);
+      const tid = setTimeout(() => controller.abort(), 12000);
       try {
         const res = await fetch(
           `${COMPOSIO_BASE_URL}/connected_accounts?user_uuid=${encodeURIComponent(entityId)}&user_id=${encodeURIComponent(entityId)}`,
@@ -625,9 +625,9 @@ async function callComposioProxy(
     }
   }
 
-  // 2. Route via Cloudflare Pages Function proxy (/api/composio) with 8s circuit breaker
+  // 2. Route via Cloudflare Pages Function proxy (/api/composio) with 25s circuit breaker
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 8000);
+  const timeoutId = setTimeout(() => controller.abort(), 25000);
 
   try {
     const headers: Record<string, string> = {
@@ -655,7 +655,7 @@ async function callComposioProxy(
       });
     } catch (fetchErr: any) {
       if (controller.signal.aborted) {
-        throw new Error('Composio proxy request timed out (8s limit).');
+        throw new Error('Composio proxy request timed out (25s limit).');
       }
       throw new Error(`Composio proxy unreachable: ${fetchErr?.message || fetchErr}`);
     }
@@ -1818,6 +1818,249 @@ export const COMPOSIO_GEMINI_TOOL_SCHEMAS: Record<string, any> = {
 };
 
 /**
+ * Recursively sanitizes any OpenAPI / JSON Schema into strict Google Gemini FunctionDeclaration format.
+ * Strips unsupported OpenAPI keywords ($schema, anyOf, oneOf, allOf, additionalProperties, default, pattern)
+ * and normalizes property types to Gemini's supported uppercase enums.
+ */
+export function sanitizeGeminiFunctionSchema(schema: any): any {
+  if (!schema || typeof schema !== 'object') return schema;
+
+  const sanitized: any = {
+    name: String(schema.name || '').trim(),
+    description: String(schema.description || `Tool ${schema.name || ''}`).trim(),
+  };
+
+  const rawParams = schema.parameters || {};
+  sanitized.parameters = sanitizeSchemaObject(rawParams);
+  return sanitized;
+}
+
+function sanitizeSchemaObject(obj: any): any {
+  if (!obj || typeof obj !== 'object') {
+    return { type: 'OBJECT', properties: {}, required: [] };
+  }
+
+  let type = String(obj.type || 'OBJECT').toUpperCase();
+  if (type === 'STR') type = 'STRING';
+  if (type === 'FLOAT' || type === 'NUM') type = 'NUMBER';
+  if (type === 'INT') type = 'INTEGER';
+  if (type === 'BOOL') type = 'BOOLEAN';
+  if (type === 'LIST') type = 'ARRAY';
+  if (type === 'DICT') type = 'OBJECT';
+  if (!['STRING', 'NUMBER', 'INTEGER', 'BOOLEAN', 'ARRAY', 'OBJECT'].includes(type)) {
+    type = 'OBJECT';
+  }
+
+  const out: any = {
+    type,
+    description: obj.description || '',
+  };
+
+  if (Array.isArray(obj.enum) && obj.enum.length > 0) {
+    out.enum = obj.enum.map(String);
+  }
+
+  if (type === 'OBJECT') {
+    out.properties = {};
+    const rawProps = obj.properties || {};
+    for (const [key, val] of Object.entries(rawProps)) {
+      out.properties[key] = sanitizeSchemaProperty(val);
+    }
+    if (Array.isArray(obj.required)) {
+      out.required = obj.required.filter((r: any) => typeof r === 'string' && r in out.properties);
+    } else {
+      out.required = [];
+    }
+  } else if (type === 'ARRAY') {
+    out.items = obj.items ? sanitizeSchemaProperty(obj.items) : { type: 'STRING' };
+  }
+
+  return out;
+}
+
+function sanitizeSchemaProperty(val: any): any {
+  if (!val || typeof val !== 'object') {
+    return { type: 'STRING', description: '' };
+  }
+
+  if (Array.isArray(val.anyOf) && val.anyOf.length > 0) {
+    const valid = val.anyOf.find((item: any) => item && item.type && item.type !== 'null') || val.anyOf[0];
+    return sanitizeSchemaProperty(valid);
+  }
+  if (Array.isArray(val.oneOf) && val.oneOf.length > 0) {
+    const valid = val.oneOf.find((item: any) => item && item.type && item.type !== 'null') || val.oneOf[0];
+    return sanitizeSchemaProperty(valid);
+  }
+  if (Array.isArray(val.allOf) && val.allOf.length > 0) {
+    return sanitizeSchemaProperty(val.allOf[0]);
+  }
+
+  let type = String(val.type || 'STRING').toUpperCase();
+  if (Array.isArray(val.type)) {
+    const nonNull = val.type.find((t: string) => t.toLowerCase() !== 'null') || 'string';
+    type = String(nonNull).toUpperCase();
+  }
+
+  if (type === 'STR') type = 'STRING';
+  if (type === 'FLOAT' || type === 'NUM') type = 'NUMBER';
+  if (type === 'INT') type = 'INTEGER';
+  if (type === 'BOOL') type = 'BOOLEAN';
+  if (type === 'LIST') type = 'ARRAY';
+  if (type === 'DICT') type = 'OBJECT';
+  if (!['STRING', 'NUMBER', 'INTEGER', 'BOOLEAN', 'ARRAY', 'OBJECT'].includes(type)) {
+    type = 'STRING';
+  }
+
+  const res: any = {
+    type,
+    description: val.description || '',
+  };
+
+  if (Array.isArray(val.enum) && val.enum.length > 0) {
+    res.enum = val.enum.map(String);
+  }
+
+  if (type === 'ARRAY') {
+    res.items = val.items ? sanitizeSchemaProperty(val.items) : { type: 'STRING' };
+  } else if (type === 'OBJECT') {
+    res.properties = {};
+    if (val.properties) {
+      for (const [k, v] of Object.entries(val.properties)) {
+        res.properties[k] = sanitizeSchemaProperty(v);
+      }
+    }
+    if (Array.isArray(val.required)) {
+      res.required = val.required.filter((r: any) => typeof r === 'string' && r in res.properties);
+    }
+  }
+
+  return res;
+}
+
+/**
+ * Public GitHub REST API fallback for read & list actions on open-source repositories.
+ * Used when Composio OAuth is disconnected or encounters rate limits.
+ */
+export async function executePublicGitHubFallback(action: string, params: Record<string, any>): Promise<any> {
+  const normAction = action.toUpperCase();
+  const owner = params.owner || (params.repo?.includes('/') ? params.repo.split('/')[0] : '');
+  const repo = params.repo?.includes('/') ? params.repo.split('/')[1] : params.repo;
+  const issueNum = params.issueNumber || params.issue_number;
+  const state = params.state || 'open';
+
+  const headers: Record<string, string> = {
+    Accept: 'application/vnd.github.v3+json',
+    'User-Agent': 'PixelOps-Autonomous-Agent/2.0',
+  };
+
+  try {
+    if (normAction.includes('LIST_ISSUES') && owner && repo) {
+      const res = await fetch(
+        `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues?state=${encodeURIComponent(state)}&per_page=10`,
+        { headers }
+      );
+      if (res.ok) {
+        const issues = await res.json();
+        return Array.isArray(issues)
+          ? issues.map((iss: any) => ({
+              number: iss.number,
+              title: iss.title,
+              state: iss.state,
+              user: iss.user?.login,
+              comments: iss.comments,
+              created_at: iss.created_at,
+              html_url: iss.html_url,
+              labels: (iss.labels || []).map((l: any) => l.name || l),
+              body: (iss.body || '').slice(0, 300),
+            }))
+          : issues;
+      }
+    }
+
+    if (normAction.includes('GET_REPOSITORY') && owner && repo) {
+      const res = await fetch(
+        `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
+        { headers }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        return {
+          full_name: data.full_name,
+          description: data.description,
+          stargazers_count: data.stargazers_count,
+          forks_count: data.forks_count,
+          open_issues_count: data.open_issues_count,
+          default_branch: data.default_branch,
+          topics: data.topics || [],
+          html_url: data.html_url,
+          updated_at: data.updated_at,
+        };
+      }
+    }
+
+    if (normAction.includes('LIST_PULL_REQUESTS') && owner && repo) {
+      const res = await fetch(
+        `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/pulls?state=${encodeURIComponent(state)}&per_page=10`,
+        { headers }
+      );
+      if (res.ok) {
+        const prs = await res.json();
+        return Array.isArray(prs)
+          ? prs.map((pr: any) => ({
+              number: pr.number,
+              title: pr.title,
+              state: pr.state,
+              user: pr.user?.login,
+              created_at: pr.created_at,
+              html_url: pr.html_url,
+            }))
+          : prs;
+      }
+    }
+
+    if (normAction.includes('GET_ISSUE') && owner && repo && issueNum) {
+      const res = await fetch(
+        `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues/${encodeURIComponent(issueNum)}`,
+        { headers }
+      );
+      if (res.ok) {
+        const iss = await res.json();
+        return {
+          number: iss.number,
+          title: iss.title,
+          state: iss.state,
+          body: iss.body,
+          comments: iss.comments,
+          user: iss.user?.login,
+          html_url: iss.html_url,
+        };
+      }
+    }
+
+    if (normAction.includes('SEARCH_REPOSITORIES') && (params.q || params.query)) {
+      const q = params.q || params.query;
+      const res = await fetch(
+        `https://api.github.com/search/repositories?q=${encodeURIComponent(q)}&per_page=5`,
+        { headers }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        return (data.items || []).map((repoItem: any) => ({
+          full_name: repoItem.full_name,
+          description: repoItem.description,
+          stargazers_count: repoItem.stargazers_count,
+          html_url: repoItem.html_url,
+        }));
+      }
+    }
+  } catch (err) {
+    console.warn('[GITHUB PUBLIC REST FALLBACK ERROR]', err);
+  }
+
+  return null;
+}
+
+/**
  * 4. Get Gemini FunctionDeclaration tools for all connected apps.
  * Automatically inspects the current user's live connected accounts if no specific list is passed,
  * ensuring newly connected Armory toolkits are instantly available to Vance, Cipher, Nyx, etc.
@@ -1974,7 +2217,7 @@ export async function getGeminiTools(connectedAppNames?: string[]): Promise<any[
     }
   }
 
-  return tools;
+  return tools.map(sanitizeGeminiFunctionSchema);
 }
 
 /**
@@ -2153,6 +2396,26 @@ export async function executeComposioAction(
     }
   }
 
+  // Fallback to Public GitHub REST API if Composio is not connected or timed out
+  if (normalizedAction.includes('GITHUB')) {
+    try {
+      const publicData = await executePublicGitHubFallback(normalizedAction, actionParams);
+      if (publicData) {
+        console.log(
+          `[GITHUB PUBLIC REST FALLBACK SUCCESS] Telemetry retrieved for "${actionName}" on ${actionParams.owner || ''}/${actionParams.repo || ''}`
+        );
+        return {
+          successful: true,
+          data: publicData,
+          actionName: normalizedAction,
+          executedAt: new Date().toISOString(),
+        };
+      }
+    } catch (fbErr: any) {
+      console.warn('[GITHUB PUBLIC REST FALLBACK ERROR]', fbErr?.message || fbErr);
+    }
+  }
+
   console.error(`[COMPOSIO EXECUTION ALL ALIASES FAILED] Tool: "${actionName}" | Normalized: "${normalizedAction}" | Error:`, lastError?.message || lastError);
   return {
     successful: false,
@@ -2241,6 +2504,8 @@ export const ComposioService = {
   notifyConnectionSync,
   COMPOSIO_GEMINI_TOOL_SCHEMAS,
   CURATED_COMPOSIO_INTEGRATIONS,
+  sanitizeGeminiFunctionSchema,
+  executePublicGitHubFallback,
 };
 
 export default ComposioService;

@@ -18,6 +18,8 @@ import {
   getConnectedAccounts,
   normalizeAppSlug,
   getGeminiTools,
+  sanitizeGeminiFunctionSchema,
+  executePublicGitHubFallback,
 } from './ComposioService';
 import {
   executeSafeOperation,
@@ -629,6 +631,7 @@ const WMO_WEATHER_CODES: Record<number, string> = {
 
 export interface CleanedSearchResult {
   primary: string;
+  coreQuery: string;
   fallback: string;
   isFinancialOrMarket: boolean;
   isVersionOrRelease: boolean;
@@ -701,6 +704,7 @@ export function cleanSearchQuery(rawQuery: string): CleanedSearchResult {
   q = q.replace(/["'`“”]/g, '').trim();
 
   if (!q) q = String(rawQuery || 'Technology Analysis').trim();
+  const coreQuery = q;
 
   // OSINT Intent Classification
   const isFinancialOrMarket = /\b(price|pricing|cost|costs|rate|rates|fee|fees|tier|tiers|subscription|plan|plans|discount|market|stock|shares|ticker|crypto|token|coin|btc|eth|sol|valuation|mrr|arr|revenue|earnings|quote|live ticker|current price)\b/i.test(q);
@@ -742,6 +746,7 @@ export function cleanSearchQuery(rawQuery: string): CleanedSearchResult {
 
   return {
     primary: q,
+    coreQuery,
     fallback,
     isFinancialOrMarket,
     isVersionOrRelease,
@@ -1015,13 +1020,14 @@ export async function executeFunctionCallHandler(fc: {
       }
     }
 
-    // 2. Live Web Search via Multi-Engine Intelligence (Real-Time DuckDuckGo + Live Market/CoinGecko + Wikipedia)
+    // 2. Live Web Search via Multi-Engine Intelligence (Real-Time Binance/Coinbase Oracles + Algolia HN Wire + GitHub Public Index + Wikipedia)
     if (name === 'live_web_search') {
       const rawQuery = String(args.query || 'Technology Analysis').trim();
       const limit = Math.min(5, Math.max(1, Number(args.maxResults) || 3));
       const cleanResult = cleanSearchQuery(rawQuery);
       const {
         primary: cleanQuery,
+        coreQuery,
         fallback: fallbackQuery,
         shouldExcludeEncyclopedia,
         isFinancialOrMarket,
@@ -1039,82 +1045,150 @@ export async function executeFunctionCallHandler(fc: {
         'wiktionary.org',
       ];
 
-      // A. Real-Time Financial & Ticker Query Interception
+      // A. Real-Time Financial & Ticker Query Interception via Binance / Coinbase / CoinGecko Oracles
       if (isFinancialOrMarket) {
-        const lowerQ = cleanQuery.toLowerCase();
-        let coinId = '';
-        const COIN_MAP: Record<string, string> = {
-          btc: 'bitcoin',
-          bitcoin: 'bitcoin',
-          eth: 'ethereum',
-          ethereum: 'ethereum',
-          sol: 'solana',
-          solana: 'solana',
-          xrp: 'ripple',
-          ripple: 'ripple',
-          doge: 'dogecoin',
-          dogecoin: 'dogecoin',
-          ada: 'cardano',
-          cardano: 'cardano',
-          bnb: 'binancecoin',
-          binancecoin: 'binancecoin',
-          avax: 'avalanche-2',
-          avalanche: 'avalanche-2',
-          link: 'chainlink',
-          chainlink: 'chainlink',
-          dot: 'polkadot',
-          polkadot: 'polkadot',
-          near: 'near',
-          sui: 'sui',
-          apt: 'aptos',
+        const lowerQ = `${cleanQuery} ${coreQuery}`.toLowerCase();
+        const COIN_MAP: Record<string, { symbol: string; coinId: string; name: string }> = {
+          btc: { symbol: 'BTC', coinId: 'bitcoin', name: 'Bitcoin' },
+          bitcoin: { symbol: 'BTC', coinId: 'bitcoin', name: 'Bitcoin' },
+          eth: { symbol: 'ETH', coinId: 'ethereum', name: 'Ethereum' },
+          ethereum: { symbol: 'ETH', coinId: 'ethereum', name: 'Ethereum' },
+          sol: { symbol: 'SOL', coinId: 'solana', name: 'Solana' },
+          solana: { symbol: 'SOL', coinId: 'solana', name: 'Solana' },
+          xrp: { symbol: 'XRP', coinId: 'ripple', name: 'XRP' },
+          ripple: { symbol: 'XRP', coinId: 'ripple', name: 'XRP' },
+          doge: { symbol: 'DOGE', coinId: 'dogecoin', name: 'Dogecoin' },
+          dogecoin: { symbol: 'DOGE', coinId: 'dogecoin', name: 'Dogecoin' },
+          ada: { symbol: 'ADA', coinId: 'cardano', name: 'Cardano' },
+          cardano: { symbol: 'ADA', coinId: 'cardano', name: 'Cardano' },
+          bnb: { symbol: 'BNB', coinId: 'binancecoin', name: 'BNB' },
+          binancecoin: { symbol: 'BNB', coinId: 'binancecoin', name: 'BNB' },
+          avax: { symbol: 'AVAX', coinId: 'avalanche-2', name: 'Avalanche' },
+          avalanche: { symbol: 'AVAX', coinId: 'avalanche-2', name: 'Avalanche' },
+          link: { symbol: 'LINK', coinId: 'chainlink', name: 'Chainlink' },
+          chainlink: { symbol: 'LINK', coinId: 'chainlink', name: 'Chainlink' },
+          dot: { symbol: 'DOT', coinId: 'polkadot', name: 'Polkadot' },
+          polkadot: { symbol: 'DOT', coinId: 'polkadot', name: 'Polkadot' },
+          near: { symbol: 'NEAR', coinId: 'near', name: 'NEAR Protocol' },
+          sui: { symbol: 'SUI', coinId: 'sui', name: 'Sui' },
+          apt: { symbol: 'APT', coinId: 'aptos', name: 'Aptos' },
+          pepe: { symbol: 'PEPE', coinId: 'pepe', name: 'Pepe' },
+          shib: { symbol: 'SHIB', coinId: 'shiba-inu', name: 'Shiba Inu' },
+          tia: { symbol: 'TIA', coinId: 'celestia', name: 'Celestia' },
+          arb: { symbol: 'ARB', coinId: 'arbitrum', name: 'Arbitrum' },
+          op: { symbol: 'OP', coinId: 'optimism', name: 'Optimism' },
+          ton: { symbol: 'TON', coinId: 'the-open-network', name: 'Toncoin' },
+          uni: { symbol: 'UNI', coinId: 'uniswap', name: 'Uniswap' },
+          ltc: { symbol: 'LTC', coinId: 'litecoin', name: 'Litecoin' },
         };
 
-        for (const [key, id] of Object.entries(COIN_MAP)) {
-          if (new RegExp(`\\b${key}\\b`, 'i').test(cleanQuery) || lowerQ.includes(key)) {
-            coinId = id;
+        let matchedCoin: { symbol: string; coinId: string; name: string } | null = null;
+        for (const [key, val] of Object.entries(COIN_MAP)) {
+          if (new RegExp(`\\b${key}\\b`, 'i').test(lowerQ)) {
+            matchedCoin = val;
             break;
           }
         }
 
-        if (coinId) {
+        if (matchedCoin) {
+          // 1. Try Binance Public 24h Ticker API (High-rate, zero-key, ultra-low latency)
           try {
-            const coinData = await executeSafeOperation(
+            const binanceData = await executeSafeOperation(
               async (signal) => {
                 const res = await fetch(
-                  `https://api.coingecko.com/api/v3/simple/price?ids=${coinId}&vs_currencies=usd&include_24hr_change=true`,
+                  `https://api.binance.com/api/v3/ticker/24hr?symbol=${matchedCoin!.symbol}USDT`,
                   { signal }
                 );
                 if (res.ok) return await res.json();
                 return null;
               },
-              { timeoutMs: 4000, maxRetries: 1, fallbackValue: null, operationName: 'live_web_search_coingecko' }
+              { timeoutMs: 4500, maxRetries: 1, fallbackValue: null, operationName: 'oracle_binance_ticker' }
             );
 
-            if (coinData && coinData[coinId]) {
-              const usdPrice = coinData[coinId].usd;
-              const change24h = coinData[coinId].usd_24h_change
-                ? `${coinData[coinId].usd_24h_change > 0 ? '+' : ''}${coinData[coinId].usd_24h_change.toFixed(2)}%`
-                : '0.00%';
+            if (binanceData && binanceData.lastPrice) {
+              const numPrice = parseFloat(binanceData.lastPrice);
+              const changePct = parseFloat(binanceData.priceChangePercent || '0');
+              const changeStr = `${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%`;
+              const highStr = parseFloat(binanceData.highPrice || '0').toLocaleString();
+              const lowStr = parseFloat(binanceData.lowPrice || '0').toLocaleString();
               results.push({
-                title: `${coinId.toUpperCase()} Live Market Ticker (November 2026)`,
-                snippet: `Current Price: $${usdPrice.toLocaleString()} USD | 24h Change: ${change24h}. Verified live market feed.`,
-                extract: `Live ticker for ${coinId.toUpperCase()}: Spot Price is $${usdPrice.toLocaleString()} USD with an intraday change of ${change24h}. Verified through real-time financial oracle.`,
-                url: `https://www.coingecko.com/en/coins/${coinId}`,
+                title: `${matchedCoin.name} (${matchedCoin.symbol}) Live Market Ticker`,
+                snippet: `Spot Price: $${numPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })} USD | 24h Change: ${changeStr} | 24h High: $${highStr} | 24h Low: $${lowStr}. Verified live market feed.`,
+                extract: `Live market oracle for ${matchedCoin.name} (${matchedCoin.symbol}): Current Spot Price is $${numPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })} USD with a 24-hour intraday change of ${changeStr}. 24h High: $${highStr}, 24h Low: $${lowStr}. Verified real-time telemetry node.`,
+                url: `https://www.binance.com/en/trade/${matchedCoin.symbol}_USDT`,
               });
             }
           } catch {}
+
+          // 2. If Binance was not reachable or blocked, try Coinbase Spot Price API
+          if (results.length === 0) {
+            try {
+              const coinbaseData = await executeSafeOperation(
+                async (signal) => {
+                  const res = await fetch(
+                    `https://api.coinbase.com/v2/prices/${matchedCoin!.symbol}-USD/spot`,
+                    { signal }
+                  );
+                  if (res.ok) return await res.json();
+                  return null;
+                },
+                { timeoutMs: 4000, maxRetries: 1, fallbackValue: null, operationName: 'oracle_coinbase_spot' }
+              );
+
+              if (coinbaseData && coinbaseData.data && coinbaseData.data.amount) {
+                const numPrice = parseFloat(coinbaseData.data.amount);
+                results.push({
+                  title: `${matchedCoin.name} (${matchedCoin.symbol}) Live Spot Price`,
+                  snippet: `Current Spot Price: $${numPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })} USD. Verified Coinbase spot oracle.`,
+                  extract: `Coinbase live spot oracle: ${matchedCoin.name} (${matchedCoin.symbol}) is trading at $${numPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })} USD. Real-time telemetry feed timestamp: ${new Date().toISOString()}.`,
+                  url: `https://www.coinbase.com/price/${matchedCoin.coinId}`,
+                });
+              }
+            } catch {}
+          }
+
+          // 3. Fallback to CoinGecko Simple Price API
+          if (results.length === 0) {
+            try {
+              const coinData = await executeSafeOperation(
+                async (signal) => {
+                  const res = await fetch(
+                    `https://api.coingecko.com/api/v3/simple/price?ids=${matchedCoin!.coinId}&vs_currencies=usd&include_24hr_change=true`,
+                    { signal }
+                  );
+                  if (res.ok) return await res.json();
+                  return null;
+                },
+                { timeoutMs: 4000, maxRetries: 1, fallbackValue: null, operationName: 'oracle_coingecko_price' }
+              );
+
+              if (coinData && coinData[matchedCoin.coinId]) {
+                const usdPrice = coinData[matchedCoin.coinId].usd;
+                const change24h = coinData[matchedCoin.coinId].usd_24h_change
+                  ? `${coinData[matchedCoin.coinId].usd_24h_change > 0 ? '+' : ''}${coinData[matchedCoin.coinId].usd_24h_change.toFixed(2)}%`
+                  : '0.00%';
+                results.push({
+                  title: `${matchedCoin.name} (${matchedCoin.symbol}) Live Market Ticker`,
+                  snippet: `Current Price: $${usdPrice.toLocaleString()} USD | 24h Change: ${change24h}. Verified CoinGecko live market feed.`,
+                  extract: `Live ticker for ${matchedCoin.name}: Spot Price is $${usdPrice.toLocaleString()} USD with an intraday change of ${change24h}. Verified through real-time financial oracle.`,
+                  url: `https://www.coingecko.com/en/coins/${matchedCoin.coinId}`,
+                });
+              }
+            } catch {}
+          }
         }
       }
 
-      // B. Real-Time Search via DuckDuckGo Instant Answer API (Bypasses static encyclopedia)
+      // B. Real-Time Tech, News & Software Intelligence via Algolia HackerNews Engine (Zero Key, 100% Live)
       if (results.length < limit) {
         try {
-          const ddgUrl = `https://api.duckduckgo.com/?q=${encodeURIComponent(
-            cleanQuery
-          )}&format=json&no_html=1&skip_disambig=1`;
-          const ddgData = await executeSafeOperation(
+          const hnSearchTerm = coreQuery && coreQuery.length > 2 ? coreQuery : fallbackQuery;
+          const hnData = await executeSafeOperation(
             async (signal) => {
-              const res = await fetch(ddgUrl, { signal });
+              const res = await fetch(
+                `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(hnSearchTerm)}&tags=story&hitsPerPage=${limit + 1}`,
+                { signal }
+              );
               if (res.ok) return await res.json();
               return null;
             },
@@ -1122,52 +1196,104 @@ export async function executeFunctionCallHandler(fc: {
               timeoutMs: 5000,
               maxRetries: 1,
               fallbackValue: null,
-              operationName: 'live_web_search_ddg',
+              operationName: 'live_web_search_algolia_hn',
             }
           );
 
-          if (ddgData) {
-            const heading = ddgData.Heading || '';
-            const abstract = ddgData.AbstractText || '';
-            const url = ddgData.AbstractURL || '';
-            const isEnc = EXCLUDED_ENCYCLOPEDIA_DOMAINS.some((d) => url.toLowerCase().includes(d));
-
-            if (abstract && (!shouldExcludeEncyclopedia || !isEnc)) {
+          if (hnData && Array.isArray(hnData.hits)) {
+            for (const hit of hnData.hits) {
+              if (results.length >= limit) break;
+              if (!hit || !hit.title) continue;
+              const hnUrl = hit.url || `https://news.ycombinator.com/item?id=${hit.objectID}`;
+              const points = hit.points || 0;
+              const comments = hit.num_comments || 0;
+              const dateStr = hit.created_at ? new Date(hit.created_at).toISOString().split('T')[0] : 'recent';
+              const author = hit.author || 'contributor';
               results.push({
-                title: heading || cleanQuery,
-                snippet: abstract,
-                extract: abstract,
-                url: url || `https://duckduckgo.com/?q=${encodeURIComponent(cleanQuery)}`,
+                title: hit.title,
+                snippet: `${hit.title}. Verified discussion by @${author} (${dateStr}): ${points} points, ${comments} comments. URL: ${hnUrl}`,
+                extract: `Verified real-time intelligence node: "${hit.title}" reported by @${author} on ${dateStr}. Telemetry score: ${points} points, ${comments} active comments. External citation: ${hnUrl}`,
+                url: hnUrl,
               });
-            }
-
-            if (Array.isArray(ddgData.RelatedTopics)) {
-              for (const rt of ddgData.RelatedTopics) {
-                if (results.length >= limit) break;
-                if (rt.Text && rt.FirstURL) {
-                  const rtEnc = EXCLUDED_ENCYCLOPEDIA_DOMAINS.some((d) => (rt.FirstURL || '').toLowerCase().includes(d));
-                  if (!shouldExcludeEncyclopedia || !rtEnc) {
-                    results.push({
-                      title: rt.Text.slice(0, 60),
-                      snippet: rt.Text,
-                      extract: rt.Text,
-                      url: rt.FirstURL,
-                    });
-                  }
-                }
-              }
             }
           }
         } catch {
-          // Continue to next source
+          // Proceed to next intelligence source
         }
       }
 
-      // C. Wikipedia Search (ONLY if shouldExcludeEncyclopedia is FALSE, e.g. for general background/history)
-      if (!shouldExcludeEncyclopedia && results.length < limit) {
+      // C. Public GitHub Index (If query matches owner/repo pattern or mentions GitHub/repositories)
+      if (results.length < limit) {
+        const repoSlashMatch = (coreQuery || cleanQuery).match(/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)/);
+        const hasGithubIntent = /\b(github|repo|repository|issue|pull request|pr|commit)\b/i.test(cleanQuery);
+
+        if (repoSlashMatch) {
+          const owner = repoSlashMatch[1];
+          const repo = repoSlashMatch[2];
+          try {
+            const repoData = await executeSafeOperation(
+              async (signal) => {
+                const res = await fetch(
+                  `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
+                  {
+                    headers: { Accept: 'application/vnd.github.v3+json', 'User-Agent': 'PixelOps-Autonomous-Agent' },
+                    signal,
+                  }
+                );
+                if (res.ok) return await res.json();
+                return null;
+              },
+              { timeoutMs: 4000, maxRetries: 1, fallbackValue: null, operationName: 'live_web_search_github_repo' }
+            );
+
+            if (repoData && repoData.full_name) {
+              results.push({
+                title: `${repoData.full_name}: ${repoData.description || 'GitHub Repository'}`,
+                snippet: `GitHub Repository: ${repoData.stargazers_count?.toLocaleString()} stars, ${repoData.forks_count?.toLocaleString()} forks, ${repoData.open_issues_count?.toLocaleString()} open issues. Default branch: ${repoData.default_branch}. Last updated: ${repoData.updated_at}.`,
+                extract: `Live GitHub Telemetry for ${repoData.full_name}: Stargazers: ${repoData.stargazers_count}, Open Issues: ${repoData.open_issues_count}, Forks: ${repoData.forks_count}, License: ${repoData.license?.spdx_id || 'Not specified'}. Description: ${repoData.description || 'N/A'}.`,
+                url: repoData.html_url || `https://github.com/${owner}/${repo}`,
+              });
+            }
+          } catch {}
+        } else if (hasGithubIntent) {
+          try {
+            const ghSearchTerm = coreQuery && coreQuery.length > 2 ? coreQuery : fallbackQuery;
+            const searchData = await executeSafeOperation(
+              async (signal) => {
+                const res = await fetch(
+                  `https://api.github.com/search/repositories?q=${encodeURIComponent(ghSearchTerm)}&per_page=2`,
+                  {
+                    headers: { Accept: 'application/vnd.github.v3+json', 'User-Agent': 'PixelOps-Autonomous-Agent' },
+                    signal,
+                  }
+                );
+                if (res.ok) return await res.json();
+                return null;
+              },
+              { timeoutMs: 4000, maxRetries: 1, fallbackValue: null, operationName: 'live_web_search_github_search' }
+            );
+
+            if (searchData && Array.isArray(searchData.items)) {
+              for (const r of searchData.items) {
+                if (results.length >= limit) break;
+                results.push({
+                  title: `${r.full_name} (${r.stargazers_count?.toLocaleString()} stars)`,
+                  snippet: `${r.description || 'Repository'} - ${r.language || 'Code'} | Updated ${r.updated_at}`,
+                  extract: `GitHub public repository node for ${r.full_name}: ${r.stargazers_count} stars, ${r.forks_count} forks. Primary language: ${r.language || 'Unknown'}. URL: ${r.html_url}`,
+                  url: r.html_url,
+                });
+              }
+            }
+          } catch {}
+        }
+      }
+
+      // D. Wikipedia Knowledge Base (If not excluded or if other sources need authoritative encyclopedia context)
+      if (results.length < limit && (!shouldExcludeEncyclopedia || results.length === 0)) {
         let rawHits: any[] = [];
+        const wikiSearchTerm = coreQuery && coreQuery.length > 2 ? coreQuery : fallbackQuery;
         const primaryWikiUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(
-          cleanQuery
+          wikiSearchTerm
         )}&utf8=&format=json&origin=*&srlimit=${limit}`;
 
         rawHits = await executeSafeOperation(
@@ -1183,27 +1309,6 @@ export async function executeFunctionCallHandler(fc: {
             operationName: 'live_web_search_wiki_primary',
           }
         );
-
-        // If primary query yielded zero hits, try the distilled fallback keywords
-        if (rawHits.length === 0 && fallbackQuery !== cleanQuery) {
-          const fallbackWikiUrl = `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(
-            fallbackQuery
-          )}&utf8=&format=json&origin=*&srlimit=${limit}`;
-
-          rawHits = await executeSafeOperation(
-            async (signal) => {
-              const wikiRes = await fetch(fallbackWikiUrl, { signal });
-              const wikiData = await wikiRes.json();
-              return (wikiData?.query?.search || []) as any[];
-            },
-            {
-              timeoutMs: 5000,
-              maxRetries: 1,
-              fallbackValue: [],
-              operationName: 'live_web_search_wiki_fallback',
-            }
-          );
-        }
 
         for (const hit of rawHits) {
           if (results.length >= limit) break;
@@ -1247,7 +1352,7 @@ export async function executeFunctionCallHandler(fc: {
         }
       }
 
-      // D. Fallback if external engines yield zero hits
+      // E. Factual Status Report if All External Engines Yield Zero Hits (Zero Hallucination / Zero Fake Mocks)
       if (results.length === 0) {
         if (isFinancialOrMarket) {
           results.push({
@@ -1257,12 +1362,11 @@ export async function executeFunctionCallHandler(fc: {
             url: `safehouse://unreachable-feed/${encodeURIComponent(cleanQuery.toLowerCase().replace(/\s+/g, '-'))}`,
           });
         } else {
-          const synthesizedIntel = synthesizeDomainIntel(cleanQuery);
           results.push({
-            title: synthesizedIntel.title,
-            snippet: synthesizedIntel.summary,
-            extract: synthesizedIntel.fullExtract,
-            url: `safehouse://live-telemetry/${encodeURIComponent(cleanQuery.toLowerCase().replace(/\s+/g, '-'))}`,
+            title: `${cleanQuery} - Search Verification Complete`,
+            snippet: `Live multi-engine sweep completed for "${cleanQuery}". No active public intelligence nodes matched the query across Algolia Tech Wire, GitHub Public Index, or Reference Knowledge Base.`,
+            extract: `Operational telemetry: Web search sweep for "${cleanQuery}" returned zero verified results from live endpoints. In accordance with zero-tolerance hallucination protocols, fictional summaries are strictly withheld.`,
+            url: `safehouse://live-search/${encodeURIComponent((coreQuery || cleanQuery).toLowerCase().replace(/\s+/g, '-'))}`,
           });
         }
       }
@@ -2908,8 +3012,51 @@ async function executeAndFormatExternalTool(opts: {
       a.status !== 'EXPIRED'
   );
 
-  // If not connected: do NOT simulate! Report honest operational status & instructions to connect
+  // If not connected: check if public REST fallback is available (e.g. GitHub public repos)
   if (!matched) {
+    if (appSlug === 'github' && !actionName.includes('CREATE') && !actionName.includes('STAR')) {
+      try {
+        const publicData = await executePublicGitHubFallback(actionName, actionArgs);
+        if (publicData) {
+          const liveDataPreview =
+            typeof publicData === 'object'
+              ? JSON.stringify(publicData, null, 2).slice(0, 350)
+              : String(publicData || 'Live data retrieved');
+          const dialogue = `${params.activeAgentName} (${params.activeAgentRole}): Live GitHub repository intelligence retrieved via public REST telemetry!\n\n• Action: ${actionName}\n• Target: ${actionArgs.owner || ''}/${actionArgs.repo || ''}\n• Parameters:\n${JSON.stringify(actionArgs, null, 2)}\n\n• Verified Repository Telemetry:\n${liveDataPreview}\n\nLive repository data cross-referenced against GitHub public index.`;
+          return {
+            id: `card-${Date.now()}`,
+            prompt: params.prompt,
+            dialogue,
+            cardTitle: 'GITHUB TELEMETRY VERIFIED',
+            actionCategory: 'Live Telemetry',
+            steps: [
+              { label: 'Intent Parsed', detail: `Analyzed repository directive for ${actionArgs.owner || ''}/${actionArgs.repo || ''}`, status: 'completed' },
+              { label: 'Public Index Wiretap', detail: 'Connected to GitHub REST endpoints', status: 'verified' },
+              { label: 'Telemetry Ingested', detail: 'Ingested live issue/PR records', status: 'completed' },
+            ],
+            toolCalls: [
+              {
+                pluginId: appSlug,
+                toolName: actionName,
+                args: actionArgs,
+                resultSummary: `Verified public repository telemetry for ${actionArgs.owner || ''}/${actionArgs.repo || ''}`,
+                livePayload: publicData,
+                targetRoom,
+                targetStationId,
+              },
+            ],
+            tokenEstimate: Math.max(90, Math.round(dialogue.length / 4)),
+            agentName: params.activeAgentName,
+            themeId: params.themeId,
+            timestamp: new Date().toISOString(),
+            hasAttachment: Boolean(params.attachment),
+          };
+        }
+      } catch (ghFallbackErr) {
+        console.warn('[GITHUB PUBLIC FALLBACK ATTEMPT FAILED]', ghFallbackErr);
+      }
+    }
+
     const dialogue = `${params.activeAgentName} (${params.activeAgentRole}): Directive recognized for live ${appName} integration.\n\n• Action: ${actionName}\n• Extracted Parameters:\n${JSON.stringify(actionArgs, null, 2)}\n\n⚠️ EXTERNAL GATEWAY OFFLINE: Your ${appName} account is currently disconnected in the Command Center Armory.\n\nTo execute live directives on ${appName}, open the Armory Toolkit tab (or run "pixelops composio connect ${appSlug}") to authorize via OAuth.`;
 
     return {
@@ -4795,7 +4942,7 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
           };
 
           if (activeDeclarations.length > 0) {
-            currentPayload.tools = [{ functionDeclarations: activeDeclarations }];
+            currentPayload.tools = [{ functionDeclarations: activeDeclarations.map(sanitizeGeminiFunctionSchema) }];
             // Enforce function-calling behavior on Turn 1 when operational tool intent is present
             if (turnCount === 1 && hasToolIntent) {
               currentPayload.toolConfig = {
@@ -4816,7 +4963,7 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
               });
             },
             {
-              timeoutMs: 16000,
+              timeoutMs: 30000,
               maxRetries: 1,
               operationName: `gemini_turn_${turnCount}_dispatch`,
             }
@@ -4835,7 +4982,7 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
                 });
               },
               {
-                timeoutMs: 16000,
+                timeoutMs: 30000,
                 maxRetries: 1,
                 operationName: `gemini_turn_${turnCount}_retry_auto`,
               }
@@ -5037,7 +5184,7 @@ MANDATORY AUTONOMOUS INTELLIGENCE PROTOCOL:
               });
             },
             {
-              timeoutMs: 16000,
+              timeoutMs: 30000,
               maxRetries: 1,
               operationName: 'gemini_synthesis_dispatch',
             }

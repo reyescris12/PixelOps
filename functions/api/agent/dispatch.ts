@@ -70,8 +70,45 @@ export async function onRequestPost(context: { request: Request; env: Env }): Pr
       );
     }
 
-    const dynamicTools: any[] = [];
-    const activeAppNames: string[] = [];
+    const dynamicTools: any[] = [
+      {
+        name: 'live_web_search',
+        description: 'Search live web knowledge nodes, current market/crypto pricing feeds, real-time news, and software releases.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            query: { type: 'STRING', description: 'Search keywords, company name, crypto ticker, or target topic.' },
+          },
+          required: ['query'],
+        },
+      },
+      {
+        name: 'composio_github_list_issues',
+        description: 'List issues in a GitHub repository with optional state filter ("open", "closed", "all").',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            owner: { type: 'STRING', description: 'Repository owner or organization name.' },
+            repo: { type: 'STRING', description: 'Repository name.' },
+            state: { type: 'STRING', description: 'Issue state filter: "open" or "closed".' },
+          },
+          required: ['owner', 'repo'],
+        },
+      },
+      {
+        name: 'composio_github_get_repository',
+        description: 'Get detailed information, stargazers, open issues count, and telemetry for a GitHub repository.',
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            owner: { type: 'STRING', description: 'Repository owner.' },
+            repo: { type: 'STRING', description: 'Repository name.' },
+          },
+          required: ['owner', 'repo'],
+        },
+      },
+    ];
+    const activeAppNames: string[] = ['web_search', 'github'];
 
     // 1. If Composio is configured, dynamically query all active integrations for this user
     if (composioApiKey && entityId) {
@@ -254,7 +291,7 @@ DYNAMIC REAL-TIME QUERY FORMULATION & NUMERICAL EXTRACTION PROTOCOL:
       };
 
       if (dynamicTools.length > 0) {
-        geminiPayload.tools = [{ functionDeclarations: dynamicTools }];
+        geminiPayload.tools = [{ functionDeclarations: dynamicTools.map(sanitizeGeminiFunctionSchema) }];
       }
 
       console.log(
@@ -306,7 +343,16 @@ DYNAMIC REAL-TIME QUERY FORMULATION & NUMERICAL EXTRACTION PROTOCOL:
         let executionResult: any = null;
         let executionSuccessful = false;
 
-        if (composioApiKey && (toolName.startsWith('composio_') || toolName.startsWith('COMPOSIO_'))) {
+        if (toolName === 'live_web_search') {
+          try {
+            const searchRes = await executeBackendWebSearch(toolArgs.query || message);
+            executionResult = searchRes;
+            executionSuccessful = true;
+          } catch (searchErr: any) {
+            executionResult = { error: searchErr?.message || 'Search execution failed.' };
+            executionSuccessful = false;
+          }
+        } else if (composioApiKey && (toolName.startsWith('composio_') || toolName.startsWith('COMPOSIO_'))) {
           const rawAction = toolName.replace(/^composio_/i, '').toUpperCase();
           try {
             const execRes = await fetch(
@@ -331,8 +377,33 @@ DYNAMIC REAL-TIME QUERY FORMULATION & NUMERICAL EXTRACTION PROTOCOL:
             executionResult = { error: execErr?.message || 'Tool execution network fault' };
             executionSuccessful = false;
           }
+
+          // If Composio failed and it's a GitHub action, try public GitHub REST fallback
+          if (!executionSuccessful && rawAction.includes('GITHUB')) {
+            try {
+              const fbData = await executePublicGitHubFallback(rawAction, toolArgs);
+              if (fbData) {
+                executionResult = { data: fbData, source: 'GitHub Public Index' };
+                executionSuccessful = true;
+              }
+            } catch {}
+          }
+        } else if (toolName.includes('github') || toolName.includes('GITHUB')) {
+          try {
+            const fbData = await executePublicGitHubFallback(toolName, toolArgs);
+            if (fbData) {
+              executionResult = { data: fbData, source: 'GitHub Public Index' };
+              executionSuccessful = true;
+            } else {
+              executionResult = { error: `GitHub action ${toolName} failed on public repository.` };
+              executionSuccessful = false;
+            }
+          } catch (ghErr: any) {
+            executionResult = { error: ghErr?.message || 'GitHub lookup failed' };
+            executionSuccessful = false;
+          }
         } else {
-          executionResult = { error: `Tool ${toolName} not executable via backend Composio gateway.` };
+          executionResult = { error: `Tool ${toolName} not executable via backend gateway.` };
           executionSuccessful = false;
         }
 
@@ -570,4 +641,243 @@ Result status: ${topTool?.success ? 'Success - live payload processed.' : `Execu
       { status: 500, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
     );
   }
+}
+
+async function executeBackendWebSearch(query: string): Promise<any> {
+  const cleanQ = String(query || '').trim();
+  const lowerQ = cleanQ.toLowerCase();
+  const results: any[] = [];
+
+  const COIN_MAP: Record<string, { symbol: string; name: string }> = {
+    btc: { symbol: 'BTC', name: 'Bitcoin' },
+    bitcoin: { symbol: 'BTC', name: 'Bitcoin' },
+    eth: { symbol: 'ETH', name: 'Ethereum' },
+    ethereum: { symbol: 'ETH', name: 'Ethereum' },
+    sol: { symbol: 'SOL', name: 'Solana' },
+    solana: { symbol: 'SOL', name: 'Solana' },
+    xrp: { symbol: 'XRP', name: 'XRP' },
+    doge: { symbol: 'DOGE', name: 'Dogecoin' },
+    ada: { symbol: 'ADA', name: 'Cardano' },
+    bnb: { symbol: 'BNB', name: 'Binance Coin' },
+    near: { symbol: 'NEAR', name: 'NEAR Protocol' },
+    sui: { symbol: 'SUI', name: 'Sui' },
+    apt: { symbol: 'APT', name: 'Aptos' },
+  };
+
+  let matchedCoin: { symbol: string; name: string } | null = null;
+  for (const [key, val] of Object.entries(COIN_MAP)) {
+    if (new RegExp(`\\b${key}\\b`, 'i').test(lowerQ)) {
+      matchedCoin = val;
+      break;
+    }
+  }
+
+  if (matchedCoin) {
+    try {
+      const binanceRes = await fetch(
+        `https://api.binance.com/api/v3/ticker/24hr?symbol=${matchedCoin.symbol}USDT`
+      );
+      if (binanceRes.ok) {
+        const bData: any = await binanceRes.json();
+        const numPrice = parseFloat(bData.lastPrice);
+        const changePct = parseFloat(bData.priceChangePercent || '0');
+        const changeStr = `${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%`;
+        results.push({
+          title: `${matchedCoin.name} (${matchedCoin.symbol}) Live Spot Ticker`,
+          snippet: `Current Spot Price: $${numPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })} USD | 24h Change: ${changeStr} | 24h High: $${parseFloat(bData.highPrice).toLocaleString()} | 24h Low: $${parseFloat(bData.lowPrice).toLocaleString()}. Verified Binance live feed.`,
+          url: `https://www.binance.com/en/trade/${matchedCoin.symbol}_USDT`,
+        });
+      }
+    } catch {}
+
+    if (results.length === 0) {
+      try {
+        const cbRes = await fetch(
+          `https://api.coinbase.com/v2/prices/${matchedCoin.symbol}-USD/spot`
+        );
+        if (cbRes.ok) {
+          const cbData: any = await cbRes.json();
+          const numPrice = parseFloat(cbData.data.amount);
+          results.push({
+            title: `${matchedCoin.name} (${matchedCoin.symbol}) Live Spot Price`,
+            snippet: `Current Spot Price: $${numPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 4 })} USD. Verified Coinbase spot oracle.`,
+            url: `https://www.coinbase.com/price/${matchedCoin.symbol.toLowerCase()}`,
+          });
+        }
+      } catch {}
+    }
+  }
+
+  // Algolia HackerNews Search
+  if (results.length < 3) {
+    try {
+      const hnRes = await fetch(
+        `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(cleanQ)}&tags=story&hitsPerPage=3`
+      );
+      if (hnRes.ok) {
+        const hnData: any = await hnRes.json();
+        for (const hit of hnData.hits || []) {
+          results.push({
+            title: hit.title,
+            snippet: `${hit.title} (${hit.points || 0} points, ${hit.num_comments || 0} comments, by ${hit.author || 'author'}).`,
+            url: hit.url || `https://news.ycombinator.com/item?id=${hit.objectID}`,
+          });
+        }
+      }
+    } catch {}
+  }
+
+  // Wikipedia Reference
+  if (results.length < 2) {
+    try {
+      const wikiRes = await fetch(
+        `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(cleanQ)}&utf8=&format=json&origin=*&srlimit=2`
+      );
+      if (wikiRes.ok) {
+        const wikiData: any = await wikiRes.json();
+        for (const hit of wikiData?.query?.search || []) {
+          results.push({
+            title: hit.title,
+            snippet: String(hit.snippet || '').replace(/<[^>]+>/g, ''),
+            url: `https://en.wikipedia.org/wiki/${encodeURIComponent(String(hit.title).replace(/ /g, '_'))}`,
+          });
+        }
+      }
+    } catch {}
+  }
+
+  return {
+    query: cleanQ,
+    resultCount: results.length,
+    results,
+    summary: results.length > 0 ? `Verified ${results.length} real-time intelligence nodes.` : 'No live matching nodes.',
+  };
+}
+
+async function executePublicGitHubFallback(action: string, params: Record<string, any>): Promise<any> {
+  const normAction = action.toUpperCase();
+  const owner = params.owner || (params.repo?.includes('/') ? params.repo.split('/')[0] : '');
+  const repo = params.repo?.includes('/') ? params.repo.split('/')[1] : params.repo;
+  const state = params.state || 'open';
+
+  const headers: Record<string, string> = {
+    Accept: 'application/vnd.github.v3+json',
+    'User-Agent': 'PixelOps-Autonomous-Agent/2.0',
+  };
+
+  if (normAction.includes('LIST_ISSUES') && owner && repo) {
+    const res = await fetch(
+      `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/issues?state=${encodeURIComponent(state)}&per_page=10`,
+      { headers }
+    );
+    if (res.ok) {
+      const issues: any = await res.json();
+      return Array.isArray(issues)
+        ? issues.map((iss: any) => ({
+            number: iss.number,
+            title: iss.title,
+            state: iss.state,
+            user: iss.user?.login,
+            comments: iss.comments,
+            created_at: iss.created_at,
+            html_url: iss.html_url,
+          }))
+        : issues;
+    }
+  }
+
+  if (normAction.includes('GET_REPOSITORY') && owner && repo) {
+    const res = await fetch(
+      `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`,
+      { headers }
+    );
+    if (res.ok) {
+      const data: any = await res.json();
+      return {
+        full_name: data.full_name,
+        description: data.description,
+        stargazers_count: data.stargazers_count,
+        open_issues_count: data.open_issues_count,
+        html_url: data.html_url,
+      };
+    }
+  }
+
+  return null;
+}
+
+function sanitizeGeminiFunctionSchema(schema: any): any {
+  if (!schema || typeof schema !== 'object') return schema;
+  const rawParams = schema.parameters || {};
+  return {
+    name: String(schema.name || '').trim(),
+    description: String(schema.description || `Tool ${schema.name || ''}`).trim(),
+    parameters: sanitizeSchemaObject(rawParams),
+  };
+}
+
+function sanitizeSchemaObject(obj: any): any {
+  if (!obj || typeof obj !== 'object') {
+    return { type: 'OBJECT', properties: {}, required: [] };
+  }
+  let type = String(obj.type || 'OBJECT').toUpperCase();
+  if (!['STRING', 'NUMBER', 'INTEGER', 'BOOLEAN', 'ARRAY', 'OBJECT'].includes(type)) {
+    type = 'OBJECT';
+  }
+  const out: any = { type, description: obj.description || '' };
+  if (Array.isArray(obj.enum) && obj.enum.length > 0) {
+    out.enum = obj.enum.map(String);
+  }
+  if (type === 'OBJECT') {
+    out.properties = {};
+    const rawProps = obj.properties || {};
+    for (const [key, val] of Object.entries(rawProps)) {
+      out.properties[key] = sanitizeSchemaProperty(val);
+    }
+    out.required = Array.isArray(obj.required)
+      ? obj.required.filter((r: any) => typeof r === 'string' && r in out.properties)
+      : [];
+  } else if (type === 'ARRAY') {
+    out.items = obj.items ? sanitizeSchemaProperty(obj.items) : { type: 'STRING' };
+  }
+  return out;
+}
+
+function sanitizeSchemaProperty(val: any): any {
+  if (!val || typeof val !== 'object') {
+    return { type: 'STRING', description: '' };
+  }
+  if (Array.isArray(val.anyOf) && val.anyOf.length > 0) {
+    const valid = val.anyOf.find((item: any) => item && item.type && item.type !== 'null') || val.anyOf[0];
+    return sanitizeSchemaProperty(valid);
+  }
+  if (Array.isArray(val.oneOf) && val.oneOf.length > 0) {
+    const valid = val.oneOf.find((item: any) => item && item.type && item.type !== 'null') || val.oneOf[0];
+    return sanitizeSchemaProperty(valid);
+  }
+  let type = String(val.type || 'STRING').toUpperCase();
+  if (Array.isArray(val.type)) {
+    type = String(val.type.find((t: string) => t.toLowerCase() !== 'null') || 'STRING').toUpperCase();
+  }
+  if (!['STRING', 'NUMBER', 'INTEGER', 'BOOLEAN', 'ARRAY', 'OBJECT'].includes(type)) {
+    type = 'STRING';
+  }
+  const res: any = { type, description: val.description || '' };
+  if (Array.isArray(val.enum) && val.enum.length > 0) {
+    res.enum = val.enum.map(String);
+  }
+  if (type === 'ARRAY') {
+    res.items = val.items ? sanitizeSchemaProperty(val.items) : { type: 'STRING' };
+  } else if (type === 'OBJECT') {
+    res.properties = {};
+    if (val.properties) {
+      for (const [k, v] of Object.entries(val.properties)) {
+        res.properties[k] = sanitizeSchemaProperty(v);
+      }
+    }
+    if (Array.isArray(val.required)) {
+      res.required = val.required.filter((r: any) => typeof r === 'string' && r in res.properties);
+    }
+  }
+  return res;
 }

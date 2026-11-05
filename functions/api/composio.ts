@@ -174,11 +174,13 @@ export const onRequest = async (context: {
                     required: Array.isArray(rawParams.required) ? rawParams.required : [],
                   };
 
-                  dynamicTools.push({
-                    name: `composio_${slug.toLowerCase()}`,
-                    description: item.description || `Execute ${slug} on ${app.toUpperCase()} via Composio.`,
-                    parameters,
-                  });
+                  dynamicTools.push(
+                    sanitizeGeminiFunctionSchema({
+                      name: `composio_${slug.toLowerCase()}`,
+                      description: item.description || `Execute ${slug} on ${app.toUpperCase()} via Composio.`,
+                      parameters,
+                    })
+                  );
                 }
               }
             } catch (toolFetchErr) {
@@ -322,3 +324,79 @@ export const onRequest = async (context: {
     );
   }
 };
+
+function sanitizeGeminiFunctionSchema(schema: any): any {
+  if (!schema || typeof schema !== 'object') return schema;
+  const rawParams = schema.parameters || {};
+  return {
+    name: String(schema.name || '').trim(),
+    description: String(schema.description || `Tool ${schema.name || ''}`).trim(),
+    parameters: sanitizeSchemaObject(rawParams),
+  };
+}
+
+function sanitizeSchemaObject(obj: any): any {
+  if (!obj || typeof obj !== 'object') {
+    return { type: 'OBJECT', properties: {}, required: [] };
+  }
+  let type = String(obj.type || 'OBJECT').toUpperCase();
+  if (!['STRING', 'NUMBER', 'INTEGER', 'BOOLEAN', 'ARRAY', 'OBJECT'].includes(type)) {
+    type = 'OBJECT';
+  }
+  const out: any = { type, description: obj.description || '' };
+  if (Array.isArray(obj.enum) && obj.enum.length > 0) {
+    out.enum = obj.enum.map(String);
+  }
+  if (type === 'OBJECT') {
+    out.properties = {};
+    const rawProps = obj.properties || {};
+    for (const [key, val] of Object.entries(rawProps)) {
+      out.properties[key] = sanitizeSchemaProperty(val);
+    }
+    out.required = Array.isArray(obj.required)
+      ? obj.required.filter((r: any) => typeof r === 'string' && r in out.properties)
+      : [];
+  } else if (type === 'ARRAY') {
+    out.items = obj.items ? sanitizeSchemaProperty(obj.items) : { type: 'STRING' };
+  }
+  return out;
+}
+
+function sanitizeSchemaProperty(val: any): any {
+  if (!val || typeof val !== 'object') {
+    return { type: 'STRING', description: '' };
+  }
+  if (Array.isArray(val.anyOf) && val.anyOf.length > 0) {
+    const valid = val.anyOf.find((item: any) => item && item.type && item.type !== 'null') || val.anyOf[0];
+    return sanitizeSchemaProperty(valid);
+  }
+  if (Array.isArray(val.oneOf) && val.oneOf.length > 0) {
+    const valid = val.oneOf.find((item: any) => item && item.type && item.type !== 'null') || val.oneOf[0];
+    return sanitizeSchemaProperty(valid);
+  }
+  let type = String(val.type || 'STRING').toUpperCase();
+  if (Array.isArray(val.type)) {
+    type = String(val.type.find((t: string) => t.toLowerCase() !== 'null') || 'STRING').toUpperCase();
+  }
+  if (!['STRING', 'NUMBER', 'INTEGER', 'BOOLEAN', 'ARRAY', 'OBJECT'].includes(type)) {
+    type = 'STRING';
+  }
+  const res: any = { type, description: val.description || '' };
+  if (Array.isArray(val.enum) && val.enum.length > 0) {
+    res.enum = val.enum.map(String);
+  }
+  if (type === 'ARRAY') {
+    res.items = val.items ? sanitizeSchemaProperty(val.items) : { type: 'STRING' };
+  } else if (type === 'OBJECT') {
+    res.properties = {};
+    if (val.properties) {
+      for (const [k, v] of Object.entries(val.properties)) {
+        res.properties[k] = sanitizeSchemaProperty(v);
+      }
+    }
+    if (Array.isArray(val.required)) {
+      res.required = val.required.filter((r: any) => typeof r === 'string' && r in res.properties);
+    }
+  }
+  return res;
+}

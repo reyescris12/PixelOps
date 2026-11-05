@@ -149,6 +149,7 @@ import {
   clearPluginCredential,
   PluginAuthCredential,
 } from './engine/pluginAuthManager';
+import { handleOpenRouterCallback } from './services/OpenRouterAuth';
 
 type NavTab = 'hq' | 'crew' | 'plugins' | 'themes';
 type HqSubView = 'terminal' | 'town_hall' | 'command_log' | 'task_queue';
@@ -225,6 +226,15 @@ const CommandCenterContent: React.FC = () => {
       window.removeEventListener('strategy:tasks-updated', handleUpdate);
       window.removeEventListener('storage', handleUpdate);
     };
+  }, []);
+
+  // OpenRouter 1-Click OAuth PKCE Callback Listener
+  useEffect(() => {
+    handleOpenRouterCallback().then((res) => {
+      if (res?.ok) {
+        console.log('[OpenRouter] Authenticated successfully via 1-Click PKCE SSO');
+      }
+    });
   }, []);
   const [currentRoom, setCurrentRoom] = useState<RoomId>(
     () => restoredSession?.currentRoom || 'war_room'

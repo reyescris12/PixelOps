@@ -870,12 +870,30 @@ function resolveActiveLLMConfig(): {
   apiKey: string;
 } | null {
   try {
+    const ssoMode = typeof localStorage !== 'undefined' ? localStorage.getItem('pixelops_ai_sso_mode') : null;
+    if (ssoMode === 'puter') {
+      return {
+        provider: 'puter',
+        model: 'google/gemini-2.5-flash',
+        apiKey: 'puter_zero_key',
+      };
+    }
+
+    const openRouterKey = typeof localStorage !== 'undefined' ? localStorage.getItem('pixelops_openrouter_key') : null;
+    if (ssoMode === 'openrouter' && openRouterKey) {
+      return {
+        provider: 'openrouter',
+        model: localStorage.getItem('pixelops_openrouter_model') || 'google/gemini-2.5-flash:free',
+        apiKey: openRouterKey,
+      };
+    }
+
     const config = loadLLMProviderConfig();
-    const candidates: ModelGatewayProvider[] = ['gemini', 'groq', 'openai', 'anthropic'];
+    const candidates: ('gemini' | 'groq' | 'openai' | 'anthropic')[] = ['gemini', 'groq', 'openai', 'anthropic'];
 
     // 1. If currently configured provider in LLMProviderService has a valid key
-    if (config.providerId && candidates.includes(config.providerId as ModelGatewayProvider)) {
-      const p = config.providerId as ModelGatewayProvider;
+    if (config.providerId && candidates.includes(config.providerId as any)) {
+      const p = config.providerId as 'gemini' | 'groq' | 'openai' | 'anthropic';
       const key = (config.apiKey || '').trim() || getProviderApiKey(p);
       if (key && key !== 'MY_GEMINI_API_KEY') {
         return {
@@ -897,6 +915,14 @@ function resolveActiveLLMConfig(): {
           apiKey: key,
         };
       }
+    }
+
+    if (openRouterKey) {
+      return {
+        provider: 'openrouter',
+        model: localStorage.getItem('pixelops_openrouter_model') || 'google/gemini-2.5-flash:free',
+        apiKey: openRouterKey,
+      };
     }
   } catch {}
 

@@ -1,8 +1,10 @@
 // services/ModelGateway.ts
 
 import { getProviderApiKey, hasProviderApiKey, SUPPORTED_VAULT_PROVIDERS } from './BYOKVault';
+import { callPuterModel as puterChat } from './PuterAuth';
+import { getOpenRouterKey } from './OpenRouterAuth';
 
-export type ModelGatewayProvider = 'gemini' | 'anthropic' | 'openai' | 'groq';
+export type ModelGatewayProvider = 'gemini' | 'anthropic' | 'openai' | 'groq' | 'openrouter' | 'puter';
 export type InferenceTier = 'fast' | 'reasoning';
 
 export interface ModelGatewayMessage {
@@ -12,15 +14,33 @@ export interface ModelGatewayMessage {
 
 export class ModelGateway {
   static resolveApiKey(provider: ModelGatewayProvider): string {
-    return getProviderApiKey(provider);
+    if (provider === 'openrouter') {
+      return getOpenRouterKey();
+    }
+    if (provider === 'puter') {
+      return 'puter_zero_key';
+    }
+    return getProviderApiKey(provider as any);
   }
 
   static hasValidKey(provider: ModelGatewayProvider): boolean {
-    return hasProviderApiKey(provider);
+    if (provider === 'puter') {
+      return true;
+    }
+    if (provider === 'openrouter') {
+      return Boolean(getOpenRouterKey());
+    }
+    return hasProviderApiKey(provider as any);
   }
 
   static getDefaultModel(provider: ModelGatewayProvider): string {
-    return SUPPORTED_VAULT_PROVIDERS[provider]?.defaultModel || 'gemini-3.8-flash';
+    if (provider === 'openrouter') {
+      return 'google/gemini-2.5-flash:free';
+    }
+    if (provider === 'puter') {
+      return 'google/gemini-2.5-flash';
+    }
+    return SUPPORTED_VAULT_PROVIDERS[provider as keyof typeof SUPPORTED_VAULT_PROVIDERS]?.defaultModel || 'gemini-3.8-flash';
   }
 
   /**
@@ -29,6 +49,12 @@ export class ModelGateway {
    * or a deep frontier model for 'reasoning' path (classified dossiers, security audits, planning).
    */
   static getModelForTier(provider: ModelGatewayProvider, tier: InferenceTier = 'reasoning'): string {
+    if (provider === 'openrouter') {
+      return tier === 'fast' ? 'google/gemini-2.5-flash:free' : 'deepseek/deepseek-r1:free';
+    }
+    if (provider === 'puter') {
+      return tier === 'fast' ? 'google/gemini-2.5-flash' : 'google/gemini-2.5-flash';
+    }
     if (provider === 'gemini') {
       return tier === 'fast' ? 'gemini-3.1-flash-lite' : 'gemini-3.8-flash';
     }
@@ -44,6 +70,69 @@ export class ModelGateway {
     return this.getDefaultModel(provider);
   }
 
+  /**
+   * Puter.js 1-Click Zero-Key Model Inference Helper
+   */
+  static async callPuterModel(
+    model?: string,
+    systemPrompt: string = '',
+    messages: (ModelGatewayMessage | any)[] = []
+  ): Promise<string> {
+    return await puterChat(model, systemPrompt, messages);
+  }
+
+  /**
+   * OpenRouter 1-Click Power SSO Inference Helper (300+ models)
+   */
+  static async callOpenRouter(
+    model: string,
+    apiKey: string,
+    systemPrompt: string,
+    messages: (ModelGatewayMessage | any)[]
+  ): Promise<string> {
+    const targetModel = model || 'google/gemini-2.5-flash:free';
+    const formattedMessages: any[] = [];
+
+    if (systemPrompt && systemPrompt.trim()) {
+      formattedMessages.push({ role: 'system', content: systemPrompt });
+    }
+
+    for (const m of messages) {
+      const role = m.role === 'assistant' || m.role === 'model' ? 'assistant' : 'user';
+      const content = typeof m === 'string' ? m : m.content || '';
+      formattedMessages.push({ role, content });
+    }
+
+    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${apiKey}`,
+        'HTTP-Referer': typeof window !== 'undefined' ? window.location.origin : 'https://pixelops.app',
+        'X-Title': 'PixelOps Command Center',
+      },
+      body: JSON.stringify({
+        model: targetModel,
+        messages: formattedMessages,
+      }),
+    });
+
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      const msg = errJson?.error?.message || errJson?.message || `HTTP ${res.status}`;
+      throw new Error(`OpenRouter API error: ${msg}`);
+    }
+
+    const data = await res.json();
+    return data.choices?.[0]?.message?.content || '';
+  }
+
+  /**
+   * Unified Routing Priority:
+   * 1. If provider === 'puter' (or Puter SSO active and no manual override key), call Puter.js.
+   * 2. If provider === 'openrouter' (or OpenRouter SSO active / key exists), call OpenRouter API.
+   * 3. Otherwise fall back to manual BYOK provider keys (Gemini, Anthropic, OpenAI, Groq).
+   */
   static async executePrompt(
     provider: ModelGatewayProvider,
     model: string,
@@ -52,10 +141,47 @@ export class ModelGateway {
     messages: (ModelGatewayMessage | any)[],
     tier?: InferenceTier
   ): Promise<string> {
-    // Resolve API key if not provided directly
+    const ssoMode = typeof localStorage !== 'undefined' ? localStorage.getItem('pixelops_ai_sso_mode') : null;
+    const openRouterKey =
+      (apiKey && provider === 'openrouter' ? apiKey : '') ||
+      (typeof localStorage !== 'undefined' ? (localStorage.getItem('pixelops_openrouter_key') || '').trim() : '');
+
+    // 1. Puter.js 1-Click Zero-Key SSO Routing
+    if (provider === 'puter' || (ssoMode === 'puter' && !apiKey)) {
+      const targetModel = model || (tier === 'fast' ? 'google/gemini-2.5-flash' : 'google/gemini-2.5-flash');
+      return await this.callPuterModel(targetModel, systemPrompt, messages);
+    }
+
+    // 2. OpenRouter 1-Click Power SSO Routing
+    if (
+      provider === 'openrouter' ||
+      (ssoMode === 'openrouter' && openRouterKey) ||
+      (openRouterKey && !apiKey && !hasProviderApiKey(provider as any))
+    ) {
+      const effectiveKey = (apiKey && provider === 'openrouter' ? apiKey : '') || openRouterKey;
+      if (!effectiveKey) {
+        throw new Error('[UPLINK ERROR]: OpenRouter credentials missing. Connect via 1-Click Power SSO in Settings.');
+      }
+      let targetModel = model;
+      if (
+        !targetModel ||
+        targetModel.includes('gemini-3.') ||
+        (targetModel.includes('gpt-4o') && !targetModel.includes('/'))
+      ) {
+        targetModel = tier === 'fast' ? 'google/gemini-2.5-flash:free' : 'deepseek/deepseek-r1:free';
+      }
+      return await this.callOpenRouter(targetModel, effectiveKey, systemPrompt, messages);
+    }
+
+    // 3. Manual BYOK Provider Routing (Gemini, Anthropic, OpenAI, Groq)
     let effectiveKey = (apiKey || '').trim() || this.resolveApiKey(provider);
 
     if (!effectiveKey) {
+      // If manual key is missing but OpenRouter key is available, transparently fallback to OpenRouter
+      if (openRouterKey) {
+        const targetModel = tier === 'fast' ? 'google/gemini-2.5-flash:free' : 'deepseek/deepseek-r1:free';
+        return await this.callOpenRouter(targetModel, openRouterKey, systemPrompt, messages);
+      }
       throw new Error(`[UPLINK ERROR]: Missing API Key for provider: ${provider}`);
     }
 

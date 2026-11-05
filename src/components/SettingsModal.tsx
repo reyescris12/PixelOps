@@ -16,6 +16,8 @@ import {
   Key,
   Eye,
   EyeOff,
+  Zap,
+  Sparkles,
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { CommandPreferences } from '../services/ApiService';
@@ -45,6 +47,28 @@ import {
   setActiveVaultProvider,
   SUPPORTED_VAULT_PROVIDERS,
 } from '../services/BYOKVault';
+import {
+  signInWithPuter,
+  signOutPuter,
+  isPuterSignedIn,
+  getPuterUser,
+  isPuterActive,
+  setPuterActive,
+  callPuterModel,
+} from '../services/PuterAuth';
+import {
+  startOpenRouterOAuth,
+  getOpenRouterKey,
+  setOpenRouterKey,
+  isOpenRouterConnected,
+  isOpenRouterActive,
+  setOpenRouterActive,
+  getOpenRouterSelectedModel,
+  setOpenRouterSelectedModel,
+  disconnectOpenRouter,
+  testOpenRouterConnection,
+  OPENROUTER_SUPPORTED_MODELS,
+} from '../services/OpenRouterAuth';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -117,6 +141,58 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   >({});
   const [revealedVaultKeys, setRevealedVaultKeys] = useState<Record<string, boolean>>({});
 
+  // SSO States: Puter.js & OpenRouter PKCE
+  const [puterSignedIn, setPuterSignedIn] = useState(false);
+  const [puterUsername, setPuterUsername] = useState(() => {
+    try {
+      return localStorage.getItem('pixelops_puter_username') || '';
+    } catch {
+      return '';
+    }
+  });
+  const [isSigningInPuter, setIsSigningInPuter] = useState(false);
+
+  const [openRouterKey, setOpenRouterKeyState] = useState(() => getOpenRouterKey());
+  const [openRouterModel, setOpenRouterModelState] = useState(() => getOpenRouterSelectedModel());
+  const [isConnectingOpenRouter, setIsConnectingOpenRouter] = useState(false);
+  const [customOpenRouterKeyInput, setCustomOpenRouterKeyInput] = useState('');
+  const [showManualOpenRouterInput, setShowManualOpenRouterInput] = useState(false);
+
+  const [aiSsoMode, setAiSsoMode] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem('pixelops_ai_sso_mode');
+    } catch {
+      return null;
+    }
+  });
+  const [ssoTestStatus, setSsoTestStatus] = useState<
+    Record<string, { loading?: boolean; ok?: boolean; message?: string } | undefined>
+  >({});
+
+  useEffect(() => {
+    const checkSso = async () => {
+      try {
+        const signedIn = await isPuterSignedIn();
+        setPuterSignedIn(signedIn);
+        if (signedIn) {
+          const user = await getPuterUser();
+          if (user?.username) setPuterUsername(user.username);
+        }
+      } catch {}
+      setOpenRouterKeyState(getOpenRouterKey());
+      setOpenRouterModelState(getOpenRouterSelectedModel());
+      setAiSsoMode(localStorage.getItem('pixelops_ai_sso_mode'));
+    };
+
+    checkSso();
+
+    const handler = () => {
+      checkSso();
+    };
+    window.addEventListener('pixelops:ai-sso-changed', handler);
+    return () => window.removeEventListener('pixelops:ai-sso-changed', handler);
+  }, [isOpen]);
+
   const handleUpdateVaultKey = (
     provider: 'gemini' | 'anthropic' | 'openai' | 'groq',
     key: string
@@ -183,6 +259,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     provider: 'gemini' | 'anthropic' | 'openai' | 'groq'
   ) => {
     playBeep('tap');
+    try {
+      localStorage.removeItem('pixelops_ai_sso_mode');
+    } catch {}
+    setAiSsoMode(null);
     setActiveVaultProvider(provider, vaultEntries[provider]?.selectedModel);
     const updated = loadLLMProviderConfig();
     setLlmConfig(updated);
@@ -191,6 +271,154 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       ok: true,
       message: `Active engine switched to ${provider.toUpperCase()} (${vaultEntries[provider]?.selectedModel}).`,
     });
+  };
+
+  const handlePuterSignIn = async () => {
+    setIsSigningInPuter(true);
+    setSsoTestStatus((prev) => ({ ...prev, puter: { loading: true, message: 'Opening Puter 1-Click Zero-Key SSO...' } }));
+    playBeep('tap');
+    try {
+      const res = await signInWithPuter();
+      if (res.ok) {
+        setPuterSignedIn(true);
+        if (res.user?.username) setPuterUsername(res.user.username);
+        setAiSsoMode('puter');
+        setSsoTestStatus((prev) => ({
+          ...prev,
+          puter: { loading: false, ok: true, message: `Connected as @${res.user?.username || 'PuterUser'}! Zero-key AI ready.` },
+        }));
+        playBeep('complete');
+      } else {
+        setSsoTestStatus((prev) => ({
+          ...prev,
+          puter: { loading: false, ok: false, message: res.error || 'Sign in cancelled.' },
+        }));
+        playBeep('error');
+      }
+    } catch (err: any) {
+      setSsoTestStatus((prev) => ({
+        ...prev,
+        puter: { loading: false, ok: false, message: err?.message || 'Puter sign in failed.' },
+      }));
+      playBeep('error');
+    } finally {
+      setIsSigningInPuter(false);
+    }
+  };
+
+  const handlePuterSignOut = async () => {
+    playBeep('tap');
+    await signOutPuter();
+    setPuterSignedIn(false);
+    setPuterUsername('');
+    setAiSsoMode(localStorage.getItem('pixelops_ai_sso_mode'));
+    setSsoTestStatus((prev) => ({ ...prev, puter: undefined }));
+  };
+
+  const handleSetPuterActive = () => {
+    playBeep('tap');
+    setPuterActive(true);
+    setAiSsoMode('puter');
+    setSsoTestStatus((prev) => ({
+      ...prev,
+      puter: { ok: true, message: 'Puter.js zero-key AI is now the active engine!' },
+    }));
+  };
+
+  const handleTestPuter = async () => {
+    setSsoTestStatus((prev) => ({ ...prev, puter: { loading: true } }));
+    playBeep('tap');
+    try {
+      const reply = await callPuterModel(
+        'google/gemini-2.5-flash',
+        'Respond with a 6-word tactical readiness confirmation.',
+        [{ role: 'user', content: 'Ping' }]
+      );
+      setSsoTestStatus((prev) => ({
+        ...prev,
+        puter: { loading: false, ok: true, message: reply || 'Puter.js zero-key link verified.' },
+      }));
+      playBeep('complete');
+    } catch (err: any) {
+      setSsoTestStatus((prev) => ({
+        ...prev,
+        puter: { loading: false, ok: false, message: err?.message || 'Puter connection test failed' },
+      }));
+      playBeep('error');
+    }
+  };
+
+  const handleOpenRouterConnect = async () => {
+    setIsConnectingOpenRouter(true);
+    playBeep('tap');
+    try {
+      await startOpenRouterOAuth();
+    } catch (err: any) {
+      setIsConnectingOpenRouter(false);
+      setSsoTestStatus((prev) => ({
+        ...prev,
+        openrouter: { loading: false, ok: false, message: err?.message || 'OpenRouter OAuth initiation failed' },
+      }));
+      playBeep('error');
+    }
+  };
+
+  const handleOpenRouterDisconnect = async () => {
+    playBeep('tap');
+    await disconnectOpenRouter();
+    setOpenRouterKeyState('');
+    setAiSsoMode(localStorage.getItem('pixelops_ai_sso_mode'));
+    setSsoTestStatus((prev) => ({ ...prev, openrouter: undefined }));
+  };
+
+  const handleSetOpenRouterActive = () => {
+    playBeep('tap');
+    setOpenRouterActive(true);
+    setAiSsoMode('openrouter');
+    setSsoTestStatus((prev) => ({
+      ...prev,
+      openrouter: { ok: true, message: `OpenRouter active engine (${openRouterModel})!` },
+    }));
+  };
+
+  const handleOpenRouterSelectModel = (modelId: string) => {
+    playBeep('tap');
+    setOpenRouterSelectedModel(modelId);
+    setOpenRouterModelState(modelId);
+  };
+
+  const handleSaveManualOpenRouterKey = () => {
+    if (!customOpenRouterKeyInput.trim()) return;
+    playBeep('tap');
+    setOpenRouterKey(customOpenRouterKeyInput.trim());
+    setOpenRouterKeyState(customOpenRouterKeyInput.trim());
+    setCustomOpenRouterKeyInput('');
+    setShowManualOpenRouterInput(false);
+    setAiSsoMode('openrouter');
+    setSsoTestStatus((prev) => ({
+      ...prev,
+      openrouter: { ok: true, message: 'OpenRouter API key saved!' },
+    }));
+    playBeep('complete');
+  };
+
+  const handleTestOpenRouter = async () => {
+    setSsoTestStatus((prev) => ({ ...prev, openrouter: { loading: true } }));
+    playBeep('tap');
+    try {
+      const res = await testOpenRouterConnection(openRouterModel, openRouterKey);
+      setSsoTestStatus((prev) => ({
+        ...prev,
+        openrouter: { loading: false, ok: res.ok, message: res.message || res.error },
+      }));
+      playBeep(res.ok ? 'complete' : 'error');
+    } catch (err: any) {
+      setSsoTestStatus((prev) => ({
+        ...prev,
+        openrouter: { loading: false, ok: false, message: err?.message || 'Connection test failed' },
+      }));
+      playBeep('error');
+    }
   };
 
   const handleTestLlm = async () => {
@@ -322,8 +550,268 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               <span className="font-semibold text-slate-200">Active LLM Intelligence Engine</span>
             </div>
             <span className="font-mono-tabular text-[11px] text-cyan-300">
-              {llmConfig.providerId.toUpperCase()} · {llmConfig.modelName}
+              {aiSsoMode === 'puter'
+                ? 'PUTER.JS · ZERO-KEY AI'
+                : aiSsoMode === 'openrouter'
+                ? `OPENROUTER · ${openRouterModel}`
+                : `${llmConfig.providerId.toUpperCase()} · ${llmConfig.modelName}`}
             </span>
+          </div>
+
+          {/* DUAL 1-CLICK MULTI-MODEL AI SSO SECTION */}
+          <div className="rounded-xl border border-indigo-900/60 bg-[#0b0c16] p-3 flex flex-col gap-2.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                <Zap className="w-3.5 h-3.5 text-amber-400" />
+                <span className="text-[11px] font-bold font-mono-tabular text-slate-100 uppercase tracking-wide">
+                  DUAL 1-CLICK MULTI-MODEL AI SSO
+                </span>
+              </div>
+              <span className="text-[9px] px-1.5 py-0.2 rounded bg-indigo-950 border border-indigo-500/50 text-indigo-300 font-mono-tabular">
+                ZERO CONFIG
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400 leading-tight">
+              One-click SSO authorization across Puter.js and OpenRouter. Access 300+ models without handling raw keys.
+            </p>
+
+            <div className="grid grid-cols-1 gap-2.5 pt-1">
+              {/* 1. Puter.js 1-Click Zero-Key AI SSO */}
+              <div
+                className={`rounded-xl border p-3 flex flex-col gap-2 transition-all ${
+                  aiSsoMode === 'puter'
+                    ? 'bg-[#061510] border-emerald-500/70 shadow-[0_0_12px_rgba(16,185,129,0.18)]'
+                    : 'bg-[#08120d] border-emerald-950/80 hover:border-emerald-800/80'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-emerald-300 flex items-center gap-1.5">
+                      <span>Puter.js Zero-Key AI</span>
+                    </span>
+                    <span className="text-[9px] px-1.5 py-0.2 rounded bg-emerald-950 border border-emerald-500/50 text-emerald-300 font-mono-tabular">
+                      ZERO KEYS · 1-CLICK
+                    </span>
+                  </div>
+                  {puterSignedIn && (
+                    <span className="text-[10px] text-emerald-400 font-mono-tabular flex items-center gap-1 font-bold">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                      <span>{puterUsername ? `@${puterUsername}` : 'CONNECTED'}</span>
+                    </span>
+                  )}
+                </div>
+
+                <p className="text-[11px] text-slate-400">
+                  Instant browser-native multi-model execution (Gemini 2.5 Flash, DeepSeek R1, Claude).
+                </p>
+
+                <div className="flex flex-col gap-1.5 pt-1">
+                  {!puterSignedIn ? (
+                    <button
+                      type="button"
+                      onClick={handlePuterSignIn}
+                      disabled={isSigningInPuter}
+                      className="w-full min-h-[36px] px-3 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-lg disabled:opacity-50"
+                    >
+                      <Sparkles className="w-3.5 h-3.5" />
+                      <span>{isSigningInPuter ? 'Connecting Puter...' : '[🟢 1-Click Zero-Key AI (Sign In with Puter)]'}</span>
+                    </button>
+                  ) : (
+                    <div className="flex items-center gap-1.5">
+                      {aiSsoMode === 'puter' ? (
+                        <span className="flex-1 py-1 px-2 rounded bg-emerald-950 border border-emerald-500/60 text-[10px] font-mono-tabular font-bold text-emerald-300 text-center flex items-center justify-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                          <span>ACTIVE ENGINE</span>
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={handleSetPuterActive}
+                          className="flex-1 py-1 px-2 rounded bg-emerald-950/70 hover:bg-emerald-900 border border-emerald-700/60 text-[10px] font-mono-tabular text-emerald-200 cursor-pointer"
+                        >
+                          Set As Active
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={handleTestPuter}
+                        disabled={ssoTestStatus.puter?.loading}
+                        className="py-1 px-2.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] font-mono-tabular cursor-pointer disabled:opacity-50"
+                      >
+                        {ssoTestStatus.puter?.loading ? 'Testing...' : 'Test Link'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handlePuterSignOut}
+                        className="py-1 px-2 rounded bg-red-950/60 hover:bg-red-900 border border-red-800/60 text-red-200 text-[10px] font-mono-tabular cursor-pointer"
+                      >
+                        Sign Out
+                      </button>
+                    </div>
+                  )}
+
+                  {ssoTestStatus.puter?.message && (
+                    <div
+                      className={`text-[10px] font-mono-tabular truncate ${
+                        ssoTestStatus.puter.ok ? 'text-emerald-400' : 'text-red-400'
+                      }`}
+                      title={ssoTestStatus.puter.message}
+                    >
+                      {ssoTestStatus.puter.ok ? '● ' : '⚠️ '}
+                      {ssoTestStatus.puter.message}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* 2. OpenRouter 1-Click Power SSO */}
+              <div
+                className={`rounded-xl border p-3 flex flex-col gap-2 transition-all ${
+                  aiSsoMode === 'openrouter'
+                    ? 'bg-[#100e20] border-indigo-500/70 shadow-[0_0_12px_rgba(99,102,241,0.18)]'
+                    : 'bg-[#0d0d1b] border-indigo-950/80 hover:border-indigo-800/80'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-indigo-300 flex items-center gap-1.5">
+                      <span>OpenRouter Power SSO</span>
+                    </span>
+                    <span className="text-[9px] px-1.5 py-0.2 rounded bg-indigo-950 border border-indigo-500/50 text-indigo-300 font-mono-tabular">
+                      300+ MODELS · PKCE
+                    </span>
+                  </div>
+                  {openRouterKey && (
+                    <span className="text-[10px] text-indigo-400 font-mono-tabular font-bold flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
+                      <span>CONNECTED</span>
+                    </span>
+                  )}
+                </div>
+
+                <p className="text-[11px] text-slate-400">
+                  Access free tiers (Gemini 2.5 Flash, DeepSeek R1, Llama 3.3) and flagship models (Claude 3.5 Sonnet, GPT-4o).
+                </p>
+
+                <div className="flex flex-col gap-1.5 pt-1">
+                  {!openRouterKey ? (
+                    <div className="flex flex-col gap-1.5">
+                      <button
+                        type="button"
+                        onClick={handleOpenRouterConnect}
+                        disabled={isConnectingOpenRouter}
+                        className="w-full min-h-[36px] px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-lg disabled:opacity-50"
+                      >
+                        <Zap className="w-3.5 h-3.5 text-amber-300" />
+                        <span>{isConnectingOpenRouter ? 'Opening OpenRouter...' : '[⚡ 1-Click Power SSO (Connect OpenRouter - 300+ Models)]'}</span>
+                      </button>
+
+                      <div className="flex items-center justify-between text-[10px]">
+                        <button
+                          type="button"
+                          onClick={() => setShowManualOpenRouterInput(!showManualOpenRouterInput)}
+                          className="text-indigo-400 hover:text-indigo-300 underline cursor-pointer"
+                        >
+                          {showManualOpenRouterInput ? 'Hide manual key entry' : 'or enter existing OpenRouter API key manually'}
+                        </button>
+                      </div>
+
+                      {showManualOpenRouterInput && (
+                        <div className="flex items-center gap-1 pt-1">
+                          <input
+                            type="password"
+                            value={customOpenRouterKeyInput}
+                            onChange={(e) => setCustomOpenRouterKeyInput(e.target.value)}
+                            placeholder="sk-or-v1-..."
+                            className="flex-1 bg-[#12151f] border border-slate-800 rounded px-2.5 py-1 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-indigo-500"
+                          />
+                          <button
+                            type="button"
+                            onClick={handleSaveManualOpenRouterKey}
+                            className="px-2.5 py-1 bg-indigo-700 hover:bg-indigo-600 text-white rounded text-xs cursor-pointer"
+                          >
+                            Save
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      {/* Model Selector Pills */}
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[10px] text-slate-400 font-mono-tabular uppercase">
+                          Selected Model
+                        </label>
+                        <div className="flex flex-wrap gap-1">
+                          {OPENROUTER_SUPPORTED_MODELS.map((m) => {
+                            const isSelected = openRouterModel === m.id;
+                            return (
+                              <button
+                                key={m.id}
+                                type="button"
+                                onClick={() => handleOpenRouterSelectModel(m.id)}
+                                className={`px-2 py-0.5 rounded text-[10px] font-mono-tabular border cursor-pointer transition-colors ${
+                                  isSelected
+                                    ? 'bg-indigo-900/70 border-indigo-400 text-indigo-200 font-bold'
+                                    : 'bg-[#151329] border-slate-800 text-slate-400 hover:text-slate-200'
+                                }`}
+                                title={m.context}
+                              >
+                                {m.name}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-1.5 pt-1">
+                        {aiSsoMode === 'openrouter' ? (
+                          <span className="flex-1 py-1 px-2 rounded bg-indigo-950 border border-indigo-500/60 text-[10px] font-mono-tabular font-bold text-indigo-300 text-center flex items-center justify-center gap-1">
+                            <span className="w-1.5 h-1.5 rounded-full bg-indigo-400 animate-pulse" />
+                            <span>ACTIVE ENGINE</span>
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={handleSetOpenRouterActive}
+                            className="flex-1 py-1 px-2 rounded bg-indigo-950/70 hover:bg-indigo-900 border border-indigo-700/60 text-[10px] font-mono-tabular text-indigo-200 cursor-pointer"
+                          >
+                            Set As Active
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={handleTestOpenRouter}
+                          disabled={ssoTestStatus.openrouter?.loading}
+                          className="py-1 px-2.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-200 text-[10px] font-mono-tabular cursor-pointer disabled:opacity-50"
+                        >
+                          {ssoTestStatus.openrouter?.loading ? 'Testing...' : 'Test Link'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleOpenRouterDisconnect}
+                          className="py-1 px-2 rounded bg-red-950/60 hover:bg-red-900 border border-red-800/60 text-red-200 text-[10px] font-mono-tabular cursor-pointer"
+                        >
+                          Disconnect
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {ssoTestStatus.openrouter?.message && (
+                    <div
+                      className={`text-[10px] font-mono-tabular truncate ${
+                        ssoTestStatus.openrouter.ok ? 'text-indigo-400' : 'text-red-400'
+                      }`}
+                      title={ssoTestStatus.openrouter.message}
+                    >
+                      {ssoTestStatus.openrouter.ok ? '● ' : '⚠️ '}
+                      {ssoTestStatus.openrouter.message}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
 
           {/* MULTI-PROVIDER BYOK KEY VAULT VIEW */}
@@ -341,7 +829,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 <div className="text-right">
                   <span className="text-[10px] text-slate-500 font-mono-tabular">ACTIVE ENGINE</span>
                   <div className="text-xs font-bold font-mono-tabular text-emerald-400">
-                    {llmConfig.providerId.toUpperCase()}
+                    {aiSsoMode === 'puter'
+                      ? 'PUTER.JS'
+                      : aiSsoMode === 'openrouter'
+                      ? 'OPENROUTER'
+                      : llmConfig.providerId.toUpperCase()}
                   </div>
                 </div>
               </div>
@@ -517,18 +1009,64 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <div className="flex items-center justify-between pt-1">
             <button
               type="button"
-              onClick={handleTestLlm}
-              disabled={llmTestStatus.loading}
+              onClick={
+                aiSsoMode === 'puter'
+                  ? handleTestPuter
+                  : aiSsoMode === 'openrouter'
+                  ? handleTestOpenRouter
+                  : handleTestLlm
+              }
+              disabled={
+                llmTestStatus.loading ||
+                Boolean(ssoTestStatus.puter?.loading) ||
+                Boolean(ssoTestStatus.openrouter?.loading)
+              }
               className="min-h-[36px] px-3 py-1.5 rounded-lg bg-cyan-950 hover:bg-cyan-900 border border-cyan-700/60 text-xs font-medium text-cyan-200 flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${llmTestStatus.loading ? 'animate-spin' : ''}`} />
-              <span>{llmTestStatus.loading ? 'Testing Link...' : `Test ${llmConfig.providerId.toUpperCase()} Active Link`}</span>
+              <RefreshCw
+                className={`w-3.5 h-3.5 ${
+                  llmTestStatus.loading ||
+                  ssoTestStatus.puter?.loading ||
+                  ssoTestStatus.openrouter?.loading
+                    ? 'animate-spin'
+                    : ''
+                }`}
+              />
+              <span>
+                {llmTestStatus.loading ||
+                ssoTestStatus.puter?.loading ||
+                ssoTestStatus.openrouter?.loading
+                  ? 'Testing Link...'
+                  : `Test ${
+                      aiSsoMode === 'puter'
+                        ? 'PUTER.JS'
+                        : aiSsoMode === 'openrouter'
+                        ? 'OPENROUTER'
+                        : llmConfig.providerId.toUpperCase()
+                    } Active Link`}
+              </span>
             </button>
           </div>
 
-          {llmTestStatus.message && (
-            <p className={`text-xs font-mono-tabular ${llmTestStatus.ok ? 'text-emerald-400' : 'text-red-400'}`}>
-              {llmTestStatus.message}
+          {(llmTestStatus.message ||
+            (aiSsoMode === 'puter' && ssoTestStatus.puter?.message) ||
+            (aiSsoMode === 'openrouter' && ssoTestStatus.openrouter?.message)) && (
+            <p
+              className={`text-xs font-mono-tabular ${
+                (aiSsoMode === 'puter'
+                  ? ssoTestStatus.puter?.ok
+                  : aiSsoMode === 'openrouter'
+                  ? ssoTestStatus.openrouter?.ok
+                  : llmTestStatus.ok)
+                  ? 'text-emerald-400'
+                  : 'text-red-400'
+              }`}
+            >
+              {aiSsoMode === 'puter'
+                ? ssoTestStatus.puter?.message
+                : aiSsoMode === 'openrouter'
+                ? ssoTestStatus.openrouter?.message
+                : llmTestStatus.message}
             </p>
           )}
         </div>

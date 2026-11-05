@@ -4670,12 +4670,18 @@ export async function executeAgentDirective(params: {
         }
       }
 
+      const isPuterMode = typeof localStorage !== 'undefined' && localStorage.getItem('pixelops_ai_sso_mode') === 'puter';
+      const openRouterKey = typeof localStorage !== 'undefined' ? (localStorage.getItem('pixelops_openrouter_key') || '').trim() : '';
+      const isOpenRouterMode = Boolean(openRouterKey) && (typeof localStorage !== 'undefined' && localStorage.getItem('pixelops_ai_sso_mode') === 'openrouter');
+
       const hasActiveAuth =
-        targetProvider === 'gemini'
+        isPuterMode ||
+        Boolean(openRouterKey) ||
+        (targetProvider === 'gemini'
           ? Boolean(geminiAuthInfo.headers['x-goog-api-key']) ||
             (Boolean(targetApiKey) && targetApiKey !== 'MY_GEMINI_API_KEY') ||
             (llmConfig.authMode === 'subscription' && geminiAuthInfo.isSubscription)
-          : Boolean(targetApiKey && targetApiKey.length > 5);
+          : Boolean(targetApiKey && targetApiKey.length > 5));
 
       // Intercept any explicit external tool directives (Gmail, GitHub, Slack, Calendar, Notion, Linear)
       // to execute live via ComposioService and connected accounts instead of simulating
@@ -4754,10 +4760,42 @@ export async function executeAgentDirective(params: {
         ? customAgentPrompt
         : `You are ${params.activeAgentName || 'Agent'}, an AI assistant. Help the user complete their directives and tasks directly, clearly, and effectively using your available tools.`;
 
-      // Multi-Provider Execution Gateway: Route to OpenAI, Groq, or Anthropic if operative is configured for them
-      if (targetProvider !== 'gemini') {
+      // Multi-Provider Execution Gateway: Route to Puter, OpenRouter, OpenAI, Groq, or Anthropic
+      if (isPuterMode && !targetApiKey) {
         try {
-          if (targetProvider === 'openai' || targetProvider === 'groq') {
+          const puterModel = targetModel || 'google/gemini-2.5-flash';
+          const puterReply = await ModelGateway.callPuterModel(
+            puterModel,
+            systemInstruction,
+            [{ role: 'user', content: params.prompt }]
+          );
+          return {
+            id: `card-${Date.now()}`,
+            prompt: params.prompt,
+            dialogue: puterReply,
+            cardTitle: `${(params.activeAgentName || 'Agent').toUpperCase()} · PUTER ZERO-KEY`,
+            actionCategory: 'SSO_INFERENCE',
+            steps: [
+              { label: 'Puter SSO Link', detail: `Connected to ${puterModel}`, status: 'completed' as const },
+              { label: 'Inference Synthesis', detail: 'Zero-key multi-model execution completed', status: 'completed' as const },
+              { label: 'Mission Verified', detail: 'Directive fulfilled via Puter.js', status: 'verified' as const },
+            ],
+            toolCalls: [],
+            tokenEstimate: Math.round(puterReply.length / 4),
+            agentName: params.activeAgentName,
+            themeId: params.themeId,
+            timestamp: new Date().toISOString(),
+            hasAttachment: Boolean(params.attachment),
+          };
+        } catch (puterErr: any) {
+          console.warn('[ApiService] Puter execution failed, trying alternative route:', puterErr);
+        }
+      }
+
+      if (targetProvider !== 'gemini' || (isOpenRouterMode && !targetApiKey)) {
+        try {
+          if (targetProvider === 'openai' || targetProvider === 'groq' || (targetProvider as any) === 'openrouter' || (isOpenRouterMode && !targetApiKey)) {
+            const isOr = (targetProvider as any) === 'openrouter' || (isOpenRouterMode && !targetApiKey);
             const openAITools = activeDeclarations.map((d) => ({
               type: 'function',
               function: {
@@ -4772,8 +4810,12 @@ export async function executeAgentDirective(params: {
               { role: 'user', content: params.prompt },
             ];
 
+            const effectiveModel = isOr
+              ? (localStorage.getItem('pixelops_openrouter_model') || 'google/gemini-2.5-flash:free')
+              : targetModel;
+
             const reqBody: any = {
-              model: targetModel,
+              model: effectiveModel,
               messages: initialMessages,
               temperature: Number(params.temperature || 0.7),
             };
@@ -4784,16 +4826,25 @@ export async function executeAgentDirective(params: {
             const endpoint =
               targetProvider === 'groq'
                 ? 'https://api.groq.com/openai/v1/chat/completions'
+                : isOr
+                ? 'https://openrouter.ai/api/v1/chat/completions'
                 : 'https://api.openai.com/v1/chat/completions';
+
+            const effectiveKey = isOr ? openRouterKey : targetApiKey;
+            const requestHeaders: Record<string, string> = {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${effectiveKey}`,
+            };
+            if (isOr) {
+              requestHeaders['HTTP-Referer'] = typeof window !== 'undefined' ? window.location.origin : 'https://pixelops.app';
+              requestHeaders['X-Title'] = 'PixelOps Command Center';
+            }
 
             const res = await executeSafeOperation(
               async (signal) => {
                 return await fetch(endpoint, {
                   method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    Authorization: `Bearer ${targetApiKey}`,
-                  },
+                  headers: requestHeaders,
                   body: JSON.stringify(reqBody),
                   signal,
                 });
@@ -4801,7 +4852,7 @@ export async function executeAgentDirective(params: {
               {
                 timeoutMs: 25000,
                 maxRetries: 1,
-                operationName: `${targetProvider}_turn1_dispatch`,
+                operationName: `${isOr ? 'openrouter' : targetProvider}_turn1_dispatch`,
               }
             );
 

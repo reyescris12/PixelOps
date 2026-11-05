@@ -18,8 +18,7 @@ export const AVAILABLE_SKILLS: SkillModuleDef[] = [
     category: 'research',
     description:
       'Enables live web queries, real-time web search via Jina Reader, and documentation extraction.',
-    systemPromptModifier:
-      'OPERATIONAL CAPABILITY ACTIVE: [WEB_SEARCH]. Retrieve live factual knowledge and documentation nodes.',
+    systemPromptModifier: '',
     providedTools: ['live_web_search'],
     recommendedRoom: 'library',
     iconName: 'Search',
@@ -31,8 +30,7 @@ export const AVAILABLE_SKILLS: SkillModuleDef[] = [
     category: 'code',
     description:
       'Allows local code drafting, testing, mathematical computation, and data processing in an isolated sandbox.',
-    systemPromptModifier:
-      'OPERATIONAL CAPABILITY ACTIVE: [CODE_SANDBOX]. Evaluate code expressions, format payloads, and test logic safely.',
+    systemPromptModifier: '',
     providedTools: ['code_sandbox_eval'],
     recommendedRoom: 'server_vault',
     iconName: 'Cpu',
@@ -44,8 +42,7 @@ export const AVAILABLE_SKILLS: SkillModuleDef[] = [
     category: 'data',
     description:
       'Handles reading, writing, and exporting markdown logs, JSON configs, and workspace files directly to IndexedDB or user downloads.',
-    systemPromptModifier:
-      'OPERATIONAL CAPABILITY ACTIVE: [FS_STORAGE]. Manage local file assets, save reports, and export markdown deliverables.',
+    systemPromptModifier: '',
     providedTools: ['fs_storage_manager'],
     recommendedRoom: 'archive_basement',
     iconName: 'Database',
@@ -57,8 +54,7 @@ export const AVAILABLE_SKILLS: SkillModuleDef[] = [
     category: 'system',
     description:
       'A generalized client supporting BYOK execution for custom REST endpoints and webhooks.',
-    systemPromptModifier:
-      'OPERATIONAL CAPABILITY ACTIVE: [API_GATEWAY]. Dispatch direct client-side HTTP requests and webhooks with custom headers.',
+    systemPromptModifier: '',
     providedTools: ['api_fetch_gateway'],
     recommendedRoom: 'comms_tower',
     iconName: 'Radar',
@@ -70,8 +66,7 @@ export const AVAILABLE_SKILLS: SkillModuleDef[] = [
     category: 'security',
     description:
       'Queries local historical logs, Dexie/IndexedDB immutable records, and saved agent notes.',
-    systemPromptModifier:
-      'OPERATIONAL CAPABILITY ACTIVE: [MEMORY_LOOKUP]. Cross-reference past operations and recall historical agent reflections.',
+    systemPromptModifier: '',
     providedTools: ['memory_vector_lookup'],
     recommendedRoom: 'server_vault',
     iconName: 'Key',
@@ -83,8 +78,7 @@ export const AVAILABLE_SKILLS: SkillModuleDef[] = [
     category: 'code',
     description:
       'Fetches repository trees, git logs, branch diffs, and pull requests via the local safehouse bridge.',
-    systemPromptModifier:
-      'OPERATIONAL CAPABILITY ACTIVE: [GITHUB_SCRAPER]. Prioritize repository inspection, code reviews, and tree navigation.',
+    systemPromptModifier: '',
     providedTools: ['fetch_github_repo', 'read_git_diff', 'inspect_repo_tree'],
     recommendedRoom: 'cyber_lab',
     iconName: 'FolderGit2',
@@ -96,8 +90,7 @@ export const AVAILABLE_SKILLS: SkillModuleDef[] = [
     category: 'research',
     description:
       'Autonomous multi-hop web retrieval, search query generation, and intelligence synthesis across archives.',
-    systemPromptModifier:
-      'OPERATIONAL CAPABILITY ACTIVE: [DEEP_RESEARCH]. Execute deep multi-source intelligence gathering and factual cross-referencing.',
+    systemPromptModifier: '',
     providedTools: ['web_search', 'extract_page_content', 'synthesize_intel'],
     recommendedRoom: 'library',
     iconName: 'Search',
@@ -109,8 +102,7 @@ export const AVAILABLE_SKILLS: SkillModuleDef[] = [
     category: 'code',
     description:
       'High-speed syntax tree analysis, AST pattern replacement, and type-safe refactoring pipelines.',
-    systemPromptModifier:
-      'OPERATIONAL CAPABILITY ACTIVE: [CODE_REFACTOR]. Focus on structural refactoring, dead code elimination, and strict type safety.',
+    systemPromptModifier: '',
     providedTools: ['ast_parse', 'apply_code_patch', 'run_linter'],
     recommendedRoom: 'war_room',
     iconName: 'Cpu',
@@ -122,8 +114,7 @@ export const AVAILABLE_SKILLS: SkillModuleDef[] = [
     category: 'system',
     description:
       'Direct execution of local whitelisted shell scripts and node commands through the safehouse sidecar.',
-    systemPromptModifier:
-      'OPERATIONAL CAPABILITY ACTIVE: [TERMINAL_SHELL]. Formulate safe terminal commands and verify system state before execution.',
+    systemPromptModifier: '',
     providedTools: ['execute_shell_cmd', 'read_local_file', 'write_local_file'],
     recommendedRoom: 'server_vault',
     iconName: 'Terminal',
@@ -135,8 +126,7 @@ export const AVAILABLE_SKILLS: SkillModuleDef[] = [
     category: 'security',
     description:
       'Analyzes encrypted environment secrets, parses cipher payloads, and validates JWT/HMAC hashes.',
-    systemPromptModifier:
-      'OPERATIONAL CAPABILITY ACTIVE: [CRYPTO_VAULT]. Adhere to strict cryptographic security guidelines and zero-knowledge storage.',
+    systemPromptModifier: '',
     providedTools: ['decrypt_vault_secret', 'verify_hash_checksum', 'generate_secure_nonce'],
     recommendedRoom: 'quantum_vault',
     iconName: 'Key',
@@ -148,8 +138,7 @@ export const AVAILABLE_SKILLS: SkillModuleDef[] = [
     category: 'data',
     description:
       'Query performance analyzer, migration planner, and schema relational graph extractor.',
-    systemPromptModifier:
-      'OPERATIONAL CAPABILITY ACTIVE: [DB_FORENSICS]. Validate query indexing, data normalization, and integrity constraints.',
+    systemPromptModifier: '',
     providedTools: ['analyze_query_plan', 'inspect_db_schema', 'generate_migration'],
     recommendedRoom: 'archive_basement',
     iconName: 'Database',
@@ -161,8 +150,7 @@ export const AVAILABLE_SKILLS: SkillModuleDef[] = [
     category: 'research',
     description:
       'Headless DOM interaction and DOM tree scraper for dynamic single-page web applications.',
-    systemPromptModifier:
-      'OPERATIONAL CAPABILITY ACTIVE: [BROWSER_CRAWLER]. Navigate client-side DOM trees and extract interactive elements.',
+    systemPromptModifier: '',
     providedTools: ['crawl_url', 'extract_dom_elements', 'capture_screenshot'],
     recommendedRoom: 'comms_tower',
     iconName: 'Radar',

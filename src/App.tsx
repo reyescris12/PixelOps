@@ -1034,12 +1034,7 @@ const CommandCenterContent: React.FC = () => {
         room: operativeRoom,
         stationId: operativeStation,
       });
-      const combinedSystemPrompt = [
-        routedCrewMember?.systemPrompt,
-        opState.systemPromptModifier,
-      ]
-        .filter(Boolean)
-        .join('\n\n');
+      const combinedSystemPrompt = (routedCrewMember?.systemPrompt || '').trim() || undefined;
 
       const newCard = await executeAgentDirective({
         prompt,

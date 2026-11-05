@@ -353,8 +353,7 @@ export const FUNCTIONAL_ROLE_PROFILES: Record<FunctionalCapabilityId, Functional
     thematicRoleTitle: 'Code-Ops & Security Specialist (Operative Cipher)',
     displayBridge: '[Software Engineering & Security Module]',
     defaultSpecialty: 'Repository Audits, Dependency Checks, Technical Vulnerability Scans & Patch Guides',
-    defaultSystemPrompt:
-      'You are Operative Cipher, Code-Ops & Security Specialist in PixelOps Command Center.\nExecution Style: Blunt, highly technical, zero fluff.\nPrimary Function: Repository audits, dependency checks, and technical vulnerability scans.\nOutput Standard: Actionable patch guides, error diagnostics, and verified code health metrics.\n\nMANDATORY AUTONOMOUS INTELLIGENCE PROTOCOL:\n1. REAL-TIME VERIFICATION FIRST: Strictly zero mock summaries or placeholders. All reports must ground in live tool fetches (GitHub PRs/issues, live CVE databases, code sandbox). Reference actual code diffs and semver constraints.\n2. THE "SO WHAT?" IMPACT & ACTION DELTA: Every audit MUST include a dedicated section titled "## Impact & Action Delta" explaining why the vulnerability/bug matters and the immediate remediation step.\n3. STRUCTURED SCHEMA: Conclude with clean Markdown frontmatter or structured diffs.',
+    defaultSystemPrompt: '',
     recommendedTools: ['code_sandbox_eval', 'fs_storage_manager', 'live_web_search'],
     description: 'Blunt, highly technical repository audits, dependency scans, and actionable patch guides.',
     iconTag: '⚡ CODE-OPS',
@@ -367,8 +366,7 @@ export const FUNCTIONAL_ROLE_PROFILES: Record<FunctionalCapabilityId, Functional
     thematicRoleTitle: 'OSINT & Recon Specialist (Operative Nyx)',
     displayBridge: '[OSINT & Deep Recon Module]',
     defaultSpecialty: 'External Intelligence Gathering, Web Reconnaissance, Competitor Tracking & Sentiment Analysis',
-    defaultSystemPrompt:
-      'You are Operative Nyx, OSINT & Recon Specialist in PixelOps Command Center.\nExecution Style: Clandestine, analytical, signal-focused.\nPrimary Function: External intelligence gathering, web reconnaissance, competitor tracking, and sentiment analysis.\nOutput Standard: Classified dossiers (intel/dossier_[target]_[date].md) featuring Threat Level ratings (ALPHA-CRITICAL, BRAVO-ELEVATED, CHARLIE-NOMINAL), key findings, and raw source attributions.\n\nMANDATORY AUTONOMOUS INTELLIGENCE PROTOCOL:\n1. REAL-TIME VERIFICATION FIRST: Strictly no fake summaries or simulated findings. Invoke live web search and wiretaps. Reference real URLs, verifiable headlines, and actual pricing deltas.\n2. THE "SO WHAT?" IMPACT & ACTION DELTA: Every dossier MUST include a dedicated section titled "## Impact & Action Delta" detailing the operational risk and next tactical maneuver.\n3. STRUCTURED SCHEMA: Format with clean Markdown frontmatter headers and source links.\n4. DYNAMIC QUERY FORMULATION: For prices, market data, version updates, or recent news, append temporal anchors ("2026", "live ticker", "current price", "latest release") to bypass static historical pages.\n5. STRUCTURED PRICE/DATA EXTRACTION: Parse real numerical prices, percentages, and metrics directly into your telemetry table rather than falling back to vague descriptions.',
+    defaultSystemPrompt: '',
     recommendedTools: ['live_web_search', 'memory_vector_lookup', 'api_fetch_gateway'],
     description: 'Clandestine, signal-focused external intelligence, live web recon, and classified dossiers.',
     iconTag: '🔍 OSINT',
@@ -381,8 +379,7 @@ export const FUNCTIONAL_ROLE_PROFILES: Record<FunctionalCapabilityId, Functional
     thematicRoleTitle: 'Signals Communications Lead [Technical Writing Module]',
     displayBridge: '[Technical Writing Module]',
     defaultSpecialty: 'Operational Documentation, Executive Summaries, Product Specs & Debriefs',
-    defaultSystemPrompt:
-      'You are a high-caliber Technical Writer and Communications Strategist embedded as a Signals Communications Lead in PixelOps Command Center. Formulate sharp, articulate prose, technical specifications, READMEs, changelogs, operational post-mortems, and persuasive executive summaries with military precision and clarity.\n\nMANDATORY PROTOCOL: No mock data or fictional tasks. Include an "## Impact & Action Delta" section in every debrief detailing tactical next steps. Structure outputs cleanly with Markdown frontmatter.',
+    defaultSystemPrompt: '',
     recommendedTools: ['fs_storage_manager', 'memory_vector_lookup', 'live_web_search'],
     description: 'Clear documentation, product specs, release notes, and structured executive communication.',
     iconTag: '📝 WRITER',
@@ -395,8 +392,7 @@ export const FUNCTIONAL_ROLE_PROFILES: Record<FunctionalCapabilityId, Functional
     thematicRoleTitle: 'Cyber-Metrics Analyst [Quantitative Data Module]',
     displayBridge: '[Quantitative Data Module]',
     defaultSpecialty: 'Statistical Telemetry, Trend Forecasting, Metric Verification & Insights',
-    defaultSystemPrompt:
-      'You are a veteran Data Analyst and Quantitative Strategist masked as a Cyber-Metrics Analyst in PixelOps Command Center. Inspect datasets, analyze performance telemetry, detect anomalies, model time-series patterns, and translate complex numbers into actionable strategic recommendations.\n\nMANDATORY PROTOCOL: No fake numbers or mock summaries. Ground all analysis in verifiable data from code_sandbox_eval or live metrics. Include an "## Impact & Action Delta" section answering operational significance.',
+    defaultSystemPrompt: '',
     recommendedTools: ['code_sandbox_eval', 'api_fetch_gateway', 'live_web_search'],
     description: 'Data analysis, metric crunching, anomaly detection, telemetry visualization, and reporting.',
     iconTag: '📊 DATA',
@@ -409,8 +405,7 @@ export const FUNCTIONAL_ROLE_PROFILES: Record<FunctionalCapabilityId, Functional
     thematicRoleTitle: 'Command Operations Chief (Operative Vance)',
     displayBridge: '[Executive Operations & SITREPs Module]',
     defaultSpecialty: 'Workflow Coordination, Executive Synthesis & Operational SITREPs',
-    defaultSystemPrompt:
-      'You are Operative Vance, Command Operations Chief in PixelOps Command Center.\nExecution Style: Structured, authoritative, concise.\nPrimary Function: Workflow coordination, executive synthesis, and operational SITREPs.\nOutput Standard: Executive command briefings summarizing multi-source telemetry with zero conversational delay.\n\nMANDATORY AUTONOMOUS INTELLIGENCE PROTOCOL:\n1. REAL-TIME VERIFICATION FIRST: Strictly zero placeholders or generic text-box fluff. Pull live state via Composio integrations (Gmail, Google Calendar, GitHub) and VFS archives.\n2. THE "SO WHAT?" IMPACT & ACTION DELTA: Every briefing MUST include a dedicated section titled "## Impact & Action Delta" highlighting strategic impact and immediate prioritized execution queues.\n3. STRUCTURED SCHEMA: Format using structured Markdown frontmatter and clear executive tables.',
+    defaultSystemPrompt: '',
     recommendedTools: ['live_web_search', 'code_sandbox_eval', 'fs_storage_manager', 'api_fetch_gateway', 'memory_vector_lookup'],
     description: 'Authoritative, concise executive synthesis, multi-app coordination, and operational SITREPs.',
     iconTag: '🧭 COMMAND',
@@ -799,14 +794,21 @@ export const CrewProvider: React.FC<{ children: React.ReactNode }> = ({ children
           ? saved.specialty.trim()
           : funcProfile ? funcProfile.defaultSpecialty : profile.specialty;
 
-      const defaultSysPrompt = funcProfile
-        ? funcProfile.defaultSystemPrompt
-        : `You are an autonomous tactical AI operative named ${customName}, serving in the role of ${role}. Specialty: ${specialty}. Bio: ${profile.bio}. Execute all directives with high precision, citing real tool data, technical telemetry, and in-character confidence.`;
-
-      const systemPrompt =
+      let systemPrompt =
         typeof saved.systemPrompt === 'string' && saved.systemPrompt.trim().length > 0
           ? saved.systemPrompt.trim()
-          : defaultSysPrompt;
+          : (funcProfile ? funcProfile.defaultSystemPrompt : '');
+
+      // Purge legacy bloated instructions to ensure true clean slate
+      if (
+        systemPrompt.includes('MANDATORY') ||
+        systemPrompt.includes('AUTONOMOUS INTELLIGENCE PROTOCOL') ||
+        systemPrompt.includes('IMPACT & ACTION DELTA') ||
+        systemPrompt.includes('Execution Style:') ||
+        systemPrompt.includes('tactical AI operative')
+      ) {
+        systemPrompt = '';
+      }
 
       const assignedTools = Array.isArray(saved.assignedTools)
         ? saved.assignedTools

@@ -288,11 +288,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const handleGoogleSignIn = async () => {
     setIsSigningInGoogle(true);
-    setLlmTestStatus({ loading: true, message: 'Launching Google OAuth 2.0 Consent Popup...' });
+    setLlmTestStatus({ loading: true, message: 'Launching Google Account Sign-In (GIS / OAuth)...' });
     playBeep('tap');
     try {
+      const targetClientId = googleClientIdInput.trim() || llmConfig.googleClientId;
       const account = await initiateGoogleSignIn({
-        clientId: llmConfig.googleClientId,
+        clientId: targetClientId,
         userEmail: userGoogleEmail.trim() || undefined,
       });
       const updated = loadLLMProviderConfig();
@@ -304,6 +305,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       });
       playBeep('complete');
     } catch (err: any) {
+      if (
+        err?.message?.includes('Client ID is required') ||
+        err?.message?.includes('Client ID required')
+      ) {
+        setShowClientIdInput(true);
+      }
       setLlmTestStatus({
         loading: false,
         ok: false,
@@ -908,9 +915,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     type="password"
                     value={llmConfig.apiKey}
                     onChange={(e) => {
-                      const updated = { ...llmConfig, apiKey: e.target.value };
+                      const val = e.target.value;
+                      const updated = { ...llmConfig, apiKey: val };
                       setLlmConfig(updated);
                       saveLLMProviderConfig(updated);
+                      if (llmConfig.providerId === 'gemini') {
+                        if (val.trim()) {
+                          localStorage.setItem('pixelops_gemini_api_key', val.trim());
+                          localStorage.setItem('gemini_api_key', val.trim());
+                        } else {
+                          localStorage.removeItem('pixelops_gemini_api_key');
+                          localStorage.removeItem('gemini_api_key');
+                        }
+                      }
                     }}
                     placeholder={DEFAULT_PROVIDER_CONFIGS[llmConfig.providerId].placeholderKey}
                     className="w-full bg-[#12151f] border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-cyan-500"

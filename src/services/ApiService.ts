@@ -5072,6 +5072,33 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
       const geminiUrl = geminiAuth.url;
       const geminiHeaders = geminiAuth.headers;
 
+      // Verify valid authentication before contacting generativelanguage.googleapis.com
+      const hasGeminiKey = Boolean(geminiHeaders['x-goog-api-key']);
+      const hasSubscriptionAuth =
+        geminiAuth.isSubscription &&
+        Boolean(geminiHeaders['Authorization'] || geminiHeaders['x-goog-api-key']);
+
+      if (!hasGeminiKey && !hasSubscriptionAuth) {
+        return {
+          id: `card-${Date.now()}`,
+          prompt: params.prompt,
+          dialogue: `⚠️ **[AUTHENTICATION REQUIRED: No Gemini API Key Detected]**\n\nPlease open **Settings (Gear Icon)** in the Command Center header and either:\n1. Enter your Google AI Studio API key under **API KEY (BYOK)** (persisted to \`pixelops_gemini_api_key\`).\n2. Or sign into your Google Account under **SUBSCRIPTION PLANS** to connect your Google AI Pro Plan.`,
+          cardTitle: 'API KEY / AUTHENTICATION REQUIRED',
+          actionCategory: 'AUTH_REQUIRED',
+          steps: [
+            { label: 'Check Gemini Key', detail: 'No active Google Gemini key found in localStorage or user settings', status: 'completed' as const },
+            { label: 'Halt Execution', detail: 'Awaiting user credentials to prevent unauthenticated failure', status: 'verified' as const },
+            { label: 'Prompt Commander', detail: 'Open Settings modal to configure your API key or Google Account', status: 'queued' as const },
+          ],
+          toolCalls: [],
+          tokenEstimate: 0,
+          agentName: params.activeAgentName,
+          themeId: params.themeId,
+          timestamp: new Date().toISOString(),
+          hasAttachment: Boolean(params.attachment),
+        };
+      }
+
       const userParts: any[] = [];
       if (params.attachment && params.attachment.data && params.attachment.mimeType) {
         userParts.push({
@@ -5157,7 +5184,29 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
           }
 
           if (!turnRes.ok) {
-            console.warn(`[ApiService] Gemini turn ${turnCount} failed with HTTP ${turnRes.status}. Gracefully activating local heuristic engine.`);
+            console.warn(`[ApiService] Gemini turn ${turnCount} failed with HTTP ${turnRes.status}.`);
+            if (turnRes.status === 400 || turnRes.status === 401 || turnRes.status === 403) {
+              const errBody = await turnRes.json().catch(() => ({}));
+              const errMsg = errBody?.error?.message || `HTTP ${turnRes.status}`;
+              return {
+                id: `card-${Date.now()}`,
+                prompt: params.prompt,
+                dialogue: `⚠️ **[GEMINI AUTHENTICATION ERROR: ${errMsg}]**\n\nThe Google Gemini API rejected the credentials. Please open **Settings (Gear Icon)** in the Command Center header to verify your Google AI Studio API key or reconnect your Google Account.`,
+                cardTitle: 'GEMINI CREDENTIAL REJECTED',
+                actionCategory: 'AUTH_ERROR',
+                steps: [
+                  { label: 'Verify Credentials', detail: `Google API returned HTTP ${turnRes.status}`, status: 'completed' as const },
+                  { label: 'Inspect Error', detail: errMsg, status: 'verified' as const },
+                  { label: 'Update Settings', detail: 'Provide a valid Google Gemini API key or reconnect account', status: 'queued' as const },
+                ],
+                toolCalls: [],
+                tokenEstimate: 0,
+                agentName: params.activeAgentName,
+                themeId: params.themeId,
+                timestamp: new Date().toISOString(),
+                hasAttachment: Boolean(params.attachment),
+              };
+            }
             return generateLocalHeuristicCard(params);
           }
 

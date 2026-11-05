@@ -202,14 +202,16 @@ export function getGeminiAuthHeadersAndUrl(
     !account.accessToken.includes('google_ai_pro_'); // Must be a real token, never mock!
 
   if (isSub && account?.accessToken) {
-    // If the token is a standard API key format (e.g. AIzaSy...), use ?key=
-    if (account.accessToken.startsWith('AIzaSy')) {
+    const rawToken = account.accessToken.trim();
+    // If the token is a standard API key format (e.g. AIzaSy...), use ?key= and x-goog-api-key
+    if (rawToken.startsWith('AIzaSy')) {
       return {
         url: `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
           normModel
-        )}:generateContent?key=${encodeURIComponent(account.accessToken.trim())}`,
+        )}:generateContent?key=${encodeURIComponent(rawToken)}`,
         headers: {
           'Content-Type': 'application/json',
+          'x-goog-api-key': rawToken,
         },
         isSubscription: true,
         planName: account.planName || 'Google AI Pro Plan',
@@ -223,7 +225,7 @@ export function getGeminiAuthHeadersAndUrl(
       )}:generateContent`,
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${account.accessToken.trim()}`,
+        Authorization: `Bearer ${rawToken}`,
       },
       isSubscription: true,
       planName: account.planName || 'Google AI Pro Plan',
@@ -231,14 +233,34 @@ export function getGeminiAuthHeadersAndUrl(
     };
   }
 
-  const key = config.apiKey?.trim() || '';
+  // BYOK mode: Explicitly pull active key from config OR localStorage.getItem('pixelops_gemini_api_key')
+  let key = config.apiKey?.trim() || '';
+  if (!key) {
+    try {
+      key =
+        localStorage.getItem('pixelops_gemini_api_key')?.trim() ||
+        localStorage.getItem('gemini_api_key')?.trim() ||
+        localStorage.getItem('apiKey')?.trim() ||
+        '';
+    } catch {}
+  }
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  };
+  if (key) {
+    headers['x-goog-api-key'] = key;
+  }
+
   return {
-    url: `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-      normModel
-    )}:generateContent?key=${encodeURIComponent(key)}`,
-    headers: {
-      'Content-Type': 'application/json',
-    },
+    url: key
+      ? `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+          normModel
+        )}:generateContent?key=${encodeURIComponent(key)}`
+      : `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+          normModel
+        )}:generateContent`,
+    headers,
     isSubscription: false,
     planName: 'Developer API Key (BYOK)',
   };
@@ -386,6 +408,13 @@ export function loadLLMProviderConfig(): LLMProviderConfig {
 export function saveLLMProviderConfig(config: LLMProviderConfig) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+    if (config.apiKey && config.apiKey.trim()) {
+      localStorage.setItem('pixelops_gemini_api_key', config.apiKey.trim());
+      localStorage.setItem('gemini_api_key', config.apiKey.trim());
+    }
+    if (config.googleClientId && config.googleClientId.trim()) {
+      localStorage.setItem('pixelops_google_client_id', config.googleClientId.trim());
+    }
     if (config.connectedAccounts?.gemini) {
       localStorage.setItem(
         'pixelops_connected_google_account',
@@ -450,25 +479,115 @@ export function setLLMAuthMode(authMode: AuthMode): LLMProviderConfig {
 }
 
 /**
- * Initiates an interactive Google Account Sign-In flow via OAuth 2.0 popup window.
+ * Resolves user profile from Google OAuth userinfo endpoint and connects the real subscription account
+ */
+async function resolveGoogleUserProfileAndConnect(
+  token: string,
+  preferredEmail?: string
+): Promise<ConnectedSubscriptionAccount> {
+  let profileData: any = null;
+  try {
+    const uRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (uRes.ok) {
+      profileData = await uRes.json();
+    }
+  } catch (err) {
+    console.warn('[GoogleAuth] Failed to fetch userinfo:', err);
+  }
+
+  const userEmail = profileData?.email || preferredEmail || '';
+  if (!userEmail) {
+    throw new Error('Could not retrieve user email from Google account.');
+  }
+
+  const connected: ConnectedSubscriptionAccount = {
+    providerId: 'gemini',
+    planType: 'google_ai_pro',
+    planName: 'Google AI Pro Plan (Gemini Advanced)',
+    planTier: 'pro',
+    email: userEmail,
+    displayName: profileData?.name || userEmail.split('@')[0],
+    avatarUrl: profileData?.picture,
+    accessToken: token,
+    expiresAt: Date.now() + 3600 * 1000,
+    status: 'connected',
+    connectedAt: new Date().toISOString(),
+  };
+  connectSubscriptionAccount(connected);
+  return connected;
+}
+
+/**
+ * Initiates authentic Google Sign-In using Google Identity Services (GIS) / Google OAuth 2.0
  */
 export async function initiateGoogleSignIn(options?: {
   clientId?: string;
   userEmail?: string;
 }): Promise<ConnectedSubscriptionAccount> {
   const currentConfig = loadLLMProviderConfig();
-  const clientId =
-    options?.clientId ||
-    currentConfig.googleClientId ||
+  let clientId =
+    options?.clientId?.trim() ||
+    currentConfig.googleClientId?.trim() ||
+    localStorage.getItem('pixelops_google_client_id')?.trim() ||
     (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID) ||
     '';
 
+  if (!clientId && typeof window !== 'undefined') {
+    const prompted = window.prompt(
+      'Enter your Google OAuth 2.0 Client ID (from Google Cloud Console -> APIs & Credentials -> OAuth Client ID):'
+    );
+    if (prompted && prompted.trim()) {
+      clientId = prompted.trim();
+      currentConfig.googleClientId = clientId;
+      saveLLMProviderConfig(currentConfig);
+    }
+  }
+
   if (!clientId) {
     throw new Error(
-      'Google OAuth Client ID is required to launch the Google consent popup. Enter your Google Client ID below or attach your Google AI Studio / Cloud access key directly.'
+      'Google OAuth Client ID is required for Google Sign-In. Enter your Google Client ID or attach your Google AI Studio API key directly under BYOK.'
     );
   }
 
+  // 1. If Google Identity Services (GIS) token client is available, use it directly
+  const googleGlobal = typeof window !== 'undefined' ? (window as any).google : null;
+  if (googleGlobal?.accounts?.oauth2?.initTokenClient) {
+    return new Promise((resolve, reject) => {
+      try {
+        const tokenClient = googleGlobal.accounts.oauth2.initTokenClient({
+          client_id: clientId,
+          scope: 'openid email profile https://www.googleapis.com/auth/generative-language',
+          callback: async (tokenResponse: any) => {
+            if (tokenResponse.error) {
+              reject(new Error(`Google Sign-In failed: ${tokenResponse.error_description || tokenResponse.error}`));
+              return;
+            }
+            const token = tokenResponse.access_token;
+            if (!token) {
+              reject(new Error('Google Sign-In returned no access token.'));
+              return;
+            }
+            try {
+              const account = await resolveGoogleUserProfileAndConnect(token, options?.userEmail);
+              resolve(account);
+            } catch (err: any) {
+              reject(err);
+            }
+          },
+          error_callback: (err: any) => {
+            reject(new Error(err?.message || 'Google account selector closed.'));
+          },
+        });
+        tokenClient.requestAccessToken({ prompt: 'select_account' });
+      } catch (gisErr: any) {
+        console.warn('[GIS] initTokenClient threw, falling back to popup window:', gisErr);
+      }
+    });
+  }
+
+  // 2. Fallback: Standard Google OAuth 2.0 popup window
   const redirectUri = window.location.origin;
   const scope = encodeURIComponent(
     'openid email profile https://www.googleapis.com/auth/generative-language'
@@ -514,36 +633,8 @@ export async function initiateGoogleSignIn(options?: {
         }
 
         try {
-          // Fetch Google user profile
-          let profileData: any = null;
-          try {
-            const uRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-              headers: { Authorization: `Bearer ${token}` },
-            });
-            if (uRes.ok) profileData = await uRes.json();
-          } catch {}
-
-          const userEmail = profileData?.email || options?.userEmail || '';
-          if (!userEmail) {
-            reject(new Error('Could not retrieve user email from Google account.'));
-            return;
-          }
-
-          const connected: ConnectedSubscriptionAccount = {
-            providerId: 'gemini',
-            planType: 'google_ai_pro',
-            planName: 'Google AI Pro Plan (Gemini Advanced)',
-            planTier: 'pro',
-            email: userEmail,
-            displayName: profileData?.name || userEmail.split('@')[0],
-            avatarUrl: profileData?.picture,
-            accessToken: token,
-            expiresAt: Date.now() + 3600 * 1000,
-            status: 'connected',
-            connectedAt: new Date().toISOString(),
-          };
-          connectSubscriptionAccount(connected);
-          resolve(connected);
+          const account = await resolveGoogleUserProfileAndConnect(token, options?.userEmail);
+          resolve(account);
         } catch (err: any) {
           reject(err);
         }
@@ -657,13 +748,21 @@ export async function testLLMProviderConnection(
         Boolean(config.connectedAccounts?.gemini?.accessToken) &&
         !config.connectedAccounts?.gemini?.accessToken?.includes('google_ai_pro_');
 
-      const key = (config.apiKey || '').trim();
+      let key = (config.apiKey || '').trim();
+      if (!key) {
+        try {
+          key =
+            localStorage.getItem('pixelops_gemini_api_key')?.trim() ||
+            localStorage.getItem('gemini_api_key')?.trim() ||
+            '';
+        } catch {}
+      }
 
       if (!isSub && (!key || key === 'MY_GEMINI_API_KEY')) {
         return {
           ok: false,
           error:
-            'Gemini API key is missing. Please enter your Google Gemini API key (AIzaSy...) in the field above.',
+            'Gemini API key is missing. Please enter your Google Gemini API key (AIzaSy...) in the field above or save it in pixelops_gemini_api_key.',
         };
       }
 
@@ -684,6 +783,8 @@ export async function testLLMProviderConnection(
       };
       if (isBearer) {
         headers['Authorization'] = `Bearer ${token}`;
+      } else if (token) {
+        headers['x-goog-api-key'] = token;
       }
 
       const res = await fetch(url, {

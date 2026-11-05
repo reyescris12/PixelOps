@@ -19,6 +19,28 @@
     href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Silkscreen:wght@400;700&display=swap"
     rel="stylesheet"
   />
+  <!-- Google Identity Services (GIS) Client SDK -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <script>
+    // Google Identity & OAuth 2.0 popup callback relay
+    (function() {
+      if (window.opener && (window.location.hash.indexOf('access_token') !== -1 || window.location.search.indexOf('code=') !== -1)) {
+        try {
+          var params = {};
+          if (window.location.hash) {
+            new URLSearchParams(window.location.hash.substring(1)).forEach(function(v, k) { params[k] = v; });
+          }
+          if (window.location.search) {
+            new URLSearchParams(window.location.search).forEach(function(v, k) { params[k] = v; });
+          }
+          window.opener.postMessage({ type: 'GOOGLE_AUTH_SUCCESS', params: params, googleAuthSuccess: true }, '*');
+          window.close();
+        } catch (e) {
+          console.warn('[OAuth] Callback relay failed:', e);
+        }
+      }
+    })();
+  </script>
 </head>
 <body>
   <div id="root"></div>

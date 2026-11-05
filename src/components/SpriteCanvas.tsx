@@ -2554,8 +2554,6 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
               ? 'SPEAKING'
               : isAgentExecuting
               ? (opState.activeSkill ? `BOUND: ${opState.activeSkill.shortCode}` : 'EXECUTING')
-              : readiness.pendingCount > 0
-              ? readiness.statusBadge
               : opState.operationalBadge;
 
             return (
@@ -3139,11 +3137,9 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
                 ? 'SPEAKING'
                 : isExec
                 ? 'EXECUTING'
-                : readiness.pendingCount > 0
-                ? readiness.statusBadge
                 : st.statusTag === 'COFFEE BREAK'
                 ? 'COMM BREAK'
-                : st.statusTag;
+                : st.statusTag || 'STANDBY';
 
               return (
                 <button

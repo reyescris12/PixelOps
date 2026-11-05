@@ -52,26 +52,30 @@ export function getOperativeReadiness(agentIdentifier: string): OperativeReadine
   });
 
   const highPriority = myTasks.filter((t) => t.priority === 'high');
+  const inProgress = myTasks.filter((t) => t.status === 'in_progress');
   const pendingCount = myTasks.length;
   const highPriorityCount = highPriority.length;
 
   let alertLevel: OperativeAlertLevel = 'nominal';
-  let statusBadge = 'NOMINAL · READY';
+  let statusBadge = 'STANDBY · READY';
   let readinessPercentage = 100;
 
-  if (highPriorityCount > 0) {
-    alertLevel = 'critical';
-    statusBadge = `⚠️ ${highPriorityCount} CRITICAL TASK${highPriorityCount > 1 ? 'S' : ''}`;
-    readinessPercentage = Math.max(35, 100 - highPriorityCount * 25);
+  if (inProgress.length > 0) {
+    const isCrit = inProgress.some((t) => t.priority === 'high');
+    alertLevel = isCrit ? 'critical' : 'elevated';
+    statusBadge = isCrit ? '⚠️ EXECUTING CRITICAL' : '⚡ EXECUTING TASK';
+    readinessPercentage = 50;
   } else if (pendingCount > 0) {
-    alertLevel = 'elevated';
-    statusBadge = `⚡ ${pendingCount} PENDING TASK${pendingCount > 1 ? 'S' : ''}`;
-    readinessPercentage = Math.max(60, 100 - pendingCount * 12);
+    alertLevel = highPriorityCount > 0 ? 'elevated' : 'nominal';
+    statusBadge = highPriorityCount > 0 ? `STANDBY (${highPriorityCount} CRITICAL IN QUEUE)` : `STANDBY (${pendingCount} QUEUED)`;
+    readinessPercentage = Math.max(70, 100 - pendingCount * 10);
   }
 
   let lastActiveDescription = 'Ready for tactical assignment';
-  if (myTasks.length > 0) {
-    lastActiveDescription = `Active queue: ${myTasks[0].title.slice(0, 48)}`;
+  if (inProgress.length > 0) {
+    lastActiveDescription = `In progress: ${inProgress[0].title.slice(0, 48)}`;
+  } else if (myTasks.length > 0) {
+    lastActiveDescription = `Queued directive: ${myTasks[0].title.slice(0, 48)}`;
   }
 
   return {

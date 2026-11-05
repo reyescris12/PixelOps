@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Layers,
   Plus,
@@ -250,9 +251,9 @@ export const RoomSpawnerModal: React.FC<RoomSpawnerModalProps> = ({
 
   const currentRoomStations = getAllRoomStations()[selectedRoomId] || [];
 
-  return (
+  const modalNode = (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/90 backdrop-blur-md select-none"
+      className="fixed inset-0 z-[100] flex items-center justify-center p-3 bg-black/90 backdrop-blur-md select-none"
       onClick={onClose}
     >
       <div
@@ -714,4 +715,6 @@ export const RoomSpawnerModal: React.FC<RoomSpawnerModalProps> = ({
       </div>
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(modalNode, document.body) : modalNode;
 };

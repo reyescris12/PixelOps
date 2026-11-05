@@ -105,6 +105,12 @@ import { TerminalConsole } from './components/TerminalConsole';
 import { WorkspaceFileViewer } from './components/WorkspaceFileViewer';
 import { PlaybookModal } from './components/PlaybookModal';
 import { RoomActionPlaybookPanel } from './components/RoomActionPlaybookPanel';
+import { TaskQueuePanel } from './components/TaskQueuePanel';
+import {
+  StrategyBoardTask,
+  loadStrategyBoardTasks,
+  updateStrategyBoardTaskStatus,
+} from './services/StrategyBoardService';
 import {
   IntelligencePlaybookDef,
   PlaybookExecutionResult,
@@ -144,7 +150,7 @@ import {
 } from './engine/pluginAuthManager';
 
 type NavTab = 'hq' | 'crew' | 'plugins' | 'themes';
-type HqSubView = 'terminal' | 'town_hall' | 'command_log';
+type HqSubView = 'terminal' | 'town_hall' | 'command_log' | 'task_queue';
 
 const CommandCenterContent: React.FC = () => {
   const {
@@ -198,6 +204,27 @@ const CommandCenterContent: React.FC = () => {
     return () => clearInterval(t);
   }, [activeTab]);
   const [commandLedger, setCommandLedger] = useState<CommandLedgerEntry[]>([]);
+  const [queuedTasksCount, setQueuedTasksCount] = useState<number>(() => {
+    try {
+      return loadStrategyBoardTasks().filter((t) => t.status !== 'completed').length;
+    } catch {
+      return 0;
+    }
+  });
+
+  useEffect(() => {
+    const handleUpdate = () => {
+      try {
+        setQueuedTasksCount(loadStrategyBoardTasks().filter((t) => t.status !== 'completed').length);
+      } catch {}
+    };
+    window.addEventListener('strategy:tasks-updated', handleUpdate);
+    window.addEventListener('storage', handleUpdate);
+    return () => {
+      window.removeEventListener('strategy:tasks-updated', handleUpdate);
+      window.removeEventListener('storage', handleUpdate);
+    };
+  }, []);
   const [currentRoom, setCurrentRoom] = useState<RoomId>(
     () => restoredSession?.currentRoom || 'war_room'
   );
@@ -1112,6 +1139,20 @@ const CommandCenterContent: React.FC = () => {
       });
       await refreshCommandLedger();
 
+      // Resolve matching in-progress or pending Strategy Board task
+      try {
+        const boardTasks = loadStrategyBoardTasks();
+        const activeMatch = boardTasks.find(
+          (t) =>
+            t.status === 'in_progress' ||
+            t.title.toLowerCase() === prompt.toLowerCase() ||
+            prompt.toLowerCase().includes(t.title.toLowerCase())
+        );
+        if (activeMatch) {
+          updateStrategyBoardTaskStatus(activeMatch.id, 'completed');
+        }
+      } catch {}
+
       // Resolution Handler B: Gemini API returns data -> smoothly fade out GameOverlay and show response
       setDialogueText(newCard.dialogue);
       setLastActionSummary(`${newCard.agentName}: ${newCard.cardTitle}`);
@@ -1216,6 +1257,61 @@ const CommandCenterContent: React.FC = () => {
       setIsExecuting(false);
       setPendingTask(null);
     }
+  };
+
+  /**
+   * Manually marks a queued task completed and immediately archives it to Cards and Command Ledger
+   */
+  const handleCompleteQueueTask = async (task: StrategyBoardTask) => {
+    updateStrategyBoardTaskStatus(task.id, 'completed');
+    const cleanAgent = (task.assignedAgent || '').toLowerCase();
+    const matchedCrew =
+      crewAgents.find(
+        (a) =>
+          a.id.toLowerCase().includes(cleanAgent) ||
+          (a.customName || '').toLowerCase().includes(cleanAgent) ||
+          (a.defaultName || '').toLowerCase().includes(cleanAgent)
+      ) || crewAgents[0];
+
+    const completedCard: AgentExecutionCard = {
+      id: `card_${Date.now()}`,
+      agentName: matchedCrew.customName || matchedCrew.id,
+      cardTitle: `[DIRECTIVE COMPLETED] ${task.title}`,
+      dialogue: `Task "${task.title}" has been verified and marked completed by Commander. Archived to Strategy Board and Command Log.`,
+      timestamp: new Date().toISOString(),
+      prompt: task.title,
+      actionCategory: 'STRATEGY QUEUE',
+      themeId: theme.id,
+      tokenEstimate: 450,
+      steps: [
+        { label: 'Queue Extraction', detail: `Processed task from ${task.source}`, status: 'completed' },
+        { label: 'Directive Verification', detail: 'Task marked complete by Commander', status: 'verified' },
+      ],
+      toolCalls: [
+        {
+          pluginId: 'strategy_queue',
+          toolName: `queue_${task.source || 'task'}`,
+          args: { priority: task.priority, source: task.source },
+          resultSummary: `Completed task: ${task.title}`,
+        },
+      ],
+    };
+
+    const nextCards = [completedCard, ...executionCards];
+    setExecutionCards(nextCards);
+    saveExecutionCards(nextCards);
+
+    await appendCommandLedgerEntry({
+      timestamp: completedCard.timestamp,
+      command_input: task.title,
+      involved_agent: completedCard.agentName,
+      tool_used: `queue_${task.source || 'task'}`,
+      result_summary: completedCard.cardTitle,
+      success_boost_achieved: 10,
+    });
+    await refreshCommandLedger();
+
+    setDialogueText(`[TASK COMPLETED] Operative ${completedCard.agentName}: "${task.title}" verified and logged to Command Ledger.`);
   };
 
   /**
@@ -2547,6 +2643,22 @@ const CommandCenterContent: React.FC = () => {
                     </button>
                     <button
                       type="button"
+                      onClick={() => {
+                        setHqSubView('task_queue');
+                        setActiveSpeakerAgentIndex(null);
+                        playBeep('tap');
+                      }}
+                      className={`px-3 py-1 font-mono-tabular text-xs cursor-pointer transition-colors flex items-center gap-1 ${
+                        hqSubView === 'task_queue'
+                          ? 'bg-[#38bdf8] text-[#0c1017] font-bold'
+                          : 'text-[#38bdf8] hover:text-[#f3ead8]'
+                      }`}
+                      title="Inspect and manage the active mission task queue"
+                    >
+                      <span>📋 Task Queue ({queuedTasksCount})</span>
+                    </button>
+                    <button
+                      type="button"
                       onClick={handleCallTownHallMeeting}
                       className={`px-3 py-1 font-mono-tabular text-xs cursor-pointer transition-colors flex items-center gap-1 ${
                         hqSubView === 'town_hall'
@@ -2594,27 +2706,64 @@ const CommandCenterContent: React.FC = () => {
                 )}
 
                 {hqSubView === 'terminal' ? (
-                  <TerminalWindow
-                    onOpenFieldManual={() => setIsFieldManualOpen(true)}
-                    dialogueText={dialogueText}
+                  <>
+                    {isExecuting && pendingTask && (
+                      <div className="w-full max-w-2xl mx-auto px-3 sm:px-0">
+                        <div className="p-2 bg-[#0c131d] border border-[#38bdf8]/60 flex items-center justify-between gap-2 text-xs font-mono-tabular shadow-[0_0_12px_rgba(56,189,248,0.2)]">
+                          <div className="flex items-center gap-2 truncate">
+                            <span className="w-2 h-2 rounded-full bg-[#38bdf8] animate-ping shrink-0" />
+                            <span className="text-[#38bdf8] font-bold shrink-0">[ACTIVE IN-FLIGHT]</span>
+                            <span className="text-[#f3ead8] truncate">&ldquo;{pendingTask.prompt}&rdquo;</span>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setHqSubView('task_queue');
+                              playBeep('tap');
+                            }}
+                            className="px-2 py-0.5 bg-[#172538] hover:bg-[#223752] text-[#38bdf8] text-[10px] font-bold border border-[#38bdf8]/40 cursor-pointer whitespace-nowrap"
+                          >
+                            [VIEW QUEUE]
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    <TerminalWindow
+                      onOpenFieldManual={() => setIsFieldManualOpen(true)}
+                      dialogueText={dialogueText}
+                      isExecuting={isExecuting}
+                      onExecuteDirective={handleExecuteDirective}
+                      executionCards={executionCards}
+                      errorMessage={errorMessage}
+                      retroError={retroError}
+                      onOpenGearVault={() => setIsSettingsOpen(true)}
+                      onReopenErrorModal={() => setIsRetroErrorModalOpen(true)}
+                      onTriggerErrorDrill={handleTriggerErrorDrill}
+                      onDismissError={() => {
+                        setRetroError(null);
+                        setErrorMessage(null);
+                        setIsRetroErrorModalOpen(false);
+                      }}
+                      onOpenCommandLog={() => {
+                        setHqSubView('command_log');
+                        refreshCommandLedger();
+                      }}
+                      ledgerCount={commandLedger.length}
+                    />
+                  </>
+                ) : hqSubView === 'task_queue' ? (
+                  <TaskQueuePanel
+                    activePendingTask={pendingTask}
                     isExecuting={isExecuting}
                     onExecuteDirective={handleExecuteDirective}
-                    executionCards={executionCards}
-                    errorMessage={errorMessage}
-                    retroError={retroError}
-                    onOpenGearVault={() => setIsSettingsOpen(true)}
-                    onReopenErrorModal={() => setIsRetroErrorModalOpen(true)}
-                    onTriggerErrorDrill={handleTriggerErrorDrill}
-                    onDismissError={() => {
-                      setRetroError(null);
-                      setErrorMessage(null);
-                      setIsRetroErrorModalOpen(false);
-                    }}
-                    onOpenCommandLog={() => {
+                    onCompleteTask={handleCompleteQueueTask}
+                    onViewCommandLog={() => {
                       setHqSubView('command_log');
                       refreshCommandLedger();
                     }}
-                    ledgerCount={commandLedger.length}
+                    onViewCards={() => {
+                      setHqSubView('terminal');
+                    }}
                   />
                 ) : hqSubView === 'town_hall' ? (
                   <TownHallRoundtablePanel

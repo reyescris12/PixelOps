@@ -24,6 +24,8 @@ import {
   ChevronUp,
   Eye,
   EyeOff,
+  Shield,
+  Globe,
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { CommandPreferences } from '../services/ApiService';
@@ -56,6 +58,11 @@ import {
   getLLMAuthInfo,
 } from '../services/LLMProviderService';
 import { GoogleAuthButton } from './GoogleAuthButton';
+import {
+  getAuth0Config,
+  saveAuth0Config,
+  signInWithAuth0,
+} from '../services/Auth0Service';
 import {
   getBYOKVaultSnapshot,
   saveBYOKVaultEntry,
@@ -137,6 +144,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     () => llmConfig.googleClientId || ''
   );
   const [showClientIdInput, setShowClientIdInput] = useState(false);
+
+  // Auth0 Configuration & Session State
+  const [auth0Domain, setAuth0Domain] = useState(() => getAuth0Config().domain);
+  const [auth0ClientId, setAuth0ClientId] = useState(() => getAuth0Config().clientId);
+  const [showAuth0Settings, setShowAuth0Settings] = useState(false);
+  const [isSigningInAuth0, setIsSigningInAuth0] = useState(false);
 
   // Multi-Provider BYOK Vault State
   const [vaultEntries, setVaultEntries] = useState(() => getBYOKVaultSnapshot());
@@ -395,9 +408,72 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   };
 
+  const handleAuth0SignIn = async (connection?: string, targetProviderId?: LLMProviderType) => {
+    const pId = targetProviderId || llmConfig.providerId || 'gemini';
+    setIsSigningInAuth0(true);
+    setLlmTestStatus({
+      loading: true,
+      message: `Initiating ${connection === 'google-oauth2' ? 'Google' : 'Auth0 Universal'} Sign-In...`,
+    });
+    playBeep('tap');
+    try {
+      const res = await signInWithAuth0({
+        connection,
+        providerId: pId,
+      });
+      if (res.ok && res.account) {
+        const updated = loadLLMProviderConfig();
+        setLlmConfig(updated);
+        setAuthenticatedGoogleEmail(res.account.email);
+        setAuthenticatedGoogleName(res.account.displayName || res.account.email);
+        setLlmTestStatus({
+          loading: false,
+          ok: true,
+          message: `Signed in as ${res.account.email} via Auth0! Connected to ${res.account.planName}.`,
+        });
+        playBeep('complete');
+      } else if (res.error) {
+        if (!res.error.includes('cancelled')) {
+          setLlmTestStatus({
+            loading: false,
+            ok: false,
+            message: res.error,
+          });
+          playBeep('error');
+        } else {
+          setLlmTestStatus({ loading: false, message: undefined });
+        }
+      }
+    } catch (err: any) {
+      setLlmTestStatus({
+        loading: false,
+        ok: false,
+        message: err?.message || 'Auth0 Sign-In could not be completed.',
+      });
+      playBeep('error');
+    } finally {
+      setIsSigningInAuth0(false);
+    }
+  };
+
+  const handleSaveAuth0Settings = () => {
+    playBeep('tap');
+    saveAuth0Config({
+      domain: auth0Domain.trim(),
+      clientId: auth0ClientId.trim(),
+    });
+    setShowAuth0Settings(false);
+    setLlmTestStatus({
+      loading: false,
+      ok: true,
+      message: 'Auth0 Tenant credentials updated and cached.',
+    });
+    playBeep('complete');
+  };
+
   const handleGoogleSignIn = async () => {
     setIsSigningInGoogle(true);
-    setLlmTestStatus({ loading: true, message: 'Launching Google Account Sign-In (GIS / OAuth)...' });
+    setLlmTestStatus({ loading: true, message: 'Launching Google Account Sign-In (Auth0 / GIS)...' });
     playBeep('tap');
     try {
       const targetClientId = googleClientIdInput.trim() || llmConfig.googleClientId;
@@ -407,6 +483,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       });
       const updated = loadLLMProviderConfig();
       setLlmConfig(updated);
+      setAuthenticatedGoogleEmail(account.email);
+      setAuthenticatedGoogleName(account.displayName || account.email);
       setLlmTestStatus({
         loading: false,
         ok: true,
@@ -773,11 +851,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                       <div className="flex items-center gap-2 my-0.5">
                         <div className="h-px bg-slate-800 flex-1" />
-                        <span className="text-[10px] text-slate-500 font-mono-tabular uppercase">or sign in with google</span>
+                        <span className="text-[10px] text-slate-500 font-mono-tabular uppercase">or sign in with auth0 / google</span>
                         <div className="h-px bg-slate-800 flex-1" />
                       </div>
 
-                      {/* Official Google Identity Services Sign-In Button */}
+                      {/* Official Google Sign-In via Auth0 / GIS */}
                       <GoogleAuthButton
                         clientId={googleClientIdInput.trim() || llmConfig.googleClientId}
                         onSuccess={(email, name) => {
@@ -794,19 +872,19 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         }}
                       />
 
+                      {/* Auth0 Universal Login Button */}
                       <button
                         type="button"
-                        onClick={handleGoogleSignIn}
-                        disabled={isSigningInGoogle}
-                        className="w-full min-h-[36px] px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-slate-200 font-semibold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-50"
+                        onClick={() => handleAuth0SignIn(undefined, 'gemini')}
+                        disabled={isSigningInAuth0}
+                        className="w-full min-h-[38px] px-3.5 py-2 rounded-xl bg-gradient-to-r from-cyan-950/80 to-blue-950/80 hover:from-cyan-900/90 hover:to-blue-900/90 border border-cyan-500/40 text-cyan-200 font-semibold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md disabled:opacity-50"
                       >
-                        <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
-                          <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-                          <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                          <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
-                          <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
-                        </svg>
-                        <span>{isSigningInGoogle ? 'Signing into Google...' : 'Launch Google Sign-In Popup'}</span>
+                        <Shield className="w-3.5 h-3.5 text-cyan-400" />
+                        <span>
+                          {isSigningInAuth0
+                            ? 'Authenticating via Auth0...'
+                            : 'Sign in with Auth0 Universal (Passkey / Google / SSO)'}
+                        </span>
                       </button>
 
                       <div className="text-[11px] text-slate-400 space-y-1 pl-1">
@@ -822,19 +900,69 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </div>
                   )}
 
-                  {/* Custom OAuth Client ID Toggle */}
-                  <div className="pt-1 border-t border-slate-800/60">
+                  {/* Auth0 Tenant Configuration Toggle */}
+                  <div className="pt-2 border-t border-slate-800/60 flex flex-col gap-2">
+                    <div className="flex items-center justify-between">
+                      <button
+                        type="button"
+                        onClick={() => setShowAuth0Settings(!showAuth0Settings)}
+                        className="text-[11px] text-cyan-400/90 hover:text-cyan-300 flex items-center gap-1 cursor-pointer font-medium"
+                      >
+                        {showAuth0Settings ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                        <Shield className="w-3 h-3" />
+                        <span>Auth0 Gateway Tenant Settings</span>
+                      </button>
+                      <span className="text-[10px] text-slate-500 font-mono-tabular">
+                        {auth0Domain ? auth0Domain.split('.')[0] : 'default'}
+                      </span>
+                    </div>
+
+                    {showAuth0Settings && (
+                      <div className="p-3 bg-[#080d16] border border-cyan-900/60 rounded-xl flex flex-col gap-2.5">
+                        <div className="text-[11px] text-slate-300">
+                          Configure your own custom Auth0 tenant credentials or connect via your organization's domain:
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[10px] text-slate-400 font-mono-tabular">AUTH0 DOMAIN</label>
+                          <input
+                            type="text"
+                            value={auth0Domain}
+                            onChange={(e) => setAuth0Domain(e.target.value)}
+                            placeholder="e.g. dev-xyz.us.auth0.com"
+                            className="w-full bg-[#10141f] border border-slate-800 rounded px-2.5 py-1.5 text-[11px] font-mono-tabular text-slate-100 focus:outline-none focus:border-cyan-500"
+                          />
+                        </div>
+                        <div className="flex flex-col gap-1">
+                          <label className="text-[10px] text-slate-400 font-mono-tabular">AUTH0 CLIENT ID</label>
+                          <input
+                            type="text"
+                            value={auth0ClientId}
+                            onChange={(e) => setAuth0ClientId(e.target.value)}
+                            placeholder="Client ID from Auth0 Application"
+                            className="w-full bg-[#10141f] border border-slate-800 rounded px-2.5 py-1.5 text-[11px] font-mono-tabular text-slate-100 focus:outline-none focus:border-cyan-500"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={handleSaveAuth0Settings}
+                          className="self-end px-3 py-1 bg-cyan-800 hover:bg-cyan-700 text-cyan-100 text-xs rounded font-medium cursor-pointer transition-colors"
+                        >
+                          Save Auth0 Tenant
+                        </button>
+                      </div>
+                    )}
+
                     <button
                       type="button"
                       onClick={() => setShowClientIdInput(!showClientIdInput)}
                       className="text-[11px] text-slate-400 hover:text-slate-200 flex items-center gap-1 cursor-pointer"
                     >
                       {showClientIdInput ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                      <span>Advanced: Custom Google OAuth Client ID</span>
+                      <span>Advanced: Direct Google Cloud OAuth Client ID (GIS)</span>
                     </button>
 
                     {showClientIdInput && (
-                      <div className="mt-2 p-2.5 bg-[#0a0f17] border border-slate-800 rounded-lg flex flex-col gap-2">
+                      <div className="p-2.5 bg-[#0a0f17] border border-slate-800 rounded-lg flex flex-col gap-2">
                         <input
                           type="text"
                           value={googleClientIdInput}
@@ -888,6 +1016,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </div>
                   ) : (
                     <div className="flex flex-col gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleAuth0SignIn(undefined, 'openai')}
+                        disabled={isSigningInAuth0}
+                        className="w-full min-h-[36px] px-3.5 py-1.5 rounded-xl bg-emerald-950/70 hover:bg-emerald-900/80 border border-emerald-500/50 text-emerald-200 font-semibold text-xs flex items-center justify-center gap-2 cursor-pointer transition-colors shadow-md disabled:opacity-50"
+                      >
+                        <Shield className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Sign in to OpenAI with Auth0</span>
+                      </button>
+
+                      <div className="flex items-center gap-2 my-0.5">
+                        <div className="h-px bg-slate-800 flex-1" />
+                        <span className="text-[10px] text-slate-500 font-mono-tabular uppercase">or enter credentials manually</span>
+                        <div className="h-px bg-slate-800 flex-1" />
+                      </div>
+
                       <div className="flex flex-col gap-1">
                         <label className="text-[11px] text-slate-300 font-medium">Your OpenAI Account Email</label>
                         <input
@@ -953,6 +1097,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </div>
                   ) : (
                     <div className="flex flex-col gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleAuth0SignIn(undefined, 'anthropic')}
+                        disabled={isSigningInAuth0}
+                        className="w-full min-h-[36px] px-3.5 py-1.5 rounded-xl bg-amber-950/70 hover:bg-amber-900/80 border border-amber-500/50 text-amber-200 font-semibold text-xs flex items-center justify-center gap-2 cursor-pointer transition-colors shadow-md disabled:opacity-50"
+                      >
+                        <Shield className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Sign in to Claude with Auth0</span>
+                      </button>
+
+                      <div className="flex items-center gap-2 my-0.5">
+                        <div className="h-px bg-slate-800 flex-1" />
+                        <span className="text-[10px] text-slate-500 font-mono-tabular uppercase">or enter credentials manually</span>
+                        <div className="h-px bg-slate-800 flex-1" />
+                      </div>
+
                       <div className="flex flex-col gap-1">
                         <label className="text-[11px] text-slate-300 font-medium">Your Anthropic Account Email</label>
                         <input

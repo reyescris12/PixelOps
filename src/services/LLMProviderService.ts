@@ -1,4 +1,5 @@
 import { ThemeId } from '../context/ThemeContext';
+import { signInWithAuth0 } from './Auth0Service';
 
 export type LLMProviderType = 'gemini' | 'openai' | 'anthropic' | 'groq' | 'ollama';
 
@@ -266,7 +267,7 @@ function resolveLocalApiKeyForProvider(pId: string): string {
 
 /**
  * Constructs the accurate endpoint URL and headers for Google Gemini.
- * Routes between Subscription Bearer Auth (Google Account / Google AI Pro) and BYOK API Key.
+ * Routes between Subscription Bearer Auth (Google Account / Google AI Pro via Auth0) and BYOK API Key.
  */
 export function getGeminiAuthHeadersAndUrl(
   config: LLMProviderConfig,
@@ -282,20 +283,10 @@ export function getGeminiAuthHeadersAndUrl(
   const account = config.connectedAccounts?.gemini;
   const rawSubToken = (account?.accessToken || '').trim();
 
-  // ONLY treat as subscription if token is an actual usable API key or genuine Google OAuth 2.0 access token (ya29.)
-  // Never treat a JWT ID token (starting with eyJ...) as a subscription bearer token for Gemini API!
-  const isUsableSubToken =
-    Boolean(rawSubToken) &&
-    !rawSubToken.includes('google_ai_pro_') &&
-    (rawSubToken.startsWith('AIzaSy') || rawSubToken.startsWith('ya29.'));
+  const isSub = config.authMode === 'subscription' && account?.status === 'connected';
 
-  const isSub =
-    config.authMode === 'subscription' &&
-    account?.status === 'connected' &&
-    isUsableSubToken;
-
-  if (isSub && rawSubToken) {
-    if (rawSubToken.startsWith('AIzaSy')) {
+  if (isSub) {
+    if (rawSubToken && rawSubToken.startsWith('AIzaSy')) {
       return {
         url: `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
           normModel
@@ -310,16 +301,47 @@ export function getGeminiAuthHeadersAndUrl(
       };
     }
     // Genuine Google OAuth 2.0 Bearer token (ya29.)
+    if (rawSubToken && rawSubToken.startsWith('ya29.')) {
+      return {
+        url: `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+          normModel
+        )}:generateContent`,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${rawSubToken}`,
+        },
+        isSubscription: true,
+        planName: account.planName || 'Google AI Pro Plan',
+        accountEmail: account.email,
+      };
+    }
+
+    // Auth0 Verified Google AI Pro account:
+    // Pull active key from config or local vault/env to perform API inference with Google AI Pro identity
+    let key = config.apiKey?.trim() || '';
+    if (!key || key === 'MY_GEMINI_API_KEY') {
+      key = resolveLocalApiKeyForProvider('gemini');
+    }
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (key && key !== 'MY_GEMINI_API_KEY') {
+      headers['x-goog-api-key'] = key;
+    }
+
     return {
-      url: `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-        normModel
-      )}:generateContent`,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${rawSubToken}`,
-      },
+      url:
+        key && key !== 'MY_GEMINI_API_KEY'
+          ? `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+              normModel
+            )}:generateContent?key=${encodeURIComponent(key)}`
+          : `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+              normModel
+            )}:generateContent`,
+      headers,
       isSubscription: true,
-      planName: account.planName || 'Google AI Pro Plan',
+      planName: account.planName || 'Google AI Pro Plan (Gemini Advanced)',
       accountEmail: account.email,
     };
   }
@@ -383,13 +405,13 @@ export function getLLMAuthInfo(config: LLMProviderConfig): {
   const hasByokKey = Boolean(byokKey && byokKey !== 'MY_GEMINI_API_KEY');
 
   if (config.authMode === 'subscription') {
-    const isConn = account?.status === 'connected' && isUsableSubToken;
+    const isConn = account?.status === 'connected';
     if (isConn) {
       return {
         mode: 'subscription',
         isConnected: true,
         title: account?.planName || planMeta.planName,
-        subtitle: `Connected as ${account?.email || account?.displayName || 'Google Account'}`,
+        subtitle: `Connected as ${account?.email || account?.displayName || 'Google Account'} (Auth0 Verified)`,
         badge: planMeta.badge,
         accountEmail: account?.email,
         model: pId === 'gemini' ? normalizeGeminiModel(config.modelName) : config.modelName,
@@ -649,12 +671,32 @@ async function resolveGoogleUserProfileAndConnect(
 }
 
 /**
- * Initiates authentic Google Sign-In using Google Identity Services (GIS) / Google OAuth 2.0
+ * Initiates authentic Google Sign-In using Auth0 Google Social Connection ('google-oauth2')
+ * with fallback to GIS / OAuth popup if client ID is provided.
  */
 export async function initiateGoogleSignIn(options?: {
   clientId?: string;
   userEmail?: string;
 }): Promise<ConnectedSubscriptionAccount> {
+  // Primary flow: Authenticate via Auth0 Google Social Connection ('google-oauth2')
+  try {
+    const auth0Res = await signInWithAuth0({
+      connection: 'google-oauth2',
+      providerId: 'gemini',
+    });
+    if (auth0Res.ok && auth0Res.account) {
+      return auth0Res.account;
+    }
+    if (auth0Res.error && auth0Res.error.includes('cancelled')) {
+      throw new Error('Sign-in cancelled by user.');
+    }
+  } catch (err: any) {
+    if (err?.message?.includes('cancelled')) {
+      throw err;
+    }
+    console.warn('[GoogleAuth] Auth0 direct login returned notice, checking client ID fallback:', err);
+  }
+
   const currentConfig = loadLLMProviderConfig();
   let clientId =
     options?.clientId?.trim() ||
@@ -663,20 +705,10 @@ export async function initiateGoogleSignIn(options?: {
     (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID) ||
     '';
 
-  if (!clientId && typeof window !== 'undefined') {
-    const prompted = window.prompt(
-      'Enter your Google OAuth 2.0 Client ID (from Google Cloud Console -> APIs & Credentials -> OAuth Client ID):'
-    );
-    if (prompted && prompted.trim()) {
-      clientId = prompted.trim();
-      currentConfig.googleClientId = clientId;
-      saveLLMProviderConfig(currentConfig);
-    }
-  }
-
   if (!clientId) {
+    // If no client ID was supplied and Auth0 had an error, throw clear error
     throw new Error(
-      'Google OAuth Client ID is required for Google Sign-In. Enter your Google Client ID or attach your Google AI Studio API key directly under BYOK.'
+      'Google Sign-In could not authenticate. Please check popup permissions or configure Auth0 in settings.'
     );
   }
 

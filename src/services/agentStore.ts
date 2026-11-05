@@ -62,7 +62,7 @@ export function getAvailableAgentProvidersAndModels(): AgentAvailableProviderMet
       isConnected: isOpenRouterConnected,
       statusLabel: isOpenRouterConnected ? 'Connected (PKCE SSO)' : 'Key / Connect Required',
       storageKey: 'pixelops_openrouter_key',
-      defaultModel: 'google/gemini-2.5-flash:free',
+      defaultModel: 'openrouter/free',
       availableModels: [
         ...OPENROUTER_FREE_MODELS.map((m) => ({
           id: m.id,
@@ -269,7 +269,7 @@ export function saveAgentModelConfig(
 
   let validModel = model;
   if (!validModel) {
-    if (provider === 'openrouter') validModel = 'google/gemini-2.5-flash:free';
+    if (provider === 'openrouter') validModel = 'openrouter/free';
     else if (provider === 'puter') validModel = 'google/gemini-2.5-flash';
     else validModel = SUPPORTED_VAULT_PROVIDERS[provider as keyof typeof SUPPORTED_VAULT_PROVIDERS]?.defaultModel || 'gemini-3.8-flash';
   }

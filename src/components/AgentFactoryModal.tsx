@@ -123,7 +123,7 @@ export const AgentFactoryModal: React.FC<AgentFactoryModalProps> = ({
     playBeep('tap');
     setProvider(pId);
     const provMeta = availableProviders.find((p) => p.id === pId);
-    setModel(provMeta?.defaultModel || 'google/gemini-2.5-flash:free');
+    setModel(provMeta?.defaultModel || 'openrouter/free');
   };
 
   const toggleTool = (toolId: string) => {

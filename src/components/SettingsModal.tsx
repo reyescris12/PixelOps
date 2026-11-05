@@ -761,7 +761,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                               <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
                               <span>Zero-Cost Free Models (No Credits Required)</span>
                             </span>
-                            <span className="text-[9px] text-emerald-500/80">100% Free Tier</span>
+                            <a
+                              href="https://openrouter.ai/models?variant=free"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[9px] text-emerald-400/80 hover:text-emerald-300 underline font-mono flex items-center gap-0.5 normal-case"
+                            >
+                              openrouter.ai/models?variant=free ↗
+                            </a>
                           </div>
                           <div className="flex flex-wrap gap-1">
                             {OPENROUTER_FREE_MODELS.map((m) => {

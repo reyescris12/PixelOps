@@ -35,7 +35,7 @@ export class ModelGateway {
 
   static getDefaultModel(provider: ModelGatewayProvider): string {
     if (provider === 'openrouter') {
-      return 'google/gemini-2.5-flash:free';
+      return 'openrouter/free';
     }
     if (provider === 'puter') {
       return 'google/gemini-2.5-flash';
@@ -50,7 +50,7 @@ export class ModelGateway {
    */
   static getModelForTier(provider: ModelGatewayProvider, tier: InferenceTier = 'reasoning'): string {
     if (provider === 'openrouter') {
-      return tier === 'fast' ? 'google/gemini-2.5-flash:free' : 'deepseek/deepseek-r1:free';
+      return tier === 'fast' ? 'openrouter/free' : 'google/gemma-4-31b-it:free';
     }
     if (provider === 'puter') {
       return tier === 'fast' ? 'google/gemini-2.5-flash' : 'google/gemini-2.5-flash';
@@ -91,7 +91,7 @@ export class ModelGateway {
     messages: (ModelGatewayMessage | any)[],
     tools?: any[]
   ): Promise<string> {
-    const targetModel = model || 'google/gemini-2.5-flash:free';
+    const targetModel = model || 'openrouter/free';
     const formattedMessages: any[] = [];
 
     if (systemPrompt && systemPrompt.trim()) {
@@ -189,7 +189,7 @@ export class ModelGateway {
         targetModel.includes('gemini-3.') ||
         (targetModel.includes('gpt-4o') && !targetModel.includes('/'))
       ) {
-        targetModel = tier === 'fast' ? 'google/gemini-2.5-flash:free' : 'deepseek/deepseek-r1:free';
+        targetModel = tier === 'fast' ? 'openrouter/free' : 'google/gemma-4-31b-it:free';
       }
       return await this.callOpenRouter(targetModel, effectiveKey, systemPrompt, messages, tools);
     }
@@ -200,7 +200,7 @@ export class ModelGateway {
     if (!effectiveKey) {
       // If manual key is missing but OpenRouter key is available, transparently fallback to OpenRouter
       if (openRouterKey) {
-        const targetModel = tier === 'fast' ? 'google/gemini-2.5-flash:free' : 'deepseek/deepseek-r1:free';
+        const targetModel = tier === 'fast' ? 'openrouter/free' : 'google/gemma-4-31b-it:free';
         return await this.callOpenRouter(targetModel, openRouterKey, systemPrompt, messages);
       }
       throw new Error(`[UPLINK ERROR]: Missing API Key for provider: ${provider}`);

@@ -883,7 +883,7 @@ function resolveActiveLLMConfig(): {
     if (ssoMode === 'openrouter' && openRouterKey) {
       return {
         provider: 'openrouter',
-        model: localStorage.getItem('pixelops_openrouter_model') || 'google/gemini-2.5-flash:free',
+        model: localStorage.getItem('pixelops_openrouter_model') || 'openrouter/free',
         apiKey: openRouterKey,
       };
     }
@@ -920,7 +920,7 @@ function resolveActiveLLMConfig(): {
     if (openRouterKey) {
       return {
         provider: 'openrouter',
-        model: localStorage.getItem('pixelops_openrouter_model') || 'google/gemini-2.5-flash:free',
+        model: localStorage.getItem('pixelops_openrouter_model') || 'openrouter/free',
         apiKey: openRouterKey,
       };
     }

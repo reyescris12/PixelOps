@@ -15,78 +15,95 @@ export interface OpenRouterModelOption {
   context: string;
 }
 
+export const DEFAULT_OPENROUTER_MODEL = 'openrouter/free';
+
+/**
+ * Official verified free models on OpenRouter (https://openrouter.ai/models?variant=free)
+ */
 export const OPENROUTER_FREE_MODELS: OpenRouterModelOption[] = [
   {
-    id: 'google/gemini-2.5-flash:free',
-    name: 'Gemini 2.5 Flash',
+    id: 'openrouter/free',
+    name: 'Free Models Router',
     tag: 'FREE',
-    context: '1M tokens · Sub-second latency · Google frontier',
+    context: '200K tokens · Smart auto-router across all live free models',
   },
   {
-    id: 'google/gemini-2.0-flash-exp:free',
-    name: 'Gemini 2.0 Flash Exp',
+    id: 'google/gemma-4-31b-it:free',
+    name: 'Google Gemma 4 31B',
     tag: 'FREE',
-    context: '1M tokens · Experimental generation & tools',
+    context: '256K tokens · Multimodal text/vision · Thinking reasoning',
   },
   {
-    id: 'google/gemini-2.0-flash-thinking-exp:free',
-    name: 'Gemini 2.0 Thinking',
+    id: 'google/gemma-4-26b-a4b-it:free',
+    name: 'Google Gemma 4 26B A4B',
     tag: 'FREE',
-    context: 'Extended thinking chain · Complex analysis',
+    context: '256K tokens · DeepMind 3.8B active MoE architecture',
   },
   {
-    id: 'deepseek/deepseek-r1:free',
-    name: 'DeepSeek R1 Reasoning',
+    id: 'nvidia/nemotron-3-ultra-550b-a55b:free',
+    name: 'NVIDIA Nemotron 3 Ultra',
     tag: 'FREE',
-    context: '128K tokens · Open reasoning & logic',
+    context: '1M tokens · 55B active / 550B total MoE frontier reasoning',
   },
   {
-    id: 'deepseek/deepseek-chat:free',
-    name: 'DeepSeek V3 Chat',
+    id: 'nvidia/nemotron-3.5-lightning:free',
+    name: 'NVIDIA Nemotron 3.5 Lightning',
     tag: 'FREE',
-    context: '128K tokens · General conversation & coding',
+    context: '1M tokens · Ultra high-throughput agentic MoE',
   },
   {
-    id: 'meta-llama/llama-3.3-70b-instruct:free',
-    name: 'Llama 3.3 70B Instruct',
+    id: 'nvidia/nemotron-3.5-super-vl:free',
+    name: 'NVIDIA Nemotron 3.5 Super VL',
     tag: 'FREE',
-    context: '128K tokens · Meta frontier open-weights',
+    context: '1M tokens · Multimodal vision, video, doc & GUI analysis',
   },
   {
-    id: 'meta-llama/llama-3.1-8b-instruct:free',
-    name: 'Llama 3.1 8B Instruct',
+    id: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free',
+    name: 'NVIDIA Nemotron 3 Nano Omni',
     tag: 'FREE',
-    context: '128K tokens · Fast lightweight response',
+    context: '256K tokens · 30B MoE perception & context sub-agent',
   },
   {
-    id: 'qwen/qwen-2.5-72b-instruct:free',
-    name: 'Qwen 2.5 72B Instruct',
+    id: 'cohere/north-mini-code:free',
+    name: 'Cohere North Mini Code',
     tag: 'FREE',
-    context: '128K tokens · High-capability multilingual',
+    context: '256K tokens · Cohere agentic coding specialist MoE',
   },
   {
-    id: 'qwen/qwen-2.5-coder-32b-instruct:free',
-    name: 'Qwen 2.5 Coder 32B',
+    id: 'recursive/flint-v1.0:free',
+    name: 'Recursive Flint',
     tag: 'FREE',
-    context: '32K tokens · Specialized code synthesis',
+    context: '262K tokens · Autoresearch 40B MoE for coding agents',
   },
   {
-    id: 'mistralai/mistral-small-3.1-24b-instruct:free',
-    name: 'Mistral Small 3.1 24B',
+    id: 'liquid/lfm-2.5-2.6b:free',
+    name: 'LiquidAI LFM 2.5 2.6B',
     tag: 'FREE',
-    context: '128K tokens · European multilingual frontier',
+    context: '65K tokens · Fast compact RAG & data extraction',
   },
   {
-    id: 'mistralai/mistral-7b-instruct:free',
-    name: 'Mistral 7B Instruct',
+    id: 'stealth/crouton-alpha',
+    name: 'Crouton Alpha',
     tag: 'FREE',
-    context: '32K tokens · Concise & rapid response',
+    context: '1M tokens · Scalable coding, agentic sub-tasks & tool use',
   },
   {
-    id: 'microsoft/phi-4:free',
-    name: 'Microsoft Phi-4 14B',
+    id: 'dots-studio/dots-3-note-preview:free',
+    name: 'Dots Studio Dots3-Note Preview',
     tag: 'FREE',
-    context: '16K tokens · Advanced synthetic reasoning',
+    context: '512K tokens · 280B MoE note analysis preview',
+  },
+  {
+    id: 'xingchen-agi/xing4.0-29b-a4b:free',
+    name: 'XingChen Xing4.0 29B A4B',
+    tag: 'FREE',
+    context: '262K tokens · 29B MoE with 4B active per token',
+  },
+  {
+    id: 'nvidia/nemotron-3.5-content-safety:free',
+    name: 'NVIDIA Nemotron 3.5 Content Safety',
+    tag: 'FREE',
+    context: '128K tokens · Multimodal input/output guardrail model',
   },
 ];
 
@@ -375,8 +392,23 @@ export function setOpenRouterActive(active: boolean = true): void {
  * Gets selected OpenRouter model
  */
 export function getOpenRouterSelectedModel(): string {
-  if (typeof localStorage === 'undefined') return 'google/gemini-2.5-flash:free';
-  return localStorage.getItem(STORAGE_MODEL) || 'google/gemini-2.5-flash:free';
+  if (typeof localStorage === 'undefined') return DEFAULT_OPENROUTER_MODEL;
+  const stored = localStorage.getItem(STORAGE_MODEL);
+  if (stored) {
+    // If user has old model stored that is no longer free, seamlessly migrate to DEFAULT_OPENROUTER_MODEL
+    const isKnown = OPENROUTER_SUPPORTED_MODELS.some((m) => m.id === stored);
+    if (isKnown) return stored;
+    if (
+      stored.includes('gemini-2.5-flash') ||
+      stored.includes('llama-3.3-70b-instruct:free') ||
+      stored.includes('deepseek-r1:free')
+    ) {
+      localStorage.setItem(STORAGE_MODEL, DEFAULT_OPENROUTER_MODEL);
+      return DEFAULT_OPENROUTER_MODEL;
+    }
+    return stored;
+  }
+  return DEFAULT_OPENROUTER_MODEL;
 }
 
 /**

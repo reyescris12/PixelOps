@@ -4672,7 +4672,7 @@ export async function executeAgentDirective(params: {
 
       const providerMeta =
         targetProvider === 'openrouter'
-          ? { name: 'OpenRouter', badge: 'OPENROUTER', storageKey: 'pixelops_openrouter_key', defaultModel: 'google/gemini-2.5-flash:free' }
+          ? { name: 'OpenRouter', badge: 'OPENROUTER', storageKey: 'pixelops_openrouter_key', defaultModel: 'openrouter/free' }
           : targetProvider === 'puter'
           ? { name: 'Puter.js', badge: 'PUTER ZERO-KEY', storageKey: 'Puter.js SDK', defaultModel: 'google/gemini-2.5-flash' }
           : SUPPORTED_VAULT_PROVIDERS[targetProvider as keyof typeof SUPPORTED_VAULT_PROVIDERS] || SUPPORTED_VAULT_PROVIDERS.gemini;
@@ -4681,7 +4681,7 @@ export async function executeAgentDirective(params: {
         params.agentModel ||
         agentConfig.model ||
         (targetProvider === 'openrouter'
-          ? (typeof localStorage !== 'undefined' ? localStorage.getItem('pixelops_openrouter_model') : null) || 'google/gemini-2.5-flash:free'
+          ? (typeof localStorage !== 'undefined' ? localStorage.getItem('pixelops_openrouter_model') : null) || 'openrouter/free'
           : targetProvider === 'gemini'
           ? normalizeGeminiModel(llmConfig.modelName)
           : undefined) ||
@@ -4851,7 +4851,7 @@ export async function executeAgentDirective(params: {
             ];
 
             const effectiveModel = isOr
-              ? (targetModel || (localStorage.getItem('pixelops_openrouter_model') || 'google/gemini-2.5-flash:free'))
+              ? (targetModel || (localStorage.getItem('pixelops_openrouter_model') || 'openrouter/free'))
               : targetModel;
 
             const reqBody: any = {

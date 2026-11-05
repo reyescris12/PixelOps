@@ -137,7 +137,7 @@ export const AgentEditorModal: React.FC<AgentEditorModalProps> = ({
     playBeep('tap');
     setProvider(newProvider);
     const provMeta = availableProviders.find((p) => p.id === newProvider);
-    setModel(provMeta?.defaultModel || 'google/gemini-2.5-flash:free');
+    setModel(provMeta?.defaultModel || 'openrouter/free');
   };
 
   const handleFormSubmit = (e: React.FormEvent) => {

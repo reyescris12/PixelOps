@@ -54,7 +54,7 @@ export const DEFAULT_PROVIDER_CONFIGS: Record<
     defaultModel: 'gemini-3.8-flash',
     defaultEndpoint: 'https://generativelanguage.googleapis.com',
     placeholderKey: 'AIzaSy...',
-    availableModels: ['gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-3.6-flash'],
+    availableModels: ['gemini-3.8-flash', 'gemini-3.1-flash-lite', 'gemini-3.5-flash-lite', 'gemini-3.6-flash'],
   },
   openai: {
     label: 'OpenAI GPT-4o',
@@ -192,14 +192,15 @@ export function normalizeGeminiModel(modelName?: string): string {
     !m ||
     m.includes('2.0') ||
     m.includes('1.5') ||
-    m === 'gemini-2.5-flash-lite' ||
-    m === 'gemini-3.1-flash-lite'
+    m === 'gemini-2.5-flash-lite'
   ) {
     if (m === 'gemini-3.5-flash-lite') return 'gemini-3.5-flash-lite';
+    if (m === 'gemini-3.1-flash-lite') return 'gemini-3.1-flash-lite';
     return 'gemini-3.8-flash';
   }
   if (
     m === 'gemini-3.8-flash' ||
+    m === 'gemini-3.1-flash-lite' ||
     m === 'gemini-3.6-flash' ||
     m === 'gemini-3.5-flash-lite' ||
     m === 'gemini-2.5-flash'

@@ -23,6 +23,8 @@ import {
   Key,
   ChevronDown,
   ChevronUp,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { CommandPreferences } from '../services/ApiService';
@@ -55,6 +57,13 @@ import {
   getLLMAuthInfo,
 } from '../services/LLMProviderService';
 import { GoogleAuthButton } from './GoogleAuthButton';
+import {
+  getBYOKVaultSnapshot,
+  saveBYOKVaultEntry,
+  testBYOKConnection,
+  setActiveVaultProvider,
+  SUPPORTED_VAULT_PROVIDERS,
+} from '../services/BYOKVault';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -129,6 +138,91 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     () => llmConfig.googleClientId || ''
   );
   const [showClientIdInput, setShowClientIdInput] = useState(false);
+
+  // Multi-Provider BYOK Vault State
+  const [vaultEntries, setVaultEntries] = useState(() => getBYOKVaultSnapshot());
+  const [vaultTestStatus, setVaultTestStatus] = useState<
+    Record<string, { loading?: boolean; ok?: boolean; message?: string }>
+  >({});
+  const [revealedVaultKeys, setRevealedVaultKeys] = useState<Record<string, boolean>>({});
+  const [authenticatedGoogleEmail, setAuthenticatedGoogleEmail] = useState(() => {
+    return (
+      (typeof localStorage !== 'undefined' && localStorage.getItem('pixelops_user_email')) || ''
+    );
+  });
+  const [authenticatedGoogleName, setAuthenticatedGoogleName] = useState(() => {
+    return (
+      (typeof localStorage !== 'undefined' && localStorage.getItem('pixelops_user_name')) || ''
+    );
+  });
+
+  const handleUpdateVaultKey = (
+    provider: 'gemini' | 'anthropic' | 'openai' | 'groq',
+    key: string
+  ) => {
+    setVaultEntries((prev) => ({
+      ...prev,
+      [provider]: { ...prev[provider], apiKey: key },
+    }));
+    saveBYOKVaultEntry(provider, key, vaultEntries[provider]?.selectedModel);
+    if (provider === llmConfig.providerId) {
+      setLlmConfig((prev) => ({ ...prev, apiKey: key }));
+    }
+  };
+
+  const handleSelectVaultModel = (
+    provider: 'gemini' | 'anthropic' | 'openai' | 'groq',
+    model: string
+  ) => {
+    playBeep('tap');
+    setVaultEntries((prev) => ({
+      ...prev,
+      [provider]: { ...prev[provider], selectedModel: model },
+    }));
+    saveBYOKVaultEntry(provider, vaultEntries[provider]?.apiKey || '', model);
+    if (provider === llmConfig.providerId) {
+      setLlmConfig((prev) => ({ ...prev, modelName: model }));
+    }
+  };
+
+  const handleTestVaultProvider = async (
+    provider: 'gemini' | 'anthropic' | 'openai' | 'groq'
+  ) => {
+    setVaultTestStatus((prev) => ({ ...prev, [provider]: { loading: true } }));
+    playBeep('tap');
+    try {
+      const res = await testBYOKConnection(
+        provider,
+        vaultEntries[provider]?.apiKey,
+        vaultEntries[provider]?.selectedModel
+      );
+      setVaultTestStatus((prev) => ({
+        ...prev,
+        [provider]: { loading: false, ok: res.ok, message: res.message },
+      }));
+      playBeep(res.ok ? 'complete' : 'error');
+    } catch (err: any) {
+      setVaultTestStatus((prev) => ({
+        ...prev,
+        [provider]: { loading: false, ok: false, message: err?.message || 'Connection test failed' },
+      }));
+      playBeep('error');
+    }
+  };
+
+  const handleActivateVaultProvider = (
+    provider: 'gemini' | 'anthropic' | 'openai' | 'groq'
+  ) => {
+    playBeep('tap');
+    setActiveVaultProvider(provider, vaultEntries[provider]?.selectedModel);
+    const updated = loadLLMProviderConfig();
+    setLlmConfig(updated);
+    setLlmTestStatus({
+      loading: false,
+      ok: true,
+      message: `Active engine switched to ${provider.toUpperCase()} (${vaultEntries[provider]?.selectedModel}).`,
+    });
+  };
 
   const handleSwitchAuthMode = (mode: AuthMode) => {
     playBeep('tap');
@@ -582,6 +676,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </div>
                   </div>
 
+                  {authenticatedGoogleEmail && (
+                    <div className="p-2 bg-[#091524] border border-cyan-500/40 rounded-lg flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <UserCheck className="w-4 h-4 text-emerald-400" />
+                        <div>
+                          <div className="text-[10px] text-cyan-400 font-mono-tabular uppercase font-bold">
+                            Verified Google Identity (GIS)
+                          </div>
+                          <div className="text-xs text-slate-100 font-medium">
+                            {authenticatedGoogleName || 'Google User'} ({authenticatedGoogleEmail})
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   {llmConfig.connectedAccounts?.gemini?.status === 'connected' ? (
                     <div className="p-3 bg-[#111e2e] border border-cyan-500/40 rounded-lg flex flex-col gap-2">
                       <div className="flex items-center justify-between">
@@ -656,6 +766,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       <GoogleAuthButton
                         clientId={googleClientIdInput.trim() || llmConfig.googleClientId}
                         onSuccess={(email, name) => {
+                          setAuthenticatedGoogleEmail(email);
+                          setAuthenticatedGoogleName(name);
                           const updated = loadLLMProviderConfig();
                           setLlmConfig(updated);
                           setLlmTestStatus({
@@ -925,93 +1037,190 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
             </div>
           ) : (
-            /* DEVELOPER BYOK API KEY VIEW (PRESERVED) */
-            <div className="flex flex-col gap-2.5 pt-1">
-              {llmConfig.providerId === 'ollama' ? (
-                <div className="flex flex-col gap-1">
-                  <label className="text-[11px] text-slate-300 font-medium">Ollama Endpoint URL</label>
-                  <input
-                    type="text"
-                    value={llmConfig.endpoint}
-                    onChange={(e) => {
-                      const updated = { ...llmConfig, endpoint: e.target.value };
-                      setLlmConfig(updated);
-                      saveLLMProviderConfig(updated);
-                    }}
-                    placeholder="http://localhost:11434"
-                    className="w-full bg-[#12151f] border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-cyan-500"
-                  />
+            /* MULTI-PROVIDER BYOK KEY VAULT VIEW */
+            <div className="flex flex-col gap-3 pt-1">
+              <div className="p-2.5 bg-[#0a0f18] border border-cyan-900/50 rounded-xl flex items-center justify-between">
+                <div>
+                  <span className="text-[10px] font-mono-tabular uppercase text-cyan-400 font-bold flex items-center gap-1.5">
+                    <Key className="w-3 h-3 text-cyan-400" />
+                    <span>MULTI-PROVIDER BYOK KEY VAULT</span>
+                  </span>
+                  <p className="text-[11px] text-slate-400">
+                    Store and verify credentials for Gemini, Claude, OpenAI, and Groq. Saved to encrypted IndexedDB & LocalStorage.
+                  </p>
                 </div>
-              ) : (
-                <div className="flex flex-col gap-1">
-                  <label className="text-[11px] text-slate-300 font-medium">
-                    {llmConfig.providerId.toUpperCase()} API Key (BYOK)
-                  </label>
-                  <input
-                    type="password"
-                    value={llmConfig.apiKey}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      const updated = { ...llmConfig, apiKey: val };
-                      setLlmConfig(updated);
-                      saveLLMProviderConfig(updated);
-                      if (llmConfig.providerId === 'gemini') {
-                        if (val.trim()) {
-                          localStorage.setItem('pixelops_gemini_api_key', val.trim());
-                          localStorage.setItem('gemini_api_key', val.trim());
-                        } else {
-                          localStorage.removeItem('pixelops_gemini_api_key');
-                          localStorage.removeItem('gemini_api_key');
-                        }
-                      }
-                    }}
-                    placeholder={DEFAULT_PROVIDER_CONFIGS[llmConfig.providerId].placeholderKey}
-                    className="w-full bg-[#12151f] border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-cyan-500"
-                  />
-                </div>
-              )}
-
-              {/* Active Available Models for BYOK */}
-              <div className="flex flex-col gap-1.5">
-                <label className="text-[11px] text-slate-300 font-medium">Active Available Models</label>
-                <div className="flex flex-wrap gap-1.5">
-                  {(DEFAULT_PROVIDER_CONFIGS[llmConfig.providerId]?.availableModels || [llmConfig.modelName]).map((m) => {
-                    const isMSelected = llmConfig.modelName === m;
-                    return (
-                      <button
-                        key={m}
-                        type="button"
-                        onClick={() => {
-                          playBeep('tap');
-                          const nextConfig = { ...llmConfig, modelName: m };
-                          saveLLMProviderConfig(nextConfig);
-                          setLlmConfig(nextConfig);
-                        }}
-                        className={`px-2.5 py-1 rounded text-xs font-mono-tabular border cursor-pointer transition-colors ${
-                          isMSelected
-                            ? 'bg-amber-900/60 border-amber-400 text-amber-200 font-bold'
-                            : 'bg-[#12151f] border-slate-800 text-slate-400 hover:text-slate-200'
-                        }`}
-                      >
-                        {m}
-                      </button>
-                    );
-                  })}
+                <div className="text-right">
+                  <span className="text-[10px] text-slate-500 font-mono-tabular">ACTIVE ENGINE</span>
+                  <div className="text-xs font-bold font-mono-tabular text-emerald-400">
+                    {llmConfig.providerId.toUpperCase()}
+                  </div>
                 </div>
               </div>
 
-              <div className="flex flex-col gap-1">
-                <label className="text-[11px] text-slate-300 font-medium">Model Identifier</label>
+              {/* Individual Provider Vault Cards */}
+              {(['gemini', 'anthropic', 'openai', 'groq'] as const).map((pId) => {
+                const entry = vaultEntries[pId] || {
+                  apiKey: '',
+                  selectedModel: SUPPORTED_VAULT_PROVIDERS[pId].defaultModel,
+                };
+                const meta = SUPPORTED_VAULT_PROVIDERS[pId];
+                const isActive = llmConfig.providerId === pId;
+                const testStatus = vaultTestStatus[pId];
+                const isRevealed = Boolean(revealedVaultKeys[pId]);
+
+                return (
+                  <div
+                    key={pId}
+                    className={`rounded-xl border p-3 flex flex-col gap-2.5 transition-all ${
+                      isActive
+                        ? 'bg-[#0f172a]/70 border-cyan-500/70 shadow-[0_0_12px_rgba(6,182,212,0.15)]'
+                        : 'bg-[#0e121c] border-slate-800/80 hover:border-slate-700'
+                    }`}
+                  >
+                    {/* Header: Provider Name, Badge & Active Toggle */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-slate-100">{meta.name}</span>
+                        <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-300 font-mono-tabular">
+                          {meta.badge}
+                        </span>
+                      </div>
+
+                      {isActive ? (
+                        <span className="px-2 py-0.5 rounded-full bg-emerald-950 border border-emerald-500/60 text-[10px] text-emerald-300 font-mono-tabular font-bold flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                          <span>ACTIVE ENGINE</span>
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => handleActivateVaultProvider(pId)}
+                          className="px-2 py-0.5 rounded bg-[#162132] hover:bg-[#1e2f47] border border-cyan-800/60 text-[10px] text-cyan-300 font-mono-tabular cursor-pointer transition-colors"
+                        >
+                          Set As Active
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Model Selector Pills */}
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] text-slate-400 font-mono-tabular uppercase">
+                        Select Model
+                      </label>
+                      <div className="flex flex-wrap gap-1.5">
+                        {meta.availableModels.map((m) => {
+                          const isMSelected = entry.selectedModel === m;
+                          return (
+                            <button
+                              key={m}
+                              type="button"
+                              onClick={() => handleSelectVaultModel(pId, m)}
+                              className={`px-2 py-0.5 rounded text-[11px] font-mono-tabular border cursor-pointer transition-colors ${
+                                isMSelected
+                                  ? 'bg-cyan-900/60 border-cyan-400 text-cyan-200 font-bold'
+                                  : 'bg-[#121622] border-slate-800 text-slate-400 hover:text-slate-200'
+                              }`}
+                            >
+                              {m}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* API Key Input Row */}
+                    <div className="flex flex-col gap-1">
+                      <label className="text-[10px] text-slate-400 font-mono-tabular uppercase">
+                        {meta.name} API Key
+                      </label>
+                      <div className="relative flex items-center">
+                        <input
+                          type={isRevealed ? 'text' : 'password'}
+                          value={entry.apiKey}
+                          onChange={(e) => handleUpdateVaultKey(pId, e.target.value)}
+                          placeholder={meta.placeholderKey}
+                          className="w-full bg-[#12151f] border border-slate-800 rounded-lg px-2.5 py-1.5 pr-8 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-cyan-500"
+                        />
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setRevealedVaultKeys((prev) => ({
+                              ...prev,
+                              [pId]: !prev[pId],
+                            }))
+                          }
+                          className="absolute right-2 text-slate-400 hover:text-slate-200 cursor-pointer"
+                          title={isRevealed ? 'Hide API Key' : 'Reveal API Key'}
+                        >
+                          {isRevealed ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Test Connection Button & Status */}
+                    <div className="flex items-center justify-between pt-1">
+                      <button
+                        type="button"
+                        onClick={() => handleTestVaultProvider(pId)}
+                        disabled={testStatus?.loading || !entry.apiKey.trim()}
+                        className="min-h-[30px] px-2.5 py-1 rounded bg-[#131d2e] hover:bg-[#1a2942] border border-cyan-800/60 text-[11px] text-cyan-200 font-medium flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
+                      >
+                        <RefreshCw className={`w-3 h-3 ${testStatus?.loading ? 'animate-spin' : ''}`} />
+                        <span>{testStatus?.loading ? 'Testing...' : `Test ${meta.name} Link`}</span>
+                      </button>
+
+                      {testStatus?.message && (
+                        <span
+                          className={`text-[11px] font-mono-tabular truncate max-w-[260px] ${
+                            testStatus.ok ? 'text-emerald-400' : 'text-red-400'
+                          }`}
+                          title={testStatus.message}
+                        >
+                          {testStatus.ok ? '● Link Verified' : `⚠️ ${testStatus.message}`}
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {/* Local Ollama Endpoint (Optional Air-Gapped) */}
+              <div className="rounded-xl border border-slate-800 bg-[#0d0f17] p-3 flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-bold text-slate-200">Local Ollama Endpoint (Air-Gapped)</div>
+                  {llmConfig.providerId === 'ollama' ? (
+                    <span className="px-2 py-0.5 rounded-full bg-emerald-950 border border-emerald-500/60 text-[10px] text-emerald-300 font-mono-tabular font-bold">
+                      ACTIVE
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        playBeep('tap');
+                        const updated = {
+                          ...llmConfig,
+                          providerId: 'ollama' as const,
+                          modelName: 'llama3.3',
+                        };
+                        saveLLMProviderConfig(updated);
+                        setLlmConfig(updated);
+                      }}
+                      className="px-2 py-0.5 rounded bg-[#162132] hover:bg-[#1e2f47] border border-cyan-800/60 text-[10px] text-cyan-300 font-mono-tabular cursor-pointer"
+                    >
+                      Set As Active
+                    </button>
+                  )}
+                </div>
                 <input
                   type="text"
-                  value={llmConfig.modelName}
+                  value={llmConfig.endpoint}
                   onChange={(e) => {
-                    const updated = { ...llmConfig, modelName: e.target.value };
+                    const updated = { ...llmConfig, endpoint: e.target.value };
                     setLlmConfig(updated);
                     saveLLMProviderConfig(updated);
                   }}
-                  placeholder={DEFAULT_PROVIDER_CONFIGS[llmConfig.providerId].defaultModel}
-                  className="w-full bg-[#12151f] border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-cyan-500"
+                  placeholder="http://localhost:11434"
+                  className="w-full bg-[#12151f] border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-cyan-500"
                 />
               </div>
             </div>

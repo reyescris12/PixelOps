@@ -594,13 +594,20 @@ export function stopAutoSync(): void {
  */
 export async function exportPortableBackup(): Promise<void> {
   const session = getActiveSession();
+  const userEmail =
+    (typeof localStorage !== 'undefined' && localStorage.getItem('pixelops_user_email')) ||
+    'operative@safehouse.local';
+  const userName =
+    (typeof localStorage !== 'undefined' && localStorage.getItem('pixelops_user_name')) ||
+    'Operative';
+
   const dummySession: AuthSession = session || {
     token: 'local',
     user: {
-      id: 'local_commander',
-      username: 'commander',
-      email: 'commander@pixelops.local',
-      callsign: 'COMMANDER',
+      id: 'local_operative',
+      username: userName.toLowerCase().replace(/\s+/g, '_'),
+      email: userEmail,
+      callsign: userName.toUpperCase(),
       securityClearance: 'COMMANDER',
       createdAt: new Date().toISOString(),
       lastLoginAt: new Date().toISOString(),

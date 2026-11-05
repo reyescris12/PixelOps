@@ -32,11 +32,11 @@ export const DEFAULT_AGENT_MODELS: Record<string, AgentModelConfig> = {
   },
   nyx: {
     provider: 'gemini',
-    model: 'gemini-3.8-flash',
+    model: 'gemini-3.1-flash-lite',
   },
   agent_1: {
     provider: 'gemini',
-    model: 'gemini-3.8-flash',
+    model: 'gemini-3.1-flash-lite',
   },
   cipher: {
     provider: 'gemini',

@@ -7,6 +7,7 @@ import {
   hasProviderApiKey,
   getProviderDisplayName,
 } from './BYOKVault';
+import { getAgentModelConfig } from './agentStore';
 import { ModelGateway } from './ModelGateway';
 import { workstationSupportsTool } from './PlacedGearService';
 import { loadCustomPlugins, executeCustomPlugin } from './PluginMarketplaceService';
@@ -636,6 +637,25 @@ const WMO_WEATHER_CODES: Record<number, string> = {
   95: 'Thunderstorm',
 };
 
+export const EXCLUDED_SEARCH_DOMAINS = [
+  'news.ycombinator.com',
+  'reddit.com',
+  'twitter.com',
+  'x.com',
+  'facebook.com',
+  'instagram.com',
+  'tiktok.com',
+  'threads.net',
+  'wikipedia.org',
+  'wikimedia.org',
+  'fandom.com',
+  'britannica.com',
+  'wikibooks.org',
+  'wiktionary.org',
+  'quora.com',
+  'pinterest.com',
+];
+
 export interface CleanedSearchResult {
   primary: string;
   coreQuery: string;
@@ -984,9 +1004,9 @@ export async function executeFunctionCallHandler(fc: {
         }
       );
 
-      if (weatherResult && weatherResult.place) {
+      if (weatherResult && weatherResult.place && weatherResult.weatherData?.current) {
         const { place, weatherData, tempUnit } = weatherResult;
-        const current = weatherData?.current || {};
+        const current = weatherData.current;
         const unitSymbol = tempUnit === 'fahrenheit' ? '°F' : '°C';
         const condition =
           WMO_WEATHER_CODES[Number(current.weather_code)] || 'Variable conditions';
@@ -1022,26 +1042,23 @@ export async function executeFunctionCallHandler(fc: {
           },
         };
       } else {
-        const fallbackPayload = {
-          status: 'offline_atmospheric_estimate',
-          source: 'Local Meteorological Ledger',
+        const failurePayload = {
+          status: 'TELEMETRY_FAILURE',
+          error: '[TELEMETRY FAILURE: Live data feed unreachable]',
+          source: 'Open-Meteo Satellite Uplink',
           location: cityQuery,
-          temperature: useFahrenheit ? '68°F' : '20°C',
-          condition: 'Fair / Operational Conditions',
-          humidity: '45%',
-          windSpeed: '12 km/h',
           observedAt: new Date().toISOString(),
         };
         return {
           id: fc.id,
           name,
-          response: fallbackPayload,
+          response: failurePayload,
           executedToolMeta: {
             pluginId: dest.pluginId,
             toolName: name,
             args,
-            resultSummary: `Weather (${cityQuery}): 68°F (Local atmospheric ledger estimate)`,
-            livePayload: fallbackPayload,
+            resultSummary: `Weather (${cityQuery}): [TELEMETRY FAILURE: Live data feed unreachable]`,
+            livePayload: failurePayload,
             targetRoom: dest.targetRoom,
             targetStationId: dest.targetStationId,
           },
@@ -1049,7 +1066,7 @@ export async function executeFunctionCallHandler(fc: {
       }
     }
 
-    // 2. Live Web Search via Multi-Engine Intelligence (Real-Time Binance/Coinbase/CoinGecko Oracles + Algolia HN Wire + GitHub Public Index + Jina Reader)
+    // 2. Live Web Search via Multi-Engine Intelligence (Real-Time Binance/Coinbase/CoinGecko Oracles + GitHub Public Index + Jina Reader)
     if (name === 'live_web_search') {
       const rawQuery = String(args.query || 'Technology Analysis').trim();
       const limit = Math.min(5, Math.max(1, Number(args.maxResults) || 3));
@@ -1064,15 +1081,13 @@ export async function executeFunctionCallHandler(fc: {
 
       let results: Array<{ title: string; snippet: string; extract?: string; url: string }> = [];
 
-      // Exclusion filter for static encyclopedia domains (Rule 2)
-      const EXCLUDED_ENCYCLOPEDIA_DOMAINS = [
-        'wikipedia.org',
-        'wikimedia.org',
-        'fandom.com',
-        'britannica.com',
-        'wikibooks.org',
-        'wiktionary.org',
-      ];
+      // Check if user explicitly requested forum, social discussion, or community sentiment
+      const isExplicitSocial = /\b(reddit|hacker\s*news|news\.ycombinator|twitter|tweet|tweets|x\.com|social sentiment|forum)\b/i.test(
+        rawQuery
+      );
+      const activeExcludedDomains = isExplicitSocial
+        ? ['wikipedia.org', 'wikimedia.org', 'fandom.com', 'britannica.com']
+        : EXCLUDED_SEARCH_DOMAINS;
 
       // A. Real-Time Financial & Ticker Query Interception via Binance / Coinbase / CoinGecko Oracles
       if (isFinancialOrMarket) {
@@ -1208,50 +1223,7 @@ export async function executeFunctionCallHandler(fc: {
         }
       }
 
-      // B. Real-Time Tech, News & Software Intelligence via Algolia HackerNews Engine (Zero Key, 100% Live)
-      if (results.length < limit) {
-        try {
-          const hnSearchTerm = coreQuery && coreQuery.length > 2 ? coreQuery : fallbackQuery;
-          const hnData = await executeSafeOperation(
-            async (signal) => {
-              const res = await fetch(
-                `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(hnSearchTerm)}&tags=story&hitsPerPage=${limit + 1}`,
-                { signal }
-              );
-              if (res.ok) return await res.json();
-              return null;
-            },
-            {
-              timeoutMs: 5000,
-              maxRetries: 1,
-              fallbackValue: null,
-              operationName: 'live_web_search_algolia_hn',
-            }
-          );
-
-          if (hnData && Array.isArray(hnData.hits)) {
-            for (const hit of hnData.hits) {
-              if (results.length >= limit) break;
-              if (!hit || !hit.title) continue;
-              const hnUrl = hit.url || `https://news.ycombinator.com/item?id=${hit.objectID}`;
-              const points = hit.points || 0;
-              const comments = hit.num_comments || 0;
-              const dateStr = hit.created_at ? new Date(hit.created_at).toISOString().split('T')[0] : 'recent';
-              const author = hit.author || 'contributor';
-              results.push({
-                title: hit.title,
-                snippet: `${hit.title}. Verified discussion by @${author} (${dateStr}): ${points} points, ${comments} comments. URL: ${hnUrl}`,
-                extract: `Verified real-time intelligence node: "${hit.title}" reported by @${author} on ${dateStr}. Telemetry score: ${points} points, ${comments} active comments. External citation: ${hnUrl}`,
-                url: hnUrl,
-              });
-            }
-          }
-        } catch {
-          // Proceed to next intelligence source
-        }
-      }
-
-      // C. Public GitHub Index (If query matches owner/repo pattern or mentions GitHub/repositories)
+      // B. Public GitHub Index (If query matches owner/repo pattern or mentions GitHub/repositories)
       if (results.length < limit) {
         const repoSlashMatch = (coreQuery || cleanQuery).match(/([a-zA-Z0-9_.-]+)\/([a-zA-Z0-9_.-]+)/);
         const hasGithubIntent = /\b(github|repo|repository|issue|pull request|pr|commit)\b/i.test(cleanQuery);
@@ -1317,9 +1289,10 @@ export async function executeFunctionCallHandler(fc: {
         }
       }
 
-      // D. Live Real-Time Web Search via Jina Reader Engine (https://s.jina.ai/)
+      // C. Live Real-Time Web Search via Jina Reader Engine (https://s.jina.ai/) with Strict Domain Sanitization
       if (results.length < limit) {
-        const jinaSearchTerm = coreQuery && coreQuery.length > 2 ? coreQuery : fallbackQuery;
+        const jinaQueryCore = coreQuery && coreQuery.length > 2 ? coreQuery : fallbackQuery;
+        const jinaSearchTerm = `${jinaQueryCore} 2026 primary documentation`;
         const jinaUrl = `https://s.jina.ai/${encodeURIComponent(jinaSearchTerm)}`;
 
         const jinaData = await executeSafeOperation(
@@ -1354,6 +1327,10 @@ export async function executeFunctionCallHandler(fc: {
             for (const item of jinaData.data) {
               if (results.length >= limit) break;
               if (!item || (!item.title && !item.url)) continue;
+              const itemUrl = item.url || jinaUrl;
+              const isExcluded = activeExcludedDomains.some((d) => itemUrl.toLowerCase().includes(d));
+              if (isExcluded) continue;
+
               const title = item.title || item.url || 'Web Intelligence Node';
               const snippet = String(item.description || item.content || '').slice(0, 320);
               const extract = String(item.content || item.description || '').slice(0, 500);
@@ -1361,7 +1338,7 @@ export async function executeFunctionCallHandler(fc: {
                 title,
                 snippet,
                 extract,
-                url: item.url || jinaUrl,
+                url: itemUrl,
               });
             }
           } else if (typeof jinaData.rawText === 'string' && jinaData.rawText.length > 50) {
@@ -1372,6 +1349,10 @@ export async function executeFunctionCallHandler(fc: {
               const urlMatch = sec.match(/(?:URL Source:\s*|\[.*?\]\()([^\s\)\n]+)/i);
               const title = titleMatch ? titleMatch[1].trim() : 'Live Web Intel';
               const url = urlMatch ? urlMatch[1].trim() : jinaUrl;
+
+              const isExcluded = activeExcludedDomains.some((d) => url.toLowerCase().includes(d));
+              if (isExcluded) continue;
+
               const cleanContent = sec
                 .replace(/Title:[^\n]+/i, '')
                 .replace(/URL Source:[^\n]+/i, '')
@@ -1392,30 +1373,43 @@ export async function executeFunctionCallHandler(fc: {
         }
       }
 
-      // Enforce exclusion filter on results
-      if (shouldExcludeEncyclopedia) {
-        results = results.filter(
-          (r) => !EXCLUDED_ENCYCLOPEDIA_DOMAINS.some((d) => r.url.toLowerCase().includes(d))
-        );
-      }
+      // Enforce strict domain sanitization & noise exclusion filter on all gathered results
+      results = results.filter(
+        (r) => !activeExcludedDomains.some((d) => (r.url || '').toLowerCase().includes(d))
+      );
 
-      // E. Factual Status Report if All External Engines Yield Zero Hits (Zero Hallucination / Zero Fake Mocks)
+      // D. Clean Telemetry Error if All External Engines Yield Zero Hits (Anti-Hallucination Core)
       if (results.length === 0) {
-        if (isFinancialOrMarket) {
-          results.push({
-            title: `${cleanQuery} - Market Telemetry Unreachable`,
-            snippet: 'Telemetry retrieval failed—live market feed unreachable. Zero live market oracles responded with verified pricing data.',
-            extract: 'Telemetry retrieval failed—live market feed unreachable. In accordance with zero-tolerance hallucination safeguards, unverified estimates, stale model weights, and memorized prices are withheld.',
-            url: `safehouse://unreachable-feed/${encodeURIComponent(cleanQuery.toLowerCase().replace(/\s+/g, '-'))}`,
-          });
-        } else {
-          results.push({
-            title: `${cleanQuery} - Search Verification Complete`,
-            snippet: `Live multi-engine sweep completed for "${cleanQuery}". No active public intelligence nodes matched the query across Algolia Tech Wire, GitHub Public Index, or Jina Live Web Index.`,
-            extract: `Operational telemetry: Web search sweep for "${cleanQuery}" returned zero verified results from live endpoints. In accordance with zero-tolerance hallucination protocols, fictional summaries are strictly withheld.`,
-            url: `safehouse://live-search/${encodeURIComponent((coreQuery || cleanQuery).toLowerCase().replace(/\s+/g, '-'))}`,
-          });
-        }
+        const failurePayload = {
+          status: 'TELEMETRY_FAILURE',
+          source: 'Live Web Primary Source & OSINT Uplink',
+          query: cleanQuery,
+          rawQuery,
+          resultCount: 0,
+          topIntelSummary: '[TELEMETRY FAILURE: Live data feed unreachable]',
+          results: [],
+          extractedMetrics: { prices: [], percentages: [], versions: [], rawNumbers: [] },
+          isMarketUnreachable: true,
+          telemetryError: '[TELEMETRY FAILURE: Live data feed unreachable]',
+          marketFeedFailureMessage: '[TELEMETRY FAILURE: Live data feed unreachable]',
+          temporalVerification: '2026 Live Telemetry Verified',
+          fetchedAt: new Date().toISOString(),
+        };
+
+        return {
+          id: fc.id,
+          name,
+          response: failurePayload,
+          executedToolMeta: {
+            pluginId: dest.pluginId,
+            toolName: name,
+            args,
+            resultSummary: `Live Web Search ("${cleanQuery}"): [TELEMETRY FAILURE: Live data feed unreachable]`,
+            livePayload: failurePayload,
+            targetRoom: dest.targetRoom,
+            targetStationId: dest.targetStationId,
+          },
+        };
       }
 
       // Rule 3: Structured Price / Numerical Extraction from all results
@@ -1426,28 +1420,27 @@ export async function executeFunctionCallHandler(fc: {
       const topTitle = results[0]?.title || cleanQuery;
       const topExtract = results[0]?.extract || results[0]?.snippet || '';
       const summary = isMarketUnreachable
-        ? `Live Web Search ("${cleanQuery}"): Telemetry retrieval failed—live market feed unreachable`
+        ? `Live Web Search ("${cleanQuery}"): [TELEMETRY FAILURE: Live data feed unreachable]`
         : `Live Web Search ("${cleanQuery}"): Verified ${results.length} intelligence nodes [Top: ${topTitle}]`;
 
       const liveResult = {
-        status: isMarketUnreachable ? 'UNREACHABLE' : 'ok',
-        source: shouldExcludeEncyclopedia
-          ? 'Live Real-Time Market & OSINT Uplink (Jina Reader + Financial Feeds)'
-          : 'Live Web Multi-Engine Uplink (Jina Reader + Real-Time Financial Oracles + Algolia Tech Wire)',
+        status: isMarketUnreachable ? 'TELEMETRY_FAILURE' : 'ok',
+        source: 'Live Web Primary Source & Real-Time Intelligence Node',
         query: cleanQuery,
         rawQuery,
         shouldExcludeEncyclopedia,
-        resultCount: results.length,
+        resultCount: isMarketUnreachable ? 0 : results.length,
         topIntelSummary: isMarketUnreachable
-          ? 'Telemetry retrieval failed—live market feed unreachable'
+          ? '[TELEMETRY FAILURE: Live data feed unreachable]'
           : topExtract.slice(0, 380),
-        results,
+        results: isMarketUnreachable ? [] : results,
         extractedMetrics,
         isMarketUnreachable,
+        telemetryError: isMarketUnreachable ? '[TELEMETRY FAILURE: Live data feed unreachable]' : undefined,
         marketFeedFailureMessage: isMarketUnreachable
-          ? 'Telemetry retrieval failed—live market feed unreachable'
+          ? '[TELEMETRY FAILURE: Live data feed unreachable]'
           : undefined,
-        temporalVerification: 'November 2026 Live Telemetry Verified',
+        temporalVerification: '2026 Live Telemetry Verified',
         fetchedAt: new Date().toISOString(),
       };
 
@@ -3923,13 +3916,13 @@ export async function generateLocalHeuristicCard(params: {
         const isRealTime = isRealTimeDataQuery(rawPrompt);
         const autoCheck = validateRealTimeToolSuccess(executedTools);
 
-        let cleanSnippet = cleanWikiSnippet(topResult.snippet || '');
+        let cleanSnippet = cleanWebSnippet(topResult.snippet || '');
         if (isRealTime && !autoCheck.isValid) {
-          cleanSnippet = '[TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]';
+          cleanSnippet = '[TELEMETRY FAILURE: Live data feed unreachable]';
         }
 
         const dialogue = isRealTime && !autoCheck.isValid
-          ? `${params.activeAgentName}: [TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]\n\nNo authenticated live market feed could be established for "${rawPrompt}". In accordance with strict anti-hallucination protocols, metric generation is aborted.`
+          ? `${params.activeAgentName}: [TELEMETRY FAILURE: Live data feed unreachable]\n\nNo authenticated live telemetry feed could be established for "${rawPrompt}". In accordance with strict anti-hallucination protocols, metric generation is aborted.`
           : `${params.activeAgentName}: Intelligence synthesis for "${searchQuery}":\n\n**${topResult.title}**\n${cleanSnippet}\n\n${resultsList.length > 1 ? `*Related Intelligence: ${resultsList.slice(1).map((r: any) => r.title).join(', ')}*` : ''}`;
 
         const searchCard: AgentExecutionCard = {
@@ -3939,8 +3932,8 @@ export async function generateLocalHeuristicCard(params: {
           cardTitle: isRealTime && !autoCheck.isValid ? 'Live Telemetry Unreachable' : `Intel: ${topResult.title || searchQuery}`,
           actionCategory: 'Web Search',
           steps: [
-            { label: 'Web Query Dispatched', detail: `Searched verified open web sources for "${searchQuery}"`, status: 'completed' },
-            { label: 'Tool Success Check', detail: isRealTime && !autoCheck.isValid ? '[TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]' : `Retrieved article: ${topResult.title}`, status: isRealTime && !autoCheck.isValid ? 'completed' : 'verified' },
+            { label: 'Web Query Dispatched', detail: `Searched verified primary sources for "${searchQuery}"`, status: 'completed' },
+            { label: 'Tool Success Check', detail: isRealTime && !autoCheck.isValid ? '[TELEMETRY FAILURE: Live data feed unreachable]' : `Retrieved article: ${topResult.title}`, status: isRealTime && !autoCheck.isValid ? 'completed' : 'verified' },
             { label: 'Briefing Synthesized', detail: isRealTime && !autoCheck.isValid ? 'Suppressed speculative number generation' : 'Extracted key intelligence into mission report', status: 'completed' },
           ],
           toolCalls: executedTools,
@@ -4234,7 +4227,7 @@ export async function parseAndExecuteAgentActionTags(
  * (crypto prices, stock tickers, rates, valuation, market metrics, SaaS tiers).
  */
 export function isRealTimeDataQuery(text: string): boolean {
-  return /\b(price|pricing|cost|costs|rate|rates|fee|fees|tier|tiers|subscription|plan|plans|market\s+price|market\s+data|stock\s+price|stock\s+quote|ticker|crypto|token|coin|btc|eth|sol|bitcoin|ethereum|solana|xrp|doge|bnb|ada|valuation|mrr|arr|revenue|earnings|quote|live ticker|current price|how much does|what is the price|current valuation|market cap)\b/i.test(
+  return /\b(price|pricing|cost|costs|rate|rates|fee|fees|tier|tiers|subscription|plan|plans|market\s+price|market\s+data|stock\s+price|stock\s+quote|ticker|crypto|token|coin|btc|eth|sol|bitcoin|ethereum|solana|xrp|doge|bnb|ada|valuation|mrr|arr|revenue|earnings|quote|live ticker|current price|how much does|what is the price|current valuation|market cap|weather|temperature|forecast|latest release|current version|live status|current news|breaking news)\b/i.test(
     text || ''
   );
 }
@@ -4254,7 +4247,12 @@ export function validateRealTimeToolSuccess(executedTools: ExecutedToolCall[]): 
 
   for (const tool of executedTools) {
     const payload = tool.livePayload;
-    if (payload && (payload.status === 'ok' || payload.status === 'SUCCESS')) {
+    if (
+      payload &&
+      (payload.status === 'ok' || payload.status === 'SUCCESS') &&
+      !payload.telemetryError &&
+      payload.status !== 'TELEMETRY_FAILURE'
+    ) {
       if (payload.fetchedAt || payload.timestamp) {
         liveTimestamp = payload.fetchedAt || payload.timestamp;
       }
@@ -4263,7 +4261,7 @@ export function validateRealTimeToolSuccess(executedTools: ExecutedToolCall[]): 
           if (!verifiedPrices.includes(p)) verifiedPrices.push(p);
         }
       }
-      if (Array.isArray(payload.results)) {
+      if (Array.isArray(payload.results) && payload.results.length > 0) {
         for (const r of payload.results) {
           const m = extractNumericalMetrics(`${r.title || ''} ${r.snippet || ''} ${r.extract || ''}`);
           for (const p of m.prices) {
@@ -4272,9 +4270,11 @@ export function validateRealTimeToolSuccess(executedTools: ExecutedToolCall[]): 
         }
       }
     }
-    const m = extractNumericalMetrics(tool.resultSummary || '');
-    for (const p of m.prices) {
-      if (!verifiedPrices.includes(p)) verifiedPrices.push(p);
+    if (!tool.resultSummary?.includes('[TELEMETRY FAILURE')) {
+      const m = extractNumericalMetrics(tool.resultSummary || '');
+      for (const p of m.prices) {
+        if (!verifiedPrices.includes(p)) verifiedPrices.push(p);
+      }
     }
   }
 
@@ -4296,7 +4296,7 @@ export function validateRealTimeToolSuccess(executedTools: ExecutedToolCall[]): 
  *    was successfully returned before allowing metric drafting.
  * 3. Transparent Failure Mode:
  *    If the live data tool call fails or cannot be parsed, output the standardized operational warning:
- *    `[TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]`
+ *    `[TELEMETRY FAILURE: Live data feed unreachable]`
  */
 export function verifyQuantitativeTelemetryGate(
   card: AgentExecutionCard,
@@ -4323,19 +4323,19 @@ export function verifyQuantitativeTelemetryGate(
     if (priceMatchesInDialogue.length > 0) {
       updatedDialogue = updatedDialogue.replace(
         priceRegex,
-        '[TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]'
+        '[TELEMETRY FAILURE: Live data feed unreachable]'
       );
     }
 
-    if (!updatedDialogue.includes('[TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]')) {
-      updatedDialogue = `> [!WARNING]\n> **ANTI-HALLUCINATION GUARD:**\n> [TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]\n\n${updatedDialogue}`;
+    if (!updatedDialogue.includes('[TELEMETRY FAILURE: Live data feed unreachable]')) {
+      updatedDialogue = `> [!WARNING]\n> **ANTI-HALLUCINATION GUARD:**\n> [TELEMETRY FAILURE: Live data feed unreachable]\n\n${updatedDialogue}`;
     }
 
     const updatedSteps: ExecutionStep[] = [
       ...(card.steps || []).filter((s) => !s.label.includes('Verification Gate') && !s.label.includes('Telemetry Gate')),
       {
         label: 'Quantitative Telemetry Gate',
-        detail: '[TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]',
+        detail: '[TELEMETRY FAILURE: Live data feed unreachable]',
         status: 'completed',
       },
     ];
@@ -4477,6 +4477,68 @@ export async function ensureReportPersistedAndAnnotated(
   }
 }
 
+/**
+ * Constructs an authentic, standardized failure card when dynamic or live telemetry feeds are unreachable.
+ * Guaranteed zero speculative estimation or hallucination from parametric memory.
+ */
+export function buildRealTimeFailureCard(params: {
+  prompt: string;
+  activeAgentName: string;
+  activeAgentRole: string;
+  themeId: ThemeId;
+  attachment?: any;
+  executedTools?: ExecutedToolCall[];
+}): AgentExecutionCard {
+  const dateStr = new Date().toISOString();
+  const failureDialogue = `---
+title: "Operational Telemetry: Feed Unreachable"
+operative: "${params.activeAgentName} (${params.activeAgentRole})"
+target: "${(params.prompt || '').slice(0, 40)}"
+date: "${dateStr}"
+threat_level: "CHARLIE-NOMINAL"
+sources_consulted:
+  - "Live Data Oracle"
+---
+
+# Operational Telemetry: Metric Generation Aborted
+**Target Directive:** \`${params.prompt}\`
+**Verification Status:** [TELEMETRY FAILURE: Live data feed unreachable]
+
+---
+
+## 1. Operational Diagnostic
+[TELEMETRY FAILURE: Live data feed unreachable]
+
+The live data tool call failed or could not retrieve an authenticated real-time numerical payload for "${params.prompt}".
+In accordance with strict anti-hallucination protocols, speculative metric estimation and stale model training weight outputs are completely aborted.
+
+---
+
+## 2. Impact & Action Delta
+- **Operational Risk:** Real-time metrics cannot be authenticated against live oracles. Stale memorized values are suppressed.
+- **Immediate Next Step:** Re-attempt query with an explicit ticker or verify external feed connectivity.
+`;
+
+  return {
+    id: `card-${Date.now()}`,
+    prompt: params.prompt || `Real-time query`,
+    dialogue: failureDialogue,
+    cardTitle: 'Live Telemetry Unreachable',
+    actionCategory: 'Live Telemetry',
+    steps: [
+      { label: 'Directive Ingested', detail: `Query: "${(params.prompt || '').slice(0, 40)}"`, status: 'completed' },
+      { label: 'Tool Success Check', detail: '[TELEMETRY FAILURE: Live data feed unreachable]', status: 'completed' },
+      { label: 'Anti-Hallucination Guard', detail: 'Aborted speculative number generation', status: 'verified' },
+    ],
+    toolCalls: params.executedTools || [],
+    tokenEstimate: 120,
+    agentName: params.activeAgentName,
+    themeId: params.themeId,
+    timestamp: dateStr,
+    hasAttachment: Boolean(params.attachment),
+  };
+}
+
 export async function executeAgentDirective(params: {
   prompt: string;
   themeId: ThemeId;
@@ -4539,12 +4601,14 @@ export async function executeAgentDirective(params: {
 
       // Check active LLM provider configuration (per-agent override or global)
       const llmConfig = loadLLMProviderConfig();
+      const agentConfig = getAgentModelConfig(params.activeAgentName);
       const targetProvider: 'gemini' | 'anthropic' | 'openai' | 'groq' =
-        params.agentProvider || (llmConfig.providerId as any) || 'gemini';
+        params.agentProvider || agentConfig.provider || (llmConfig.providerId as any) || 'gemini';
       const providerMeta =
         SUPPORTED_VAULT_PROVIDERS[targetProvider] || SUPPORTED_VAULT_PROVIDERS.gemini;
       const targetModel: string =
         params.agentModel ||
+        agentConfig.model ||
         (targetProvider === 'gemini' ? normalizeGeminiModel(llmConfig.modelName) : undefined) ||
         providerMeta.defaultModel ||
         'gemini-3.8-flash';
@@ -4710,7 +4774,12 @@ You have direct access to local execution tools: ${declaredToolNames || 'local e
 Think step-by-step, execute tasks logically, call tools whenever you need live data or operations, and return structured results.`;
 
       const operationalExecutionDirective = `CRITICAL OPERATIONAL DIRECTIVE:
-You are an autonomous tactical operative. Execute tasks using your available function-calling tools and native Google Search grounding. Do NOT output raw [AGENT_ACTION: ...] execution tags, pseudo-commands, or code block execution wrappers. When live data or workspace operations are needed, use function calls or native search grounding directly, and synthesize your findings into clean, structured Markdown reports.`;
+You are an autonomous tactical operative. You MUST ALWAYS execute tasks using native programmatic function calls.
+STRICT FUNCTION-CALLING & ZERO-SIMULATION RULES:
+- NEVER simulate tool execution in text.
+- NEVER output text-based simulation tags (such as [AGENT_ACTION: ...], [TOOL_CALL: ...], or fake bash/markdown execution tags).
+- When live data, market feeds, web search, code evaluation, file operations, or external services are needed, invoke the native function call schema directly.
+- Programmatic multi-turn execution loops capture your raw JSON tool output and return it in a subsequent turn so your final response is synthesized strictly from real retrieved telemetry.`;
 
       const userAgnosticDirective = `STRICT USER-AGNOSTIC & TARGET-DRIVEN DIRECTIVE:
 - ALL OPERATIONS MUST BE GROUNDED IN USER TARGETS: Process data, perform audits, and gather intelligence strictly based on the target companies, domains, repositories, tech stacks, or topics provided dynamically by the active user session.
@@ -4882,6 +4951,21 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
                 if (turn2Res && turn2Res.ok) {
                   const turn2Data = await turn2Res.json();
                   const turn2Reply = turn2Data.choices?.[0]?.message?.content || 'Directive executed.';
+
+                  if (isRealTimeDataQuery(params.prompt) && !validateRealTimeToolSuccess(executedTools).isValid) {
+                    return await ensureReportPersistedAndAnnotated(
+                      buildRealTimeFailureCard({
+                        prompt: params.prompt,
+                        activeAgentName: params.activeAgentName,
+                        activeAgentRole: params.activeAgentRole,
+                        themeId: params.themeId,
+                        attachment: params.attachment,
+                        executedTools,
+                      }),
+                      params
+                    );
+                  }
+
                   const card: AgentExecutionCard = {
                     id: `card-${Date.now()}`,
                     prompt: params.prompt,
@@ -4902,6 +4986,20 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
                   };
                   return await ensureReportPersistedAndAnnotated(card, params);
                 }
+              }
+
+              if (isRealTimeDataQuery(params.prompt)) {
+                return await ensureReportPersistedAndAnnotated(
+                  buildRealTimeFailureCard({
+                    prompt: params.prompt,
+                    activeAgentName: params.activeAgentName,
+                    activeAgentRole: params.activeAgentRole,
+                    themeId: params.themeId,
+                    attachment: params.attachment,
+                    executedTools: [],
+                  }),
+                  params
+                );
               }
 
               const reply = choice?.content || 'Directive processed.';
@@ -5035,6 +5133,21 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
                     .filter((c: any) => c.type === 'text')
                     .map((c: any) => c.text)
                     .join('\n');
+
+                  if (isRealTimeDataQuery(params.prompt) && !validateRealTimeToolSuccess(executedTools).isValid) {
+                    return await ensureReportPersistedAndAnnotated(
+                      buildRealTimeFailureCard({
+                        prompt: params.prompt,
+                        activeAgentName: params.activeAgentName,
+                        activeAgentRole: params.activeAgentRole,
+                        themeId: params.themeId,
+                        attachment: params.attachment,
+                        executedTools,
+                      }),
+                      params
+                    );
+                  }
+
                   const card: AgentExecutionCard = {
                     id: `card-${Date.now()}`,
                     prompt: params.prompt,
@@ -5055,6 +5168,20 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
                   };
                   return await ensureReportPersistedAndAnnotated(card, params);
                 }
+              }
+
+              if (isRealTimeDataQuery(params.prompt)) {
+                return await ensureReportPersistedAndAnnotated(
+                  buildRealTimeFailureCard({
+                    prompt: params.prompt,
+                    activeAgentName: params.activeAgentName,
+                    activeAgentRole: params.activeAgentRole,
+                    themeId: params.themeId,
+                    attachment: params.attachment,
+                    executedTools: [],
+                  }),
+                  params
+                );
               }
 
               const textContent = contentList
@@ -5297,56 +5424,17 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
         if (isRealTime) {
           const toolCheck = validateRealTimeToolSuccess(allExecutedTools);
           if (!toolCheck.isValid) {
-            // Live data tool call failed or could not retrieve an authenticated real-time numerical payload.
-            // ABORT metric generation immediately to prevent speculative hallucinations!
-            const dateStr = new Date().toISOString();
-            const failureDialogue = `---
-title: "Operational Telemetry: Feed Unreachable"
-operative: "${params.activeAgentName} (${params.activeAgentRole})"
-target: "${(params.prompt || '').slice(0, 40)}"
-date: "${dateStr}"
-threat_level: "CHARLIE-NOMINAL"
-sources_consulted:
-  - "Live Data Oracle"
----
-
-# Operational Telemetry: Metric Generation Aborted
-**Target Directive:** \`${params.prompt}\`
-**Verification Status:** [TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]
-
----
-
-## 1. Operational Diagnostic
-[TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]
-
-The live data tool call failed or cannot be parsed to extract a verifiable real-time numerical payload for "${params.prompt}".
-In accordance with strict anti-hallucination protocols, speculative metric estimation and stale model training weight outputs are completely aborted.
-
----
-
-## 2. Impact & Action Delta
-- **Operational Risk:** Real-time metrics cannot be authenticated against live oracles. Stale memorized values are suppressed.
-- **Immediate Next Step:** Re-attempt query with an explicit ticker or verify external feed connectivity.
-`;
-            const failureCard: AgentExecutionCard = {
-              id: `card-${Date.now()}`,
-              prompt: params.prompt || `Real-time query`,
-              dialogue: failureDialogue,
-              cardTitle: 'Live Telemetry Unreachable',
-              actionCategory: 'Live Telemetry',
-              steps: [
-                { label: 'Directive Ingested', detail: `Query: "${(params.prompt || '').slice(0, 40)}"`, status: 'completed' },
-                { label: 'Tool Success Check', detail: '[TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]', status: 'completed' },
-                { label: 'Anti-Hallucination Guard', detail: 'Aborted speculative number generation', status: 'verified' },
-              ],
-              toolCalls: allExecutedTools,
-              tokenEstimate: 120,
-              agentName: params.activeAgentName,
-              themeId: params.themeId,
-              timestamp: dateStr,
-              hasAttachment: Boolean(params.attachment),
-            };
-            return await ensureReportPersistedAndAnnotated(failureCard, params);
+            return await ensureReportPersistedAndAnnotated(
+              buildRealTimeFailureCard({
+                prompt: params.prompt,
+                activeAgentName: params.activeAgentName,
+                activeAgentRole: params.activeAgentRole,
+                themeId: params.themeId,
+                attachment: params.attachment,
+                executedTools: allExecutedTools,
+              }),
+              params
+            );
           }
         }
 
@@ -5547,54 +5635,17 @@ ${searchResults.map((s: { title: string; snippet: string; url: string }, idx: nu
         }
 
         if (isRealTime && !validateRealTimeToolSuccess(allExecutedTools).isValid) {
-          const dateStr = new Date().toISOString();
-          const failureDialogue = `---
-title: "Operational Telemetry: Feed Unreachable"
-operative: "${params.activeAgentName} (${params.activeAgentRole})"
-target: "${(params.prompt || '').slice(0, 40)}"
-date: "${dateStr}"
-threat_level: "CHARLIE-NOMINAL"
-sources_consulted:
-  - "Live Data Oracle"
----
-
-# Operational Telemetry: Metric Generation Aborted
-**Target Directive:** \`${params.prompt}\`
-**Verification Status:** [TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]
-
----
-
-## 1. Operational Diagnostic
-[TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]
-
-The live data tool call failed or could not retrieve an authenticated real-time numerical payload for "${params.prompt}".
-In accordance with strict anti-hallucination protocols, speculative metric estimation and stale model training weight outputs are completely aborted.
-
----
-
-## 2. Impact & Action Delta
-- **Operational Risk:** Real-time metrics cannot be authenticated against live oracles. Stale memorized values are suppressed.
-- **Immediate Next Step:** Re-attempt query with an explicit ticker or verify external feed connectivity.
-`;
-          const failureCard: AgentExecutionCard = {
-            id: `card-${Date.now()}`,
-            prompt: params.prompt || `Real-time query`,
-            dialogue: failureDialogue,
-            cardTitle: 'Live Telemetry Unreachable',
-            actionCategory: 'Live Telemetry',
-            steps: [
-              { label: 'Directive Ingested', detail: `Query: "${(params.prompt || '').slice(0, 40)}"`, status: 'completed' },
-              { label: 'Tool Success Check', detail: '[TELEMETRY FAILURE: Live data feed unreachable — aborting metric generation]', status: 'completed' },
-              { label: 'Anti-Hallucination Guard', detail: 'Aborted speculative number generation', status: 'verified' },
-            ],
-            toolCalls: allExecutedTools,
-            tokenEstimate: 120,
-            agentName: params.activeAgentName,
-            themeId: params.themeId,
-            timestamp: dateStr,
-            hasAttachment: Boolean(params.attachment),
-          };
-          return await ensureReportPersistedAndAnnotated(failureCard, params);
+          return await ensureReportPersistedAndAnnotated(
+            buildRealTimeFailureCard({
+              prompt: params.prompt,
+              activeAgentName: params.activeAgentName,
+              activeAgentRole: params.activeAgentRole,
+              themeId: params.themeId,
+              attachment: params.attachment,
+              executedTools: allExecutedTools,
+            }),
+            params
+          );
         }
 
         let parsedDirect: any = null;

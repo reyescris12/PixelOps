@@ -1,5 +1,4 @@
 import { ThemeId } from '../context/ThemeContext';
-import { signInWithAuth0 } from './Auth0Service';
 
 export type LLMProviderType = 'gemini' | 'openai' | 'anthropic' | 'groq' | 'ollama';
 
@@ -266,8 +265,7 @@ function resolveLocalApiKeyForProvider(pId: string): string {
 }
 
 /**
- * Constructs the accurate endpoint URL and headers for Google Gemini.
- * Routes between Subscription Bearer Auth (Google Account / Google AI Pro via Auth0) and BYOK API Key.
+ * Constructs the accurate endpoint URL and headers for Google Gemini via BYOK API Key.
  */
 export function getGeminiAuthHeadersAndUrl(
   config: LLMProviderConfig,
@@ -280,79 +278,11 @@ export function getGeminiAuthHeadersAndUrl(
   accountEmail?: string;
 } {
   const normModel = normalizeGeminiModel(modelName || config.modelName);
-  const account = config.connectedAccounts?.gemini;
-  const rawSubToken = (account?.accessToken || '').trim();
-
-  const isSub = config.authMode === 'subscription' && account?.status === 'connected';
-
-  if (isSub) {
-    if (rawSubToken && rawSubToken.startsWith('AIzaSy')) {
-      return {
-        url: `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-          normModel
-        )}:generateContent?key=${encodeURIComponent(rawSubToken)}`,
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': rawSubToken,
-        },
-        isSubscription: true,
-        planName: account.planName || 'Google AI Pro Plan',
-        accountEmail: account.email,
-      };
-    }
-    // Genuine Google OAuth 2.0 Bearer token (ya29.)
-    if (rawSubToken && rawSubToken.startsWith('ya29.')) {
-      return {
-        url: `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-          normModel
-        )}:generateContent`,
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${rawSubToken}`,
-        },
-        isSubscription: true,
-        planName: account.planName || 'Google AI Pro Plan',
-        accountEmail: account.email,
-      };
-    }
-
-    // Auth0 Verified Google AI Pro account:
-    // Pull active key from config or local vault/env to perform API inference with Google AI Pro identity
-    let key = config.apiKey?.trim() || '';
-    if (!key || key === 'MY_GEMINI_API_KEY') {
-      key = resolveLocalApiKeyForProvider('gemini');
-    }
-
-    const headers: Record<string, string> = {
-      'Content-Type': 'application/json',
-    };
-    if (key && key !== 'MY_GEMINI_API_KEY') {
-      headers['x-goog-api-key'] = key;
-    }
-
-    return {
-      url:
-        key && key !== 'MY_GEMINI_API_KEY'
-          ? `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-              normModel
-            )}:generateContent?key=${encodeURIComponent(key)}`
-          : `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-              normModel
-            )}:generateContent`,
-      headers,
-      isSubscription: true,
-      planName: account.planName || 'Google AI Pro Plan (Gemini Advanced)',
-      accountEmail: account.email,
-    };
-  }
 
   // BYOK mode: Explicitly pull active key from config OR all possible storage locations
   let key = config.apiKey?.trim() || '';
   if (!key || key === 'MY_GEMINI_API_KEY') {
     key = resolveLocalApiKeyForProvider('gemini');
-    if (!key && rawSubToken && rawSubToken.startsWith('AIzaSy')) {
-      key = rawSubToken;
-    }
   }
 
   const headers: Record<string, string> = {
@@ -363,17 +293,17 @@ export function getGeminiAuthHeadersAndUrl(
   }
 
   return {
-    url: key && key !== 'MY_GEMINI_API_KEY'
-      ? `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-          normModel
-        )}:generateContent?key=${encodeURIComponent(key)}`
-      : `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-          normModel
-        )}:generateContent`,
+    url:
+      key && key !== 'MY_GEMINI_API_KEY'
+        ? `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+            normModel
+          )}:generateContent?key=${encodeURIComponent(key)}`
+        : `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+            normModel
+          )}:generateContent`,
     headers,
     isSubscription: false,
     planName: 'Developer API Key (BYOK)',
-    accountEmail: account?.email,
   };
 }
 
@@ -390,60 +320,16 @@ export function getLLMAuthInfo(config: LLMProviderConfig): {
   model: string;
 } {
   const pId = config.providerId || 'gemini';
-  const planMeta = SUBSCRIPTION_PLANS[pId] || SUBSCRIPTION_PLANS.gemini;
-  const account = config.connectedAccounts?.[pId];
-  const rawSubToken = (account?.accessToken || '').trim();
-  const isUsableSubToken =
-    Boolean(rawSubToken) &&
-    !rawSubToken.includes('google_ai_pro_') &&
-    (rawSubToken.startsWith('AIzaSy') || rawSubToken.startsWith('ya29.'));
-
-  // First check if a valid BYOK key exists for this provider
   const byokKey =
     resolveLocalApiKeyForProvider(pId) ||
     (config.apiKey && config.apiKey !== 'MY_GEMINI_API_KEY' ? config.apiKey.trim() : '');
   const hasByokKey = Boolean(byokKey && byokKey !== 'MY_GEMINI_API_KEY');
 
-  if (config.authMode === 'subscription') {
-    const isConn = account?.status === 'connected';
-    if (isConn) {
-      return {
-        mode: 'subscription',
-        isConnected: true,
-        title: account?.planName || planMeta.planName,
-        subtitle: `Connected as ${account?.email || account?.displayName || 'Google Account'} (Auth0 Verified)`,
-        badge: planMeta.badge,
-        accountEmail: account?.email,
-        model: pId === 'gemini' ? normalizeGeminiModel(config.modelName) : config.modelName,
-      };
-    }
-    // If subscription is not active but user has a BYOK key, reflect BYOK status
-    if (hasByokKey) {
-      return {
-        mode: 'apikey',
-        isConnected: true,
-        title: `${DEFAULT_PROVIDER_CONFIGS[pId].label} (BYOK)`,
-        subtitle: 'Developer API Key Active',
-        badge: 'BYOK ACTIVE',
-        model: pId === 'gemini' ? normalizeGeminiModel(config.modelName) : config.modelName,
-      };
-    }
-    return {
-      mode: 'subscription',
-      isConnected: false,
-      title: account?.planName || planMeta.planName,
-      subtitle: 'Subscription disconnected — Add API Key in Settings',
-      badge: 'NO API KEY',
-      accountEmail: account?.email,
-      model: pId === 'gemini' ? normalizeGeminiModel(config.modelName) : config.modelName,
-    };
-  }
-
   return {
     mode: 'apikey',
     isConnected: hasByokKey,
     title: `${DEFAULT_PROVIDER_CONFIGS[pId].label} (BYOK)`,
-    subtitle: hasByokKey ? 'Developer API Key Verified' : 'API Key Unconfigured',
+    subtitle: hasByokKey ? 'Developer API Key Active' : 'API Key Unconfigured — Enter Key in Settings',
     badge: hasByokKey ? 'BYOK ACTIVE' : 'NO API KEY',
     model: pId === 'gemini' ? normalizeGeminiModel(config.modelName) : config.modelName,
   };
@@ -627,193 +513,6 @@ export function setLLMAuthMode(authMode: AuthMode): LLMProviderConfig {
   };
   saveLLMProviderConfig(updated);
   return updated;
-}
-
-/**
- * Resolves user profile from Google OAuth userinfo endpoint and connects the real subscription account
- */
-async function resolveGoogleUserProfileAndConnect(
-  token: string,
-  preferredEmail?: string
-): Promise<ConnectedSubscriptionAccount> {
-  let profileData: any = null;
-  try {
-    const uRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (uRes.ok) {
-      profileData = await uRes.json();
-    }
-  } catch (err) {
-    console.warn('[GoogleAuth] Failed to fetch userinfo:', err);
-  }
-
-  const userEmail = profileData?.email || preferredEmail || '';
-  if (!userEmail) {
-    throw new Error('Could not retrieve user email from Google account.');
-  }
-
-  const connected: ConnectedSubscriptionAccount = {
-    providerId: 'gemini',
-    planType: 'google_ai_pro',
-    planName: 'Google AI Pro Plan (Gemini Advanced)',
-    planTier: 'pro',
-    email: userEmail,
-    displayName: profileData?.name || userEmail.split('@')[0],
-    avatarUrl: profileData?.picture,
-    accessToken: token,
-    expiresAt: Date.now() + 3600 * 1000,
-    status: 'connected',
-    connectedAt: new Date().toISOString(),
-  };
-  connectSubscriptionAccount(connected);
-  return connected;
-}
-
-/**
- * Initiates authentic Google Sign-In using Auth0 Google Social Connection ('google-oauth2')
- * with fallback to GIS / OAuth popup if client ID is provided.
- */
-export async function initiateGoogleSignIn(options?: {
-  clientId?: string;
-  userEmail?: string;
-}): Promise<ConnectedSubscriptionAccount> {
-  // Primary flow: Authenticate via Auth0 Google Social Connection ('google-oauth2')
-  try {
-    const auth0Res = await signInWithAuth0({
-      connection: 'google-oauth2',
-      providerId: 'gemini',
-    });
-    if (auth0Res.ok && auth0Res.account) {
-      return auth0Res.account;
-    }
-    if (auth0Res.error && auth0Res.error.includes('cancelled')) {
-      throw new Error('Sign-in cancelled by user.');
-    }
-  } catch (err: any) {
-    if (err?.message?.includes('cancelled')) {
-      throw err;
-    }
-    console.warn('[GoogleAuth] Auth0 direct login returned notice, checking client ID fallback:', err);
-  }
-
-  const currentConfig = loadLLMProviderConfig();
-  let clientId =
-    options?.clientId?.trim() ||
-    currentConfig.googleClientId?.trim() ||
-    localStorage.getItem('pixelops_google_client_id')?.trim() ||
-    (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID) ||
-    '';
-
-  if (!clientId) {
-    // If no client ID was supplied and Auth0 had an error, throw clear error
-    throw new Error(
-      'Google Sign-In could not authenticate. Please check popup permissions or configure Auth0 in settings.'
-    );
-  }
-
-  // 1. If Google Identity Services (GIS) token client is available, use it directly
-  const googleGlobal = typeof window !== 'undefined' ? (window as any).google : null;
-  if (googleGlobal?.accounts?.oauth2?.initTokenClient) {
-    return new Promise((resolve, reject) => {
-      try {
-        const tokenClient = googleGlobal.accounts.oauth2.initTokenClient({
-          client_id: clientId,
-          scope: 'openid email profile https://www.googleapis.com/auth/generative-language',
-          callback: async (tokenResponse: any) => {
-            if (tokenResponse.error) {
-              reject(new Error(`Google Sign-In failed: ${tokenResponse.error_description || tokenResponse.error}`));
-              return;
-            }
-            const token = tokenResponse.access_token;
-            if (!token) {
-              reject(new Error('Google Sign-In returned no access token.'));
-              return;
-            }
-            try {
-              const account = await resolveGoogleUserProfileAndConnect(token, options?.userEmail);
-              resolve(account);
-            } catch (err: any) {
-              reject(err);
-            }
-          },
-          error_callback: (err: any) => {
-            reject(new Error(err?.message || 'Google account selector closed.'));
-          },
-        });
-        tokenClient.requestAccessToken({ prompt: 'select_account' });
-      } catch (gisErr: any) {
-        console.warn('[GIS] initTokenClient threw, falling back to popup window:', gisErr);
-      }
-    });
-  }
-
-  // 2. Fallback: Standard Google OAuth 2.0 popup window
-  const redirectUri = window.location.origin;
-  const scope = encodeURIComponent(
-    'openid email profile https://www.googleapis.com/auth/generative-language'
-  );
-  const state = `google_ai_pro_${Date.now()}`;
-
-  const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(
-    clientId
-  )}&redirect_uri=${encodeURIComponent(
-    redirectUri
-  )}&response_type=token&scope=${scope}&state=${state}&prompt=select_account`;
-
-  const width = 520;
-  const height = 660;
-  const left = Math.max(0, Math.round(window.screenX + (window.outerWidth - width) / 2));
-  const top = Math.max(0, Math.round(window.screenY + (window.outerHeight - height) / 2));
-
-  const popup = window.open(
-    authUrl,
-    'google_oauth_popup',
-    `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes,status=yes`
-  );
-
-  if (!popup) {
-    throw new Error('Popup blocked. Please allow popups in your browser to sign into your Google account.');
-  }
-
-  return new Promise((resolve, reject) => {
-    const timeoutTimer = setTimeout(() => {
-      cleanup();
-      reject(new Error('Google sign-in timed out. Please try again.'));
-    }, 120000);
-
-    const messageHandler = async (event: MessageEvent) => {
-      if (!event.data) return;
-      if (event.data.type === 'GOOGLE_AUTH_SUCCESS' || event.data.googleAuthSuccess) {
-        cleanup();
-        const params = event.data.params || {};
-        const token = params.access_token || params.code || '';
-        if (!token) {
-          reject(new Error('Google returned empty credentials.'));
-          return;
-        }
-
-        try {
-          const account = await resolveGoogleUserProfileAndConnect(token, options?.userEmail);
-          resolve(account);
-        } catch (err: any) {
-          reject(err);
-        }
-      }
-    };
-
-    const cleanup = () => {
-      clearTimeout(timeoutTimer);
-      window.removeEventListener('message', messageHandler);
-      if (!popup.closed) {
-        try {
-          popup.close();
-        } catch {}
-      }
-    };
-
-    window.addEventListener('message', messageHandler);
-  });
 }
 
 /**

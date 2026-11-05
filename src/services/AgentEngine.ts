@@ -17,7 +17,6 @@ import {
   getGeminiAuthHeadersAndUrl,
   normalizeGeminiModel,
   testLLMProviderConnection,
-  initiateGoogleSignIn,
   connectUserSubscriptionAccount,
   disconnectSubscriptionAccount,
 } from './LLMProviderService';
@@ -37,7 +36,6 @@ export {
   getGeminiAuthHeadersAndUrl,
   normalizeGeminiModel,
   testLLMProviderConnection,
-  initiateGoogleSignIn,
   connectUserSubscriptionAccount,
   disconnectSubscriptionAccount,
   ModelGateway,
@@ -54,7 +52,6 @@ export default {
   getGeminiAuthHeadersAndUrl,
   normalizeGeminiModel,
   testLLMProviderConnection,
-  initiateGoogleSignIn,
   connectUserSubscriptionAccount,
   disconnectSubscriptionAccount,
   ModelGateway,

@@ -1,7 +1,5 @@
 import {createRoot} from 'react-dom/client';
-import { Auth0Provider } from '@auth0/auth0-react';
 import App from './App.tsx';
-import { getAuth0Config } from './services/Auth0Service';
 import './index.css';
 
 // Handle OAuth popup redirect when provider returns to the root URL
@@ -88,22 +86,7 @@ if (typeof window !== 'undefined' && window.opener && window.opener !== window) 
   }
 }
 
-const auth0Config = getAuth0Config();
-
-createRoot(document.getElementById('root')!).render(
-  <Auth0Provider
-    domain={auth0Config.domain}
-    clientId={auth0Config.clientId}
-    authorizationParams={{
-      redirect_uri: typeof window !== 'undefined' ? window.location.origin : '',
-      scope: 'openid profile email',
-    }}
-    cacheLocation="localstorage"
-    useRefreshTokens={true}
-  >
-    <App />
-  </Auth0Provider>
-);
+createRoot(document.getElementById('root')!).render(<App />);
 
 // Ensure updated Service Worker activates cleanly without stale cached bundles
 if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {

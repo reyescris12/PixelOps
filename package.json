@@ -12,7 +12,6 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@auth0/auth0-react": "^2.30.0",
     "@google/genai": "^2.4.0",
     "@tailwindcss/vite": "^4.3.3",
     "@vitejs/plugin-react": "^6.1.1",

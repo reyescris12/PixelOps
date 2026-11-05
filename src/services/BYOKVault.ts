@@ -237,3 +237,55 @@ export function setActiveVaultProvider(
   };
   saveLLMProviderConfig(updated);
 }
+
+/**
+ * Returns the stored API key or active subscription token for a given provider
+ */
+export function getProviderApiKey(provider: 'gemini' | 'anthropic' | 'openai' | 'groq'): string {
+  const meta = SUPPORTED_VAULT_PROVIDERS[provider];
+  if (!meta) return '';
+
+  try {
+    let key = (localStorage.getItem(meta.storageKey) || '').trim();
+    if (!key && provider === 'gemini') {
+      key = (localStorage.getItem('gemini_api_key') || '').trim();
+      if (!key) {
+        // Also check Google OAuth access token for subscription plans
+        const subToken = (localStorage.getItem('pixelops_google_access_token') || '').trim();
+        if (subToken) return subToken;
+      }
+    }
+    if (!key) {
+      const active = loadLLMProviderConfig();
+      if (active.providerId === provider && active.apiKey) {
+        key = active.apiKey.trim();
+      }
+    }
+    return key;
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Checks if a valid API key or credential exists for a specific provider
+ */
+export function hasProviderApiKey(provider: 'gemini' | 'anthropic' | 'openai' | 'groq'): boolean {
+  if (provider === 'gemini') {
+    const key = getProviderApiKey('gemini');
+    if (key && key !== 'MY_GEMINI_API_KEY') return true;
+    const subToken = (localStorage.getItem('pixelops_google_access_token') || '').trim();
+    if (subToken) return true;
+    return false;
+  }
+  const key = getProviderApiKey(provider);
+  return Boolean(key && key.length > 5);
+}
+
+/**
+ * Returns user-friendly provider display name
+ */
+export function getProviderDisplayName(provider: 'gemini' | 'anthropic' | 'openai' | 'groq'): string {
+  return SUPPORTED_VAULT_PROVIDERS[provider]?.name || provider;
+}
+

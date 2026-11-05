@@ -1,5 +1,6 @@
 import { ThemeId } from '../context/ThemeContext';
 import { executeAgentDirective, AgentExecutionCard } from './ApiService';
+import { getAgentModelConfig } from './agentStore';
 import {
   dispatchOutboxNotification,
   loadWebhookConfig,
@@ -409,6 +410,7 @@ export async function executeNightShiftTask(
           resolvedPrompt = `[NIGHT SHIFT CHAIN STEP 1/${totalSteps}] ${resolvedPrompt}`;
         }
 
+        const stepModelCfg = getAgentModelConfig(step.agentId || step.agentName);
         const stepCard = await executeAgentDirective({
           prompt: resolvedPrompt,
           themeId,
@@ -416,6 +418,8 @@ export async function executeNightShiftTask(
           activeAgentRole: step.agentRole || 'Autonomous Chain Operative',
           enabledPlugins,
           temperature: 0.65,
+          agentProvider: stepModelCfg.provider,
+          agentModel: stepModelCfg.model,
         });
 
         tokenUsage += stepCard.tokenEstimate || 300;
@@ -450,6 +454,7 @@ export async function executeNightShiftTask(
       // Single operative execution
       onStepProgress?.(1, 1, task.agentName);
 
+      const singleModelCfg = getAgentModelConfig(task.agentId || task.agentName);
       const card = await executeAgentDirective({
         prompt: `[NIGHT SHIFT ROUTINE] ${task.prompt}`,
         themeId,
@@ -457,6 +462,8 @@ export async function executeNightShiftTask(
         activeAgentRole: 'Autonomous Night Shift Operative',
         enabledPlugins,
         temperature: 0.65,
+        agentProvider: singleModelCfg.provider,
+        agentModel: singleModelCfg.model,
       });
 
       tokenUsage = card.tokenEstimate || 350;

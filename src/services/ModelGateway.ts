@@ -1,5 +1,7 @@
 // services/ModelGateway.ts
 
+import { getProviderApiKey, hasProviderApiKey, SUPPORTED_VAULT_PROVIDERS } from './BYOKVault';
+
 export type ModelGatewayProvider = 'gemini' | 'anthropic' | 'openai' | 'groq';
 
 export interface ModelGatewayMessage {
@@ -8,6 +10,18 @@ export interface ModelGatewayMessage {
 }
 
 export class ModelGateway {
+  static resolveApiKey(provider: ModelGatewayProvider): string {
+    return getProviderApiKey(provider);
+  }
+
+  static hasValidKey(provider: ModelGatewayProvider): boolean {
+    return hasProviderApiKey(provider);
+  }
+
+  static getDefaultModel(provider: ModelGatewayProvider): string {
+    return SUPPORTED_VAULT_PROVIDERS[provider]?.defaultModel || 'gemini-3.8-flash';
+  }
+
   static async executePrompt(
     provider: ModelGatewayProvider,
     model: string,
@@ -16,23 +30,7 @@ export class ModelGateway {
     messages: (ModelGatewayMessage | any)[]
   ): Promise<string> {
     // Resolve API key if not provided directly
-    let effectiveKey = (apiKey || '').trim();
-    if (!effectiveKey && typeof localStorage !== 'undefined') {
-      try {
-        if (provider === 'gemini') {
-          effectiveKey =
-            localStorage.getItem('pixelops_gemini_api_key') ||
-            localStorage.getItem('gemini_api_key') ||
-            '';
-        } else if (provider === 'anthropic') {
-          effectiveKey = localStorage.getItem('pixelops_anthropic_api_key') || '';
-        } else if (provider === 'openai') {
-          effectiveKey = localStorage.getItem('pixelops_openai_api_key') || '';
-        } else if (provider === 'groq') {
-          effectiveKey = localStorage.getItem('pixelops_groq_api_key') || '';
-        }
-      } catch {}
-    }
+    let effectiveKey = (apiKey || '').trim() || this.resolveApiKey(provider);
 
     if (!effectiveKey) {
       throw new Error(`[UPLINK ERROR]: Missing API Key for provider: ${provider}`);

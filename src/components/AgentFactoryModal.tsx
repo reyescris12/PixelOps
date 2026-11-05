@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, UserPlus, Shield, Terminal, MapPin, Wrench } from 'lucide-react';
+import { X, UserPlus, Shield, Terminal, MapPin, Wrench, Cpu } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import {
   SPRITE_VARIANT_LIST,
@@ -11,6 +11,8 @@ import {
   FUNCTIONAL_ROLE_PROFILES,
 } from '../context/CrewContext';
 import { RoomId, ROOM_ORDER, ROOM_METADATA, AgentSpriteFigure } from './SpriteCanvas';
+import { SUPPORTED_VAULT_PROVIDERS } from '../services/BYOKVault';
+import { AgentProvider } from '../services/agentStore';
 
 const SPRITE_CATEGORIES: Array<'All' | SpriteVariantCategory> = [
   'All',
@@ -65,6 +67,8 @@ interface AgentFactoryModalProps {
     spriteVariant: SpriteVariant;
     currentRoom: RoomId;
     assignedTools?: string[];
+    provider?: AgentProvider;
+    model?: string;
   }) => void;
 }
 
@@ -83,6 +87,8 @@ export const AgentFactoryModal: React.FC<AgentFactoryModalProps> = ({
   const [spriteVariant, setSpriteVariant] = useState<SpriteVariant>('exo_hacker');
   const [selectedCategory, setSelectedCategory] = useState<'All' | SpriteVariantCategory>('All');
   const [currentRoom, setCurrentRoom] = useState<RoomId>('comms_tower');
+  const [provider, setProvider] = useState<AgentProvider>('gemini');
+  const [model, setModel] = useState<string>('gemini-3.8-flash');
 
   if (!isOpen) return null;
 
@@ -93,6 +99,7 @@ export const AgentFactoryModal: React.FC<AgentFactoryModalProps> = ({
 
   const selectedMeta = SPRITE_VARIANTS[spriteVariant] || SPRITE_VARIANTS.trenchcoat;
   const selectedRoleMeta = FUNCTIONAL_ROLE_PROFILES[functionalRole] || FUNCTIONAL_ROLE_PROFILES.coder;
+  const selectedProviderMeta = SUPPORTED_VAULT_PROVIDERS[provider] || SUPPORTED_VAULT_PROVIDERS.gemini;
 
   const handleSelectRolePreset = (pId: FunctionalCapabilityId) => {
     playBeep('tap');
@@ -103,6 +110,13 @@ export const AgentFactoryModal: React.FC<AgentFactoryModalProps> = ({
     setSpecialty(p.defaultSpecialty);
     setSystemPrompt(p.defaultSystemPrompt);
     setAssignedTools(p.recommendedTools);
+  };
+
+  const handleSelectProvider = (pId: AgentProvider) => {
+    playBeep('tap');
+    setProvider(pId);
+    const meta = SUPPORTED_VAULT_PROVIDERS[pId];
+    setModel(meta?.defaultModel || 'gemini-3.8-flash');
   };
 
   const toggleTool = (toolId: string) => {
@@ -126,6 +140,8 @@ export const AgentFactoryModal: React.FC<AgentFactoryModalProps> = ({
       spriteVariant,
       currentRoom,
       assignedTools,
+      provider,
+      model,
     });
     onClose();
   };
@@ -245,6 +261,52 @@ export const AgentFactoryModal: React.FC<AgentFactoryModalProps> = ({
                 className="px-3 py-2 rounded-xl bg-[#090d12] border border-amber-500/30 text-amber-100 font-mono focus:border-amber-400 outline-none"
                 placeholder="e.g. Full-Stack Architecture & Debugging"
               />
+            </div>
+          </div>
+
+          {/* AI Model & Provider Engine */}
+          <div className="p-3 rounded-xl bg-[#090d12] border border-amber-500/30 flex flex-col gap-2">
+            <span className="font-bold text-amber-200 flex items-center gap-1.5 text-xs">
+              <Cpu className="w-3.5 h-3.5 text-amber-400" />
+              <span>◈ AI Model & Provider Gateway</span>
+            </span>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              {(Object.keys(SUPPORTED_VAULT_PROVIDERS) as AgentProvider[]).map((pId) => {
+                const meta = SUPPORTED_VAULT_PROVIDERS[pId];
+                const isSelected = provider === pId;
+                return (
+                  <button
+                    key={pId}
+                    type="button"
+                    onClick={() => handleSelectProvider(pId)}
+                    className={`p-2 rounded-lg border text-left cursor-pointer transition-colors ${
+                      isSelected
+                        ? 'bg-amber-500/20 border-amber-400 text-amber-100 font-bold'
+                        : 'bg-[#111722] border-amber-500/20 text-amber-300/70 hover:border-amber-400/50'
+                    }`}
+                  >
+                    <div className="text-[11px]">{meta.name.split(' ')[0]}</div>
+                    <div className="text-[9px] text-amber-400/80">{meta.badge}</div>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex items-center gap-2 pt-1 border-t border-amber-500/20">
+              <span className="text-[10px] text-amber-300/80 uppercase font-semibold">Model:</span>
+              <select
+                value={model}
+                onChange={(e) => {
+                  playBeep('tap');
+                  setModel(e.target.value);
+                }}
+                className="flex-1 px-2 py-1 rounded bg-[#111722] border border-amber-500/30 text-amber-100 text-xs font-mono outline-none cursor-pointer"
+              >
+                {selectedProviderMeta.availableModels.map((m) => (
+                  <option key={m} value={m} className="bg-[#111722] text-amber-100">
+                    {m} {m === selectedProviderMeta.defaultModel ? '(Default)' : ''}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
 

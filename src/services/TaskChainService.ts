@@ -17,6 +17,7 @@ import {
   synthesizeComprehensiveReport,
   uploadReportToWorkspaceFiles,
 } from './ReportService';
+import { getAgentModelConfig } from './agentStore';
 
 export interface TaskChainStep {
   id: string;
@@ -483,7 +484,8 @@ export async function executeTaskChain(
     currentStep.inputContext = enrichedPrompt;
 
     try {
-      // Execute the operative's directive
+      // Execute the operative's directive with their customized model & provider
+      const agentModelCfg = getAgentModelConfig(currentStep.assignedAgentId);
       const card = await executeAgentDirective({
         prompt: enrichedPrompt,
         themeId,
@@ -491,6 +493,8 @@ export async function executeTaskChain(
         activeAgentRole: currentStep.assignedAgentRole,
         enabledPlugins,
         temperature: 0.5,
+        agentProvider: agentModelCfg.provider,
+        agentModel: agentModelCfg.model,
         onFunctionCallTriggered: (info) => {
           callbacks.onFunctionCallTriggered?.(info);
           callbacks.onStepProgress?.(

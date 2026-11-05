@@ -1,6 +1,13 @@
 import { ThemeId } from '../context/ThemeContext';
 import type { RoomId } from '../components/SpriteCanvas';
 import { loadLLMProviderConfig, normalizeGeminiModel, getGeminiAuthHeadersAndUrl } from './LLMProviderService';
+import {
+  SUPPORTED_VAULT_PROVIDERS,
+  getProviderApiKey,
+  hasProviderApiKey,
+  getProviderDisplayName,
+} from './BYOKVault';
+import { ModelGateway } from './ModelGateway';
 import { workstationSupportsTool } from './PlacedGearService';
 import { loadCustomPlugins, executeCustomPlugin } from './PluginMarketplaceService';
 import { getLast50Commands, ledgerDb } from './CommandLedgerDb';
@@ -4481,6 +4488,8 @@ export async function executeAgentDirective(params: {
   enabledPlugins: string[];
   attachment?: { data: string; mimeType: string; name: string } | null;
   temperature: number;
+  agentProvider?: 'gemini' | 'anthropic' | 'openai' | 'groq';
+  agentModel?: string;
   providerTokenStatus?: Record<string, { valid: boolean; accountHandle: string }>;
   onFunctionCallTriggered?: (info: {
     toolName: string;
@@ -4528,13 +4537,35 @@ export async function executeAgentDirective(params: {
         });
       }
 
-      // Check active LLM provider configuration
+      // Check active LLM provider configuration (per-agent override or global)
       const llmConfig = loadLLMProviderConfig();
-      const apiKey = llmConfig.apiKey?.trim();
-      const geminiAuthInfo = getGeminiAuthHeadersAndUrl(llmConfig, llmConfig.modelName);
+      const targetProvider: 'gemini' | 'anthropic' | 'openai' | 'groq' =
+        params.agentProvider || (llmConfig.providerId as any) || 'gemini';
+      const providerMeta =
+        SUPPORTED_VAULT_PROVIDERS[targetProvider] || SUPPORTED_VAULT_PROVIDERS.gemini;
+      const targetModel: string =
+        params.agentModel ||
+        (targetProvider === 'gemini' ? normalizeGeminiModel(llmConfig.modelName) : undefined) ||
+        providerMeta.defaultModel ||
+        'gemini-3.8-flash';
+
+      const targetApiKey = getProviderApiKey(targetProvider);
+      const geminiAuthInfo = getGeminiAuthHeadersAndUrl(llmConfig, targetModel);
+      if (
+        targetProvider === 'gemini' &&
+        targetApiKey &&
+        !geminiAuthInfo.headers['x-goog-api-key'] &&
+        !targetApiKey.startsWith('ya29.')
+      ) {
+        geminiAuthInfo.headers['x-goog-api-key'] = targetApiKey;
+      }
+
       const hasActiveAuth =
-        (llmConfig.authMode === 'subscription' && geminiAuthInfo.isSubscription) ||
-        (Boolean(apiKey) && apiKey !== 'MY_GEMINI_API_KEY');
+        targetProvider === 'gemini'
+          ? (llmConfig.authMode === 'subscription' && geminiAuthInfo.isSubscription) ||
+            Boolean(geminiAuthInfo.headers['x-goog-api-key']) ||
+            (Boolean(targetApiKey) && targetApiKey !== 'MY_GEMINI_API_KEY')
+          : Boolean(targetApiKey && targetApiKey.length > 5);
 
       // Intercept any explicit external tool directives (Gmail, GitHub, Slack, Calendar, Notion, Linear)
       // to execute live via ComposioService and connected accounts instead of simulating
@@ -4543,73 +4574,27 @@ export async function executeAgentDirective(params: {
         return externalToolCard;
       }
 
-      // If neither Google Account subscription nor valid client API key is configured, attempt backend Cloudflare agent dispatch before local fallback
+      // If credentials for the target provider are missing, halt cleanly with an actionable AUTH_REQUIRED card
       if (!hasActiveAuth) {
-        try {
-          const entityId = localStorage.getItem('pixelops_composio_entity_id') || 'commander_default';
-          const dispatchRes = await fetch('/api/agent/dispatch', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'x-entity-id': entityId,
-            },
-            body: JSON.stringify({
-              message: params.prompt,
-              entityId,
-              agentName: params.activeAgentName,
-              activeAgentRole: params.activeAgentRole,
-              systemPrompt: params.agentSystemPrompt,
-              temperature: params.temperature,
-            }),
-          });
-          const contentType = dispatchRes.headers.get('content-type') || '';
-          if (dispatchRes.ok && contentType.includes('application/json')) {
-            const dispatchData = await dispatchRes.json();
-            if (dispatchData?.dialogue) {
-              const executedCalls: ExecutedToolCall[] = (dispatchData.executedTools || []).map((t: any) => ({
-                pluginId: 'composio_dispatch',
-                toolName: t.toolName,
-                args: t.args || {},
-                resultSummary: t.success ? `Executed ${t.toolName} successfully` : `Tool error: ${t.result?.error || 'failed'}`,
-                livePayload: t.result,
-                targetRoom: resolveToolWorkflowDestination(t.toolName).targetRoom,
-                targetStationId: resolveToolWorkflowDestination(t.toolName).targetStationId,
-              }));
-
-              const dispatchedCard: AgentExecutionCard = {
-                id: `card-${Date.now()}`,
-                prompt: params.prompt,
-                dialogue: dispatchData.dialogue,
-                cardTitle: dispatchData.structuredPayload?.title || `${params.activeAgentName} Operational SITREP`,
-                actionCategory: 'Intelligence',
-                steps: [
-                  { label: 'Cloud Dispatch', detail: `Routed to Cloudflare Agent Engine (${dispatchData.agentName || params.activeAgentName})`, status: 'completed' },
-                  { label: 'Tool Matrix Verification', detail: `Executed ${executedCalls.length} dynamic tool turns`, status: 'verified' },
-                  { label: 'Structured Frontmatter Render', detail: `Threat: ${dispatchData.structuredPayload?.threatLevel || 'CHARLIE-NOMINAL'}`, status: 'completed' },
-                ],
-                toolCalls: executedCalls,
-                tokenEstimate: 120,
-                agentName: params.activeAgentName,
-                themeId: params.themeId,
-                timestamp: new Date().toISOString(),
-                hasAttachment: Boolean(params.attachment),
-              };
-              return verifyQuantitativeTelemetryGate(dispatchedCard, params.prompt, executedCalls);
-            }
-          }
-        } catch {
-          // Fall through to client heuristic engine
-        }
-
-        return generateLocalHeuristicCard({
+        const provName = getProviderDisplayName(targetProvider);
+        return {
+          id: `card-${Date.now()}`,
           prompt: params.prompt,
+          dialogue: `⚠️ **[AUTHENTICATION REQUIRED: No ${provName} API Key Detected]**\n\nOperative **${params.activeAgentName}** is assigned to **${provName}** (\`${targetModel}\`), but no valid credentials were found in safehouse storage (\`${providerMeta.storageKey}\`).\n\nPlease open **Settings (Gear Icon)** in the Command Center header under **BYOK KEY VAULT** to configure your **${provName}** API key, or switch this operative to another configured provider.`,
+          cardTitle: `${provName.toUpperCase()} API KEY REQUIRED`,
+          actionCategory: 'AUTH_REQUIRED',
+          steps: [
+            { label: 'Check Credentials', detail: `No active key for ${provName} in ${providerMeta.storageKey}`, status: 'completed' as const },
+            { label: 'Halt Execution', detail: 'Awaiting credentials to prevent unauthenticated failure', status: 'verified' as const },
+            { label: 'Prompt Commander', detail: 'Configure API key in Settings [⚙️] or switch operative model', status: 'queued' as const },
+          ],
+          toolCalls: [],
+          tokenEstimate: 0,
+          agentName: params.activeAgentName,
           themeId: params.themeId,
-          activeAgentName: params.activeAgentName,
-          activeAgentRole: params.activeAgentRole,
-          attachment: params.attachment,
-          enabledPlugins: params.enabledPlugins,
-          onFunctionCallTriggered: params.onFunctionCallTriggered,
-        });
+          timestamp: new Date().toISOString(),
+          hasAttachment: Boolean(params.attachment),
+        };
       }
 
       // Build dynamic tool declarations from active plugins & assigned operative capabilities
@@ -4779,10 +4764,10 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
         .filter(Boolean)
         .join('\n\n');
 
-      // If alternative provider is selected (OpenAI, Anthropic, Ollama), execute client-side or fallback
-      if (llmConfig.providerId && llmConfig.providerId !== 'gemini') {
+      // Multi-Provider Execution Gateway: Route to OpenAI, Groq, or Anthropic if operative is configured for them
+      if (targetProvider !== 'gemini') {
         try {
-          if (llmConfig.providerId === 'openai') {
+          if (targetProvider === 'openai' || targetProvider === 'groq') {
             const openAITools = activeDeclarations.map((d) => ({
               type: 'function',
               function: {
@@ -4798,7 +4783,7 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
             ];
 
             const reqBody: any = {
-              model: llmConfig.modelName || 'gpt-4o-mini',
+              model: targetModel,
               messages: initialMessages,
               temperature: Number(params.temperature || 0.7),
             };
@@ -4806,22 +4791,27 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
               reqBody.tools = openAITools;
             }
 
+            const endpoint =
+              targetProvider === 'groq'
+                ? 'https://api.groq.com/openai/v1/chat/completions'
+                : 'https://api.openai.com/v1/chat/completions';
+
             const res = await executeSafeOperation(
               async (signal) => {
-                return await fetch('https://api.openai.com/v1/chat/completions', {
+                return await fetch(endpoint, {
                   method: 'POST',
                   headers: {
                     'Content-Type': 'application/json',
-                    Authorization: `Bearer ${apiKey}`,
+                    Authorization: `Bearer ${targetApiKey}`,
                   },
                   body: JSON.stringify(reqBody),
                   signal,
                 });
               },
               {
-                timeoutMs: 18000,
+                timeoutMs: 25000,
                 maxRetries: 1,
-                operationName: 'openai_turn1_dispatch',
+                operationName: `${targetProvider}_turn1_dispatch`,
               }
             );
 
@@ -4865,17 +4855,17 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
                   });
                 }
 
-                // Turn 2
+                // Turn 2: Synthesize findings through model
                 const turn2Res = await executeSafeOperation(
                   async (signal) => {
-                    return await fetch('https://api.openai.com/v1/chat/completions', {
+                    return await fetch(endpoint, {
                       method: 'POST',
                       headers: {
                         'Content-Type': 'application/json',
-                        Authorization: `Bearer ${apiKey}`,
+                        Authorization: `Bearer ${targetApiKey}`,
                       },
                       body: JSON.stringify({
-                        model: llmConfig.modelName || 'gpt-4o-mini',
+                        model: targetModel,
                         messages: [...initialMessages, choice, ...toolResponseMessages],
                         temperature: Number(params.temperature || 0.7),
                       }),
@@ -4883,16 +4873,16 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
                     });
                   },
                   {
-                    timeoutMs: 18000,
+                    timeoutMs: 25000,
                     maxRetries: 1,
-                    operationName: 'openai_turn2_dispatch',
+                    operationName: `${targetProvider}_turn2_dispatch`,
                   }
                 );
 
                 if (turn2Res && turn2Res.ok) {
                   const turn2Data = await turn2Res.json();
                   const turn2Reply = turn2Data.choices?.[0]?.message?.content || 'Directive executed.';
-                  return {
+                  const card: AgentExecutionCard = {
                     id: `card-${Date.now()}`,
                     prompt: params.prompt,
                     dialogue: turn2Reply,
@@ -4910,22 +4900,19 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
                     timestamp: new Date().toISOString(),
                     hasAttachment: Boolean(params.attachment),
                   };
+                  return await ensureReportPersistedAndAnnotated(card, params);
                 }
               }
 
               const reply = choice?.content || 'Directive processed.';
-              const actionCard = await parseAndExecuteAgentActionTags(reply, params);
-              if (actionCard) {
-                return actionCard;
-              }
-              return {
+              const card: AgentExecutionCard = {
                 id: `card-${Date.now()}`,
                 prompt: params.prompt,
                 dialogue: reply,
-                cardTitle: 'OpenAI Directive Execution',
+                cardTitle: `${providerMeta.name} Directive Execution`,
                 actionCategory: 'Operations',
                 steps: [
-                  { label: 'Parse Directive', detail: 'Validated OpenAI parameters', status: 'completed' as const },
+                  { label: 'Parse Directive', detail: `Validated ${providerMeta.name} parameters`, status: 'completed' as const },
                   { label: 'Execute Routine', detail: 'Inference completed successfully', status: 'verified' as const },
                   { label: 'Ledger Synced', detail: 'Recorded to local state', status: 'completed' as const },
                 ],
@@ -4936,10 +4923,11 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
                 timestamp: new Date().toISOString(),
                 hasAttachment: Boolean(params.attachment),
               };
+              return await ensureReportPersistedAndAnnotated(card, params);
             }
           }
 
-          if (llmConfig.providerId === 'anthropic') {
+          if (targetProvider === 'anthropic') {
             const anthropicTools = activeDeclarations.map((d) => ({
               name: d.name,
               description: d.description,
@@ -4952,13 +4940,13 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
                   method: 'POST',
                   headers: {
                     'Content-Type': 'application/json',
-                    'x-api-key': apiKey,
+                    'x-api-key': targetApiKey,
                     'anthropic-version': '2023-06-01',
-                    'dangerously-allow-browser': 'true',
+                    'anthropic-dangerous-direct-browser-access': 'true',
                   },
                   body: JSON.stringify({
-                    model: llmConfig.modelName || 'claude-3-5-sonnet-20241022',
-                    max_tokens: 1500,
+                    model: targetModel,
+                    max_tokens: 3000,
                     system: systemInstruction,
                     messages: [{ role: 'user', content: params.prompt }],
                     tools: anthropicTools.length > 0 ? anthropicTools : undefined,
@@ -4968,23 +4956,112 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
                 });
               },
               {
-                timeoutMs: 18000,
+                timeoutMs: 25000,
                 maxRetries: 1,
-                operationName: 'anthropic_dispatch',
+                operationName: 'anthropic_turn1_dispatch',
               }
             );
 
             if (res && res.ok) {
               const data = await res.json();
-              const textContent = (data.content || [])
+              const contentList = Array.isArray(data.content) ? data.content : [];
+              const toolUseCalls = contentList.filter((c: any) => c.type === 'tool_use');
+
+              if (toolUseCalls.length > 0) {
+                const executedTools: ExecutedToolCall[] = [];
+                const toolResultBlocks: any[] = [];
+
+                for (const tc of toolUseCalls) {
+                  const fnName = tc.name;
+                  const fnArgs = tc.input || {};
+
+                  const primaryDest = resolveToolWorkflowDestination(fnName);
+                  params.onFunctionCallTriggered?.({
+                    toolName: fnName,
+                    args: fnArgs,
+                    targetRoom: primaryDest.targetRoom,
+                    targetStationId: primaryDest.targetStationId,
+                    taskTag: primaryDest.taskTag,
+                  });
+
+                  const handlerOut = await executeFunctionCallHandler({
+                    id: tc.id,
+                    name: fnName,
+                    args: fnArgs,
+                  });
+                  executedTools.push(handlerOut.executedToolMeta);
+                  toolResultBlocks.push({
+                    type: 'tool_result',
+                    tool_use_id: tc.id,
+                    content: JSON.stringify(handlerOut.response),
+                  });
+                }
+
+                // Turn 2 for Anthropic
+                const turn2Res = await executeSafeOperation(
+                  async (signal) => {
+                    return await fetch('https://api.anthropic.com/v1/messages', {
+                      method: 'POST',
+                      headers: {
+                        'Content-Type': 'application/json',
+                        'x-api-key': targetApiKey,
+                        'anthropic-version': '2023-06-01',
+                        'anthropic-dangerous-direct-browser-access': 'true',
+                      },
+                      body: JSON.stringify({
+                        model: targetModel,
+                        max_tokens: 3000,
+                        system: systemInstruction,
+                        messages: [
+                          { role: 'user', content: params.prompt },
+                          { role: 'assistant', content: contentList },
+                          { role: 'user', content: toolResultBlocks },
+                        ],
+                        temperature: Number(params.temperature || 0.7),
+                      }),
+                      signal,
+                    });
+                  },
+                  {
+                    timeoutMs: 25000,
+                    maxRetries: 1,
+                    operationName: 'anthropic_turn2_dispatch',
+                  }
+                );
+
+                if (turn2Res && turn2Res.ok) {
+                  const turn2Data = await turn2Res.json();
+                  const turn2Text = (turn2Data.content || [])
+                    .filter((c: any) => c.type === 'text')
+                    .map((c: any) => c.text)
+                    .join('\n');
+                  const card: AgentExecutionCard = {
+                    id: `card-${Date.now()}`,
+                    prompt: params.prompt,
+                    dialogue: turn2Text || 'Directive executed.',
+                    cardTitle: `${executedTools[0]?.toolName.replace(/_/g, ' ').toUpperCase() || 'OPERATION'} COMPLETE`,
+                    actionCategory: 'Live Telemetry',
+                    steps: [
+                      { label: 'Tool Invoked', detail: executedTools[0]?.toolName || 'Claude Tool Call', status: 'completed' as const },
+                      { label: 'Output Synthesized', detail: executedTools[0]?.resultSummary || 'Telemetry verified', status: 'verified' as const },
+                      { label: 'Ledger Synced', detail: 'Recorded to local mission ledger', status: 'completed' as const },
+                    ],
+                    toolCalls: executedTools,
+                    tokenEstimate: Math.max(64, Math.round((turn2Text || '').length / 4)),
+                    agentName: params.activeAgentName,
+                    themeId: params.themeId,
+                    timestamp: new Date().toISOString(),
+                    hasAttachment: Boolean(params.attachment),
+                  };
+                  return await ensureReportPersistedAndAnnotated(card, params);
+                }
+              }
+
+              const textContent = contentList
                 .filter((c: any) => c.type === 'text')
                 .map((c: any) => c.text)
                 .join('\n');
-              const actionCard = await parseAndExecuteAgentActionTags(textContent, params);
-              if (actionCard) {
-                return actionCard;
-              }
-              return {
+              const card: AgentExecutionCard = {
                 id: `card-${Date.now()}`,
                 prompt: params.prompt,
                 dialogue: textContent || 'Directive executed.',
@@ -5002,101 +5079,27 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
                 timestamp: new Date().toISOString(),
                 hasAttachment: Boolean(params.attachment),
               };
+              return await ensureReportPersistedAndAnnotated(card, params);
             }
           }
-
-          if (llmConfig.providerId === 'ollama') {
-            const endpoint = (llmConfig.endpoint || 'http://localhost:11434').replace(/\/+$/, '');
-            const res = await executeSafeOperation(
-              async (signal) => {
-                return await fetch(`${endpoint}/api/chat`, {
-                  method: 'POST',
-                  headers: {
-                    'Content-Type': 'application/json',
-                    ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-                  },
-                  body: JSON.stringify({
-                    model: llmConfig.modelName || 'llama3',
-                    stream: false,
-                    messages: [
-                      { role: 'system', content: systemInstruction },
-                      { role: 'user', content: params.prompt },
-                    ],
-                  }),
-                  signal,
-                });
-              },
-              {
-                timeoutMs: 20000,
-                maxRetries: 1,
-                operationName: 'ollama_dispatch',
-              }
-            );
-
-            if (res && res.ok) {
-              const data = await res.json();
-              const reply = data.message?.content || 'Directive processed.';
-              const actionCard = await parseAndExecuteAgentActionTags(reply, params);
-              if (actionCard) {
-                return actionCard;
-              }
-              return {
-                id: `card-${Date.now()}`,
-                prompt: params.prompt,
-                dialogue: reply,
-                cardTitle: 'Local Ollama Execution',
-                actionCategory: 'Operations',
-                steps: [
-                  { label: 'Parse Directive', detail: 'Validated Ollama parameters', status: 'completed' as const },
-                  { label: 'Execute Routine', detail: 'Local model inference completed', status: 'verified' as const },
-                  { label: 'Ledger Synced', detail: 'Recorded to local state', status: 'completed' as const },
-                ],
-                toolCalls: [],
-                tokenEstimate: Math.max(48, Math.round(reply.length / 4)),
-                agentName: params.activeAgentName,
-                themeId: params.themeId,
-                timestamp: new Date().toISOString(),
-                hasAttachment: Boolean(params.attachment),
-              };
-            }
-          }
-        } catch {
-          // Graceful fallback on network drop or timeout
+        } catch (err) {
+          console.warn(`[ApiService] ${targetProvider} dispatch failed:`, err);
         }
         return generateLocalHeuristicCard(params);
       }
 
       // Google Gemini Direct Client-Side Execution (Subscription Bearer Token or BYOK Key)
-      const geminiAuth = getGeminiAuthHeadersAndUrl(llmConfig, llmConfig.modelName);
-      const modelName = normalizeGeminiModel(llmConfig.modelName);
+      const geminiAuth = getGeminiAuthHeadersAndUrl(llmConfig, targetModel);
+      const modelName = normalizeGeminiModel(targetModel);
       const geminiUrl = geminiAuth.url;
       const geminiHeaders = geminiAuth.headers;
-
-      // Verify valid authentication before contacting generativelanguage.googleapis.com
-      const hasGeminiKey = Boolean(geminiHeaders['x-goog-api-key']);
-      const hasSubscriptionAuth =
-        geminiAuth.isSubscription &&
-        Boolean(geminiHeaders['Authorization'] || geminiHeaders['x-goog-api-key']);
-
-      if (!hasGeminiKey && !hasSubscriptionAuth) {
-        return {
-          id: `card-${Date.now()}`,
-          prompt: params.prompt,
-          dialogue: `⚠️ **[AUTHENTICATION REQUIRED: No Gemini API Key Detected]**\n\nPlease open **Settings (Gear Icon)** in the Command Center header and either:\n1. Enter your Google AI Studio API key under **API KEY (BYOK)** (persisted to \`pixelops_gemini_api_key\`).\n2. Or sign into your Google Account under **SUBSCRIPTION PLANS** to connect your Google AI Pro Plan.`,
-          cardTitle: 'API KEY / AUTHENTICATION REQUIRED',
-          actionCategory: 'AUTH_REQUIRED',
-          steps: [
-            { label: 'Check Gemini Key', detail: 'No active Google Gemini key found in localStorage or user settings', status: 'completed' as const },
-            { label: 'Halt Execution', detail: 'Awaiting user credentials to prevent unauthenticated failure', status: 'verified' as const },
-            { label: 'Prompt Commander', detail: 'Open Settings modal to configure your API key or Google Account', status: 'queued' as const },
-          ],
-          toolCalls: [],
-          tokenEstimate: 0,
-          agentName: params.activeAgentName,
-          themeId: params.themeId,
-          timestamp: new Date().toISOString(),
-          hasAttachment: Boolean(params.attachment),
-        };
+      if (
+        targetProvider === 'gemini' &&
+        targetApiKey &&
+        !geminiHeaders['x-goog-api-key'] &&
+        !targetApiKey.startsWith('ya29.')
+      ) {
+        geminiHeaders['x-goog-api-key'] = targetApiKey;
       }
 
       const userParts: any[] = [];

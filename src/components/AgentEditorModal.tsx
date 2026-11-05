@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { Cpu, CheckCircle2, AlertTriangle, Key } from 'lucide-react';
 import {
   CrewAgentState,
   SpriteVariant,
@@ -11,6 +12,12 @@ import {
 } from '../context/CrewContext';
 import { useTheme } from '../context/ThemeContext';
 import { AgentSpriteFigure } from './SpriteCanvas';
+import {
+  SUPPORTED_VAULT_PROVIDERS,
+  hasProviderApiKey,
+  getProviderDisplayName,
+} from '../services/BYOKVault';
+import { AgentProvider } from '../services/agentStore';
 
 interface AgentEditorModalProps {
   agent: CrewAgentState | null;
@@ -24,6 +31,8 @@ interface AgentEditorModalProps {
     systemPrompt: string;
     assignedTools: string[];
     spriteVariant: SpriteVariant;
+    provider?: AgentProvider;
+    model?: string;
   }) => void;
   onClearMemory: () => void;
 }
@@ -77,6 +86,8 @@ export const AgentEditorModal: React.FC<AgentEditorModalProps> = ({
   const [systemPrompt, setSystemPrompt] = useState('');
   const [assignedTools, setAssignedTools] = useState<string[]>([]);
   const [spriteVariant, setSpriteVariant] = useState<SpriteVariant>('trenchcoat');
+  const [provider, setProvider] = useState<AgentProvider>('gemini');
+  const [model, setModel] = useState<string>('gemini-3.8-flash');
   const [activeTab, setActiveTab] = useState<'config' | 'memory'>('config');
 
   useEffect(() => {
@@ -88,6 +99,8 @@ export const AgentEditorModal: React.FC<AgentEditorModalProps> = ({
       setSystemPrompt(agent.systemPrompt || '');
       setAssignedTools(agent.assignedTools || []);
       setSpriteVariant(agent.spriteVariant || 'trenchcoat');
+      setProvider((agent.provider as AgentProvider) || 'gemini');
+      setModel(agent.model || 'gemini-3.8-flash');
       setActiveTab('config');
     }
   }, [agent, isOpen]);
@@ -112,6 +125,13 @@ export const AgentEditorModal: React.FC<AgentEditorModalProps> = ({
     setAssignedTools(profile.recommendedTools);
   };
 
+  const handleSelectProvider = (newProvider: AgentProvider) => {
+    playBeep('tap');
+    setProvider(newProvider);
+    const meta = SUPPORTED_VAULT_PROVIDERS[newProvider];
+    setModel(meta?.defaultModel || 'gemini-3.8-flash');
+  };
+
   const handleFormSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     playBeep('complete');
@@ -123,10 +143,14 @@ export const AgentEditorModal: React.FC<AgentEditorModalProps> = ({
       systemPrompt: systemPrompt.trim(),
       assignedTools,
       spriteVariant,
+      provider,
+      model,
     });
     onClose();
   };
 
+  const hasVaultKey = hasProviderApiKey(provider);
+  const selectedProviderMeta = SUPPORTED_VAULT_PROVIDERS[provider] || SUPPORTED_VAULT_PROVIDERS.gemini;
   const selectedSpriteMeta = SPRITE_VARIANTS[spriteVariant] || SPRITE_VARIANTS.trenchcoat;
   const selectedRoleMeta = FUNCTIONAL_ROLE_PROFILES[functionalRole] || FUNCTIONAL_ROLE_PROFILES.general_assistant;
 
@@ -226,6 +250,95 @@ export const AgentEditorModal: React.FC<AgentEditorModalProps> = ({
           <form onSubmit={handleFormSubmit} className="p-4 sm:p-5 flex flex-col gap-4 max-h-[72vh] overflow-y-auto">
             {activeTab === 'config' ? (
               <>
+                {/* 0. Operative AI Provider & Model Gateway Customization */}
+                <div className="p-3 bg-[#110e0b] border border-[#785732] rounded-sm">
+                  <div className="flex flex-wrap items-center justify-between gap-1 mb-2">
+                    <label className="text-[11px] text-[#e59838] uppercase font-bold flex items-center gap-1.5">
+                      <Cpu size={14} className="text-[#e59838]" />
+                      <span>◈ Assigned AI Provider & Model Gateway</span>
+                    </label>
+                    <span className="text-[10px] text-[#b8a690]">
+                      Customize which LLM powers this operative on the fly
+                    </span>
+                  </div>
+
+                  {/* Provider Selector Cards */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+                    {(Object.keys(SUPPORTED_VAULT_PROVIDERS) as AgentProvider[]).map((pId) => {
+                      const pMeta = SUPPORTED_VAULT_PROVIDERS[pId];
+                      const isSelected = provider === pId;
+                      const hasKey = hasProviderApiKey(pId);
+                      return (
+                        <button
+                          key={pId}
+                          type="button"
+                          onClick={() => handleSelectProvider(pId)}
+                          className={`p-2 border text-left cursor-pointer transition-all flex flex-col justify-between gap-1 rounded-xs ${
+                            isSelected
+                              ? 'bg-[#281a0e] border-[#e59838] text-white shadow-[0_0_10px_rgba(229,152,56,0.3)]'
+                              : 'bg-[#18130e] border-[#4a351d] text-[#b8a690] hover:border-[#785732]'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between text-[10px] font-bold">
+                            <span className={isSelected ? 'text-[#e59838]' : 'text-[#f3ead8]'}>
+                              {pMeta.name.split(' ')[0]}
+                            </span>
+                            <span
+                              className={`w-2 h-2 rounded-full ${
+                                hasKey ? 'bg-emerald-400' : 'bg-amber-400'
+                              }`}
+                              title={hasKey ? 'Key Configured in Vault' : 'Key Missing in Vault'}
+                            />
+                          </div>
+                          <div className="text-[9px] text-[#8c7a65] font-mono-tabular">
+                            {pMeta.badge}
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Model Selector Dropdown & Key Status */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-[#3d2b18] items-center">
+                    <div>
+                      <label className="block text-[10px] text-[#9c8265] uppercase mb-1 font-semibold">
+                        Model Architecture
+                      </label>
+                      <select
+                        value={model}
+                        onChange={(e) => {
+                          playBeep('tap');
+                          setModel(e.target.value);
+                        }}
+                        className="w-full px-2.5 py-1.5 bg-[#090807] border border-[#5e4326] focus:border-[#e59838] text-[#f3ead8] text-xs font-mono-tabular outline-none cursor-pointer"
+                      >
+                        {selectedProviderMeta.availableModels.map((m) => (
+                          <option key={m} value={m} className="bg-[#121110] text-[#f3ead8]">
+                            {m} {m === selectedProviderMeta.defaultModel ? '(Default)' : ''}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div className="flex flex-col justify-center">
+                      <span className="text-[10px] text-[#9c8265] uppercase font-semibold mb-1">
+                        Credentials Status
+                      </span>
+                      {hasVaultKey ? (
+                        <div className="flex items-center gap-1.5 text-xs text-emerald-400 font-mono-tabular bg-emerald-950/30 border border-emerald-800/40 px-2 py-1 rounded-xs">
+                          <CheckCircle2 size={13} className="shrink-0" />
+                          <span>Key linked ({selectedProviderMeta.storageKey})</span>
+                        </div>
+                      ) : (
+                        <div className="flex items-center gap-1.5 text-[11px] text-amber-400 font-mono-tabular bg-amber-950/40 border border-amber-800/60 px-2 py-1 rounded-xs">
+                          <AlertTriangle size={13} className="shrink-0" />
+                          <span>No key in Vault! Open Settings [⚙️] to configure.</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
                 {/* 1. Functional AI Capability / Role Preset Selector */}
                 <div className="p-3 bg-[#0a0d13] border border-[#2b3a4a] rounded-sm">
                   <div className="flex flex-wrap items-center justify-between gap-1 mb-2">

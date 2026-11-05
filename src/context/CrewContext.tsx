@@ -577,6 +577,8 @@ export interface CrewAgentState {
   missionsCompleted: number;
   clearanceLevel: ClearanceLevelNumber;
   serviceRibbons: string[];
+  provider?: 'gemini' | 'anthropic' | 'openai' | 'groq';
+  model?: string;
 }
 
 export interface RecruitedAgentPayload {
@@ -595,6 +597,8 @@ export interface RecruitedAgentPayload {
   missionsCompleted?: number;
   clearanceLevel?: ClearanceLevelNumber;
   serviceRibbons?: string[];
+  provider?: 'gemini' | 'anthropic' | 'openai' | 'groq';
+  model?: string;
 }
 
 interface CrewContextValue {
@@ -616,6 +620,8 @@ interface CrewContextValue {
       spriteVariant?: SpriteVariant;
       xp?: number;
       missionsCompleted?: number;
+      provider?: 'gemini' | 'anthropic' | 'openai' | 'groq';
+      model?: string;
     }
   ) => void;
   addAgentMemory: (id: string, entry: { prompt: string; summary: string }) => void;
@@ -630,6 +636,8 @@ interface CrewContextValue {
     spriteVariant: SpriteVariant;
     currentRoom: RoomId;
     assignedTools?: string[];
+    provider?: 'gemini' | 'anthropic' | 'openai' | 'groq';
+    model?: string;
   }) => string;
   dismissAgent: (id: string) => void;
   awardAgentXp: (
@@ -701,6 +709,8 @@ interface StoredAgentCustomization {
   missionsCompleted?: number;
   clearanceLevel?: ClearanceLevelNumber;
   serviceRibbons?: string[];
+  provider?: 'gemini' | 'anthropic' | 'openai' | 'groq';
+  model?: string;
 }
 
 const loadStoredCustomizations = (): Record<string, StoredAgentCustomization> => {
@@ -818,6 +828,8 @@ export const CrewProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const missionsCompleted = typeof saved.missionsCompleted === 'number' ? saved.missionsCompleted : 0;
       const clearanceLevel = calculateClearanceLevel(xp);
       const serviceRibbons = Array.isArray(saved.serviceRibbons) ? saved.serviceRibbons : [];
+      const provider = (saved.provider as 'gemini' | 'anthropic' | 'openai' | 'groq') || 'gemini';
+      const model = saved.model || 'gemini-3.8-flash';
 
       return {
         id: profile.id,
@@ -838,6 +850,8 @@ export const CrewProvider: React.FC<{ children: React.ReactNode }> = ({ children
         missionsCompleted,
         clearanceLevel,
         serviceRibbons,
+        provider,
+        model,
       };
     });
   }, [theme.agents, customMap]);
@@ -854,6 +868,8 @@ export const CrewProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const missionsCompleted = typeof rec.missionsCompleted === 'number' ? rec.missionsCompleted : 0;
       const clearanceLevel = calculateClearanceLevel(xp);
       const serviceRibbons = Array.isArray(rec.serviceRibbons) ? rec.serviceRibbons : [];
+      const provider = (rec.provider as 'gemini' | 'anthropic' | 'openai' | 'groq') || 'gemini';
+      const model = rec.model || 'gemini-3.8-flash';
 
       return {
         id: rec.id,
@@ -874,6 +890,8 @@ export const CrewProvider: React.FC<{ children: React.ReactNode }> = ({ children
         missionsCompleted,
         clearanceLevel,
         serviceRibbons,
+        provider,
+        model,
       };
     });
   }, [recruitedAgents, theme.agents.length]);
@@ -964,6 +982,10 @@ export const CrewProvider: React.FC<{ children: React.ReactNode }> = ({ children
         systemPrompt?: string;
         assignedTools?: string[];
         spriteVariant?: SpriteVariant;
+        xp?: number;
+        missionsCompleted?: number;
+        provider?: 'gemini' | 'anthropic' | 'openai' | 'groq';
+        model?: string;
       }
     ) => {
       if (id.startsWith('rec_')) {
@@ -1053,6 +1075,8 @@ export const CrewProvider: React.FC<{ children: React.ReactNode }> = ({ children
       spriteVariant: SpriteVariant;
       currentRoom: RoomId;
       assignedTools?: string[];
+      provider?: 'gemini' | 'anthropic' | 'openai' | 'groq';
+      model?: string;
     }): string => {
       const newId = `rec_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`;
       const defaultStationByRoom: Record<RoomId, string> = {
@@ -1080,6 +1104,8 @@ export const CrewProvider: React.FC<{ children: React.ReactNode }> = ({ children
         spriteVariant: payload.spriteVariant,
         currentRoom: payload.currentRoom,
         preferredStationId: defaultStationByRoom[payload.currentRoom] || 'war_center_desk',
+        provider: payload.provider || 'gemini',
+        model: payload.model || 'gemini-3.8-flash',
       };
       setRecruitedAgents((prev) => [...prev, newRecruited]);
       return newId;

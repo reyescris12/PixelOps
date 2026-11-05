@@ -88,6 +88,8 @@ import {
 } from './services/AmbientAudioService';
 
 import { AgentEditorModal } from './components/AgentEditorModal';
+import { hasProviderApiKey, SUPPORTED_VAULT_PROVIDERS } from './services/BYOKVault';
+import { saveAgentModelConfig } from './services/agentStore';
 import { NightShiftModal } from './components/NightShiftModal';
 import { loadNightShiftNotifications, runPendingNightShiftTasks } from './services/NightShiftService';
 import { backgroundWorkerEngine } from './services/WorkerService';
@@ -1034,6 +1036,8 @@ const CommandCenterContent: React.FC = () => {
         enabledPlugins,
         attachment,
         temperature: preferences.temperature,
+        agentProvider: routedCrewMember?.provider,
+        agentModel: routedCrewMember?.model,
         // When Gemini returns a functionCall, immediately walk the active agent to the target room
         onFunctionCallTriggered: (info) => {
           handleMoveAgentToRoom(
@@ -1630,6 +1634,72 @@ const CommandCenterContent: React.FC = () => {
                             {variantMeta.label} ({variantMeta.gearOverlayLabel})
                           </span>
                         </p>
+
+                        {/* Assigned Model & Provider Pill / Quick Selector */}
+                        <div className="flex flex-wrap items-center gap-2 mt-1.5 pt-1 border-t border-[#2b221a]">
+                          <span className="text-[10px] text-[#9c8265] uppercase font-semibold">
+                            AI Model:
+                          </span>
+                          <span
+                            className={`text-[10px] font-mono-tabular font-bold px-1.5 py-0.5 rounded-xs border flex items-center gap-1.5 ${
+                              hasProviderApiKey((crewMember.provider as any) || 'gemini')
+                                ? 'bg-emerald-950/40 text-emerald-300 border-emerald-800/50'
+                                : 'bg-amber-950/40 text-amber-300 border-amber-800/50'
+                            }`}
+                          >
+                            <span
+                              className={`w-1.5 h-1.5 rounded-full ${
+                                hasProviderApiKey((crewMember.provider as any) || 'gemini')
+                                  ? 'bg-emerald-400'
+                                  : 'bg-amber-400'
+                              }`}
+                            />
+                            <span className="uppercase text-[9px] text-[#b8a690]">
+                              {crewMember.provider || 'gemini'}:
+                            </span>
+                            <span>{crewMember.model || 'gemini-3.8-flash'}</span>
+                          </span>
+
+                          {/* Quick Provider Switcher Buttons */}
+                          <div className="flex items-center gap-1">
+                            {(['gemini', 'anthropic', 'openai', 'groq'] as const).map((prov) => {
+                              const isCurrent = (crewMember.provider || 'gemini') === prov;
+                              const pHasKey = hasProviderApiKey(prov);
+                              return (
+                                <button
+                                  key={prov}
+                                  type="button"
+                                  onClick={() => {
+                                    playBeep('tap');
+                                    const defaultM =
+                                      SUPPORTED_VAULT_PROVIDERS[prov]?.defaultModel || 'gemini-3.8-flash';
+                                    updateAgentConfig(crewMember.id, {
+                                      provider: prov,
+                                      model: defaultM,
+                                    });
+                                    saveAgentModelConfig(crewMember.id, prov, defaultM);
+                                  }}
+                                  className={`px-1.5 py-0.2 text-[9px] font-mono-tabular rounded-xs border cursor-pointer transition-colors ${
+                                    isCurrent
+                                      ? 'bg-[#e59838] text-[#121110] font-bold border-[#e59838]'
+                                      : 'bg-[#121110] text-[#9c8265] border-[#3d2b18] hover:text-[#f3ead8]'
+                                  }`}
+                                  title={`Switch ${crewMember.customName} to ${prov.toUpperCase()} (${
+                                    pHasKey ? 'Key Available in Vault' : 'Key Missing in Settings'
+                                  })`}
+                                >
+                                  {prov === 'gemini'
+                                    ? 'Gemini'
+                                    : prov === 'anthropic'
+                                    ? 'Claude'
+                                    : prov === 'openai'
+                                    ? 'GPT-4o'
+                                    : 'Groq'}
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
                       </div>
                     </div>
 
@@ -2933,6 +3003,9 @@ const CommandCenterContent: React.FC = () => {
         onSave={(updates) => {
           if (editingAgentId) {
             updateAgentConfig(editingAgentId, updates);
+            if (updates.provider && updates.model) {
+              saveAgentModelConfig(editingAgentId, updates.provider, updates.model);
+            }
           }
         }}
         onClearMemory={() => {

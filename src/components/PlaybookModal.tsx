@@ -131,7 +131,17 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
         targetName: 'Primary Target',
         targetScope: 'Operational scope',
       };
-      setTargetName(current.targetName || '');
+      let initialTarget = current.targetName || '';
+      if (
+        playbook.id === 'triage_gmail' &&
+        (!initialTarget ||
+          initialTarget.toLowerCase().startsWith('commander_') ||
+          initialTarget.toLowerCase().startsWith('conn_') ||
+          /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(initialTarget))
+      ) {
+        initialTarget = 'is:unread';
+      }
+      setTargetName(initialTarget);
       setTargetScope(current.targetScope || '');
       setWatchCondition(current.watchCondition || '');
       setRecipientEmail(current.recipientEmail || '');
@@ -186,8 +196,19 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
   };
 
   const handleStartSweep = () => {
+    let cleanedTargetName = targetName.trim();
+    if (
+      playbook.id === 'triage_gmail' &&
+      (!cleanedTargetName ||
+        cleanedTargetName.toLowerCase().startsWith('commander_') ||
+        cleanedTargetName.toLowerCase().startsWith('conn_') ||
+        /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(cleanedTargetName))
+    ) {
+      cleanedTargetName = 'is:unread';
+    }
+
     const finalTarget: UserPlaybookTarget = {
-      targetName: targetName.trim() || 'General Target Focus',
+      targetName: cleanedTargetName || (playbook.id === 'triage_gmail' ? 'is:unread' : 'General Target Focus'),
       targetScope: targetScope.trim() || 'General Intelligence Scope',
       watchCondition: watchCondition.trim() || undefined,
       recipientEmail: recipientEmail.trim() || undefined,
@@ -427,15 +448,51 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
 
                   <div className="space-y-1">
                     <label className="text-[10px] uppercase font-bold text-[#94a3b8]">
-                      Target Name, Organization, Stack, or Entity:
+                      {playbook.id === 'triage_gmail'
+                        ? 'Gmail Search Filter / Query (e.g. is:unread, label:important, from:clients):'
+                        : playbook.id === 'calendar_brief'
+                        ? 'Calendar Schedule Scope / Meeting Window:'
+                        : playbook.id === 'sync_github' || playbook.id === 'tech_audit'
+                        ? 'GitHub Repository (owner/repo):'
+                        : 'Target Name, Organization, Stack, or Entity:'}
                     </label>
                     <input
                       type="text"
                       value={targetName}
                       onChange={(e) => setTargetName(e.target.value)}
-                      placeholder={playbook.targetPlaceholder}
+                      placeholder={
+                        playbook.id === 'triage_gmail'
+                          ? 'is:unread (leave blank for default)'
+                          : playbook.targetPlaceholder
+                      }
                       className="w-full px-3 py-1.5 bg-[#070b10] border border-[#2c3d54] text-xs text-[#f3ead8] outline-none focus:border-[#e59838] transition-colors"
                     />
+                    {playbook.id === 'triage_gmail' && (
+                      <div className="flex flex-wrap items-center gap-1.5 pt-1 text-[10px] text-[#94a3b8]">
+                        <span className="text-[#8c7a65]">Quick Filters:</span>
+                        <button
+                          type="button"
+                          onClick={() => setTargetName('is:unread')}
+                          className="px-1.5 py-0.5 bg-[#142131] hover:bg-[#1e344d] text-[#38bdf8] border border-[#2d425f] text-[9px] cursor-pointer"
+                        >
+                          is:unread
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setTargetName('is:unread label:important')}
+                          className="px-1.5 py-0.5 bg-[#142131] hover:bg-[#1e344d] text-[#38bdf8] border border-[#2d425f] text-[9px] cursor-pointer"
+                        >
+                          label:important
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setTargetName('from:clients OR subject:urgent')}
+                          className="px-1.5 py-0.5 bg-[#142131] hover:bg-[#1e344d] text-[#38bdf8] border border-[#2d425f] text-[9px] cursor-pointer"
+                        >
+                          subject:urgent
+                        </button>
+                      </div>
+                    )}
                   </div>
 
                   <div className="space-y-1">

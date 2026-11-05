@@ -26,6 +26,7 @@ import {
   getLocalConnectedAccounts,
   initiateAppConnection,
   normalizeAppSlug,
+  formatComposioError,
 } from '../services/ComposioService';
 import {
   executeFunctionCallHandler,
@@ -1399,14 +1400,26 @@ async function runTriageGmailPipeline(
     } catch {}
   }
 
-  onStageUpdate?.(1, `Fetch Unread Inbox: Pulling messages matching criteria "${target.targetName}"...`);
+  // Sanitize search query: if targetName is an entity ID, UUID, or empty, default to 'is:unread'
+  let rawQuery = (target.targetName || '').trim();
+  if (
+    !rawQuery ||
+    rawQuery.toLowerCase().startsWith('commander_') ||
+    rawQuery.toLowerCase().startsWith('conn_') ||
+    /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(rawQuery)
+  ) {
+    rawQuery = 'is:unread';
+  }
+
+  onStageUpdate?.(1, `Fetch Unread Inbox: Pulling messages matching criteria "${rawQuery}"...`);
   let rawMessages: any[] = [];
   let queryError: string | null = null;
   if (gmailConnected) {
     try {
       const res = await executeComposioAction('GMAIL_LIST_MESSAGES', {
-        query: target.targetName || 'is:unread',
-        max_results: 5,
+        query: rawQuery,
+        q: rawQuery,
+        max_results: 10,
       });
       if (res.successful && res.data) {
         if (Array.isArray(res.data)) {
@@ -1423,10 +1436,10 @@ async function runTriageGmailPipeline(
           rawMessages = res.data.data;
         }
       } else if (!res.successful) {
-        queryError = res.error || 'Failed to list messages from Gmail.';
+        queryError = formatComposioError(res.error) || 'Failed to list messages from Gmail.';
       }
     } catch (err: any) {
-      queryError = err?.message || 'Error executing Gmail search.';
+      queryError = formatComposioError(err) || 'Error executing Gmail search.';
     }
   }
 
@@ -1470,12 +1483,12 @@ async function runTriageGmailPipeline(
         createdAt: new Date().toISOString(),
       });
     });
-  } else if (gmailConnected) {
-    // Gmail is verified connected: Inbox Zero
+  } else if (gmailConnected && !queryError) {
+    // True verified Inbox Zero
     createdTasks.push(
       {
         id: `task_inbox_${Date.now()}_1`,
-        title: `[INBOX ZERO VERIFIED] All incoming communications clear for "${target.targetName || 'is:unread'}"`,
+        title: `[INBOX ZERO VERIFIED] All incoming communications clear for "${rawQuery}"`,
         source: 'gmail',
         sourceDetail: `Gmail Account: ${matchedGmailAccount?.userUuid || matchedGmailAccount?.id || 'Connected'}`,
         priority: 'low',
@@ -1486,6 +1499,30 @@ async function runTriageGmailPipeline(
       {
         id: `task_inbox_${Date.now()}_2`,
         title: `[COMMUNICATION MONITOR] Autonomous watch active for incoming thread spikes`,
+        source: 'gmail',
+        sourceDetail: 'Command Operations Protocol',
+        priority: 'medium',
+        status: 'pending',
+        assignedAgent: 'Agent Vance',
+        createdAt: new Date().toISOString(),
+      }
+    );
+  } else if (gmailConnected && queryError) {
+    // Query telemetry issue
+    createdTasks.push(
+      {
+        id: `task_inbox_${Date.now()}_1`,
+        title: `[TELEMETRY ALERT] Investigate Gmail API error: ${queryError.slice(0, 60)}`,
+        source: 'gmail',
+        sourceDetail: `Gmail Account: ${matchedGmailAccount?.userUuid || matchedGmailAccount?.id || 'Connected'}`,
+        priority: 'high',
+        status: 'pending',
+        assignedAgent: 'Agent Vance',
+        createdAt: new Date().toISOString(),
+      },
+      {
+        id: `task_inbox_${Date.now()}_2`,
+        title: `[INTEGRATION SYNC] Re-authenticate or configure BYOK Composio API Key in Armory`,
         source: 'gmail',
         sourceDetail: 'Command Operations Protocol',
         priority: 'medium',
@@ -1531,7 +1568,7 @@ async function runTriageGmailPipeline(
   const defaultDossier = `---
 title: "Strategy Board Triage: Gmail Ingestion Report"
 operative: "Agent Vance (Command Operations Chief)"
-target: "${target.targetName}"
+target: "${rawQuery}"
 date: "${dateStr}"
 threat_level: "${messages.length > 0 ? 'BRAVO-ELEVATED' : 'CHARLIE-NOMINAL'}"
 sources_consulted:
@@ -1539,13 +1576,15 @@ ${sourcesConsulted.map((s) => `  - "${s}"`).join('\n')}
 ---
 
 # Strategy Board Triage: Gmail Ingestion Report
-**Criteria Filter:** ${target.targetName}
+**Criteria Filter:** ${rawQuery}
 **Triage Focus:** ${target.targetScope}
 **Date:** ${dateStr}
 **Operative:** Agent Vance (Command Operations Chief)
 **Connection Status:** ${
   gmailConnected
-    ? `CONNECTED & VERIFIED (${matchedGmailAccount?.userUuid || matchedGmailAccount?.id || 'Active Account'})`
+    ? queryError
+      ? `CONNECTED (Telemetry Warning: ${queryError})`
+      : `CONNECTED & VERIFIED (${matchedGmailAccount?.userUuid || matchedGmailAccount?.id || 'Active Account'})`
     : 'AWAITING OAUTH AUTHORIZATION'
 }
 
@@ -1555,8 +1594,10 @@ ${sourcesConsulted.map((s) => `  - "${s}"`).join('\n')}
 ${
   gmailConnected
     ? messages.length > 0
-      ? `Scanned user inbox for query "${target.targetName}". Extracted **${createdTasks.length}** live action items and routed them directly to the active Strategy Board task queue.`
-      : `Scanned user inbox for query "${target.targetName}". Zero unread messages or pending blockers detected (Inbox Zero verified on connected account). Operational continuity confirmed clear.`
+      ? `Scanned user inbox for query "${rawQuery}". Extracted **${createdTasks.length}** live action items and routed them directly to the active Strategy Board task queue.`
+      : queryError
+      ? `Gmail integration is connected, but the inbox query encountered a telemetry warning: "${queryError}". Re-sync the account in the Toolkits tab or ensure your Composio API key is configured.`
+      : `Scanned user inbox for query "${rawQuery}". Exactly 0 unread messages found matching scope (Inbox Zero verified on connected account). Operational continuity confirmed clear.`
     : `Gmail integration is awaiting live user authentication. Generated an Executive Comms Triage Architecture Framework with **${createdTasks.length}** actionable queue items routed directly to your Strategy Board. To link your live inbox in 1 click, use the Connect button in this Playbook or the Armory Toolkits tab.`
 }
 
@@ -1574,7 +1615,9 @@ ${
   messages.length > 0
     ? messages.map((m: any, i: number) => `${i + 1}. **From:** ${m.from} | **Subject:** ${m.subject}\n   **Snippet:** ${m.snippet}`).join('\n\n')
     : gmailConnected
-    ? `- **Filter Telemetry:** Query \`${target.targetName}\` executed across authenticated account (${matchedGmailAccount?.userUuid || matchedGmailAccount?.id || 'Active'}).\n- **Result:** 0 unread messages found matching scope.`
+    ? queryError
+      ? `- **Filter Telemetry:** Query \`${rawQuery}\` executed.\n- **Warning:** ${queryError}`
+      : `- **Filter Telemetry:** Query \`${rawQuery}\` executed across authenticated account (${matchedGmailAccount?.userUuid || matchedGmailAccount?.id || 'Active'}).\n- **Result:** 0 unread messages found matching scope.`
     : `### Executive Comms Architecture Matrix:
 - **Tier 1 (P0 - Immediate Response):** Inbound client requests, billing/security alerts, blocked production incidents. SLA: < 1 hour.
 - **Tier 2 (P1 - Same Day):** Internal team questions, pull request reviews, vendor syncs. SLA: < 4 hours.
@@ -1598,29 +1641,31 @@ ${
   const aiPrompt = `Generate a classified Gmail Triage and Strategy Board report conforming strictly to the Global Autonomous Intelligence Protocol.
 PERSONA: Agent Vance (Command Operations Chief) - Structured, authoritative, concise, zero fluff.
 
-Filter: ${target.targetName}
+Filter: ${rawQuery}
 Scope: ${target.targetScope}
 Date: ${dateStr}
 Connected: ${gmailConnected}
 Account: ${matchedGmailAccount?.userUuid || matchedGmailAccount?.id || (gmailConnected ? 'Active Account' : 'None')}
 Messages Extracted: ${JSON.stringify(messages.slice(0, 5))}
 Tasks Generated: ${JSON.stringify(createdTasks)}
-Query Telemetry: ${queryError ? `Telemetry Warning: ${queryError}` : 'Live inbox telemetry retrieved.'}
+Query Telemetry: ${queryError ? `Telemetry Warning: ${queryError}` : `Live inbox telemetry retrieved. Query "${rawQuery}" returned ${messages.length} messages.`}
 
 Instructions:
-1. Synthesize an executive communications triage dossier for "${target.targetName}".
-2. If Connected is true, DO NOT report that authentication is missing or that the inbox is dark. Detail the extracted messages (or confirm Inbox Zero if zero messages are present).
-3. If Connected is false, detail the Executive Triage Protocol and note that OAuth authorization is pending.
-4. List the Strategy Board tasks in Section 1.
-5. Detail the operational impact and execution next steps in Section 3.
-6. Begin immediately with valid YAML frontmatter. Pure Markdown, no conversational preamble.`;
+1. Synthesize an executive communications triage dossier for "${rawQuery}".
+2. Target: Must be "${rawQuery}". DO NOT write internal commander IDs or UUIDs as the target.
+3. If Connected is true and zero messages were found without telemetry warnings, confirm Inbox Zero.
+4. If a telemetry warning occurred, describe it concisely and suggest re-syncing in Toolkits.
+5. If Connected is false, detail the Executive Triage Protocol and note that OAuth authorization is pending.
+6. List the Strategy Board tasks in Section 1.
+7. Detail the operational impact and execution next steps in Section 3.
+8. Begin immediately with valid YAML frontmatter. Pure Markdown, no conversational preamble.`;
 
   const finalDossier = await generateAIEnhancedDossier(aiPrompt, defaultDossier, 'Agent Vance');
   await writeWorkspaceFile(targetPath, finalDossier, 'markdown', 'intel');
 
   await appendCommandLedgerEntry({
     timestamp: new Date().toISOString(),
-    command_input: `[⚡ TRIAGE GMAIL: ${target.targetName}]`,
+    command_input: `[⚡ TRIAGE GMAIL: ${rawQuery}]`,
     involved_agent: 'Agent Vance',
     tool_used: 'intelligence_playbook',
     result_summary: `Gmail triage completed. Ingested ${createdTasks.length} tasks to Strategy Board.`,
@@ -1630,7 +1675,7 @@ Instructions:
   return {
     playbookId: 'triage_gmail',
     title: '[⚡ TRIAGE GMAIL TO TASKS]',
-    targetName: target.targetName,
+    targetName: rawQuery,
     targetScope: target.targetScope,
     assignedOperativeName: 'Agent Vance',
     assignedRoom: 'war_room',
@@ -1638,7 +1683,7 @@ Instructions:
     dossierContent: finalDossier,
     stagesCompleted: [
       { stage: 'Composio Auth Check', detail: gmailConnected ? 'Gmail connected' : 'Auth requested', status: 'verified' },
-      { stage: 'Fetch Unread Inbox', detail: `Ingested messages matching ${target.targetName}`, status: 'verified' },
+      { stage: 'Fetch Unread Inbox', detail: `Ingested messages matching ${rawQuery}`, status: 'verified' },
       { stage: 'Extract Action Items', detail: `Created ${createdTasks.length} Strategy Board tasks`, status: 'verified' },
       { stage: 'VFS Action Log', detail: `Archived summary to ${targetPath}`, status: 'completed' },
     ],

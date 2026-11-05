@@ -600,6 +600,30 @@ async function callComposioDirect(
 /**
  * Core Proxy Request Dispatcher with 8s Circuit Breaker
  */
+export function formatComposioError(err: any): string {
+  if (!err) return '';
+  if (typeof err === 'string') {
+    return err === '[object Object]' ? 'API parameter or communication fault' : err;
+  }
+  if (typeof err.message === 'string' && err.message.trim() && err.message !== '[object Object]') {
+    return err.message.trim();
+  }
+  if (typeof err.error === 'string' && err.error.trim()) {
+    return err.error.trim();
+  }
+  if (typeof err.error === 'object' && err.error !== null) {
+    return formatComposioError(err.error);
+  }
+  if (typeof err.msg === 'string' && err.msg.trim()) return err.msg.trim();
+  if (typeof err.details === 'string' && err.details.trim()) return err.details.trim();
+  try {
+    const s = JSON.stringify(err);
+    return s === '{}' ? 'Unknown provider response' : s;
+  } catch {
+    return String(err);
+  }
+}
+
 async function callComposioProxy(
   endpoint: string,
   method: string = 'GET',
@@ -670,7 +694,8 @@ async function callComposioProxy(
       } catch {
         parsedError = { message: errorText || `HTTP ${res.status}` };
       }
-      throw new Error(parsedError.message || parsedError.error || `Composio proxy error (${res.status})`);
+      const cleanMessage = formatComposioError(parsedError) || `Composio proxy error (${res.status})`;
+      throw new Error(cleanMessage);
     }
 
     if (!contentType.includes('application/json')) {
@@ -2255,11 +2280,22 @@ export async function executeComposioAction(
 
   // Parameter normalizations
   if (normalizedAction.includes('GMAIL')) {
-    if (actionParams.query && !actionParams.q) {
-      actionParams.q = actionParams.query;
-    } else if (actionParams.q && !actionParams.query) {
-      actionParams.query = actionParams.q;
+    let qStr = String(actionParams.query || actionParams.q || '').trim();
+    if (
+      !qStr ||
+      qStr.toLowerCase().startsWith('commander_') ||
+      qStr.toLowerCase().startsWith('conn_') ||
+      /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(qStr)
+    ) {
+      qStr = 'is:unread';
     }
+
+    actionParams.query = qStr;
+    actionParams.q = qStr;
+    const maxCount = Number(actionParams.max_results || actionParams.maxResults || 5);
+    actionParams.max_results = maxCount;
+    actionParams.maxResults = maxCount;
+
     if (actionParams.recipient_email && !actionParams.to) {
       actionParams.to = actionParams.recipient_email;
     } else if (actionParams.to && !actionParams.recipient_email) {
@@ -2354,7 +2390,7 @@ export async function executeComposioAction(
   } else if (normalizedAction === 'SLACK_GET_CHANNEL_HISTORY') {
     actionsToTry.push('SLACK_CONVERSATIONS_HISTORY');
   } else if (normalizedAction === 'GMAIL_LIST_MESSAGES') {
-    actionsToTry.push('GMAIL_LIST_MAIL', 'GMAIL_USERS_MESSAGES_LIST');
+    actionsToTry.push('GMAIL_FETCH_EMAILS', 'GMAIL_LIST_MAIL', 'GMAIL_USERS_MESSAGES_LIST', 'GMAIL_GET_ALL_MESSAGES');
   } else if (normalizedAction === 'GMAIL_GET_MESSAGE') {
     actionsToTry.push('GMAIL_USERS_MESSAGES_GET');
   } else if (normalizedAction === 'GOOGLECALENDAR_LIST_EVENTS') {
@@ -2420,10 +2456,11 @@ export async function executeComposioAction(
     }
   }
 
-  console.error(`[COMPOSIO EXECUTION ALL ALIASES FAILED] Tool: "${actionName}" | Normalized: "${normalizedAction}" | Error:`, lastError?.message || lastError);
+  const cleanErrMsg = formatComposioError(lastError) || 'Composio execution failed.';
+  console.error(`[COMPOSIO EXECUTION ALL ALIASES FAILED] Tool: "${actionName}" | Normalized: "${normalizedAction}" | Error:`, cleanErrMsg);
   return {
     successful: false,
-    error: lastError?.message || 'Composio execution failed.',
+    error: cleanErrMsg,
     actionName,
     executedAt: new Date().toISOString(),
   };

@@ -35,6 +35,7 @@ import {
 } from './engine/moduleRegistry';
 import { TerminalWindow } from './components/TerminalWindow';
 import { SettingsModal } from './components/SettingsModal';
+import { loadLLMProviderConfig, getLLMAuthInfo } from './services/LLMProviderService';
 import { ThemeSettings } from './components/ThemeSettings';
 import { RetroErrorModal } from './components/RetroErrorModal';
 import { PWAInstallButton, OfflineBanner } from './components/PWAInstallButton';
@@ -2380,6 +2381,36 @@ const CommandCenterContent: React.FC = () => {
               )}
               <span>]</span>
             </button>
+
+            {/* AI Subscription / Connected Plan HUD Pill */}
+            {(() => {
+              const authInfo = getLLMAuthInfo(loadLLMProviderConfig());
+              const isGoogle = authInfo.badge.includes('GOOGLE');
+              return (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsSettingsOpen(true);
+                    playBeep('tap');
+                  }}
+                  className={`px-2 py-0.5 border font-mono-tabular text-xs flex items-center gap-1.5 cursor-pointer transition-colors ${
+                    authInfo.isConnected
+                      ? isGoogle
+                        ? 'bg-[#0b1f33] hover:bg-[#12304d] border-[#38bdf8] text-[#7dd3fc]'
+                        : 'bg-[#0f291e] hover:bg-[#163c2b] border-[#4ade80] text-[#86efac]'
+                      : 'bg-[#181926] hover:bg-[#222538] border-[#64748b] text-[#cbd5e1]'
+                  }`}
+                  title={`${authInfo.title}: ${authInfo.subtitle}. Click to configure subscription plans & sign in.`}
+                >
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      authInfo.isConnected ? 'bg-[#4ade80] animate-pulse' : 'bg-[#94a3b8]'
+                    }`}
+                  />
+                  <span>[{authInfo.isConnected ? `💎 ${authInfo.badge}` : '💎 CONNECT AI PLAN'}]</span>
+                </button>
+              );
+            })()}
 
             <button
               type="button"

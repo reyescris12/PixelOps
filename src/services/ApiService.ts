@@ -1,6 +1,6 @@
 import { ThemeId } from '../context/ThemeContext';
 import type { RoomId } from '../components/SpriteCanvas';
-import { loadLLMProviderConfig, normalizeGeminiModel } from './LLMProviderService';
+import { loadLLMProviderConfig, normalizeGeminiModel, getGeminiAuthHeadersAndUrl } from './LLMProviderService';
 import { workstationSupportsTool } from './PlacedGearService';
 import { loadCustomPlugins, executeCustomPlugin } from './PluginMarketplaceService';
 import { getLast50Commands, ledgerDb } from './CommandLedgerDb';
@@ -4060,17 +4060,19 @@ export async function generateLocalHeuristicCard(params: {
 
 export async function checkServerStatus(
   themeId: ThemeId = 'green'
-): Promise<{ online: boolean; configured: boolean; model: string }> {
+): Promise<{ online: boolean; configured: boolean; model: string; authMode?: string; planName?: string }> {
   const config = loadLLMProviderConfig();
-  const hasKey = Boolean(
-    config.apiKey &&
-      config.apiKey.trim().length > 0 &&
-      config.apiKey !== 'MY_GEMINI_API_KEY'
+  const auth = getGeminiAuthHeadersAndUrl(config, config.modelName);
+  const isConfigured = Boolean(
+    (config.authMode === 'subscription' && auth.isSubscription) ||
+    (config.apiKey && config.apiKey.trim().length > 0 && config.apiKey !== 'MY_GEMINI_API_KEY')
   );
   return {
     online: true,
-    configured: hasKey,
+    configured: isConfigured,
     model: normalizeGeminiModel(config.modelName),
+    authMode: config.authMode,
+    planName: auth.planName,
   };
 }
 
@@ -4078,35 +4080,34 @@ export async function pingGeminiConnection(
   themeId: ThemeId = 'green'
 ): Promise<{ ok: boolean; message?: string; error?: string; model?: string }> {
   const config = loadLLMProviderConfig();
-  const key = config.apiKey?.trim();
-  if (!key || key === 'MY_GEMINI_API_KEY') {
+  const auth = getGeminiAuthHeadersAndUrl(config, config.modelName);
+  const hasAuth =
+    (config.authMode === 'subscription' && auth.isSubscription) ||
+    (Boolean(config.apiKey) && config.apiKey.trim() !== 'MY_GEMINI_API_KEY');
+
+  if (!hasAuth) {
     return {
       ok: true,
-      message: 'Local heuristic engine standing by. Bring Your Own Key (BYOK) enabled in Settings.',
+      message: 'Local heuristic engine standing by. Sign into Google AI Pro Plan or add API key in Settings.',
       model: 'local-heuristic-v2',
     };
   }
 
   const model = normalizeGeminiModel(config.modelName);
   try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-        model
-      )}:generateContent?key=${encodeURIComponent(key)}`,
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [
-            {
-              role: 'user',
-              parts: [{ text: 'Respond with a 6-word tactical readiness confirmation.' }],
-            },
-          ],
-        }),
-        signal: AbortSignal.timeout(8000),
-      }
-    );
+    const res = await fetch(auth.url, {
+      method: 'POST',
+      headers: auth.headers,
+      body: JSON.stringify({
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: 'Respond with a 6-word tactical readiness confirmation.' }],
+          },
+        ],
+      }),
+      signal: AbortSignal.timeout(8000),
+    });
 
     if (!res.ok) {
       const errJson = await res.json().catch(() => ({}));
@@ -4124,7 +4125,7 @@ export async function pingGeminiConnection(
       'Tactical link verified. All agents standing by.';
     return {
       ok: true,
-      message: replyText,
+      message: `${replyText} [${auth.isSubscription ? auth.planName : 'BYOK Key'}]`,
       model,
     };
   } catch (err: any) {
@@ -4530,6 +4531,10 @@ export async function executeAgentDirective(params: {
       // Check active LLM provider configuration
       const llmConfig = loadLLMProviderConfig();
       const apiKey = llmConfig.apiKey?.trim();
+      const geminiAuthInfo = getGeminiAuthHeadersAndUrl(llmConfig, llmConfig.modelName);
+      const hasActiveAuth =
+        (llmConfig.authMode === 'subscription' && geminiAuthInfo.isSubscription) ||
+        (Boolean(apiKey) && apiKey !== 'MY_GEMINI_API_KEY');
 
       // Intercept any explicit external tool directives (Gmail, GitHub, Slack, Calendar, Notion, Linear)
       // to execute live via ComposioService and connected accounts instead of simulating
@@ -4538,8 +4543,8 @@ export async function executeAgentDirective(params: {
         return externalToolCard;
       }
 
-      // If no valid client API key is configured, attempt backend Cloudflare agent dispatch before local fallback
-      if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
+      // If neither Google Account subscription nor valid client API key is configured, attempt backend Cloudflare agent dispatch before local fallback
+      if (!hasActiveAuth) {
         try {
           const entityId = localStorage.getItem('pixelops_composio_entity_id') || 'commander_default';
           const dispatchRes = await fetch('/api/agent/dispatch', {
@@ -5061,11 +5066,11 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
         return generateLocalHeuristicCard(params);
       }
 
-      // Google Gemini Direct Client-Side Execution
+      // Google Gemini Direct Client-Side Execution (Subscription Bearer Token or BYOK Key)
+      const geminiAuth = getGeminiAuthHeadersAndUrl(llmConfig, llmConfig.modelName);
       const modelName = normalizeGeminiModel(llmConfig.modelName);
-      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-        modelName
-      )}:generateContent?key=${encodeURIComponent(apiKey)}`;
+      const geminiUrl = geminiAuth.url;
+      const geminiHeaders = geminiAuth.headers;
 
       const userParts: any[] = [];
       if (params.attachment && params.attachment.data && params.attachment.mimeType) {
@@ -5119,7 +5124,7 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
             async (signal) => {
               return await fetch(geminiUrl, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: geminiHeaders,
                 body: JSON.stringify(currentPayload),
                 signal,
               });
@@ -5138,7 +5143,7 @@ You are an autonomous tactical agent. Never generate fictional, mock, or simulat
               async (signal) => {
                 return await fetch(geminiUrl, {
                   method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
+                  headers: geminiHeaders,
                   body: JSON.stringify(currentPayload),
                   signal,
                 });
@@ -5323,7 +5328,7 @@ MANDATORY AUTONOMOUS INTELLIGENCE PROTOCOL:
             async (signal) => {
               return await fetch(geminiUrl, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: geminiHeaders,
                 body: JSON.stringify(synthesisPayload),
                 signal,
               });
@@ -5848,16 +5853,18 @@ export async function executeRoundtableMeeting(params: {
 
       const llmConfig = loadLLMProviderConfig();
       const apiKey = llmConfig.apiKey?.trim();
+      const geminiAuth = getGeminiAuthHeadersAndUrl(llmConfig, llmConfig.modelName);
+      const hasRoundtableAuth =
+        (llmConfig.authMode === 'subscription' && geminiAuth.isSubscription) ||
+        (Boolean(apiKey) && apiKey !== 'MY_GEMINI_API_KEY');
 
-      if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
+      if (!hasRoundtableAuth) {
         return generateLocalRoundtableMeeting(params);
       }
 
       try {
-        const modelName = normalizeGeminiModel(llmConfig.modelName);
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-          modelName
-        )}:generateContent?key=${encodeURIComponent(apiKey)}`;
+        const url = geminiAuth.url;
+        const headers = geminiAuth.headers;
 
         const personaInstruction =
           THEME_PERSONA_INSTRUCTIONS[params.themeId] || THEME_PERSONA_INSTRUCTIONS.spy;
@@ -5902,7 +5909,7 @@ ROUNDTABLE RULES:
           async (signal) => {
             return await fetch(url, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers,
               body: JSON.stringify({
                 systemInstruction: {
                   parts: [{ text: roundtableSystemInstruction }],

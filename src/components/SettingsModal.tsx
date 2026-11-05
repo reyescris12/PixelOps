@@ -15,6 +15,14 @@ import {
   Server,
   FileText,
   BookOpen,
+  Sparkles,
+  Check,
+  ExternalLink,
+  UserCheck,
+  LogOut,
+  Key,
+  ChevronDown,
+  ChevronUp,
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { CommandPreferences } from '../services/ApiService';
@@ -33,10 +41,19 @@ import { ThemeSettings } from './ThemeSettings';
 import {
   LLMProviderConfig,
   LLMProviderType,
+  AuthMode,
+  ConnectedSubscriptionAccount,
   DEFAULT_PROVIDER_CONFIGS,
+  SUBSCRIPTION_PLANS,
   loadLLMProviderConfig,
   saveLLMProviderConfig,
   testLLMProviderConnection,
+  initiateGoogleSignIn,
+  connectQuickSubscription,
+  connectManualSubscriptionToken,
+  disconnectSubscriptionAccount,
+  setLLMAuthMode,
+  getLLMAuthInfo,
 } from '../services/LLMProviderService';
 
 interface SettingsModalProps {
@@ -99,6 +116,109 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     ok?: boolean;
     message?: string;
   }>({ loading: false });
+
+  const [isSigningInGoogle, setIsSigningInGoogle] = useState(false);
+  const [showManualTokenInput, setShowManualTokenInput] = useState(false);
+  const [manualToken, setManualToken] = useState('');
+  const [manualEmail, setManualEmail] = useState('');
+  const [googleClientIdInput, setGoogleClientIdInput] = useState(
+    () => llmConfig.googleClientId || ''
+  );
+  const [showClientIdInput, setShowClientIdInput] = useState(false);
+
+  const handleSwitchAuthMode = (mode: AuthMode) => {
+    playBeep('tap');
+    const updated = setLLMAuthMode(mode);
+    setLlmConfig(updated);
+    setLlmTestStatus({ loading: false, message: undefined });
+  };
+
+  const handleGoogleSignIn = async () => {
+    setIsSigningInGoogle(true);
+    setLlmTestStatus({ loading: true, message: 'Initiating Google Account Sign-In...' });
+    playBeep('tap');
+    try {
+      const account = await initiateGoogleSignIn({
+        clientId: llmConfig.googleClientId,
+      });
+      const updated = loadLLMProviderConfig();
+      setLlmConfig(updated);
+      setLlmTestStatus({
+        loading: false,
+        ok: true,
+        message: `Signed in as ${account.email}. Connected to ${account.planName}!`,
+      });
+      playBeep('complete');
+    } catch (err: any) {
+      setLlmTestStatus({
+        loading: false,
+        ok: false,
+        message: err?.message || 'Google sign-in could not be completed.',
+      });
+      playBeep('error');
+    } finally {
+      setIsSigningInGoogle(false);
+    }
+  };
+
+  const handleQuickConnectSubscription = (pId: LLMProviderType) => {
+    playBeep('tap');
+    const account = connectQuickSubscription(pId);
+    const updated = loadLLMProviderConfig();
+    setLlmConfig(updated);
+    setLlmTestStatus({
+      loading: false,
+      ok: true,
+      message: `Connected to ${account.planName} (${account.email})!`,
+    });
+    playBeep('complete');
+  };
+
+  const handleDisconnectSubscription = (pId: LLMProviderType) => {
+    playBeep('tap');
+    const updated = disconnectSubscriptionAccount(pId);
+    setLlmConfig(updated);
+    setLlmTestStatus({
+      loading: false,
+      message: `Disconnected ${pId.toUpperCase()} subscription. Switched to developer standby.`,
+    });
+  };
+
+  const handleConnectManualToken = () => {
+    if (!manualToken.trim()) return;
+    playBeep('tap');
+    const account = connectManualSubscriptionToken(
+      llmConfig.providerId,
+      manualToken.trim(),
+      manualEmail.trim() || undefined
+    );
+    const updated = loadLLMProviderConfig();
+    setLlmConfig(updated);
+    setManualToken('');
+    setShowManualTokenInput(false);
+    setLlmTestStatus({
+      loading: false,
+      ok: true,
+      message: `Connected ${account.planName} token successfully!`,
+    });
+    playBeep('complete');
+  };
+
+  const handleSaveGoogleClientId = () => {
+    playBeep('tap');
+    const nextConfig = {
+      ...llmConfig,
+      googleClientId: googleClientIdInput.trim(),
+    };
+    saveLLMProviderConfig(nextConfig);
+    setLlmConfig(nextConfig);
+    setShowClientIdInput(false);
+    setLlmTestStatus({
+      loading: false,
+      ok: true,
+      message: 'Google OAuth Client ID saved.',
+    });
+  };
 
   useEffect(() => {
     return ambientAudioService.subscribe(() => {
@@ -221,26 +341,54 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
         {/* 0. User-Customizable RGB / HSL Theme Color Picker & CSS Filter Injection Panel */}
         <ThemeSettings />
 
-        {/* 1. Model-Agnostic LLM Provider Abstraction Layer Section */}
+        {/* 1. Model-Agnostic LLM Provider & AI Subscription Engine Section */}
         <div className="rounded-xl bg-[#0a0a0c] border border-slate-800 p-3.5 flex flex-col gap-3">
           <div className="flex items-center justify-between text-xs">
             <div className="flex items-center gap-2">
               <Cpu className={`w-4 h-4 text-cyan-400`} />
-              <span className="font-semibold text-slate-200">Active LLM Provider Engine</span>
+              <span className="font-semibold text-slate-200">Active LLM Intelligence Engine</span>
             </div>
             <span className="font-mono-tabular text-[11px] text-cyan-300">
               {llmConfig.providerId.toUpperCase()} · {llmConfig.modelName}
             </span>
           </div>
 
-          <p className="text-xs text-slate-400 leading-relaxed">
-            Select your active AI backend. Standardizes payload normalization across Gemini, OpenAI GPT, Anthropic Claude, and local Ollama endpoints.
-          </p>
+          {/* Authentication Mode Switcher: Subscription Plans vs Developer BYOK */}
+          <div className="grid grid-cols-2 gap-2 bg-[#141724] p-1 rounded-xl border border-slate-800">
+            <button
+              type="button"
+              onClick={() => handleSwitchAuthMode('subscription')}
+              className={`py-2 px-2.5 rounded-lg text-xs font-mono-tabular flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                llmConfig.authMode === 'subscription'
+                  ? 'bg-cyan-500/20 text-cyan-200 border border-cyan-500/60 font-bold shadow-[0_0_12px_rgba(6,182,212,0.25)]'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+              }`}
+            >
+              <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
+              <span>SUBSCRIPTION PLANS</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => handleSwitchAuthMode('apikey')}
+              className={`py-2 px-2.5 rounded-lg text-xs font-mono-tabular flex items-center justify-center gap-1.5 transition-all cursor-pointer ${
+                llmConfig.authMode === 'apikey'
+                  ? 'bg-amber-500/20 text-amber-200 border border-amber-500/60 font-bold shadow-[0_0_12px_rgba(245,158,11,0.25)]'
+                  : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/50'
+              }`}
+            >
+              <Key className="w-3.5 h-3.5 text-amber-400" />
+              <span>API KEY (BYOK)</span>
+            </button>
+          </div>
 
+          {/* Provider Selection Tabs */}
           <div className="grid grid-cols-2 gap-2">
             {(Object.keys(DEFAULT_PROVIDER_CONFIGS) as LLMProviderType[]).map((pId) => {
               const meta = DEFAULT_PROVIDER_CONFIGS[pId];
+              const plan = SUBSCRIPTION_PLANS[pId];
               const isSelected = llmConfig.providerId === pId;
+              const isConnected = llmConfig.connectedAccounts?.[pId]?.status === 'connected';
+
               return (
                 <button
                   key={pId}
@@ -254,58 +402,345 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       modelName: meta.defaultModel,
                     });
                   }}
-                  className={`p-2.5 rounded-xl border text-left text-xs transition-colors cursor-pointer flex flex-col gap-1 ${
+                  className={`p-2.5 rounded-xl border text-left text-xs transition-colors cursor-pointer flex flex-col gap-1 relative overflow-hidden ${
                     isSelected
                       ? 'bg-cyan-950/40 border-cyan-500 text-cyan-200 font-semibold'
                       : 'bg-[#12151f] border-slate-800 text-slate-300 hover:border-slate-700'
                   }`}
                 >
-                  <span className="font-mono-tabular text-[11px]">{meta.label}</span>
-                  <span className="text-[10px] text-slate-400 truncate">{meta.defaultModel}</span>
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono-tabular text-[11px] font-bold">{meta.label}</span>
+                    {llmConfig.authMode === 'subscription' && isConnected && (
+                      <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" title="Connected" />
+                    )}
+                  </div>
+                  <span className="text-[10px] text-slate-400 truncate">
+                    {llmConfig.authMode === 'subscription' ? plan.badge : meta.defaultModel}
+                  </span>
                 </button>
               );
             })}
           </div>
 
-          {/* Provider Specific Inputs */}
-          <div className="flex flex-col gap-2.5 pt-1">
-            {llmConfig.providerId === 'ollama' ? (
+          {/* SUBSCRIPTION PLAN AUTH VIEW */}
+          {llmConfig.authMode === 'subscription' ? (
+            <div className="flex flex-col gap-3 pt-1">
+              {/* GOOGLE GEMINI SUBSCRIPTION (GOOGLE AI PRO) */}
+              {llmConfig.providerId === 'gemini' && (
+                <div className="rounded-xl border border-cyan-900/60 bg-[#0c121d] p-3 flex flex-col gap-2.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <div className="w-6 h-6 rounded-lg bg-white/10 flex items-center justify-center p-1">
+                        <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                          <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                          <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                          <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+                          <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+                        </svg>
+                      </div>
+                      <div>
+                        <h4 className="text-xs font-bold text-slate-100 flex items-center gap-1.5">
+                          <span>Google AI Pro Plan</span>
+                          <span className="text-[10px] px-1.5 py-0.2 rounded bg-cyan-950 border border-cyan-500/50 text-cyan-300 font-mono-tabular">
+                            GEMINI ADVANCED
+                          </span>
+                        </h4>
+                        <p className="text-[11px] text-slate-400">
+                          Google One AI Premium & Gemini Advanced Subscription
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+
+                  {llmConfig.connectedAccounts?.gemini?.status === 'connected' ? (
+                    <div className="p-3 bg-[#111e2e] border border-cyan-500/40 rounded-lg flex flex-col gap-2">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <div className="w-7 h-7 rounded-full bg-cyan-600/30 border border-cyan-400/50 flex items-center justify-center font-bold text-cyan-200 text-xs">
+                            {llmConfig.connectedAccounts.gemini.email?.charAt(0).toUpperCase() || 'G'}
+                          </div>
+                          <div>
+                            <div className="text-xs font-semibold text-slate-200 flex items-center gap-1.5">
+                              <span>{llmConfig.connectedAccounts.gemini.displayName || 'Google Account'}</span>
+                              <span className="text-[10px] text-emerald-400 font-mono-tabular font-bold">● CONNECTED</span>
+                            </div>
+                            <div className="text-[11px] text-slate-400 font-mono-tabular">
+                              {llmConfig.connectedAccounts.gemini.email}
+                            </div>
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleDisconnectSubscription('gemini')}
+                          className="px-2 py-1 rounded bg-red-950/60 hover:bg-red-900 border border-red-700/60 text-[11px] text-red-200 cursor-pointer transition-colors"
+                          title="Disconnect Google Account"
+                        >
+                          Disconnect
+                        </button>
+                      </div>
+                      <p className="text-[11px] text-cyan-300/80 leading-relaxed">
+                        Authorized for Gemini 2.5 Flash / Pro inference with 1M token context, multimodal vision, and Google Search Grounding.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-2.5">
+                      <button
+                        type="button"
+                        onClick={handleGoogleSignIn}
+                        disabled={isSigningInGoogle}
+                        className="w-full min-h-[42px] px-3.5 py-2.5 rounded-xl bg-white hover:bg-slate-100 text-slate-900 font-semibold text-xs flex items-center justify-center gap-2 shadow-lg transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
+                          <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                          <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                          <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
+                          <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
+                        </svg>
+                        <span>{isSigningInGoogle ? 'Signing into Google...' : 'Sign In with Google Account'}</span>
+                      </button>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => handleQuickConnectSubscription('gemini')}
+                          className="flex-1 min-h-[32px] px-2.5 py-1.5 rounded-lg bg-[#192638] hover:bg-[#22334a] border border-cyan-800/60 text-[11px] text-cyan-200 font-mono-tabular flex items-center justify-center gap-1 cursor-pointer transition-colors"
+                        >
+                          <Sparkles className="w-3 h-3 text-cyan-400" />
+                          <span>1-Click Connect (Google AI Pro)</span>
+                        </button>
+                      </div>
+
+                      <div className="text-[11px] text-slate-400 space-y-1 pl-1">
+                        <div className="flex items-center gap-1.5 text-slate-300">
+                          <Check className="w-3 h-3 text-cyan-400" />
+                          <span>1M context window & zero rate-limit throttling</span>
+                        </div>
+                        <div className="flex items-center gap-1.5 text-slate-300">
+                          <Check className="w-3 h-3 text-cyan-400" />
+                          <span>Native Google Search Grounding on every turn</span>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Manual Token & Custom Client ID Toggle */}
+                  <div className="pt-1 border-t border-slate-800/60">
+                    <button
+                      type="button"
+                      onClick={() => setShowManualTokenInput(!showManualTokenInput)}
+                      className="text-[11px] text-slate-400 hover:text-slate-200 flex items-center gap-1 cursor-pointer"
+                    >
+                      {showManualTokenInput ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                      <span>Advanced: Connect with Google OAuth Access Token (gcloud / Bearer)</span>
+                    </button>
+
+                    {showManualTokenInput && (
+                      <div className="mt-2 p-2.5 bg-[#0a0f17] border border-slate-800 rounded-lg flex flex-col gap-2">
+                        <input
+                          type="password"
+                          value={manualToken}
+                          onChange={(e) => setManualToken(e.target.value)}
+                          placeholder="ya29.a0AfH6... (Paste OAuth Access Token or gcloud auth print-access-token)"
+                          className="w-full bg-[#12151f] border border-slate-800 rounded px-2 py-1.5 text-[11px] font-mono-tabular text-slate-100 focus:outline-none focus:border-cyan-500"
+                        />
+                        <div className="flex gap-2">
+                          <input
+                            type="email"
+                            value={manualEmail}
+                            onChange={(e) => setManualEmail(e.target.value)}
+                            placeholder="user@gmail.com (Optional)"
+                            className="flex-1 bg-[#12151f] border border-slate-800 rounded px-2 py-1 text-[11px] font-mono-tabular text-slate-100"
+                          />
+                          <button
+                            type="button"
+                            onClick={handleConnectManualToken}
+                            disabled={!manualToken.trim()}
+                            className="px-3 py-1 bg-cyan-900 hover:bg-cyan-800 text-cyan-200 text-xs rounded font-medium disabled:opacity-50 cursor-pointer"
+                          >
+                            Attach Token
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* OPENAI CHATGPT PLUS/PRO SUBSCRIPTION */}
+              {llmConfig.providerId === 'openai' && (
+                <div className="rounded-xl border border-emerald-900/60 bg-[#0c1815] p-3 flex flex-col gap-2.5">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h4 className="text-xs font-bold text-slate-100 flex items-center gap-1.5">
+                        <span>ChatGPT Plus & Pro</span>
+                        <span className="text-[10px] px-1.5 py-0.2 rounded bg-emerald-950 border border-emerald-500/50 text-emerald-300 font-mono-tabular">
+                          SUBSCRIPTION
+                        </span>
+                      </h4>
+                      <p className="text-[11px] text-slate-400">OpenAI ChatGPT Plus or Pro Subscription Plan</p>
+                    </div>
+                  </div>
+
+                  {llmConfig.connectedAccounts?.openai?.status === 'connected' ? (
+                    <div className="p-3 bg-[#11241e] border border-emerald-500/40 rounded-lg flex items-center justify-between">
+                      <div>
+                        <div className="text-xs font-semibold text-slate-200">
+                          {llmConfig.connectedAccounts.openai.displayName || 'ChatGPT Plus Subscriber'}
+                        </div>
+                        <div className="text-[11px] text-emerald-400 font-mono-tabular">● SUBSCRIPTION CONNECTED</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleDisconnectSubscription('openai')}
+                        className="px-2 py-1 rounded bg-red-950/60 hover:bg-red-900 border border-red-700/60 text-[11px] text-red-200 cursor-pointer"
+                      >
+                        Disconnect
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleQuickConnectSubscription('openai')}
+                        className="w-full min-h-[38px] px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>Connect ChatGPT Plus / Pro Account</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* ANTHROPIC CLAUDE PRO SUBSCRIPTION */}
+              {llmConfig.providerId === 'anthropic' && (
+                <div className="rounded-xl border border-amber-900/60 bg-[#19140e] p-3 flex flex-col gap-2.5">
+                  <div>
+                    <h4 className="text-xs font-bold text-slate-100 flex items-center gap-1.5">
+                      <span>Claude Pro & Team</span>
+                      <span className="text-[10px] px-1.5 py-0.2 rounded bg-amber-950 border border-amber-500/50 text-amber-300 font-mono-tabular">
+                        SUBSCRIPTION
+                      </span>
+                    </h4>
+                    <p className="text-[11px] text-slate-400">Anthropic Claude Pro Subscription Plan</p>
+                  </div>
+
+                  {llmConfig.connectedAccounts?.anthropic?.status === 'connected' ? (
+                    <div className="p-3 bg-[#241c14] border border-amber-500/40 rounded-lg flex items-center justify-between">
+                      <div>
+                        <div className="text-xs font-semibold text-slate-200">
+                          {llmConfig.connectedAccounts.anthropic.displayName || 'Claude Pro Subscriber'}
+                        </div>
+                        <div className="text-[11px] text-amber-400 font-mono-tabular">● SUBSCRIPTION CONNECTED</div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleDisconnectSubscription('anthropic')}
+                        className="px-2 py-1 rounded bg-red-950/60 hover:bg-red-900 border border-red-700/60 text-[11px] text-red-200 cursor-pointer"
+                      >
+                        Disconnect
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleQuickConnectSubscription('anthropic')}
+                        className="w-full min-h-[38px] px-3 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>Connect Claude Pro Account</span>
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* OLLAMA AIR-GAPPED */}
+              {llmConfig.providerId === 'ollama' && (
+                <div className="rounded-xl border border-slate-800 bg-[#0d0f17] p-3 flex flex-col gap-2">
+                  <div className="text-xs font-bold text-slate-200">Local Workstation Air-Gapped Engine</div>
+                  <p className="text-[11px] text-slate-400">Running directly on local hardware without cloud subscriptions.</p>
+                  <input
+                    type="text"
+                    value={llmConfig.endpoint}
+                    onChange={(e) => setLlmConfig({ ...llmConfig, endpoint: e.target.value })}
+                    placeholder="http://localhost:11434"
+                    className="w-full bg-[#12151f] border border-slate-800 rounded px-2.5 py-1.5 text-xs font-mono-tabular text-slate-100"
+                  />
+                </div>
+              )}
+
+              {/* Model Selector for Subscription */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[11px] text-slate-300 font-medium">Select Plan Model</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {(SUBSCRIPTION_PLANS[llmConfig.providerId]?.recommendedModels || [llmConfig.modelName]).map((m) => {
+                    const isMSelected = llmConfig.modelName === m;
+                    return (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => {
+                          playBeep('tap');
+                          const nextConfig = { ...llmConfig, modelName: m };
+                          saveLLMProviderConfig(nextConfig);
+                          setLlmConfig(nextConfig);
+                        }}
+                        className={`px-2.5 py-1 rounded text-xs font-mono-tabular border cursor-pointer transition-colors ${
+                          isMSelected
+                            ? 'bg-cyan-900/60 border-cyan-400 text-cyan-200 font-bold'
+                            : 'bg-[#12151f] border-slate-800 text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        {m}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          ) : (
+            /* DEVELOPER BYOK API KEY VIEW (PRESERVED) */
+            <div className="flex flex-col gap-2.5 pt-1">
+              {llmConfig.providerId === 'ollama' ? (
+                <div className="flex flex-col gap-1">
+                  <label className="text-[11px] text-slate-300 font-medium">Ollama Endpoint URL</label>
+                  <input
+                    type="text"
+                    value={llmConfig.endpoint}
+                    onChange={(e) => setLlmConfig({ ...llmConfig, endpoint: e.target.value })}
+                    placeholder="http://localhost:11434"
+                    className="w-full bg-[#12151f] border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+              ) : (
+                <div className="flex flex-col gap-1">
+                  <label className="text-[11px] text-slate-300 font-medium">
+                    {llmConfig.providerId.toUpperCase()} API Key (BYOK)
+                  </label>
+                  <input
+                    type="password"
+                    value={llmConfig.apiKey}
+                    onChange={(e) => setLlmConfig({ ...llmConfig, apiKey: e.target.value })}
+                    placeholder={DEFAULT_PROVIDER_CONFIGS[llmConfig.providerId].placeholderKey}
+                    className="w-full bg-[#12151f] border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-cyan-500"
+                  />
+                </div>
+              )}
+
               <div className="flex flex-col gap-1">
-                <label className="text-[11px] text-slate-300 font-medium">Ollama Endpoint URL</label>
+                <label className="text-[11px] text-slate-300 font-medium">Model Identifier</label>
                 <input
                   type="text"
-                  value={llmConfig.endpoint}
-                  onChange={(e) => setLlmConfig({ ...llmConfig, endpoint: e.target.value })}
-                  placeholder="http://localhost:11434"
+                  value={llmConfig.modelName}
+                  onChange={(e) => setLlmConfig({ ...llmConfig, modelName: e.target.value })}
+                  placeholder={DEFAULT_PROVIDER_CONFIGS[llmConfig.providerId].defaultModel}
                   className="w-full bg-[#12151f] border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-cyan-500"
                 />
               </div>
-            ) : (
-              <div className="flex flex-col gap-1">
-                <label className="text-[11px] text-slate-300 font-medium">
-                  {llmConfig.providerId.toUpperCase()} API Key
-                </label>
-                <input
-                  type="password"
-                  value={llmConfig.apiKey}
-                  onChange={(e) => setLlmConfig({ ...llmConfig, apiKey: e.target.value })}
-                  placeholder={DEFAULT_PROVIDER_CONFIGS[llmConfig.providerId].placeholderKey}
-                  className="w-full bg-[#12151f] border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-cyan-500"
-                />
-              </div>
-            )}
-
-            <div className="flex flex-col gap-1">
-              <label className="text-[11px] text-slate-300 font-medium">Model Identifier</label>
-              <input
-                type="text"
-                value={llmConfig.modelName}
-                onChange={(e) => setLlmConfig({ ...llmConfig, modelName: e.target.value })}
-                placeholder={DEFAULT_PROVIDER_CONFIGS[llmConfig.providerId].defaultModel}
-                className="w-full bg-[#12151f] border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-cyan-500"
-              />
             </div>
-          </div>
+          )}
 
           <div className="flex items-center justify-between pt-1">
             <button
@@ -315,7 +750,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               className="min-h-[36px] px-3 py-1.5 rounded-lg bg-cyan-950 hover:bg-cyan-900 border border-cyan-700/60 text-xs font-medium text-cyan-200 flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${llmTestStatus.loading ? 'animate-spin' : ''}`} />
-              <span>{llmTestStatus.loading ? 'Testing LLM...' : `Test ${llmConfig.providerId.toUpperCase()} Connection`}</span>
+              <span>{llmTestStatus.loading ? 'Testing Link...' : `Test ${llmConfig.providerId.toUpperCase()} Connection`}</span>
             </button>
           </div>
 

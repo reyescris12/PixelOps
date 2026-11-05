@@ -1,6 +1,6 @@
 import { ThemeId } from '../context/ThemeContext';
 import { executeSafeOperation } from './SafetyService';
-import { loadLLMProviderConfig, normalizeGeminiModel } from './LLMProviderService';
+import { loadLLMProviderConfig, normalizeGeminiModel, getGeminiAuthHeadersAndUrl } from './LLMProviderService';
 
 /**
  * Two-Step Drafting Agent Architecture for External Composio Tools
@@ -34,16 +34,14 @@ CRITICAL TASK:
 - Include all necessary operational details, findings, professional greetings, and sign-offs appropriate for ${targetChannel.toUpperCase()}.
 - Return ONLY the drafted message text with no introductory meta-commentary.`;
 
-      const modelName = normalizeGeminiModel(config.modelName);
-      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
-        modelName
-      )}:generateContent?key=${encodeURIComponent(apiKey)}`;
+      const geminiAuth = getGeminiAuthHeadersAndUrl(config, config.modelName);
+      const geminiUrl = geminiAuth.url;
 
       const res = await executeSafeOperation(
         async (signal: AbortSignal) => {
           return await fetch(geminiUrl, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: geminiAuth.headers,
             body: JSON.stringify({
               systemInstruction: { parts: [{ text: draftingSystemPrompt }] },
               contents: [{ role: 'user', parts: [{ text: `Draft the dispatch content for this directive: "${prompt}"` }] }],

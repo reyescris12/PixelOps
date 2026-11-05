@@ -22,9 +22,24 @@ if (typeof window !== 'undefined' && window.opener && window.opener !== window) 
         paramsObj[key] = val;
       });
 
+      if (hash) {
+        const hashClean = hash.startsWith('#') ? hash.slice(1) : hash;
+        const hashParams = new URLSearchParams(hashClean);
+        hashParams.forEach((val, key) => {
+          paramsObj[key] = val;
+        });
+      }
+
+      const isGoogleAuth =
+        search.includes('google') ||
+        hash.includes('google') ||
+        Boolean(paramsObj.state && paramsObj.state.includes('google')) ||
+        (Boolean(paramsObj.access_token) && !paramsObj.connected_account_id);
+
       const payload = {
-        type: 'COMPOSIO_AUTH_SUCCESS',
-        composioAuthSuccess: true,
+        type: isGoogleAuth ? 'GOOGLE_AUTH_SUCCESS' : 'COMPOSIO_AUTH_SUCCESS',
+        composioAuthSuccess: !isGoogleAuth,
+        googleAuthSuccess: Boolean(isGoogleAuth),
         status: 'SUCCESS',
         url: window.location.href,
         params: paramsObj,
@@ -36,14 +51,16 @@ if (typeof window !== 'undefined' && window.opener && window.opener !== window) 
 
       // 2. BroadcastChannel
       if ('BroadcastChannel' in window) {
-        const bc = new BroadcastChannel('pixelops_composio_oauth');
+        const bcName = isGoogleAuth ? 'pixelops_google_oauth' : 'pixelops_composio_oauth';
+        const bc = new BroadcastChannel(bcName);
         bc.postMessage(payload);
         bc.close();
       }
 
       // 3. LocalStorage
       try {
-        localStorage.setItem('pixelops_last_oauth_sync', JSON.stringify(payload));
+        const storageKey = isGoogleAuth ? 'pixelops_last_google_oauth' : 'pixelops_last_oauth_sync';
+        localStorage.setItem(storageKey, JSON.stringify(payload));
       } catch {}
     } catch {}
 

@@ -30,7 +30,7 @@ import {
   extractNumericalMetrics,
   ExtractedNumericalMetrics,
 } from '../services/ApiService';
-import { loadLLMProviderConfig } from '../services/LLMProviderService';
+import { loadLLMProviderConfig, getGeminiAuthHeadersAndUrl } from '../services/LLMProviderService';
 
 /**
  * Extracts a concise, clean entity or domain keyword string for search queries,
@@ -690,12 +690,18 @@ STRICT EXECUTION PROTOCOLS:
 
 ${prompt}`;
 
-    if (apiKey && apiKey !== 'MY_GEMINI_API_KEY') {
+    const llmConf = loadLLMProviderConfig();
+    const auth = getGeminiAuthHeadersAndUrl(llmConf, 'gemini-2.5-flash');
+    const hasAuth =
+      (llmConf.authMode === 'subscription' && auth.isSubscription) ||
+      (apiKey && apiKey !== 'MY_GEMINI_API_KEY');
+
+    if (hasAuth) {
       const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey.trim())}`,
+        auth.url,
         {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: auth.headers,
           body: JSON.stringify({
             contents: [{ role: 'user', parts: [{ text: enforcedPrompt }] }],
             tools: [{ googleSearch: {} }],

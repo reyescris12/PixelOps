@@ -18,37 +18,22 @@ export interface CustomPluginConnector {
 
 const STORAGE_CUSTOM_PLUGINS_KEY = 'pixelops_custom_market_plugins_v1';
 
-export const DEFAULT_CUSTOM_PLUGINS: CustomPluginConnector[] = [
-  {
-    id: 'plugin-crypto-tracker',
-    name: 'Crypto Market Telemetry',
-    endpointUrl: 'https://api.coincap.io/v2/assets?limit=5',
-    authHeaderKey: '',
-    authHeaderValue: '',
-    toolFunctionName: 'crypto_market_telemetry',
-    description: 'Queries live cryptocurrency asset prices, market caps, and volume statistics from CoinCap.',
-    jsonSchemaParameters: {
-      properties: {
-        assetName: {
-          type: 'STRING',
-          description: 'Optional cryptocurrency symbol or name to filter (e.g. bitcoin, ethereum).',
-        },
-      },
-      required: [],
-    },
-    enabled: true,
-    createdAt: new Date().toISOString(),
-  },
-];
+export const DEFAULT_CUSTOM_PLUGINS: CustomPluginConnector[] = [];
 
 export function loadCustomPlugins(): CustomPluginConnector[] {
   try {
     const raw = localStorage.getItem(STORAGE_CUSTOM_PLUGINS_KEY);
-    if (!raw) return DEFAULT_CUSTOM_PLUGINS;
+    if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : DEFAULT_CUSTOM_PLUGINS;
+    if (!Array.isArray(parsed)) return [];
+    // Filter out retired fake crypto telemetry stub
+    return parsed.filter(
+      (p) =>
+        p.id !== 'plugin-crypto-tracker' &&
+        p.toolFunctionName !== 'crypto_market_telemetry'
+    );
   } catch {
-    return DEFAULT_CUSTOM_PLUGINS;
+    return [];
   }
 }
 

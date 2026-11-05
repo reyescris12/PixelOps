@@ -26,7 +26,7 @@ export interface PersistedAppSessionState {
   liveAgentsSnapshot?: Record<number, LiveAgentState>;
   autoRoam?: boolean;
   activeTab: 'hq' | 'crew' | 'plugins' | 'themes';
-  hqSubView: 'terminal' | 'command_log' | 'town_hall' | 'toolkits';
+  hqSubView: 'terminal' | 'command_log' | 'town_hall';
   dialogueText: string;
   lastActionSummary: string | null;
   decryptionBoost: number;

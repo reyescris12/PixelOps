@@ -144,7 +144,7 @@ import {
 } from './engine/pluginAuthManager';
 
 type NavTab = 'hq' | 'crew' | 'plugins' | 'themes';
-type HqSubView = 'terminal' | 'town_hall' | 'command_log' | 'toolkits';
+type HqSubView = 'terminal' | 'town_hall' | 'command_log';
 
 const CommandCenterContent: React.FC = () => {
   const {
@@ -183,9 +183,12 @@ const CommandCenterContent: React.FC = () => {
   const [activeTab, setActiveTab] = useState<NavTab>(
     () => restoredSession?.activeTab || 'hq'
   );
-  const [hqSubView, setHqSubView] = useState<HqSubView>(
-    () => restoredSession?.hqSubView || 'terminal'
-  );
+  const [hqSubView, setHqSubView] = useState<HqSubView>(() => {
+    if (restoredSession?.hqSubView && (restoredSession.hqSubView as string) !== 'toolkits') {
+      return restoredSession.hqSubView;
+    }
+    return 'terminal';
+  });
 
   useEffect(() => {
     if (activeTab !== 'crew') return;
@@ -801,10 +804,6 @@ const CommandCenterContent: React.FC = () => {
 
   const handleRoomChange = (nextRoom: RoomId) => {
     setCurrentRoom(nextRoom);
-    if (nextRoom === 'armory') {
-      setActiveTab('hq');
-      setHqSubView('toolkits');
-    }
     if (!isExecuting) {
       setDialogueText(getRoomMetadata(nextRoom).defaultBriefing);
     }
@@ -1548,17 +1547,6 @@ const CommandCenterContent: React.FC = () => {
       setIsExecutingMeeting(false);
     }
   };
-
-  const remainingBatteryPct = Math.max(
-    5,
-    Math.min(
-      100,
-      Math.round(
-        ((preferences.maxTokenBudget - preferences.usedTokens + 420) / preferences.maxTokenBudget) *
-          100
-      )
-    )
-  );
 
   const renderCrewConsolePanel = () => {
     const armoryCategories: Array<'All' | SpriteVariantCategory> = [
@@ -2312,6 +2300,7 @@ const CommandCenterContent: React.FC = () => {
           }}
         >
           {/* Left Zone: [⚙️] SAFEHOUSE v1.0 + [🗺️ RADAR] Minimap Toggle */}
+          {/* Left Zone: [⚙️] SAFEHOUSE + Sector Info + Soundscape */}
           <div className="flex items-center gap-2.5 shrink-0">
             <button
               type="button"
@@ -2326,190 +2315,68 @@ const CommandCenterContent: React.FC = () => {
               <span className="uppercase">{theme.shortLabel} v1.0</span>
             </button>
 
-            <button
-              type="button"
-              onClick={() => {
-                setIsMinimapOpen((prev) => !prev);
-                playBeep('tap');
-              }}
-              className={`px-2 py-0.5 font-mono-tabular text-xs border transition-colors cursor-pointer flex items-center gap-1 ${
-                isMinimapOpen
-                  ? 'bg-[#e59838] text-[#121110] border-[#fde047] font-bold'
-                  : 'bg-[#171a26] text-[#4ade80] border-[#363d54] hover:border-[#4ade80]'
-              }`}
-              title="Toggle Overworld Minimap Radar"
-            >
-              <span>[🗺️ RADAR]</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setIsTerminalConsoleOpen((prev) => !prev);
-                playBeep('tap');
-              }}
-              className={`px-2 py-0.5 font-mono-tabular text-xs border transition-colors cursor-pointer flex items-center gap-1 ${
-                isTerminalConsoleOpen
-                  ? 'bg-[#22c55e] text-[#0c1017] border-[#86efac] font-bold shadow-[0_0_10px_rgba(34,197,94,0.5)]'
-                  : 'bg-[#171a26] text-[#22c55e] border-[#363d54] hover:border-[#22c55e]'
-              }`}
-              title="Toggle Tactical CLI Terminal (~)"
-            >
-              <span>[&gt;_ CLI]</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setIsFieldManualOpen(true);
-                playBeep('tap');
-              }}
-              className="px-2.5 py-0.5 font-mono-tabular text-xs border transition-colors cursor-pointer flex items-center gap-1 bg-[#181a24] text-[#cbd5e1] border-[#363d54] hover:border-[#e59838] hover:text-[#f3ead8]"
-              title="Open Classified Safehouse Field Manual & Operative Handbook"
-            >
-              <span>[📖 MANUAL]</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={handleCallTownHallMeeting}
-              className={`px-2.5 py-0.5 font-mono-tabular text-xs border transition-colors cursor-pointer flex items-center gap-1 ${
-                isMeetingActive
-                  ? 'bg-[#38bdf8] text-[#0c1017] border-[#bae6fd] font-bold shadow-[0_0_12px_rgba(56,189,248,0.45)]'
-                  : 'bg-[#1f1a14] text-[#e59838] border-[#b47b38] hover:bg-[#e59838] hover:text-[#121110] font-semibold'
-              }`}
-              title="Call Town Hall Meeting: Summon all active agents to the War Room for a roundtable discussion"
-            >
-              <span>[📣 CALL MEETING]</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('hq');
-                setHqSubView('toolkits');
-                playBeep('tap');
-              }}
-              className={`px-2.5 py-0.5 font-mono-tabular text-xs border transition-colors cursor-pointer flex items-center gap-1 ${
-                activeTab === 'hq' && hqSubView === 'toolkits'
-                  ? 'bg-[#e59838] text-[#121110] border-[#fde047] font-bold shadow-[0_0_12px_rgba(229,152,56,0.45)]'
-                  : 'bg-[#1f1a14] text-[#e59838] border-[#b47b38] hover:bg-[#e59838] hover:text-[#121110] font-semibold'
-              }`}
-              title="Open Armory Toolkit Marketplace & Composio Integrations"
-            >
-              <span>[⚔️ TOOLKITS ({composioConnectedCount})]</span>
-            </button>
-          </div>
-
-          {/* Center Zone: Active Sector Code + Room Ambient Synth Status + Active Decryption Boost Indicator */}
-          {(() => {
-            const activeMeta = getRoomMetadata(currentRoom);
-            const activeSound =
-              ROOM_SOUNDSCAPE_PROFILES[currentRoom] || ROOM_SOUNDSCAPE_PROFILES.war_room;
-            return (
-              <div className="hidden sm:flex items-center gap-3 font-mono-tabular text-xs sm:text-sm text-[#c5c9d6]">
-                <span>
-                  SECTOR: <strong className="text-[#e59838]">{activeMeta?.shortBadge || 'SECTOR'}</strong> ({activeMeta?.sectorCode || 'SEC-00'})
-                </span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const next = !soundEnabled;
-                    setSoundEnabled(next);
-                    if (next) {
-                      ambientAudioService.setRoom(currentRoom, true);
-                      playBeep('tap');
-                    }
-                  }}
-                  className={`px-2 py-0.5 text-[10px] border transition-colors cursor-pointer flex items-center gap-1 ${
-                    soundEnabled
-                      ? 'bg-[#13221a] text-[#4ade80] border-[#4ade80]'
-                      : 'bg-[#1c1a17] text-[#94a3b8] border-[#383633] hover:border-[#e59838]'
-                  }`}
-                  title={`Ambient Synth Loop: ${activeSound.title} — ${activeSound.description} (Click to toggle)`}
-                >
+            {(() => {
+              const activeMeta = getRoomMetadata(currentRoom);
+              const activeSound =
+                ROOM_SOUNDSCAPE_PROFILES[currentRoom] || ROOM_SOUNDSCAPE_PROFILES.war_room;
+              return (
+                <div className="hidden sm:flex items-center gap-2.5 font-mono-tabular text-xs text-[#c5c9d6] pl-2 border-l border-[#363d54]">
                   <span>
-                    {soundEnabled
-                      ? `[🔊 SYNTH: ${activeSound.shortTag}]`
-                      : '[🔇 SYNTH: OFF]'}
+                    SECTOR: <strong className="text-[#e59838]">{activeMeta?.shortBadge || 'SECTOR'}</strong> ({activeMeta?.sectorCode || 'SEC-00'})
                   </span>
-                </button>
-                {decryptionBoost > 0 && (
-                  <span className="text-xs text-[#4ade80]">
-                    [BOOST +{decryptionBoost}%]
-                  </span>
-                )}
-                <RoomActionPlaybookPanel
-                  currentRoom={currentRoom}
-                  onExecutePlaybook={handleOpenPlaybookSetup}
-                  variant="pill"
-                  onOpenVfs={() => {
-                    setIsWorkspaceFilesOpen(true);
-                    playBeep('tap');
-                  }}
-                />
-                {currentRoom === 'armory' && (
                   <button
                     type="button"
                     onClick={() => {
-                      setActiveTab('hq');
-                      setHqSubView('toolkits');
-                      playBeep('tap');
+                      const next = !soundEnabled;
+                      setSoundEnabled(next);
+                      if (next) {
+                        ambientAudioService.setRoom(currentRoom, true);
+                        playBeep('tap');
+                      }
                     }}
-                    className="px-2 py-0.5 bg-[#e59838] text-[#121110] font-bold text-[10px] border border-[#e59838] hover:bg-[#d48828] cursor-pointer transition-colors"
-                    title="Open Armory Composio Toolkit Matrix"
+                    className={`px-2 py-0.5 text-[10px] border transition-colors cursor-pointer flex items-center gap-1 ${
+                      soundEnabled
+                        ? 'bg-[#13221a] text-[#4ade80] border-[#4ade80]'
+                        : 'bg-[#1c1a17] text-[#94a3b8] border-[#383633] hover:border-[#e59838]'
+                    }`}
+                    title={`Ambient Synth Loop: ${activeSound.title} — ${activeSound.description} (Click to toggle)`}
                   >
-                    [⚔️ ARMORY TOOLKITS]
+                    <span>
+                      {soundEnabled
+                        ? `[🔊 SYNTH: ${activeSound.shortTag}]`
+                        : '[🔇 SYNTH: OFF]'}
+                    </span>
                   </button>
-                )}
-              </div>
-            );
-          })()}
+                </div>
+              );
+            })()}
+          </div>
 
-          {/* Right Zone: [🔋 100%] ▶⚡ + Tactical HUD Controls + Optional PWA Install */}
+          {/* Center Zone: Active Meeting / Boost / Sector Playbook */}
+          <div className="hidden md:flex items-center gap-2 font-mono-tabular text-xs text-[#c5c9d6]">
+            {isMeetingActive && (
+              <span className="px-2 py-0.5 bg-[#38bdf8]/20 border border-[#38bdf8] text-[#38bdf8] font-bold animate-pulse">
+                [📣 ROUNDTABLE: WAR ROOM]
+              </span>
+            )}
+            {decryptionBoost > 0 && (
+              <span className="px-2 py-0.5 bg-[#4ade80]/20 border border-[#4ade80] text-[#4ade80] font-bold">
+                [⚡ BOOST +{decryptionBoost}%]
+              </span>
+            )}
+            <RoomActionPlaybookPanel
+              currentRoom={currentRoom}
+              onExecutePlaybook={handleOpenPlaybookSetup}
+              variant="pill"
+              onOpenVfs={() => {
+                setIsWorkspaceFilesOpen(true);
+                playBeep('tap');
+              }}
+            />
+          </div>
+
+          {/* Right Zone: AI Subscription Plan + Night Shift + Telemetry */}
           <div className="flex items-center gap-2 shrink-0 font-mono-tabular text-xs">
-            <button
-              type="button"
-              onClick={() => {
-                setIsSyncModalOpen(true);
-                playBeep('tap');
-              }}
-              className={`px-2 py-0.5 border flex items-center gap-1 cursor-pointer transition-colors ${
-                syncStats.status === 'syncing'
-                  ? 'bg-[#16382b] border-[#4ade80] text-[#4ade80]'
-                  : 'bg-[#152026] hover:bg-[#1e2f38] border-[#314a56] hover:border-[#38bdf8] text-[#38bdf8]'
-              }`}
-              title="Open SatCom Multi-Device Cloud Sync & Accounts"
-            >
-              <span
-                className={`w-1.5 h-1.5 rounded-full ${
-                  syncStats.status === 'syncing'
-                    ? 'bg-[#4ade80] animate-spin'
-                    : syncStats.status === 'offline'
-                    ? 'bg-[#94a3b8]'
-                    : 'bg-[#38bdf8] animate-pulse'
-                }`}
-              />
-              <span>[SYNC{syncStats.status === 'syncing' ? '...' : ''}]</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setIsNightShiftOpen(true);
-                playBeep('tap');
-              }}
-              className="px-2 py-0.5 bg-[#151822] hover:bg-[#1e2330] border border-[#363d54] hover:border-[#e59838] text-[#e59838] flex items-center gap-1 cursor-pointer transition-colors"
-              title="Open Night Shift scheduler, routine briefings, and webhook connectors"
-            >
-              <span>[NIGHT SHIFT</span>
-              {nightShiftUnreadCount > 0 && (
-                <span className="text-[#4ade80] font-bold">
-                  :{nightShiftUnreadCount}
-                </span>
-              )}
-              <span>]</span>
-            </button>
-
             {/* AI Subscription / Connected Plan HUD Pill */}
             {(() => {
               const authInfo = getLLMAuthInfo(loadLLMProviderConfig());
@@ -2543,55 +2410,33 @@ const CommandCenterContent: React.FC = () => {
             <button
               type="button"
               onClick={() => {
+                setIsNightShiftOpen(true);
+                playBeep('tap');
+              }}
+              className="px-2 py-0.5 bg-[#151822] hover:bg-[#1e2330] border border-[#363d54] hover:border-[#e59838] text-[#e59838] flex items-center gap-1 cursor-pointer transition-colors"
+              title="Open Night Shift scheduler, routine briefings, and webhook connectors"
+            >
+              <span>[🌙 NIGHT SHIFT</span>
+              {nightShiftUnreadCount > 0 && (
+                <span className="text-[#4ade80] font-bold">
+                  :{nightShiftUnreadCount}
+                </span>
+              )}
+              <span>]</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
                 setIsTelemetryOpen(true);
                 playBeep('tap');
               }}
               className="px-2 py-0.5 bg-[#131d19] hover:bg-[#1a2923] border border-[#2b4c3b] hover:border-[#4ade80] text-[#4ade80] flex items-center gap-1 cursor-pointer transition-colors"
               title="Open Telemetry, Token Ledger & Cost Tracking HUD"
             >
-              <span>[TELEMETRY]</span>
+              <span>[📊 TELEMETRY]</span>
             </button>
             <PWAInstallButton />
-            <button
-              type="button"
-              onClick={() => {
-                setIsSettingsOpen(true);
-                playBeep('tap');
-              }}
-              className="font-mono-tabular text-sm sm:text-base flex items-center gap-1.5 cursor-pointer"
-              title="Battery / Token Telemetry Status"
-            >
-              <span className="text-[#c5c9d6]">[</span>
-              {/* Pixel Battery Icon */}
-              <svg
-                viewBox="0 0 12 16"
-                className="w-3.5 h-4 pixelated inline-block"
-                shapeRendering="crispEdges"
-              >
-                <rect x="4" y="0" width="4" height="2" fill="#94a3b8" />
-                <rect x="1" y="2" width="10" height="14" fill="none" stroke="#94a3b8" strokeWidth="1.5" />
-                <rect x="3" y="4" width="6" height="10" fill="#4ade80" />
-              </svg>
-              <span className="text-[#4ade80] font-semibold">{remainingBatteryPct}%</span>
-              <span className="text-[#c5c9d6]">]</span>
-
-              {/* Signal Bar & Wi-Fi Icon */}
-              <svg
-                viewBox="0 0 22 14"
-                className="w-5 h-3.5 pixelated inline-block ml-1"
-                shapeRendering="crispEdges"
-              >
-                {/* Vertical Signal Pillar */}
-                <rect x="1" y="2" width="3" height="10" fill="#4ade80" />
-                <rect x="1" y="0" width="3" height="2" fill="#eab308" />
-                {/* Pixel Wi-Fi Arcs */}
-                <rect x="8" y="2" width="12" height="2" fill="#4ade80" />
-                <rect x="6" y="4" width="2" height="2" fill="#4ade80" />
-                <rect x="20" y="4" width="2" height="2" fill="#4ade80" />
-                <rect x="10" y="6" width="8" height="2" fill="#4ade80" />
-                <rect x="13" y="10" width="2" height="2" fill="#4ade80" />
-              </svg>
-            </button>
           </div>
         </header>
 
@@ -2707,22 +2552,6 @@ const CommandCenterContent: React.FC = () => {
                     </button>
                     <button
                       type="button"
-                      onClick={() => {
-                        setHqSubView('toolkits');
-                        setActiveSpeakerAgentIndex(null);
-                        playBeep('tap');
-                      }}
-                      className={`px-3 py-1 font-mono-tabular text-xs cursor-pointer transition-colors flex items-center gap-1.5 ${
-                        hqSubView === 'toolkits'
-                          ? 'bg-[#e59838] text-[#121110] font-bold shadow-[0_0_8px_rgba(229,152,56,0.4)]'
-                          : 'text-[#e59838] hover:text-[#f3ead8]'
-                      }`}
-                      title="Open Composio Armory Toolkit Marketplace (GitHub, Slack, Gmail, Notion, Linear)"
-                    >
-                      <span>⚔️ Armory Toolkits ({composioConnectedCount})</span>
-                    </button>
-                    <button
-                      type="button"
                       onClick={handleCallTownHallMeeting}
                       className={`px-3 py-1 font-mono-tabular text-xs cursor-pointer transition-colors flex items-center gap-1 ${
                         hqSubView === 'town_hall'
@@ -2748,17 +2577,6 @@ const CommandCenterContent: React.FC = () => {
                       }`}
                     >
                       📜 Command Log ({commandLedger.length})
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setIsWorkspaceFilesOpen(true);
-                        playBeep('tap');
-                      }}
-                      className="px-3 py-1 font-mono-tabular text-xs cursor-pointer transition-colors text-[#38bdf8] hover:text-[#f3ead8]"
-                      title="Open Workspace File Explorer & Markdown Reports (IndexedDB)"
-                    >
-                      📁 Files
                     </button>
                   </div>
                   <span className="hidden sm:inline font-mono-tabular text-[11px] text-[#9c8265]">
@@ -2836,14 +2654,6 @@ const CommandCenterContent: React.FC = () => {
                     activeSpeakerAgentIndex={activeSpeakerAgentIndex}
                     onSelectSpeakerAgentIndex={setActiveSpeakerAgentIndex}
                     participantsWithNotes={participantsWithNotes}
-                  />
-                ) : hqSubView === 'toolkits' ? (
-                  <PluginMarketplace
-                    onPluginStatusChange={() => {
-                      setPlugins((prev) => [...prev]);
-                      syncComposioAccounts();
-                    }}
-                    onClose={() => setHqSubView('terminal')}
                   />
                 ) : (
                   <CommandLogScreen

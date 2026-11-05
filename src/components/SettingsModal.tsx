@@ -5,7 +5,6 @@ import {
   VolumeX,
   RefreshCw,
   ShieldCheck,
-  BatteryCharging,
   Lock,
   KeyRound,
   CheckCircle2,
@@ -507,14 +506,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     } finally {
       setRevalidating(false);
     }
-  };
-
-  const handleRechargeTokens = () => {
-    playBeep('complete');
-    onUpdatePreferences({
-      ...preferences,
-      usedTokens: 0,
-    });
   };
 
   const handleSaveAll = () => {
@@ -1481,8 +1472,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           />
         </div>
 
-        {/* Battery / Token Gauge Reset & Audio Toggle */}
-        <div className="grid grid-cols-2 gap-3">
+        {/* Audio Synth Toggle */}
+        <div>
           <button
             type="button"
             onClick={() => {
@@ -1490,7 +1481,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               setSoundEnabled(next);
               ambientAudioService.setAmbientEnabled(next, next);
             }}
-            className="min-h-[42px] px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs font-medium text-slate-200 flex items-center justify-center gap-2 cursor-pointer"
+            className="w-full min-h-[42px] px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs font-medium text-slate-200 flex items-center justify-center gap-2 cursor-pointer"
           >
             {soundEnabled && ambientState.isEnabled ? (
               <Volume2 className="w-4 h-4 text-emerald-400" />
@@ -1501,15 +1492,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               8-Bit & Room Synth:{' '}
               {soundEnabled && ambientState.isEnabled ? 'On' : 'Muted'}
             </span>
-          </button>
-
-          <button
-            type="button"
-            onClick={handleRechargeTokens}
-            className="min-h-[42px] px-3 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-xs font-medium text-slate-200 flex items-center justify-center gap-2 cursor-pointer"
-          >
-            <BatteryCharging className="w-4 h-4 text-amber-400" />
-            <span>Recharge Battery</span>
           </button>
         </div>
 

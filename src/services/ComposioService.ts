@@ -2433,7 +2433,7 @@ export async function executeComposioAction(
  */
 export async function runAgentWithTools(
   prompt: string,
-  selectedModel: string = 'gemini-2.5-flash',
+  selectedModel: string = 'gemini-3.8-flash',
   apiKey?: string
 ): Promise<any> {
   let effectiveKey = (apiKey || '').trim();

@@ -49,8 +49,7 @@ import {
   saveLLMProviderConfig,
   testLLMProviderConnection,
   initiateGoogleSignIn,
-  connectQuickSubscription,
-  connectManualSubscriptionToken,
+  connectUserSubscriptionAccount,
   disconnectSubscriptionAccount,
   setLLMAuthMode,
   getLLMAuthInfo,
@@ -118,9 +117,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   }>({ loading: false });
 
   const [isSigningInGoogle, setIsSigningInGoogle] = useState(false);
-  const [showManualTokenInput, setShowManualTokenInput] = useState(false);
-  const [manualToken, setManualToken] = useState('');
-  const [manualEmail, setManualEmail] = useState('');
+  const [isConnectingSubscription, setIsConnectingSubscription] = useState(false);
+  const [userGoogleEmail, setUserGoogleEmail] = useState('');
+  const [userGoogleKey, setUserGoogleKey] = useState('');
+  const [userOpenAIEmail, setUserOpenAIEmail] = useState('');
+  const [userOpenAIKey, setUserOpenAIKey] = useState('');
+  const [userAnthropicEmail, setUserAnthropicEmail] = useState('');
+  const [userAnthropicKey, setUserAnthropicKey] = useState('');
   const [googleClientIdInput, setGoogleClientIdInput] = useState(
     () => llmConfig.googleClientId || ''
   );
@@ -133,13 +136,164 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setLlmTestStatus({ loading: false, message: undefined });
   };
 
+  const handleConnectGoogleSubscription = async () => {
+    if (!userGoogleEmail.trim() || !userGoogleEmail.includes('@')) {
+      setLlmTestStatus({
+        loading: false,
+        ok: false,
+        message: 'Please enter your actual Google account email (e.g. user@gmail.com).',
+      });
+      playBeep('error');
+      return;
+    }
+    if (!userGoogleKey.trim()) {
+      setLlmTestStatus({
+        loading: false,
+        ok: false,
+        message: 'Please enter your Google AI Studio API key or OAuth Bearer token.',
+      });
+      playBeep('error');
+      return;
+    }
+
+    setIsConnectingSubscription(true);
+    setLlmTestStatus({ loading: true, message: 'Validating credentials with Google Gemini upstream...' });
+    playBeep('tap');
+    try {
+      const account = await connectUserSubscriptionAccount({
+        providerId: 'gemini',
+        email: userGoogleEmail.trim(),
+        credentialKey: userGoogleKey.trim(),
+      });
+      const updated = loadLLMProviderConfig();
+      setLlmConfig(updated);
+      setUserGoogleKey('');
+      setLlmTestStatus({
+        loading: false,
+        ok: true,
+        message: `Successfully connected ${account.email} to Google AI Pro Plan! Tactical link verified.`,
+      });
+      playBeep('complete');
+    } catch (err: any) {
+      setLlmTestStatus({
+        loading: false,
+        ok: false,
+        message: err?.message || 'Google account connection failed. Check your key/token.',
+      });
+      playBeep('error');
+    } finally {
+      setIsConnectingSubscription(false);
+    }
+  };
+
+  const handleConnectOpenAISubscription = async () => {
+    if (!userOpenAIEmail.trim() || !userOpenAIEmail.includes('@')) {
+      setLlmTestStatus({
+        loading: false,
+        ok: false,
+        message: 'Please enter your OpenAI account email.',
+      });
+      playBeep('error');
+      return;
+    }
+    if (!userOpenAIKey.trim()) {
+      setLlmTestStatus({
+        loading: false,
+        ok: false,
+        message: 'Please enter your OpenAI API key or session token.',
+      });
+      playBeep('error');
+      return;
+    }
+
+    setIsConnectingSubscription(true);
+    setLlmTestStatus({ loading: true, message: 'Connecting ChatGPT Plus / Pro credentials...' });
+    playBeep('tap');
+    try {
+      const account = await connectUserSubscriptionAccount({
+        providerId: 'openai',
+        email: userOpenAIEmail.trim(),
+        credentialKey: userOpenAIKey.trim(),
+      });
+      const updated = loadLLMProviderConfig();
+      setLlmConfig(updated);
+      setUserOpenAIKey('');
+      setLlmTestStatus({
+        loading: false,
+        ok: true,
+        message: `Connected ${account.email} to ChatGPT Plus & Pro subscription!`,
+      });
+      playBeep('complete');
+    } catch (err: any) {
+      setLlmTestStatus({
+        loading: false,
+        ok: false,
+        message: err?.message || 'Connection failed.',
+      });
+      playBeep('error');
+    } finally {
+      setIsConnectingSubscription(false);
+    }
+  };
+
+  const handleConnectAnthropicSubscription = async () => {
+    if (!userAnthropicEmail.trim() || !userAnthropicEmail.includes('@')) {
+      setLlmTestStatus({
+        loading: false,
+        ok: false,
+        message: 'Please enter your Anthropic account email.',
+      });
+      playBeep('error');
+      return;
+    }
+    if (!userAnthropicKey.trim()) {
+      setLlmTestStatus({
+        loading: false,
+        ok: false,
+        message: 'Please enter your Anthropic Claude key or session token.',
+      });
+      playBeep('error');
+      return;
+    }
+
+    setIsConnectingSubscription(true);
+    setLlmTestStatus({ loading: true, message: 'Connecting Claude Pro credentials...' });
+    playBeep('tap');
+    try {
+      const account = await connectUserSubscriptionAccount({
+        providerId: 'anthropic',
+        email: userAnthropicEmail.trim(),
+        credentialKey: userAnthropicKey.trim(),
+      });
+      const updated = loadLLMProviderConfig();
+      setLlmConfig(updated);
+      setUserAnthropicKey('');
+      setLlmTestStatus({
+        loading: false,
+        ok: true,
+        message: `Connected ${account.email} to Claude Pro & Team subscription!`,
+      });
+      playBeep('complete');
+    } catch (err: any) {
+      setLlmTestStatus({
+        loading: false,
+        ok: false,
+        message: err?.message || 'Connection failed.',
+      });
+      playBeep('error');
+    } finally {
+      setIsConnectingSubscription(false);
+    }
+  };
+
   const handleGoogleSignIn = async () => {
     setIsSigningInGoogle(true);
-    setLlmTestStatus({ loading: true, message: 'Initiating Google Account Sign-In...' });
+    setLlmTestStatus({ loading: true, message: 'Launching Google OAuth 2.0 Consent Popup...' });
     playBeep('tap');
     try {
       const account = await initiateGoogleSignIn({
         clientId: llmConfig.googleClientId,
+        userEmail: userGoogleEmail.trim() || undefined,
       });
       const updated = loadLLMProviderConfig();
       setLlmConfig(updated);
@@ -161,19 +315,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     }
   };
 
-  const handleQuickConnectSubscription = (pId: LLMProviderType) => {
-    playBeep('tap');
-    const account = connectQuickSubscription(pId);
-    const updated = loadLLMProviderConfig();
-    setLlmConfig(updated);
-    setLlmTestStatus({
-      loading: false,
-      ok: true,
-      message: `Connected to ${account.planName} (${account.email})!`,
-    });
-    playBeep('complete');
-  };
-
   const handleDisconnectSubscription = (pId: LLMProviderType) => {
     playBeep('tap');
     const updated = disconnectSubscriptionAccount(pId);
@@ -182,26 +323,6 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       loading: false,
       message: `Disconnected ${pId.toUpperCase()} subscription. Switched to developer standby.`,
     });
-  };
-
-  const handleConnectManualToken = () => {
-    if (!manualToken.trim()) return;
-    playBeep('tap');
-    const account = connectManualSubscriptionToken(
-      llmConfig.providerId,
-      manualToken.trim(),
-      manualEmail.trim() || undefined
-    );
-    const updated = loadLLMProviderConfig();
-    setLlmConfig(updated);
-    setManualToken('');
-    setShowManualTokenInput(false);
-    setLlmTestStatus({
-      loading: false,
-      ok: true,
-      message: `Connected ${account.planName} token successfully!`,
-    });
-    playBeep('complete');
   };
 
   const handleSaveGoogleClientId = () => {
@@ -220,23 +341,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     });
   };
 
-  useEffect(() => {
-    return ambientAudioService.subscribe(() => {
-      setAmbientState(ambientAudioService.getState());
-    });
-  }, []);
-
-  if (!isOpen) return null;
-
-  const activeProfile =
-    ROOM_SOUNDSCAPE_PROFILES[currentRoom] || ROOM_SOUNDSCAPE_PROFILES.war_room;
-
-  const handleTestLlm = async () => {
+  const handleTestLlm = async (modeOverride?: AuthMode) => {
     setLlmTestStatus({ loading: true, message: undefined });
     playBeep('tap');
     try {
-      saveLLMProviderConfig(llmConfig);
-      const res = await testLLMProviderConnection(llmConfig, theme.id);
+      const mode = modeOverride || llmConfig.authMode;
+      saveLLMProviderConfig({ ...llmConfig, authMode: mode });
+      const res = await testLLMProviderConnection(llmConfig, theme.id, mode);
       if (res.ok) {
         setLlmTestStatus({
           loading: false,
@@ -261,6 +372,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       playBeep('error');
     }
   };
+
+  useEffect(() => {
+    return ambientAudioService.subscribe(() => {
+      setAmbientState(ambientAudioService.getState());
+    });
+  }, []);
+
+  if (!isOpen) return null;
+
+  const activeProfile =
+    ROOM_SOUNDSCAPE_PROFILES[currentRoom] || ROOM_SOUNDSCAPE_PROFILES.war_room;
 
   const handleRotateProviderToken = async (provider: ServiceProviderName) => {
     setRotatingProvider(provider);
@@ -479,16 +601,54 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                         </button>
                       </div>
                       <p className="text-[11px] text-cyan-300/80 leading-relaxed">
-                        Authorized for Gemini 2.5 Flash / Pro inference with 1M token context, multimodal vision, and Google Search Grounding.
+                        Authorized for Gemini 3.8 Flash / 3.5 Flash Lite inference with 1M token context, multimodal vision, and Google Search Grounding.
                       </p>
                     </div>
                   ) : (
                     <div className="flex flex-col gap-2.5">
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[11px] text-slate-300 font-medium">Your Google Account Email</label>
+                        <input
+                          type="email"
+                          value={userGoogleEmail}
+                          onChange={(e) => setUserGoogleEmail(e.target.value)}
+                          placeholder="e.g. yourname@gmail.com (Enter your own Google email)"
+                          className="w-full bg-[#12151f] border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-cyan-500"
+                        />
+                      </div>
+
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[11px] text-slate-300 font-medium">Google AI Pro Key or Bearer Token</label>
+                        <input
+                          type="password"
+                          value={userGoogleKey}
+                          onChange={(e) => setUserGoogleKey(e.target.value)}
+                          placeholder="AIzaSy... (API Key from AI Studio) or OAuth token"
+                          className="w-full bg-[#12151f] border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-cyan-500"
+                        />
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={handleConnectGoogleSubscription}
+                        disabled={isConnectingSubscription || !userGoogleEmail.trim() || !userGoogleKey.trim()}
+                        className="w-full min-h-[38px] px-3.5 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 shadow-lg transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        <Sparkles className="w-3.5 h-3.5" />
+                        <span>{isConnectingSubscription ? 'Verifying Google Account...' : 'Connect Google AI Pro Account'}</span>
+                      </button>
+
+                      <div className="flex items-center gap-2 my-0.5">
+                        <div className="h-px bg-slate-800 flex-1" />
+                        <span className="text-[10px] text-slate-500 font-mono-tabular uppercase">or launch OAuth popup</span>
+                        <div className="h-px bg-slate-800 flex-1" />
+                      </div>
+
                       <button
                         type="button"
                         onClick={handleGoogleSignIn}
                         disabled={isSigningInGoogle}
-                        className="w-full min-h-[42px] px-3.5 py-2.5 rounded-xl bg-white hover:bg-slate-100 text-slate-900 font-semibold text-xs flex items-center justify-center gap-2 shadow-lg transition-all cursor-pointer disabled:opacity-50"
+                        className="w-full min-h-[36px] px-3 py-1.5 rounded-xl bg-white/10 hover:bg-white/20 border border-white/20 text-slate-200 font-semibold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer disabled:opacity-50"
                       >
                         <svg className="w-4 h-4 shrink-0" viewBox="0 0 24 24">
                           <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
@@ -496,19 +656,8 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                           <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" />
                           <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" />
                         </svg>
-                        <span>{isSigningInGoogle ? 'Signing into Google...' : 'Sign In with Google Account'}</span>
+                        <span>{isSigningInGoogle ? 'Signing into Google...' : 'Launch Google Sign-In Popup'}</span>
                       </button>
-
-                      <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => handleQuickConnectSubscription('gemini')}
-                          className="flex-1 min-h-[32px] px-2.5 py-1.5 rounded-lg bg-[#192638] hover:bg-[#22334a] border border-cyan-800/60 text-[11px] text-cyan-200 font-mono-tabular flex items-center justify-center gap-1 cursor-pointer transition-colors"
-                        >
-                          <Sparkles className="w-3 h-3 text-cyan-400" />
-                          <span>1-Click Connect (Google AI Pro)</span>
-                        </button>
-                      </div>
 
                       <div className="text-[11px] text-slate-400 space-y-1 pl-1">
                         <div className="flex items-center gap-1.5 text-slate-300">
@@ -523,43 +672,33 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </div>
                   )}
 
-                  {/* Manual Token & Custom Client ID Toggle */}
+                  {/* Custom OAuth Client ID Toggle */}
                   <div className="pt-1 border-t border-slate-800/60">
                     <button
                       type="button"
-                      onClick={() => setShowManualTokenInput(!showManualTokenInput)}
+                      onClick={() => setShowClientIdInput(!showClientIdInput)}
                       className="text-[11px] text-slate-400 hover:text-slate-200 flex items-center gap-1 cursor-pointer"
                     >
-                      {showManualTokenInput ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                      <span>Advanced: Connect with Google OAuth Access Token (gcloud / Bearer)</span>
+                      {showClientIdInput ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                      <span>Advanced: Custom Google OAuth Client ID</span>
                     </button>
 
-                    {showManualTokenInput && (
+                    {showClientIdInput && (
                       <div className="mt-2 p-2.5 bg-[#0a0f17] border border-slate-800 rounded-lg flex flex-col gap-2">
                         <input
-                          type="password"
-                          value={manualToken}
-                          onChange={(e) => setManualToken(e.target.value)}
-                          placeholder="ya29.a0AfH6... (Paste OAuth Access Token or gcloud auth print-access-token)"
-                          className="w-full bg-[#12151f] border border-slate-800 rounded px-2 py-1.5 text-[11px] font-mono-tabular text-slate-100 focus:outline-none focus:border-cyan-500"
+                          type="text"
+                          value={googleClientIdInput}
+                          onChange={(e) => setGoogleClientIdInput(e.target.value)}
+                          placeholder="apps.googleusercontent.com Client ID"
+                          className="w-full bg-[#12151f] border border-slate-800 rounded px-2.5 py-1.5 text-[11px] font-mono-tabular text-slate-100 focus:outline-none focus:border-cyan-500"
                         />
-                        <div className="flex gap-2">
-                          <input
-                            type="email"
-                            value={manualEmail}
-                            onChange={(e) => setManualEmail(e.target.value)}
-                            placeholder="user@gmail.com (Optional)"
-                            className="flex-1 bg-[#12151f] border border-slate-800 rounded px-2 py-1 text-[11px] font-mono-tabular text-slate-100"
-                          />
-                          <button
-                            type="button"
-                            onClick={handleConnectManualToken}
-                            disabled={!manualToken.trim()}
-                            className="px-3 py-1 bg-cyan-900 hover:bg-cyan-800 text-cyan-200 text-xs rounded font-medium disabled:opacity-50 cursor-pointer"
-                          >
-                            Attach Token
-                          </button>
-                        </div>
+                        <button
+                          type="button"
+                          onClick={handleSaveGoogleClientId}
+                          className="self-end px-3 py-1 bg-cyan-900 hover:bg-cyan-800 text-cyan-200 text-xs rounded font-medium cursor-pointer"
+                        >
+                          Save Client ID
+                        </button>
                       </div>
                     )}
                   </div>
@@ -585,9 +724,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <div className="p-3 bg-[#11241e] border border-emerald-500/40 rounded-lg flex items-center justify-between">
                       <div>
                         <div className="text-xs font-semibold text-slate-200">
-                          {llmConfig.connectedAccounts.openai.displayName || 'ChatGPT Plus Subscriber'}
+                          {llmConfig.connectedAccounts.openai.displayName || llmConfig.connectedAccounts.openai.email}
                         </div>
-                        <div className="text-[11px] text-emerald-400 font-mono-tabular">● SUBSCRIPTION CONNECTED</div>
+                        <div className="text-[11px] text-emerald-400 font-mono-tabular">● {llmConfig.connectedAccounts.openai.email} CONNECTED</div>
                       </div>
                       <button
                         type="button"
@@ -599,13 +738,34 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </div>
                   ) : (
                     <div className="flex flex-col gap-2">
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[11px] text-slate-300 font-medium">Your OpenAI Account Email</label>
+                        <input
+                          type="email"
+                          value={userOpenAIEmail}
+                          onChange={(e) => setUserOpenAIEmail(e.target.value)}
+                          placeholder="e.g. user@domain.com"
+                          className="w-full bg-[#12151f] border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-emerald-500"
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[11px] text-slate-300 font-medium">ChatGPT Plus / Pro Key or Token</label>
+                        <input
+                          type="password"
+                          value={userOpenAIKey}
+                          onChange={(e) => setUserOpenAIKey(e.target.value)}
+                          placeholder="sk-... (API key or platform token)"
+                          className="w-full bg-[#12151f] border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-emerald-500"
+                        />
+                      </div>
                       <button
                         type="button"
-                        onClick={() => handleQuickConnectSubscription('openai')}
-                        className="w-full min-h-[38px] px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                        onClick={handleConnectOpenAISubscription}
+                        disabled={isConnectingSubscription || !userOpenAIEmail.trim() || !userOpenAIKey.trim()}
+                        className="w-full min-h-[38px] px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 cursor-pointer transition-colors disabled:opacity-50"
                       >
                         <Sparkles className="w-3.5 h-3.5" />
-                        <span>Connect ChatGPT Plus / Pro Account</span>
+                        <span>{isConnectingSubscription ? 'Verifying...' : 'Connect ChatGPT Plus / Pro Account'}</span>
                       </button>
                     </div>
                   )}
@@ -629,9 +789,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     <div className="p-3 bg-[#241c14] border border-amber-500/40 rounded-lg flex items-center justify-between">
                       <div>
                         <div className="text-xs font-semibold text-slate-200">
-                          {llmConfig.connectedAccounts.anthropic.displayName || 'Claude Pro Subscriber'}
+                          {llmConfig.connectedAccounts.anthropic.displayName || llmConfig.connectedAccounts.anthropic.email}
                         </div>
-                        <div className="text-[11px] text-amber-400 font-mono-tabular">● SUBSCRIPTION CONNECTED</div>
+                        <div className="text-[11px] text-amber-400 font-mono-tabular">● {llmConfig.connectedAccounts.anthropic.email} CONNECTED</div>
                       </div>
                       <button
                         type="button"
@@ -643,13 +803,34 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </div>
                   ) : (
                     <div className="flex flex-col gap-2">
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[11px] text-slate-300 font-medium">Your Anthropic Account Email</label>
+                        <input
+                          type="email"
+                          value={userAnthropicEmail}
+                          onChange={(e) => setUserAnthropicEmail(e.target.value)}
+                          placeholder="e.g. user@domain.com"
+                          className="w-full bg-[#12151f] border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-amber-500"
+                        />
+                      </div>
+                      <div className="flex flex-col gap-1">
+                        <label className="text-[11px] text-slate-300 font-medium">Claude Pro / Team Key or Token</label>
+                        <input
+                          type="password"
+                          value={userAnthropicKey}
+                          onChange={(e) => setUserAnthropicKey(e.target.value)}
+                          placeholder="sk-ant-... (API key or session token)"
+                          className="w-full bg-[#12151f] border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-amber-500"
+                        />
+                      </div>
                       <button
                         type="button"
-                        onClick={() => handleQuickConnectSubscription('anthropic')}
-                        className="w-full min-h-[38px] px-3 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                        onClick={handleConnectAnthropicSubscription}
+                        disabled={isConnectingSubscription || !userAnthropicEmail.trim() || !userAnthropicKey.trim()}
+                        className="w-full min-h-[38px] px-3 py-2 rounded-xl bg-amber-600 hover:bg-amber-500 text-slate-950 font-bold text-xs flex items-center justify-center gap-2 cursor-pointer transition-colors disabled:opacity-50"
                       >
                         <Sparkles className="w-3.5 h-3.5" />
-                        <span>Connect Claude Pro Account</span>
+                        <span>{isConnectingSubscription ? 'Verifying...' : 'Connect Claude Pro Account'}</span>
                       </button>
                     </div>
                   )}
@@ -709,7 +890,11 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <input
                     type="text"
                     value={llmConfig.endpoint}
-                    onChange={(e) => setLlmConfig({ ...llmConfig, endpoint: e.target.value })}
+                    onChange={(e) => {
+                      const updated = { ...llmConfig, endpoint: e.target.value };
+                      setLlmConfig(updated);
+                      saveLLMProviderConfig(updated);
+                    }}
                     placeholder="http://localhost:11434"
                     className="w-full bg-[#12151f] border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-cyan-500"
                   />
@@ -722,19 +907,56 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   <input
                     type="password"
                     value={llmConfig.apiKey}
-                    onChange={(e) => setLlmConfig({ ...llmConfig, apiKey: e.target.value })}
+                    onChange={(e) => {
+                      const updated = { ...llmConfig, apiKey: e.target.value };
+                      setLlmConfig(updated);
+                      saveLLMProviderConfig(updated);
+                    }}
                     placeholder={DEFAULT_PROVIDER_CONFIGS[llmConfig.providerId].placeholderKey}
                     className="w-full bg-[#12151f] border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-cyan-500"
                   />
                 </div>
               )}
 
+              {/* Active Available Models for BYOK */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[11px] text-slate-300 font-medium">Active Available Models</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {(DEFAULT_PROVIDER_CONFIGS[llmConfig.providerId]?.availableModels || [llmConfig.modelName]).map((m) => {
+                    const isMSelected = llmConfig.modelName === m;
+                    return (
+                      <button
+                        key={m}
+                        type="button"
+                        onClick={() => {
+                          playBeep('tap');
+                          const nextConfig = { ...llmConfig, modelName: m };
+                          saveLLMProviderConfig(nextConfig);
+                          setLlmConfig(nextConfig);
+                        }}
+                        className={`px-2.5 py-1 rounded text-xs font-mono-tabular border cursor-pointer transition-colors ${
+                          isMSelected
+                            ? 'bg-amber-900/60 border-amber-400 text-amber-200 font-bold'
+                            : 'bg-[#12151f] border-slate-800 text-slate-400 hover:text-slate-200'
+                        }`}
+                      >
+                        {m}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
               <div className="flex flex-col gap-1">
                 <label className="text-[11px] text-slate-300 font-medium">Model Identifier</label>
                 <input
                   type="text"
                   value={llmConfig.modelName}
-                  onChange={(e) => setLlmConfig({ ...llmConfig, modelName: e.target.value })}
+                  onChange={(e) => {
+                    const updated = { ...llmConfig, modelName: e.target.value };
+                    setLlmConfig(updated);
+                    saveLLMProviderConfig(updated);
+                  }}
                   placeholder={DEFAULT_PROVIDER_CONFIGS[llmConfig.providerId].defaultModel}
                   className="w-full bg-[#12151f] border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-cyan-500"
                 />
@@ -745,12 +967,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
           <div className="flex items-center justify-between pt-1">
             <button
               type="button"
-              onClick={handleTestLlm}
+              onClick={() => handleTestLlm(llmConfig.authMode)}
               disabled={llmTestStatus.loading}
               className="min-h-[36px] px-3 py-1.5 rounded-lg bg-cyan-950 hover:bg-cyan-900 border border-cyan-700/60 text-xs font-medium text-cyan-200 flex items-center gap-1.5 transition-colors cursor-pointer disabled:opacity-50"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${llmTestStatus.loading ? 'animate-spin' : ''}`} />
-              <span>{llmTestStatus.loading ? 'Testing Link...' : `Test ${llmConfig.providerId.toUpperCase()} Connection`}</span>
+              <span>{llmTestStatus.loading ? 'Testing Link...' : `Test ${llmConfig.providerId.toUpperCase()} Connection (${llmConfig.authMode === 'subscription' ? 'Subscription' : 'BYOK'})`}</span>
             </button>
           </div>
 

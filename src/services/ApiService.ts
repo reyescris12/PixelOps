@@ -4106,7 +4106,7 @@ export async function pingGeminiConnection(
           },
         ],
       }),
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(25000),
     });
 
     if (!res.ok) {

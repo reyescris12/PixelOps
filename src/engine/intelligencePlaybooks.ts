@@ -691,7 +691,7 @@ STRICT EXECUTION PROTOCOLS:
 ${prompt}`;
 
     const llmConf = loadLLMProviderConfig();
-    const auth = getGeminiAuthHeadersAndUrl(llmConf, 'gemini-2.5-flash');
+    const auth = getGeminiAuthHeadersAndUrl(llmConf, 'gemini-3.8-flash');
     const hasAuth =
       (llmConf.authMode === 'subscription' && auth.isSubscription) ||
       (apiKey && apiKey !== 'MY_GEMINI_API_KEY');

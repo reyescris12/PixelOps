@@ -15,10 +15,10 @@ export interface ConnectedSubscriptionAccount {
   planType: SubscriptionPlanType;
   planName: string; // e.g. "Google AI Pro Plan (Gemini Advanced)"
   planTier?: 'pro' | 'plus' | 'team' | 'advanced' | 'free';
-  email?: string;
+  email: string;
   displayName?: string;
   avatarUrl?: string;
-  accessToken?: string; // OAuth Access Token or Bearer Token
+  accessToken: string; // OAuth Access Token or Bearer Token
   refreshToken?: string;
   idToken?: string;
   expiresAt?: number;
@@ -30,8 +30,8 @@ export interface LLMProviderConfig {
   providerId: LLMProviderType;
   authMode: AuthMode; // 'subscription' | 'apikey'
   apiKey: string;
-  endpoint: string; // e.g., http://localhost:11434 for Ollama
-  modelName: string; // e.g. gemini-2.5-flash, gpt-4o, claude-3-5-sonnet, llama3
+  endpoint: string;
+  modelName: string; // e.g. gemini-3.8-flash, gpt-4o, claude-3-5-sonnet-20241022, llama3.3
   connectedAccounts?: Partial<Record<LLMProviderType, ConnectedSubscriptionAccount>>;
   googleClientId?: string;
 }
@@ -40,31 +40,45 @@ const STORAGE_KEY = 'pixelops_llm_provider_config_v2';
 
 export const DEFAULT_PROVIDER_CONFIGS: Record<
   LLMProviderType,
-  { defaultModel: string; defaultEndpoint: string; label: string; placeholderKey: string }
+  {
+    defaultModel: string;
+    defaultEndpoint: string;
+    label: string;
+    placeholderKey: string;
+    availableModels: string[];
+  }
 > = {
   gemini: {
     label: 'Google Gemini',
-    defaultModel: 'gemini-2.5-flash',
+    defaultModel: 'gemini-3.8-flash',
     defaultEndpoint: 'https://generativelanguage.googleapis.com',
     placeholderKey: 'AIzaSy...',
+    availableModels: ['gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-3.6-flash'],
   },
   openai: {
     label: 'OpenAI GPT-4o',
     defaultModel: 'gpt-4o',
     defaultEndpoint: 'https://api.openai.com/v1',
     placeholderKey: 'sk-...',
+    availableModels: ['gpt-4o', 'gpt-4o-mini', 'o3-mini', 'o1'],
   },
   anthropic: {
     label: 'Anthropic Claude',
     defaultModel: 'claude-3-5-sonnet-20241022',
     defaultEndpoint: 'https://api.anthropic.com',
     placeholderKey: 'sk-ant-...',
+    availableModels: [
+      'claude-3-5-sonnet-20241022',
+      'claude-3-5-haiku-20241022',
+      'claude-3-opus-20240229',
+    ],
   },
   ollama: {
     label: 'Local Ollama Endpoint',
-    defaultModel: 'llama3',
+    defaultModel: 'llama3.3',
     defaultEndpoint: 'http://localhost:11434',
     placeholderKey: 'Optional bearer token',
+    availableModels: ['llama3.3', 'mistral', 'qwen2.5-coder'],
   },
 };
 
@@ -84,27 +98,27 @@ export const SUBSCRIPTION_PLANS: Record<
     providerTitle: 'Google Account',
     badge: 'GOOGLE AI PRO',
     description:
-      'Connect with your Google Account to unlock Gemini 2.5 Flash and Gemini 2.5 Pro under your Google One AI Premium or Gemini Advanced subscription.',
+      'Connect with your own Google Account to unlock Gemini 3.8 Flash with 1M token context, multimodal reasoning, and Google Search Grounding.',
     features: [
-      'Unlimited 1M token context window',
-      'Native real-time Google search grounding',
-      'Priority latency & multimodal execution',
-      'Full safehouse tool matrix authorization',
+      '1M token context window & fast low-latency execution',
+      'Native real-time Google search grounding on every directive',
+      'Multimodal image, diagram, and code comprehension',
+      'No rate-limit throttling under Google AI Pro',
     ],
-    recommendedModels: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-1.5-pro'],
+    recommendedModels: ['gemini-3.8-flash', 'gemini-3.5-flash-lite', 'gemini-3.6-flash'],
   },
   openai: {
     planName: 'ChatGPT Plus & Pro Subscription',
     providerTitle: 'OpenAI Account',
     badge: 'CHATGPT PLUS / PRO',
     description:
-      'Connect your ChatGPT Plus or Pro subscription to deploy GPT-4o and advanced reasoning models with high concurrency limits.',
+      'Connect your ChatGPT Plus or Pro subscription to deploy GPT-4o and o3-mini models with high concurrency limits.',
     features: [
       'GPT-4o multimodal vision & code generation',
-      'Advanced reasoning model access (o1, o3-mini)',
-      'High throughput concurrency & tool calling',
+      'Advanced reasoning model access (o3-mini, o1)',
+      'High throughput concurrency & tool execution',
     ],
-    recommendedModels: ['gpt-4o', 'gpt-4o-mini', 'o3-mini'],
+    recommendedModels: ['gpt-4o', 'gpt-4o-mini', 'o3-mini', 'o1'],
   },
   anthropic: {
     planName: 'Claude Pro & Team Subscription',
@@ -117,7 +131,11 @@ export const SUBSCRIPTION_PLANS: Record<
       '200,000 token context window for large repos',
       'High priority response queues',
     ],
-    recommendedModels: ['claude-3-5-sonnet-20241022', 'claude-3-5-haiku', 'claude-3-opus'],
+    recommendedModels: [
+      'claude-3-5-sonnet-20241022',
+      'claude-3-5-haiku-20241022',
+      'claude-3-opus-20240229',
+    ],
   },
   ollama: {
     planName: 'Local Ollama Air-Gapped Engine',
@@ -127,27 +145,43 @@ export const SUBSCRIPTION_PLANS: Record<
       'Air-gapped, zero-cost private execution running directly on your local workstation without external cloud dependencies.',
     features: [
       '100% private, local & air-gapped',
-      'Zero telemetry transmission to cloud providers',
-      'Custom fine-tuned weights support (llama3, mistral)',
+      'Zero telemetry transmission to external cloud services',
+      'Custom fine-tuned weights support (llama3.3, mistral)',
     ],
-    recommendedModels: ['llama3', 'mistral', 'qwen2.5-coder'],
+    recommendedModels: ['llama3.3', 'mistral', 'qwen2.5-coder'],
   },
 };
 
 /**
- * Normalizes Gemini model names to valid upstream Google API models (e.g. gemini-2.5-flash)
+ * Normalizes Gemini model names to valid, active upstream Google API models (e.g. gemini-3.8-flash).
+ * Strips any retired or deprecated legacy model identifiers.
  */
 export function normalizeGeminiModel(modelName?: string): string {
   const m = String(modelName || '').trim();
-  if (!m || m.includes('3.1') || m.toLowerCase() === 'gemini-3.1-flash-lite') {
-    return 'gemini-2.5-flash';
+  if (
+    !m ||
+    m.includes('2.0') ||
+    m.includes('1.5') ||
+    m === 'gemini-2.5-flash-lite' ||
+    m === 'gemini-3.1-flash-lite'
+  ) {
+    if (m === 'gemini-3.5-flash-lite') return 'gemini-3.5-flash-lite';
+    return 'gemini-3.8-flash';
   }
-  return m;
+  if (
+    m === 'gemini-3.8-flash' ||
+    m === 'gemini-3.6-flash' ||
+    m === 'gemini-3.5-flash-lite' ||
+    m === 'gemini-2.5-flash'
+  ) {
+    return m;
+  }
+  return 'gemini-3.8-flash';
 }
 
 /**
- * Constructs the accurate endpoint URL and headers for Google Gemini, automatically
- * routing between Subscription Bearer Auth (Google Account / Google AI Pro) and BYOK API Key.
+ * Constructs the accurate endpoint URL and headers for Google Gemini.
+ * Routes between Subscription Bearer Auth (Google Account / Google AI Pro) and BYOK API Key.
  */
 export function getGeminiAuthHeadersAndUrl(
   config: LLMProviderConfig,
@@ -164,9 +198,25 @@ export function getGeminiAuthHeadersAndUrl(
   const isSub =
     config.authMode === 'subscription' &&
     account?.status === 'connected' &&
-    Boolean(account?.accessToken);
+    Boolean(account?.accessToken) &&
+    !account.accessToken.includes('google_ai_pro_'); // Must be a real token, never mock!
 
   if (isSub && account?.accessToken) {
+    // If the token is a standard API key format (e.g. AIzaSy...), use ?key=
+    if (account.accessToken.startsWith('AIzaSy')) {
+      return {
+        url: `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+          normModel
+        )}:generateContent?key=${encodeURIComponent(account.accessToken.trim())}`,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        isSubscription: true,
+        planName: account.planName || 'Google AI Pro Plan',
+        accountEmail: account.email,
+      };
+    }
+    // Otherwise use Google OAuth Bearer token
     return {
       url: `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
         normModel
@@ -211,7 +261,11 @@ export function getLLMAuthInfo(config: LLMProviderConfig): {
   const account = config.connectedAccounts?.[pId];
 
   if (config.authMode === 'subscription') {
-    const isConn = account?.status === 'connected' && Boolean(account?.accessToken);
+    const isConn =
+      account?.status === 'connected' &&
+      Boolean(account?.accessToken) &&
+      !account.accessToken.includes('google_ai_pro_');
+
     return {
       mode: 'subscription',
       isConnected: isConn,
@@ -270,33 +324,33 @@ export function loadLLMProviderConfig(): LLMProviderConfig {
     const rawModel =
       parsed?.modelName ||
       DEFAULT_PROVIDER_CONFIGS[pId]?.defaultModel ||
-      'gemini-2.5-flash';
+      'gemini-3.8-flash';
     const modelName = pId === 'gemini' ? normalizeGeminiModel(rawModel) : rawModel;
 
-    // Load any saved connected accounts
+    // Load connected accounts and PURGE any fake mock accounts or mock tokens
     const connectedAccounts: Partial<Record<LLMProviderType, ConnectedSubscriptionAccount>> =
       parsed?.connectedAccounts || {};
 
-    // Check if legacy Google OAuth account exists in localStorage
-    if (!connectedAccounts.gemini) {
-      try {
-        const storedGoogle = localStorage.getItem('pixelops_connected_google_account');
-        if (storedGoogle) {
-          connectedAccounts.gemini = JSON.parse(storedGoogle);
-        }
-      } catch {}
+    // Purge fake mock accounts
+    if (
+      connectedAccounts.gemini &&
+      (connectedAccounts.gemini.email === 'commander@gmail.com' ||
+        connectedAccounts.gemini.accessToken?.includes('google_ai_pro_'))
+    ) {
+      delete connectedAccounts.gemini;
+      localStorage.removeItem('pixelops_connected_google_account');
     }
 
-    // Determine default authMode: If connected account is active or no API key, default to subscription
-    let authMode: AuthMode = parsed?.authMode || 'subscription';
-    if (!parsed?.authMode) {
-      if (connectedAccounts[pId]?.status === 'connected') {
-        authMode = 'subscription';
-      } else if (apiKey && apiKey !== 'MY_GEMINI_API_KEY') {
-        authMode = 'apikey';
-      } else {
-        authMode = 'subscription';
-      }
+    // Default authMode: If valid real subscription account is connected, use subscription; otherwise default to apikey!
+    const hasValidSubscription = Boolean(
+      connectedAccounts[pId]?.status === 'connected' &&
+        connectedAccounts[pId]?.accessToken &&
+        !connectedAccounts[pId]?.accessToken?.includes('google_ai_pro_')
+    );
+
+    let authMode: AuthMode = parsed?.authMode || (hasValidSubscription ? 'subscription' : 'apikey');
+    if (!hasValidSubscription && parsed?.authMode === 'subscription' && !apiKey) {
+      authMode = 'subscription';
     }
 
     const googleClientId =
@@ -320,7 +374,7 @@ export function loadLLMProviderConfig(): LLMProviderConfig {
   } catch {
     return {
       providerId: 'gemini',
-      authMode: 'subscription',
+      authMode: 'apikey',
       apiKey: '',
       endpoint: DEFAULT_PROVIDER_CONFIGS.gemini.defaultEndpoint,
       modelName: DEFAULT_PROVIDER_CONFIGS.gemini.defaultModel,
@@ -373,7 +427,7 @@ export function disconnectSubscriptionAccount(providerId: LLMProviderType): LLMP
   const updated: LLMProviderConfig = {
     ...current,
     connectedAccounts: nextAccounts,
-    authMode: current.apiKey ? 'apikey' : 'subscription',
+    authMode: 'apikey',
   };
   saveLLMProviderConfig(updated);
   if (providerId === 'gemini') {
@@ -396,11 +450,11 @@ export function setLLMAuthMode(authMode: AuthMode): LLMProviderConfig {
 }
 
 /**
- * Initiates an interactive Google Account Sign-In flow via popup window.
- * Requests OAuth 2.0 access token with Google Generative Language & profile scopes.
+ * Initiates an interactive Google Account Sign-In flow via OAuth 2.0 popup window.
  */
 export async function initiateGoogleSignIn(options?: {
   clientId?: string;
+  userEmail?: string;
 }): Promise<ConnectedSubscriptionAccount> {
   const currentConfig = loadLLMProviderConfig();
   const clientId =
@@ -409,132 +463,173 @@ export async function initiateGoogleSignIn(options?: {
     (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GOOGLE_CLIENT_ID) ||
     '';
 
+  if (!clientId) {
+    throw new Error(
+      'Google OAuth Client ID is required to launch the Google consent popup. Enter your Google Client ID below or attach your Google AI Studio / Cloud access key directly.'
+    );
+  }
+
   const redirectUri = window.location.origin;
   const scope = encodeURIComponent(
     'openid email profile https://www.googleapis.com/auth/generative-language'
   );
   const state = `google_ai_pro_${Date.now()}`;
 
-  // If a Google Client ID is configured, launch the real Google OAuth 2.0 consent screen
-  if (clientId) {
-    const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(
-      clientId
-    )}&redirect_uri=${encodeURIComponent(
-      redirectUri
-    )}&response_type=token&scope=${scope}&state=${state}&prompt=select_account`;
+  const authUrl = `https://accounts.google.com/o/oauth2/v2/auth?client_id=${encodeURIComponent(
+    clientId
+  )}&redirect_uri=${encodeURIComponent(
+    redirectUri
+  )}&response_type=token&scope=${scope}&state=${state}&prompt=select_account`;
 
-    const width = 520;
-    const height = 660;
-    const left = Math.max(0, Math.round(window.screenX + (window.outerWidth - width) / 2));
-    const top = Math.max(0, Math.round(window.screenY + (window.outerHeight - height) / 2));
+  const width = 520;
+  const height = 660;
+  const left = Math.max(0, Math.round(window.screenX + (window.outerWidth - width) / 2));
+  const top = Math.max(0, Math.round(window.screenY + (window.outerHeight - height) / 2));
 
-    const popup = window.open(
-      authUrl,
-      'google_oauth_popup',
-      `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes,status=yes`
-    );
+  const popup = window.open(
+    authUrl,
+    'google_oauth_popup',
+    `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes,status=yes`
+  );
 
-    if (!popup) {
-      throw new Error('Popup blocked. Please allow popups for this origin to sign into Google.');
-    }
+  if (!popup) {
+    throw new Error('Popup blocked. Please allow popups in your browser to sign into your Google account.');
+  }
 
-    return new Promise((resolve, reject) => {
-      const timeoutTimer = setTimeout(() => {
+  return new Promise((resolve, reject) => {
+    const timeoutTimer = setTimeout(() => {
+      cleanup();
+      reject(new Error('Google sign-in timed out. Please try again.'));
+    }, 120000);
+
+    const messageHandler = async (event: MessageEvent) => {
+      if (!event.data) return;
+      if (event.data.type === 'GOOGLE_AUTH_SUCCESS' || event.data.googleAuthSuccess) {
         cleanup();
-        reject(new Error('Google sign-in timed out. Please try again.'));
-      }, 120000);
+        const params = event.data.params || {};
+        const token = params.access_token || params.code || '';
+        if (!token) {
+          reject(new Error('Google returned empty credentials.'));
+          return;
+        }
 
-      const messageHandler = async (event: MessageEvent) => {
-        if (!event.data) return;
-        if (event.data.type === 'GOOGLE_AUTH_SUCCESS' || event.data.googleAuthSuccess) {
-          cleanup();
-          const params = event.data.params || {};
-          const token = params.access_token || params.code || '';
-          if (!token) {
-            reject(new Error('Google returned empty authentication credentials.'));
+        try {
+          // Fetch Google user profile
+          let profileData: any = null;
+          try {
+            const uRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            if (uRes.ok) profileData = await uRes.json();
+          } catch {}
+
+          const userEmail = profileData?.email || options?.userEmail || '';
+          if (!userEmail) {
+            reject(new Error('Could not retrieve user email from Google account.'));
             return;
           }
 
-          try {
-            // Fetch Google user profile
-            let profileData: any = null;
-            try {
-              const uRes = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
-                headers: { Authorization: `Bearer ${token}` },
-              });
-              if (uRes.ok) profileData = await uRes.json();
-            } catch {}
-
-            const connected: ConnectedSubscriptionAccount = {
-              providerId: 'gemini',
-              planType: 'google_ai_pro',
-              planName: 'Google AI Pro Plan (Gemini Advanced)',
-              planTier: 'pro',
-              email: profileData?.email || 'google.user@gmail.com',
-              displayName: profileData?.name || 'Google AI Pro Subscriber',
-              avatarUrl: profileData?.picture,
-              accessToken: token,
-              expiresAt: Date.now() + 3600 * 1000,
-              status: 'connected',
-              connectedAt: new Date().toISOString(),
-            };
-            connectSubscriptionAccount(connected);
-            resolve(connected);
-          } catch (err: any) {
-            reject(err);
-          }
+          const connected: ConnectedSubscriptionAccount = {
+            providerId: 'gemini',
+            planType: 'google_ai_pro',
+            planName: 'Google AI Pro Plan (Gemini Advanced)',
+            planTier: 'pro',
+            email: userEmail,
+            displayName: profileData?.name || userEmail.split('@')[0],
+            avatarUrl: profileData?.picture,
+            accessToken: token,
+            expiresAt: Date.now() + 3600 * 1000,
+            status: 'connected',
+            connectedAt: new Date().toISOString(),
+          };
+          connectSubscriptionAccount(connected);
+          resolve(connected);
+        } catch (err: any) {
+          reject(err);
         }
-      };
+      }
+    };
 
-      const cleanup = () => {
-        clearTimeout(timeoutTimer);
-        window.removeEventListener('message', messageHandler);
-        if (!popup.closed) {
-          try {
-            popup.close();
-          } catch {}
-        }
-      };
+    const cleanup = () => {
+      clearTimeout(timeoutTimer);
+      window.removeEventListener('message', messageHandler);
+      if (!popup.closed) {
+        try {
+          popup.close();
+        } catch {}
+      }
+    };
 
-      window.addEventListener('message', messageHandler);
-    });
+    window.addEventListener('message', messageHandler);
+  });
+}
+
+/**
+ * Connects an authenticated Google AI Pro or major AI subscription account using the user's
+ * actual email and verified access credential (Google AI Studio Key, gcloud token, or OAuth Bearer).
+ */
+export async function connectUserSubscriptionAccount(params: {
+  providerId: LLMProviderType;
+  email: string;
+  credentialKey: string;
+}): Promise<ConnectedSubscriptionAccount> {
+  const cleanEmail = params.email.trim();
+  const cleanKey = params.credentialKey.trim();
+
+  if (!cleanEmail || !cleanEmail.includes('@')) {
+    throw new Error('Please enter a valid email address for your account.');
+  }
+  if (!cleanKey) {
+    throw new Error('Please enter your Google AI Studio API key or OAuth access token.');
   }
 
-  // If no OAuth Client ID is registered, provide seamless 1-click connect with simulated/session credentials
-  return connectQuickSubscription('gemini');
-}
+  // Pre-validate credentials with Google Gemini upstream
+  if (params.providerId === 'gemini') {
+    const isBearer = cleanKey.startsWith('ya29.');
+    const testUrl = isBearer
+      ? 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent'
+      : `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${encodeURIComponent(
+          cleanKey
+        )}`;
 
-/**
- * 1-Click Instant Connect for Subscription Plans (Google AI Pro, ChatGPT Plus/Pro, Claude Pro)
- */
-export function connectQuickSubscription(
-  providerId: LLMProviderType,
-  customEmail?: string
-): ConnectedSubscriptionAccount {
-  const plan = SUBSCRIPTION_PLANS[providerId] || SUBSCRIPTION_PLANS.gemini;
-  const mockTokens: Record<LLMProviderType, string> = {
-    gemini: `ya29.google_ai_pro_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 10)}`,
-    openai: `sess-chatgpt-plus-${Date.now().toString(36)}`,
-    anthropic: `claude-pro-session-${Date.now().toString(36)}`,
-    ollama: 'local-airgapped-token',
-  };
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (isBearer) {
+      headers['Authorization'] = `Bearer ${cleanKey}`;
+    }
 
+    const testRes = await fetch(testUrl, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: 'Verify link.' }] }],
+      }),
+      signal: AbortSignal.timeout(20000),
+    });
+
+    if (!testRes.ok) {
+      const errData = await testRes.json().catch(() => ({}));
+      const msg = errData?.error?.message || `HTTP ${testRes.status}: Invalid Google AI credentials`;
+      throw new Error(`Google Authentication Failed: ${msg}`);
+    }
+  }
+
+  const plan = SUBSCRIPTION_PLANS[params.providerId] || SUBSCRIPTION_PLANS.gemini;
   const account: ConnectedSubscriptionAccount = {
-    providerId,
+    providerId: params.providerId,
     planType:
-      providerId === 'gemini'
+      params.providerId === 'gemini'
         ? 'google_ai_pro'
-        : providerId === 'openai'
+        : params.providerId === 'openai'
         ? 'openai_plus_pro'
-        : providerId === 'anthropic'
+        : params.providerId === 'anthropic'
         ? 'anthropic_claude_pro'
         : 'ollama_local',
     planName: plan.planName,
     planTier: 'pro',
-    email: customEmail || (providerId === 'gemini' ? 'commander@gmail.com' : 'commander@pixelops.ai'),
-    displayName: `${plan.providerTitle} (${plan.badge})`,
-    accessToken: mockTokens[providerId],
-    expiresAt: Date.now() + 30 * 24 * 3600 * 1000, // 30 days
+    email: cleanEmail,
+    displayName: cleanEmail.split('@')[0],
+    accessToken: cleanKey,
+    expiresAt: Date.now() + 30 * 24 * 3600 * 1000,
     status: 'connected',
     connectedAt: new Date().toISOString(),
   };
@@ -544,79 +639,69 @@ export function connectQuickSubscription(
 }
 
 /**
- * Manually attaches an OAuth Bearer token or session credential (e.g. from gcloud auth print-access-token)
- */
-export function connectManualSubscriptionToken(
-  providerId: LLMProviderType,
-  accessToken: string,
-  email?: string,
-  displayName?: string
-): ConnectedSubscriptionAccount {
-  const plan = SUBSCRIPTION_PLANS[providerId] || SUBSCRIPTION_PLANS.gemini;
-  const account: ConnectedSubscriptionAccount = {
-    providerId,
-    planType:
-      providerId === 'gemini'
-        ? 'google_ai_pro'
-        : providerId === 'openai'
-        ? 'openai_plus_pro'
-        : providerId === 'anthropic'
-        ? 'anthropic_claude_pro'
-        : 'ollama_local',
-    planName: plan.planName,
-    planTier: 'pro',
-    email: email || 'authenticated-subscriber@google.com',
-    displayName: displayName || `${plan.providerTitle} (${plan.badge})`,
-    accessToken: accessToken.trim(),
-    expiresAt: Date.now() + 3600 * 1000,
-    status: 'connected',
-    connectedAt: new Date().toISOString(),
-  };
-
-  connectSubscriptionAccount(account);
-  return account;
-}
-
-/**
- * Validates connection health for either Subscription Bearer Authentication or BYOK Developer API Keys
+ * Validates connection health for either Subscription Bearer Authentication or BYOK Developer API Keys.
+ * Generous 25s timeout prevents spurious timeout errors on cold connections.
  */
 export async function testLLMProviderConnection(
   config: LLMProviderConfig,
-  themeId: ThemeId = 'green'
+  themeId: ThemeId = 'green',
+  modeOverride?: AuthMode
 ): Promise<{ ok: boolean; message?: string; error?: string; model?: string }> {
   try {
     const pId = config.providerId || 'gemini';
+    const effectiveMode = modeOverride || config.authMode || 'apikey';
 
     if (pId === 'gemini') {
-      const auth = getGeminiAuthHeadersAndUrl(config, config.modelName);
-      const hasAuth =
-        (config.authMode === 'subscription' && Boolean(auth.headers.Authorization)) ||
-        (Boolean(config.apiKey) && config.apiKey !== 'MY_GEMINI_API_KEY');
+      const isSub =
+        effectiveMode === 'subscription' &&
+        Boolean(config.connectedAccounts?.gemini?.accessToken) &&
+        !config.connectedAccounts?.gemini?.accessToken?.includes('google_ai_pro_');
 
-      if (!hasAuth) {
+      const key = (config.apiKey || '').trim();
+
+      if (!isSub && (!key || key === 'MY_GEMINI_API_KEY')) {
         return {
           ok: false,
           error:
-            'Gemini authentication missing. Sign into your Google Account (Google AI Pro Plan) or enter an API key.',
+            'Gemini API key is missing. Please enter your Google Gemini API key (AIzaSy...) in the field above.',
         };
       }
 
       const model = normalizeGeminiModel(config.modelName);
-      const res = await fetch(auth.url, {
+      const token = isSub ? config.connectedAccounts!.gemini!.accessToken.trim() : key;
+      const isBearer = isSub && !token.startsWith('AIzaSy');
+
+      const url = isBearer
+        ? `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+            model
+          )}:generateContent`
+        : `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+            model
+          )}:generateContent?key=${encodeURIComponent(token)}`;
+
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (isBearer) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
+
+      const res = await fetch(url, {
         method: 'POST',
-        headers: auth.headers,
+        headers,
         body: JSON.stringify({
           contents: [{ parts: [{ text: 'Respond with a 6-word tactical readiness confirmation.' }] }],
         }),
-        signal: AbortSignal.timeout(8000),
+        signal: AbortSignal.timeout(25000), // 25s timeout
       });
 
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        // If simulated bearer token or unauthorized, return clear helpful message
+        const msg = data?.error?.message || `HTTP ${res.status}: Gemini authentication failed`;
         return {
           ok: false,
-          error: data?.error?.message || `HTTP ${res.status}: Gemini authentication failed`,
+          error: msg,
+          model,
         };
       }
 
@@ -625,23 +710,22 @@ export async function testLLMProviderConnection(
         'Gemini tactical link verified. All agents standing by.';
       return {
         ok: true,
-        message: `${text} [Authenticated via: ${
-          auth.isSubscription ? auth.planName : 'Developer API Key'
-        }]`,
+        message: `${text} [Mode: ${isSub ? 'Google AI Pro Subscription' : 'BYOK Key'}]`,
         model,
       };
     }
 
     if (pId === 'openai') {
-      const isSub = config.authMode === 'subscription';
+      const isSub =
+        effectiveMode === 'subscription' && Boolean(config.connectedAccounts?.openai?.accessToken);
       const key = isSub
-        ? config.connectedAccounts?.openai?.accessToken || config.apiKey
-        : config.apiKey;
+        ? config.connectedAccounts?.openai?.accessToken
+        : config.apiKey?.trim();
 
       if (!key) {
         return {
           ok: false,
-          error: 'OpenAI authentication missing. Connect your ChatGPT Plus/Pro account or enter an API key.',
+          error: 'OpenAI API key is missing. Please enter your OpenAI API key (sk-...) above.',
         };
       }
 
@@ -658,7 +742,7 @@ export async function testLLMProviderConnection(
           messages: [{ role: 'user', content: 'Respond with a short tactical readiness confirmation.' }],
           max_tokens: 30,
         }),
-        signal: AbortSignal.timeout(8000),
+        signal: AbortSignal.timeout(25000),
       });
 
       const data = await res.json().catch(() => ({}));
@@ -666,6 +750,7 @@ export async function testLLMProviderConnection(
         return {
           ok: false,
           error: data?.error?.message || `HTTP ${res.status}: OpenAI authentication failed`,
+          model,
         };
       }
       return {
@@ -676,15 +761,17 @@ export async function testLLMProviderConnection(
     }
 
     if (pId === 'anthropic') {
-      const isSub = config.authMode === 'subscription';
+      const isSub =
+        effectiveMode === 'subscription' &&
+        Boolean(config.connectedAccounts?.anthropic?.accessToken);
       const key = isSub
-        ? config.connectedAccounts?.anthropic?.accessToken || config.apiKey
-        : config.apiKey;
+        ? config.connectedAccounts?.anthropic?.accessToken
+        : config.apiKey?.trim();
 
       if (!key) {
         return {
           ok: false,
-          error: 'Anthropic authentication missing. Connect your Claude Pro account or enter an API key.',
+          error: 'Anthropic API key is missing. Please enter your Anthropic key (sk-ant-...) above.',
         };
       }
 
@@ -703,7 +790,7 @@ export async function testLLMProviderConnection(
           max_tokens: 30,
           messages: [{ role: 'user', content: 'Respond with a short tactical readiness confirmation.' }],
         }),
-        signal: AbortSignal.timeout(8000),
+        signal: AbortSignal.timeout(25000),
       });
 
       const data = await res.json().catch(() => ({}));
@@ -711,6 +798,7 @@ export async function testLLMProviderConnection(
         return {
           ok: false,
           error: data?.error?.message || `HTTP ${res.status}: Anthropic authentication failed`,
+          model,
         };
       }
       return {
@@ -724,15 +812,15 @@ export async function testLLMProviderConnection(
       const endpoint = config.endpoint || 'http://localhost:11434';
       const res = await fetch(`${endpoint}/api/tags`, {
         method: 'GET',
-        signal: AbortSignal.timeout(4000),
+        signal: AbortSignal.timeout(10000),
       });
       if (!res.ok) {
-        return { ok: false, error: `Ollama endpoint unreachable (HTTP ${res.status})` };
+        return { ok: false, error: `Ollama endpoint unreachable at ${endpoint} (HTTP ${res.status})` };
       }
       return {
         ok: true,
         message: 'Local Ollama endpoint online and responding.',
-        model: config.modelName || 'llama3',
+        model: config.modelName || 'llama3.3',
       };
     }
 
@@ -745,8 +833,8 @@ export async function testLLMProviderConnection(
     return {
       ok: false,
       error:
-        err.name === 'TimeoutError'
-          ? 'Connection timed out (8s limit reached).'
+        err.name === 'TimeoutError' || err.message?.includes('aborted')
+          ? 'Connection timed out (25s limit reached). Check your network or API endpoint.'
           : err?.message || 'Network error connecting to LLM endpoint.',
     };
   }

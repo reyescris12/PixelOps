@@ -235,6 +235,7 @@ const CommandCenterContent: React.FC = () => {
     () => (restoredSession?.pendingTask?.isPending ? restoredSession.pendingTask : null)
   );
   const [completionAlertAgentId, setCompletionAlertAgentId] = useState<string | null>(null);
+  const [errorAlertAgentId, setErrorAlertAgentId] = useState<string | null>(null);
   const [lastActionSummary, setLastActionSummary] = useState<string | null>(
     () => restoredSession?.lastActionSummary || null
   );
@@ -1148,6 +1149,10 @@ const CommandCenterContent: React.FC = () => {
       setRetroError(descriptor);
       setIsRetroErrorModalOpen(true);
       setErrorMessage(descriptor.headline);
+      setErrorAlertAgentId(routedAgent.id);
+      setTimeout(() => {
+        setErrorAlertAgentId(null);
+      }, 4000);
       setPendingTask(null);
       smoothCloseGameOverlay();
 
@@ -2549,6 +2554,7 @@ const CommandCenterContent: React.FC = () => {
             isRoutingCamera={isRoutingCamera}
             isExecuting={isExecuting}
             completionAlertAgentId={completionAlertAgentId}
+            errorAlertAgentId={errorAlertAgentId}
             lastActionSummary={lastActionSummary}
             isGameActive={isGameActive}
             isGameClosing={isGameClosing}

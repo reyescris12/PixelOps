@@ -1320,12 +1320,12 @@ export const AgentSpriteFigure: React.FC<{
     pose === 'walk' ||
     pose === 'walking';
 
+  const isWorkAnimationActive = isExecuting || spriteState === 'executing';
+
   const resolvedSpriteState: SpriteAnimationState = isWalkingState
     ? 'walking'
-    : isExecuting || spriteState === 'executing'
+    : isWorkAnimationActive
     ? 'executing'
-    : pose === 'work' || pose === 'laptop' || spriteState === 'working'
-    ? 'working'
     : 'idle';
 
   // 4-step walking stride cycle: 0 -> walk_1 (left stride), 1 -> stand (pass), 2 -> walk_2 (right stride), 3 -> stand (pass)
@@ -1340,7 +1340,7 @@ export const AgentSpriteFigure: React.FC<{
       if (isWalkingState) {
         return resolveWalkCycleUrl('safecracker');
       }
-      if (pose === 'work' || pose === 'laptop' || isExecuting) {
+      if (isWorkAnimationActive) {
         return '/assets/agents/safecracker_work.png';
       }
       return '/assets/agents/safecracker_stand.png';
@@ -1350,7 +1350,7 @@ export const AgentSpriteFigure: React.FC<{
       if (isWalkingState) {
         return resolveWalkCycleUrl('exo_hacker');
       }
-      if (pose === 'work' || pose === 'laptop' || isExecuting) {
+      if (isWorkAnimationActive) {
         return '/assets/agents/exo_hacker_work.png';
       }
       return '/assets/agents/exo_hacker_stand.png';
@@ -1360,7 +1360,7 @@ export const AgentSpriteFigure: React.FC<{
       if (isWalkingState) {
         return resolveWalkCycleUrl('tactical_tech_ops');
       }
-      if (pose === 'work' || pose === 'laptop' || isExecuting) {
+      if (isWorkAnimationActive) {
         return '/assets/agents/tactical_tech_ops_work.png';
       }
       return '/assets/agents/tactical_tech_ops_stand.png';
@@ -1394,7 +1394,7 @@ export const AgentSpriteFigure: React.FC<{
       if (isWalkingState) {
         return resolveWalkCycleUrl('nyx');
       }
-      if (pose === 'work' || isExecuting) {
+      if (isWorkAnimationActive) {
         return '/assets/agents/nyx_work.png';
       }
       return '/assets/agents/nyx_stand.png';
@@ -1414,11 +1414,11 @@ export const AgentSpriteFigure: React.FC<{
     return '/assets/agents/vance_stand.png';
   };
 
-  const isWorkPose = pose === 'work' || isExecuting;
+  const isWorkPose = isWorkAnimationActive;
   const shouldFlipLeft =
     facing === 'left' &&
     pose !== 'laptop' &&
-    !(family === 'nyx' && pose === 'work' && !isWalkingState) &&
+    !(family === 'nyx' && isWorkPose && !isWalkingState) &&
     !(
       (family === 'safecracker' || family === 'exo_hacker' || family === 'tactical_tech_ops') &&
       isWorkPose &&
@@ -1544,6 +1544,7 @@ interface SpriteCanvasProps {
   isRoutingCamera?: boolean;
   isExecuting: boolean;
   completionAlertAgentId: string | null;
+  errorAlertAgentId?: string | null;
   lastActionSummary: string | null;
   isGameActive?: boolean;
   isGameClosing?: boolean;
@@ -1640,6 +1641,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
   isRoutingCamera = false,
   isExecuting,
   completionAlertAgentId,
+  errorAlertAgentId = null,
   isGameActive = false,
   isGameClosing = false,
   onGameBoostChange,
@@ -1684,10 +1686,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
     }
   };
 
-  const [autoRoam, setAutoRoam] = useState<boolean>(() => {
-    const saved = loadLiveAgentsSnapshot();
-    return saved ? saved.autoRoam : true;
-  });
+  const autoRoam = false;
 
   // Drag / Pan state for scrollable 2D overworld canvas
   const dragStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -2238,153 +2237,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
     };
   }, [isExecuting, isMeetingActive]);
 
-  // Casual Ambient Wandering & Zone-Based Crowd Control Loop
-  useEffect(() => {
-    if (!autoRoam || isExecuting || isMeetingActive) return;
 
-    const roamTimer = setInterval(() => {
-      if (typeof document !== 'undefined' && document.hidden) return;
-      setLiveAgents((prev) => {
-        const idleCandidates = Object.values(prev).filter((a) => !a.isMoving);
-        if (idleCandidates.length === 0) return prev;
-
-        const chosen =
-          idleCandidates[Math.floor(Math.random() * idleCandidates.length)];
-        const currentSectorMeta = getRoomMeta(chosen.room);
-
-        const occupiedRooms = new Set(
-          Object.values(prev)
-            .filter((a) => a.agentIndex !== chosen.agentIndex)
-            .map((a) => a.targetRoom)
-        );
-        const uncrowdedNeighbors = (currentSectorMeta.neighbors || []).filter(
-          (n) => !occupiedRooms.has(n)
-        );
-
-        if (Math.random() < 0.28 && uncrowdedNeighbors.length > 0) {
-          const nextRoom =
-            uncrowdedNeighbors[
-              Math.floor(Math.random() * uncrowdedNeighbors.length)
-            ];
-          const nextStations = getRoomStns(nextRoom);
-          const nextStation =
-            nextStations[Math.floor(Math.random() * nextStations.length)];
-          const path = buildAgentWaypointPath(
-            chosen.room,
-            chosen.xPct,
-            chosen.yPct,
-            nextRoom,
-            nextStation
-          );
-          const firstWp = path[0] || {
-            xPct: nextStation.xPct,
-            yPct: nextStation.yPct,
-            room: nextRoom,
-          };
-
-          return {
-            ...prev,
-            [chosen.agentIndex]: {
-              ...chosen,
-              targetRoom: nextRoom,
-              targetStationId: nextStation.id,
-              targetXPct: firstWp.xPct,
-              targetYPct: firstWp.yPct,
-              pose: 'walk',
-              facing: firstWp.xPct >= chosen.xPct ? 'right' : 'left',
-              statusTag: `TO ${getRoomMeta(nextRoom).shortBadge}`,
-              isMoving: true,
-              phase: 'walking_to_door',
-              waypoints: path,
-            },
-          };
-        }
-
-        const corridorPts =
-          ROOM_CORRIDOR_WAYPOINTS[chosen.room] || ROOM_CORRIDOR_WAYPOINTS.war_room;
-        const stationsInRoom = getRoomStns(chosen.room);
-
-        const wanderToCorridorTile = Math.random() < 0.45;
-        if (wanderToCorridorTile && corridorPts.length > 0) {
-          const wp =
-            corridorPts[Math.floor(Math.random() * corridorPts.length)];
-          const safeWander = snapToWalkableFloor(
-            chosen.room,
-            wp.xPct + (Math.random() * 6 - 3),
-            wp.yPct + (Math.random() * 2 - 1)
-          );
-          const path = buildSingleRoomWaypoints(
-            chosen.room,
-            chosen.xPct,
-            chosen.yPct,
-            safeWander.xPct,
-            safeWander.yPct,
-            wp.label
-          );
-          const firstWp = path[0] || {
-            xPct: safeWander.xPct,
-            yPct: safeWander.yPct,
-            room: chosen.room,
-          };
-
-          return {
-            ...prev,
-            [chosen.agentIndex]: {
-              ...chosen,
-              targetXPct: firstWp.xPct,
-              targetYPct: firstWp.yPct,
-              pose: 'walk',
-              facing: firstWp.xPct >= chosen.xPct ? 'right' : 'left',
-              statusTag: 'PATROL',
-              isMoving: true,
-              phase: 'walking_to_station',
-              waypoints: path,
-            },
-          };
-        }
-
-        const otherStations = stationsInRoom.filter(
-          (s) => s.id !== chosen.stationId
-        );
-        const nextStation =
-          otherStations[Math.floor(Math.random() * otherStations.length)] ||
-          stationsInRoom[0];
-
-        const path = buildAgentWaypointPath(
-          chosen.room,
-          chosen.xPct,
-          chosen.yPct,
-          chosen.room,
-          nextStation
-        );
-        const targetNextX = nextStation.corridorXPct || nextStation.xPct;
-        const targetNextY = nextStation.corridorYPct || nextStation.yPct;
-        const firstWp = path[0] || {
-          xPct: targetNextX,
-          yPct: targetNextY,
-          room: chosen.room,
-        };
-
-        return {
-          ...prev,
-          [chosen.agentIndex]: {
-            ...chosen,
-            targetStationId: nextStation.id,
-            targetXPct: firstWp.xPct,
-            targetYPct: firstWp.yPct,
-            pose: 'walk',
-            facing: firstWp.xPct >= chosen.xPct ? 'right' : 'left',
-            statusTag: 'PATROL',
-            isMoving: true,
-            phase: 'walking_to_station',
-            waypoints: path,
-          },
-        };
-      });
-    }, 3400);
-
-    return () => clearInterval(roamTimer);
-  }, [autoRoam, isExecuting, isMeetingActive]);
 
   const filledSegments = isExecuting ? (tick % 8) + 2 : 6;
   const activeRoomMeta = getRoomMeta(currentRoom);
@@ -2664,21 +2517,25 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
 
             const activePose: StationPose = isWalkingTransitionActive
               ? 'walking'
-              : st.pose;
+              : isAgentExecuting
+              ? st.pose
+              : st.pose === 'desk'
+              ? 'desk'
+              : 'stand';
             const spriteState: SpriteAnimationState = isWalkingTransitionActive
               ? 'walking'
               : isAgentExecuting
               ? 'executing'
               : 'idle';
 
-            const showProgressBar =
-              isAgentExecuting || st.statusTag === 'HACKING';
+            const showProgressBar = isAgentExecuting;
 
             // Uniform perspective-aware character height (27.5% base standing height with subtle floor depth scale + 0.82x crouching multiplier)
             const depthScale = 0.88 + Math.max(0, Math.min(30, st.yPct - 60)) * 0.008;
             const isCrouchingWork =
               !isWalkingTransitionActive &&
-              (activePose === 'work' || activePose === 'laptop' || isAgentExecuting) &&
+              isAgentExecuting &&
+              (activePose === 'work' || activePose === 'laptop') &&
               (variantMeta.baseSpriteFamily === 'safecracker' ||
                 variantMeta.baseSpriteFamily === 'exo_hacker' ||
                 variantMeta.baseSpriteFamily === 'tactical_tech_ops');
@@ -2819,6 +2676,14 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
                       className={`mt-0.5 text-[#fde047] font-mono-tabular font-bold text-[10px] ${PIXEL_TEXT_SHADOW_AMBER}`}
                     >
                       [✓ COMPLETE]
+                    </span>
+                  )}
+
+                  {errorAlertAgentId === profile.id && (
+                    <span
+                      className="mt-0.5 text-red-400 font-mono-tabular font-bold text-[10px] [text-shadow:0_2px_0_#000,0_-1px_0_#000,1px_0_0_#000,-1px_0_0_#000,0_0_8px_rgba(248,113,113,0.75)]"
+                    >
+                      [! ERROR]
                     </span>
                   )}
                 </div>
@@ -3457,19 +3322,10 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
               </button>
             )}
 
-            <button
-              type="button"
-              onClick={() => {
-                setAutoRoam((prev) => !prev);
-                playBeep('tap');
-              }}
-              className={`flex items-center gap-0.5 cursor-pointer whitespace-nowrap ${
-                autoRoam ? 'text-[#4ade80]' : 'text-[#64748b]'
-              }`}
-            >
-              <Sparkles className="w-3 h-3" />
-              <span>[ROAM:{autoRoam ? 'ON' : 'OFF'}]</span>
-            </button>
+            <div className="flex items-center gap-1.5 text-[#94a3b8] whitespace-nowrap text-[10px] font-mono-tabular select-none px-1.5 py-0.5 rounded bg-black/30 border border-[#38bdf8]/20">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#38bdf8] animate-pulse" />
+              <span>[STATE-BOUND · IDLE LOCKED]</span>
+            </div>
           </div>
         </div>
       </div>

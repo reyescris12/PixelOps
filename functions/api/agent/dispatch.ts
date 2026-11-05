@@ -759,7 +759,38 @@ async function executeBackendWebSearch(query: string): Promise<any> {
   cleanCore = cleanCore.replace(/[^a-zA-Z0-9\s_-]/g, ' ').replace(/\s+/g, ' ').trim();
   const searchTerm = cleanCore && cleanCore.length > 2 ? cleanCore : cleanQ;
 
-  // Algolia HackerNews Search
+  // 1. DuckDuckGo Instant Knowledge API
+  if (results.length < 3) {
+    try {
+      const ddgRes = await fetch(
+        `https://api.duckduckgo.com/?q=${encodeURIComponent(cleanQ)}&format=json&no_html=1`
+      );
+      if (ddgRes.ok) {
+        const ddgData: any = await ddgRes.json();
+        if (ddgData.AbstractText && ddgData.AbstractText.length > 20) {
+          results.push({
+            title: ddgData.Heading || cleanQ,
+            snippet: ddgData.AbstractText.slice(0, 320),
+            url: ddgData.AbstractURL || `https://duckduckgo.com/?q=${encodeURIComponent(cleanQ)}`,
+          });
+        }
+        if (Array.isArray(ddgData.RelatedTopics)) {
+          for (const topic of ddgData.RelatedTopics) {
+            if (results.length >= 3) break;
+            if (topic.Text && topic.FirstURL && !results.some((r) => r.url === topic.FirstURL)) {
+              results.push({
+                title: (topic.Text.split(' - ')[0] || topic.Text).slice(0, 60),
+                snippet: topic.Text.slice(0, 320),
+                url: topic.FirstURL,
+              });
+            }
+          }
+        }
+      }
+    } catch {}
+  }
+
+  // 2. Algolia HackerNews Search
   if (results.length < 3) {
     try {
       const hnRes = await fetch(
@@ -768,17 +799,49 @@ async function executeBackendWebSearch(query: string): Promise<any> {
       if (hnRes.ok) {
         const hnData: any = await hnRes.json();
         for (const hit of hnData.hits || []) {
+          if (results.length >= 4) break;
+          const hitUrl = hit.url || `https://news.ycombinator.com/item?id=${hit.objectID}`;
+          if (results.some((r) => r.url === hitUrl)) continue;
           results.push({
             title: hit.title,
             snippet: `${hit.title} (${hit.points || 0} points, ${hit.num_comments || 0} comments, by ${hit.author || 'author'}).`,
-            url: hit.url || `https://news.ycombinator.com/item?id=${hit.objectID}`,
+            url: hitUrl,
           });
         }
       }
     } catch {}
   }
 
-  // Live Web Search via Jina Reader (Real-Time Web Scraping)
+  // 3. Wikipedia Open Search API
+  if (results.length < 3) {
+    try {
+      const wikiRes = await fetch(
+        `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(searchTerm)}&utf8=&format=json&origin=*`
+      );
+      if (wikiRes.ok) {
+        const wikiData: any = await wikiRes.json();
+        for (const item of wikiData?.query?.search || []) {
+          if (results.length >= 4) break;
+          if (!item || !item.title) continue;
+          const cleanSnippet = String(item.snippet || '')
+            .replace(/<[^>]+>/g, '')
+            .replace(/&quot;/g, '"')
+            .replace(/&#039;/g, "'")
+            .replace(/&amp;/g, '&')
+            .trim();
+          const wikiUrl = `https://en.wikipedia.org/wiki/${encodeURIComponent(item.title.replace(/\s+/g, '_'))}`;
+          if (results.some((r) => r.url === wikiUrl)) continue;
+          results.push({
+            title: `${item.title} (Encyclopedia Intel)`,
+            snippet: cleanSnippet.slice(0, 320),
+            url: wikiUrl,
+          });
+        }
+      }
+    } catch {}
+  }
+
+  // 4. Live Web Search via Jina Reader (with graceful error handling)
   if (results.length < 3) {
     try {
       const jinaRes = await fetch(`https://s.jina.ai/${encodeURIComponent(searchTerm)}`, {
@@ -790,10 +853,12 @@ async function executeBackendWebSearch(query: string): Promise<any> {
         for (const item of items) {
           if (results.length >= 4) break;
           if (!item || (!item.title && !item.url)) continue;
+          const itemUrl = item.url || `https://s.jina.ai/${encodeURIComponent(searchTerm)}`;
+          if (results.some((r) => r.url === itemUrl)) continue;
           results.push({
             title: item.title || item.url || 'Web Intelligence Node',
             snippet: String(item.description || item.content || '').slice(0, 320),
-            url: item.url || `https://s.jina.ai/${encodeURIComponent(searchTerm)}`,
+            url: itemUrl,
           });
         }
       }

@@ -5,7 +5,7 @@
  * Open-Ended One-Click OSINT & Tactical Cross-App Playbooks.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   Shield,
@@ -42,9 +42,11 @@ import {
 } from '../engine/intelligencePlaybooks';
 import {
   getLocalConnectedAccounts,
+  getConnectedAccounts,
   initiateAppConnection,
   subscribeToConnectionChanges,
   ComposioConnectedAccount,
+  normalizeAppSlug,
 } from '../services/ComposioService';
 import { useTheme } from '../context/ThemeContext';
 
@@ -86,9 +88,25 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
   const [emailStatus, setEmailStatus] = useState<string | null>(null);
   const [nightShiftStatus, setNightShiftStatus] = useState<string | null>(null);
   const [isConnectingApp, setIsConnectingApp] = useState(false);
+  const [isRefreshingStatus, setIsRefreshingStatus] = useState(false);
   const [connectedAccounts, setConnectedAccounts] = useState<ComposioConnectedAccount[]>(() =>
     getLocalConnectedAccounts()
   );
+
+  // Sync latest accounts from Composio proxy / local store
+  const handleSyncAccounts = useCallback(async () => {
+    setIsRefreshingStatus(true);
+    try {
+      const accounts = await getConnectedAccounts();
+      if (Array.isArray(accounts)) {
+        setConnectedAccounts(accounts);
+      }
+    } catch {
+      setConnectedAccounts(getLocalConnectedAccounts());
+    } finally {
+      setIsRefreshingStatus(false);
+    }
+  }, []);
 
   // Listen for live Composio account changes
   useEffect(() => {
@@ -97,6 +115,13 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
     });
     return () => unsub();
   }, []);
+
+  // Refresh status whenever modal opens
+  useEffect(() => {
+    if (isOpen) {
+      handleSyncAccounts();
+    }
+  }, [isOpen, handleSyncAccounts]);
 
   // Initialize target from localStorage or presets when playbook changes
   useEffect(() => {
@@ -140,18 +165,17 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
     requiredAppName = 'GitHub';
   }
 
-  const isAppConnected = requiredAppSlug
-    ? connectedAccounts.some((acc) => {
-        const slug = (acc.appName || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-        const target = requiredAppSlug!.toLowerCase().replace(/[^a-z0-9]/g, '');
-        return (
-          slug === target &&
-          (acc.status?.toUpperCase() === 'ACTIVE' ||
-            acc.status?.toUpperCase() === 'CONNECTED' ||
-            acc.status?.toUpperCase() === 'INITIATED')
-        );
+  // Robust slug & name matching for connected accounts
+  const activeMatchedAccount = requiredAppSlug
+    ? connectedAccounts.find((acc) => {
+        const norm = normalizeAppSlug(acc.appName || '');
+        const targetNorm = normalizeAppSlug(requiredAppSlug!);
+        const isMatch = norm === targetNorm || norm.includes(targetNorm) || targetNorm.includes(norm);
+        return isMatch && acc.status !== 'FAILED' && acc.status !== 'EXPIRED';
       })
-    : true;
+    : undefined;
+
+  const isAppConnected = requiredAppSlug ? Boolean(activeMatchedAccount) : true;
 
   const handleSelectPreset = (preset: UserPlaybookTarget) => {
     setTargetName(preset.targetName);
@@ -197,8 +221,16 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
     playBeep('tap');
     try {
       const res = await initiateAppConnection(requiredAppSlug);
-      if (res?.redirectUrl) {
-        window.open(res.redirectUrl, '_blank');
+      const targetUrl = res?.redirectUrl || res?.connectionUrl;
+      if (targetUrl) {
+        window.open(targetUrl, '_blank');
+      }
+      if (typeof res?.waitForCompletion === 'function') {
+        res.waitForCompletion().then((completed: boolean) => {
+          if (completed) {
+            handleSyncAccounts();
+          }
+        });
       }
     } catch (err) {
       console.warn('Failed to initiate app connection:', err);
@@ -281,28 +313,86 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
 
           {/* Main Body */}
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            {/* Composio App Connection Alert for Connected-App Playbooks */}
-            {requiredAppSlug && !isAppConnected && (
-              <div className="p-3 bg-[#261d10] border border-[#f59e0b] flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2.5">
-                <div className="flex items-center gap-2">
-                  <AlertTriangle className="w-4 h-4 text-[#fbbf24] shrink-0" />
-                  <div>
-                    <div className="text-xs font-bold text-[#fbbf24]">
-                      {requiredAppName} Integration Not Linked
+            {/* Dedicated Integration Status HUD for Connected-App Playbooks */}
+            {requiredAppSlug && (
+              <div
+                className={`p-3 border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 transition-colors ${
+                  isAppConnected
+                    ? 'bg-[#0b1710] border-[#22c55e]/60 shadow-[0_0_15px_rgba(34,197,94,0.12)]'
+                    : 'bg-[#261d10] border-[#f59e0b] shadow-[0_0_15px_rgba(245,158,11,0.2)]'
+                }`}
+              >
+                <div className="flex items-center gap-2.5">
+                  {isAppConnected ? (
+                    <div className="w-8 h-8 rounded-xs bg-[#11241a] border border-[#22c55e]/60 flex items-center justify-center shrink-0">
+                      <Check className="w-4 h-4 text-[#4ade80]" />
                     </div>
-                    <div className="text-[10px] text-[#cbd5e1] mt-0.5">
-                      Connect your account via Composio to authorize 1-click execution.
+                  ) : (
+                    <div className="w-8 h-8 rounded-xs bg-[#2e1d0c] border border-[#f59e0b]/60 flex items-center justify-center shrink-0">
+                      <AlertTriangle className="w-4 h-4 text-[#fbbf24]" />
+                    </div>
+                  )}
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold tracking-wider text-[#f3ead8]">
+                        {requiredAppName.toUpperCase()} INTEGRATION
+                      </span>
+                      {isAppConnected ? (
+                        <span className="px-2 py-0.5 bg-[#143320] border border-[#22c55e] text-[#4ade80] text-[10px] font-bold tracking-wider flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#4ade80] animate-pulse" />
+                          ONLINE & READY
+                        </span>
+                      ) : (
+                        <span className="px-2 py-0.5 bg-[#3a200c] border border-[#f59e0b] text-[#fbbf24] text-[10px] font-bold tracking-wider">
+                          AWAITING CONNECTION
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-[#cbd5e1] mt-0.5">
+                      {isAppConnected
+                        ? `Authorized for live 1-click execution. Account: ${
+                            activeMatchedAccount?.userUuid || activeMatchedAccount?.id || 'Connected Account'
+                          }`
+                        : `Authorize ${requiredAppName} to allow ${playbook.assignedOperativeName} to ingest live inbox & message telemetry.`}
                     </div>
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={handleConnectApp}
-                  disabled={isConnectingApp}
-                  className="px-3 py-1.5 bg-[#f59e0b] text-[#121110] font-bold text-xs border border-[#f59e0b] hover:bg-[#d97706] cursor-pointer transition-colors shrink-0 disabled:opacity-50"
-                >
-                  {isConnectingApp ? 'CONNECTING...' : `[⚡ CONNECT ${requiredAppName.toUpperCase()}]`}
-                </button>
+
+                <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto justify-end">
+                  {isAppConnected ? (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleSyncAccounts}
+                        disabled={isRefreshingStatus}
+                        className="px-2.5 py-1.5 bg-[#14261c] hover:bg-[#1e3a2b] text-[#86efac] border border-[#22c55e]/40 text-xs font-bold flex items-center gap-1 cursor-pointer transition-colors"
+                        title="Re-verify live account status"
+                      >
+                        <RotateCcw className={`w-3.5 h-3.5 ${isRefreshingStatus ? 'animate-spin' : ''}`} />
+                        <span>SYNC</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleConnectApp}
+                        disabled={isConnectingApp}
+                        className="px-3 py-1.5 bg-[#1c2936] hover:bg-[#25394d] text-[#38bdf8] border border-[#38bdf8]/50 text-xs font-bold cursor-pointer transition-colors"
+                        title="Connect a different account or re-authenticate OAuth"
+                      >
+                        {isConnectingApp ? 'CONNECTING...' : '[SWITCH / RE-CONNECT]'}
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={handleConnectApp}
+                      disabled={isConnectingApp}
+                      className="px-3.5 py-1.5 bg-[#f59e0b] hover:bg-[#d97706] text-[#121110] font-bold text-xs border border-[#f59e0b] cursor-pointer transition-all flex items-center gap-1.5 shadow-[0_0_12px_rgba(245,158,11,0.3)]"
+                    >
+                      <Zap className="w-3.5 h-3.5" />
+                      <span>{isConnectingApp ? 'OPENING OAUTH...' : `[⚡ CONNECT ${requiredAppName.toUpperCase()}]`}</span>
+                    </button>
+                  )}
+                </div>
               </div>
             )}
 

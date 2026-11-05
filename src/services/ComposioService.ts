@@ -2315,7 +2315,11 @@ export async function executeComposioAction(
     parameters: actionParams,
   };
 
-  if (matchedAccount?.id) {
+  if (
+    matchedAccount?.id &&
+    !matchedAccount.id.startsWith('conn_') &&
+    !matchedAccount.id.startsWith('local_')
+  ) {
     payload.connected_account_id = matchedAccount.id;
     payload.connectedAccountId = matchedAccount.id;
   }

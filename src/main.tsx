@@ -87,3 +87,19 @@ if (typeof window !== 'undefined' && window.opener && window.opener !== window) 
 }
 
 createRoot(document.getElementById('root')!).render(<App />);
+
+// Ensure updated Service Worker activates cleanly without stale cached bundles
+if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    const key = 'pixelops_last_sw_reload';
+    const lastReload = parseInt(sessionStorage.getItem(key) || '0', 10);
+    if (Date.now() - lastReload > 4000) {
+      sessionStorage.setItem(key, String(Date.now()));
+      window.location.reload();
+    }
+  });
+
+  navigator.serviceWorker.ready.then((reg) => {
+    reg.update().catch(() => {});
+  });
+}

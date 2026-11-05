@@ -109,6 +109,7 @@ import { TaskQueuePanel } from './components/TaskQueuePanel';
 import {
   StrategyBoardTask,
   loadStrategyBoardTasks,
+  addStrategyBoardTasks,
   updateStrategyBoardTaskStatus,
 } from './services/StrategyBoardService';
 import {
@@ -260,6 +261,7 @@ const CommandCenterContent: React.FC = () => {
   const [plugins, setPlugins] = useState<PluginConnector[]>(() => loadPlugins());
   const [preferences, setPreferences] = useState<CommandPreferences>(() => loadPreferences());
   const [isExecuting, setIsExecuting] = useState(false);
+  const [executingAgentIds, setExecutingAgentIds] = useState<string[]>([]);
   const [isGameActive, setIsGameActive] = useState(false);
   const [isGameClosing, setIsGameClosing] = useState(false);
   const [decryptionBoost, setDecryptionBoost] = useState<number>(
@@ -1023,11 +1025,14 @@ const CommandCenterContent: React.FC = () => {
       assignmentStationId,
       assignmentTaskTag
     );
-    setIsRoutingCamera(true);
-    setTimeout(() => setIsRoutingCamera(false), 2400);
+    if (hqSubView !== 'town_hall') {
+      setIsRoutingCamera(true);
+      setTimeout(() => setIsRoutingCamera(false), 2400);
+    }
 
     setDialogueText(`[DIRECTIVE INGESTED] Dispatching ${routedDisplayName} to ${getRoomMetadata(targetRoom)?.shortBadge || String(targetRoom).toUpperCase()} (${assignmentTaskTag})...`);
     setIsExecuting(true);
+    setExecutingAgentIds((prev) => Array.from(new Set([...prev, routedAgent.id])));
     setIsGameActive(false);
     setIsGameClosing(false);
     setDecryptionBoost(0);
@@ -1254,8 +1259,14 @@ const CommandCenterContent: React.FC = () => {
         durationMs: 800,
       });
     } finally {
-      setIsExecuting(false);
-      setPendingTask(null);
+      setExecutingAgentIds((prev) => {
+        const next = prev.filter((id) => id !== routedAgent.id);
+        if (next.length === 0) {
+          setIsExecuting(false);
+          setPendingTask(null);
+        }
+        return next;
+      });
     }
   };
 
@@ -1321,7 +1332,8 @@ const CommandCenterContent: React.FC = () => {
     agentId: string,
     directive: string,
     targetSector?: RoomId,
-    skipAmbiguityCheck: boolean = false
+    skipAmbiguityCheck: boolean = false,
+    stayInMeeting: boolean = false
   ) => {
     const cleanId = (agentId || '').trim().toLowerCase();
     const targetCrew = crewAgents.find(
@@ -1341,7 +1353,9 @@ const CommandCenterContent: React.FC = () => {
 
     // Synchronize UI dropdown state so there is zero mismatch
     setActiveAgentId(resolvedAgent.id);
-    setHqSubView('terminal');
+    if (!stayInMeeting) {
+      setHqSubView('terminal');
+    }
     setActiveSpeakerAgentIndex(null);
 
     const room =
@@ -1367,7 +1381,8 @@ const CommandCenterContent: React.FC = () => {
     targetAgentId: string,
     fallbackDirective?: string,
     fallbackSector?: RoomId,
-    slotIdx: number = 0
+    slotIdx: number = 0,
+    stayInMeeting: boolean = true
   ) => {
     let matchedTask: RoundtableActionItem | undefined;
     for (const session of roundtableSessions) {
@@ -1474,8 +1489,21 @@ const CommandCenterContent: React.FC = () => {
       `[OPERATIVE DISPATCHED] ${agentDisplayName} deploying to ${sectorBadge} for directive: "${directive.slice(0, 48)}..."`
     );
 
-    // Dispatch directly with skipAmbiguityCheck = true (already confirmed during meeting)
-    dispatchDirectiveToAgent(resolvedAgent.id, directive, targetSector, true);
+    // Track in Strategy Board as in_progress so it is immediately visible in the active task queue
+    addStrategyBoardTasks([
+      {
+        id: taskId,
+        title: directive,
+        source: 'recon',
+        priority: 'medium',
+        status: 'in_progress',
+        assignedAgent: agentDisplayName,
+        createdAt: new Date().toISOString(),
+      },
+    ]);
+
+    // Dispatch directly with stayInMeeting so commander is NOT kicked to the terminal!
+    dispatchDirectiveToAgent(resolvedAgent.id, directive, targetSector, true, stayInMeeting);
   };
 
   const handleTriggerErrorDrill = (code: RetroErrorCode) => {
@@ -2542,6 +2570,7 @@ const CommandCenterContent: React.FC = () => {
             walkingTransition={walkingTransition}
             isRoutingCamera={isRoutingCamera}
             isExecuting={isExecuting}
+            executingAgentIds={executingAgentIds}
             completionAlertAgentId={completionAlertAgentId}
             errorAlertAgentId={errorAlertAgentId}
             lastActionSummary={lastActionSummary}

@@ -25,7 +25,27 @@ export function loadStrategyBoardTasks(): StrategyBoardTask[] {
     const raw = localStorage.getItem(STORAGE_STRATEGY_TASKS_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) return [];
+    
+    // Normalize stale in_progress tasks (older than 5 minutes) back to pending
+    const now = Date.now();
+    let hasChanges = false;
+    const normalized = parsed.map((t: StrategyBoardTask) => {
+      if (t.status === 'in_progress') {
+        const createdMs = new Date(t.createdAt).getTime();
+        if (isNaN(createdMs) || now - createdMs > 5 * 60 * 1000) {
+          hasChanges = true;
+          return { ...t, status: 'pending' as const };
+        }
+      }
+      return t;
+    });
+
+    if (hasChanges) {
+      saveStrategyBoardTasks(normalized);
+    }
+
+    return normalized;
   } catch {
     return [];
   }

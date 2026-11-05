@@ -1544,6 +1544,7 @@ interface SpriteCanvasProps {
   } | null;
   isRoutingCamera?: boolean;
   isExecuting: boolean;
+  executingAgentIds?: string[];
   completionAlertAgentId: string | null;
   errorAlertAgentId?: string | null;
   lastActionSummary: string | null;
@@ -1641,6 +1642,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
   walkingTransition,
   isRoutingCamera = false,
   isExecuting,
+  executingAgentIds = [],
   completionAlertAgentId,
   errorAlertAgentId = null,
   isGameActive = false,
@@ -2505,8 +2507,10 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
             const isSelected = activeAgent.id === crewMember.id;
             const isRoundtableSpeaker =
               isMeetingActive && activeSpeakerAgentIndex === st.agentIndex;
+            const isThisAgentRunning =
+              executingAgentIds.includes(crewMember.id) || (isExecuting && isSelected);
             const isAgentExecuting =
-              (isExecuting && isSelected) || isRoundtableSpeaker;
+              isThisAgentRunning || isRoundtableSpeaker;
 
             const isWalkingTransitionActive =
               Boolean(
@@ -3129,7 +3133,8 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
               const isSelected = activeAgent.id === crew.id;
               const isSpeaker =
                 isMeetingActive && activeSpeakerAgentIndex === idx;
-              const isExec = (isExecuting && isSelected) || isSpeaker;
+              const isExec =
+                executingAgentIds.includes(crew.id) || (isExecuting && isSelected) || isSpeaker;
               const readiness = getOperativeReadiness(crew.customName || crew.id);
               const statusLabel = st.isMoving
                 ? st.statusTag

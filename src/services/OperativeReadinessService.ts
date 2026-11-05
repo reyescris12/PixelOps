@@ -66,9 +66,9 @@ export function getOperativeReadiness(agentIdentifier: string): OperativeReadine
     statusBadge = isCrit ? '⚠️ EXECUTING CRITICAL' : '⚡ EXECUTING TASK';
     readinessPercentage = 50;
   } else if (pendingCount > 0) {
-    alertLevel = highPriorityCount > 0 ? 'elevated' : 'nominal';
-    statusBadge = highPriorityCount > 0 ? `STANDBY (${highPriorityCount} CRITICAL IN QUEUE)` : `STANDBY (${pendingCount} QUEUED)`;
-    readinessPercentage = Math.max(70, 100 - pendingCount * 10);
+    alertLevel = 'nominal';
+    statusBadge = pendingCount > 1 ? `STANDBY (${pendingCount} QUEUED)` : 'STANDBY · READY';
+    readinessPercentage = Math.max(80, 100 - pendingCount * 5);
   }
 
   let lastActiveDescription = 'Ready for tactical assignment';

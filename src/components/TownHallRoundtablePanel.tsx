@@ -10,6 +10,8 @@ import {
   MessageSquare,
   History,
   FileText,
+  Zap,
+  Rocket,
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { useCrew, SPRITE_VARIANTS } from '../context/CrewContext';
@@ -114,6 +116,52 @@ export const TownHallRoundtablePanel: React.FC<TownHallRoundtablePanelProps> = (
       targetAgentId,
       taskId
     );
+  };
+
+  const handleDeployAllTasks = (actionItems: RoundtableActionItem[]) => {
+    setIsAutoStepping(false);
+    onSelectSpeakerAgentIndex(null);
+    playBeep('complete');
+
+    const undeployed = actionItems.filter((item, idx) => {
+      const taskId = item.id || `task_${activeSession?.id}_${idx}`;
+      return !deployedTaskIds.has(taskId);
+    });
+
+    if (undeployed.length === 0) return;
+
+    // Batch mark as deployed in local UI state
+    setDeployedTaskIds((prev) => {
+      const next = new Set(prev);
+      undeployed.forEach((item, idx) => {
+        const taskId = item.id || `task_${activeSession?.id}_${idx}`;
+        next.add(taskId);
+      });
+      return next;
+    });
+
+    // Stagger dispatches slightly so operatives pathfind cleanly to their sectors
+    undeployed.forEach((item, idx) => {
+      const slotIdx =
+        typeof item.agentIndex === 'number' &&
+        item.agentIndex >= 0 &&
+        item.agentIndex < crewAgents.length
+          ? item.agentIndex
+          : idx % Math.max(1, crewAgents.length);
+      const crew = crewAgents[slotIdx] || getCrewAgentByIndex(slotIdx);
+      const taskId = item.id || `task_${activeSession?.id}_${idx}`;
+      const assignedAgentId = item.assignedAgentId || crew?.id || `agent_${slotIdx}`;
+
+      setTimeout(() => {
+        onDispatchActionItem(
+          slotIdx,
+          item.directive,
+          item.targetSector,
+          assignedAgentId,
+          taskId
+        );
+      }, idx * 250);
+    });
   };
 
   // Subtle sprite animation frame toggle for speaking avatars
@@ -530,8 +578,40 @@ export const TownHallRoundtablePanel: React.FC<TownHallRoundtablePanelProps> = (
 
                       if (displayTasks.length === 0) return null;
 
+                      const undeployedCount = displayTasks.filter((item, idx) => {
+                        const taskId = item.id || `task_${activeSession.id}_${idx}`;
+                        return !deployedTaskIds.has(taskId);
+                      }).length;
+
                       return (
                         <div className="pt-1.5 border-t border-[#1f3b2b] flex flex-col gap-1.5">
+                          <div className="flex flex-wrap items-center justify-between gap-2 pb-1 border-b border-[#1b3024]">
+                            <span className="text-[10px] text-[#86efac] font-bold">
+                              ACTION PROTOCOLS ({displayTasks.length}) · {undeployedCount} PENDING
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleDeployAllTasks(displayTasks)}
+                              disabled={undeployedCount === 0}
+                              className={`px-2.5 py-1 text-[11px] font-bold font-mono-tabular border flex items-center gap-1.5 transition-all cursor-pointer ${
+                                undeployedCount > 0
+                                  ? 'bg-[#15803d] hover:bg-[#16a34a] text-white border-[#22c55e] shadow-[0_0_12px_rgba(34,197,94,0.35)] active:scale-95'
+                                  : 'bg-[#14231a] text-[#4ade80]/60 border-[#234230] cursor-default'
+                              }`}
+                              title={
+                                undeployedCount > 0
+                                  ? `Deploy all ${undeployedCount} assigned operatives to their designated sectors immediately`
+                                  : 'All roundtable directives have been deployed'
+                              }
+                            >
+                              <Rocket className="w-3 h-3 text-[#fde047]" />
+                              <span>
+                                {undeployedCount > 0
+                                  ? `[🚀 DEPLOY ALL OPERATIVES (${undeployedCount})]`
+                                  : '[✓ ALL OPERATIVES DEPLOYED]'}
+                              </span>
+                            </button>
+                          </div>
                           {displayTasks.map((item, idx) => {
                             const slotIdx =
                               typeof item.agentIndex === 'number' &&

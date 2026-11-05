@@ -61,6 +61,16 @@ export const RoomSpawnerModal: React.FC<RoomSpawnerModalProps> = ({
   const [selectedRoomId, setSelectedRoomId] = useState<string>(currentRoom);
   const [notification, setNotification] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (isOpen && typeof document !== 'undefined') {
+      const orig = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+      return () => {
+        document.body.style.overflow = orig;
+      };
+    }
+  }, [isOpen]);
+
   // Custom room form state
   const [customForm, setCustomForm] = useState({
     id: '',
@@ -253,7 +263,8 @@ export const RoomSpawnerModal: React.FC<RoomSpawnerModalProps> = ({
 
   const modalNode = (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center p-3 bg-black/90 backdrop-blur-md select-none"
+      className="fixed inset-0 flex items-center justify-center p-3 bg-black/90 backdrop-blur-md select-none"
+      style={{ zIndex: 99999 }}
       onClick={onClose}
     >
       <div

@@ -85,7 +85,25 @@ export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = (
   );
   const [copiedDossier, setCopiedDossier] = useState(false);
   const [isFloatingOpen, setIsFloatingOpen] = useState(false);
+  const [isBannerCollapsed, setIsBannerCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem('pixelops_workflows_banner_collapsed') === 'true';
+    } catch {
+      return false;
+    }
+  });
   const floatingRef = useRef<HTMLDivElement>(null);
+
+  const toggleBannerCollapse = () => {
+    playBeep('tap');
+    setIsBannerCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('pixelops_workflows_banner_collapsed', String(next));
+      } catch {}
+      return next;
+    });
+  };
 
   // Auto-collapse floating panel on room change so it never obstructs newly viewed sectors
   useEffect(() => {
@@ -285,6 +303,31 @@ export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = (
   // BANNER VARIANT (Docked Out-of-the-Way Below Room Canvas)
   // ==========================================
   if (variant === 'banner') {
+    if (playbooks.length === 0 && currentRoom !== 'briefing_lounge' && currentRoom !== 'armory') {
+      return null;
+    }
+
+    if (isBannerCollapsed) {
+      return (
+        <div className={`bg-[#0a0d14]/90 border border-[#38bdf8]/30 px-3 py-1.5 flex items-center justify-between font-mono-tabular text-xs ${className}`}>
+          <div className="flex items-center gap-2">
+            <span className="text-[#38bdf8] font-bold text-[11px] uppercase tracking-wider">
+              [⚡ SECTOR WORKFLOWS DECK]
+            </span>
+            <span className="text-[10px] text-[#94a3b8]">
+              {playbooks.length} Available in {currentRoom.toUpperCase().replace('_', ' ')}
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={toggleBannerCollapse}
+            className="px-2 py-0.5 bg-[#172333] hover:bg-[#203248] text-[#38bdf8] border border-[#38bdf8]/40 text-[10px] font-bold cursor-pointer transition-colors"
+          >
+            [+ EXPAND WORKFLOWS]
+          </button>
+        </div>
+      );
+    }
     // --- PILLAR 1: Comms Tower & Basement ---
     if (currentRoom === 'comms_tower' || currentRoom === 'archive_basement') {
       return (
@@ -313,6 +356,14 @@ export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = (
                   <span>[📂 VFS FILES]</span>
                 </button>
               )}
+              <button
+                type="button"
+                onClick={toggleBannerCollapse}
+                className="px-2 py-0.5 bg-[#101924] hover:bg-[#192738] text-[#94a3b8] hover:text-[#38bdf8] border border-[#1e2f45] text-[10px] font-bold cursor-pointer transition-colors"
+                title="Collapse workflows tray"
+              >
+                [− COLLAPSE]
+              </button>
             </div>
           </div>
 
@@ -366,9 +417,19 @@ export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = (
                 {currentRoom === 'war_room' ? 'WAR ROOM' : 'SERVER VAULT'}
               </span>
             </div>
-            <span className="text-[10px] text-[#94a3b8] hidden md:inline">
-              1-Click Connected App Automations via Composio
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-[#94a3b8] hidden md:inline">
+                1-Click Connected App Automations via Composio
+              </span>
+              <button
+                type="button"
+                onClick={toggleBannerCollapse}
+                className="px-2 py-0.5 bg-[#17140f] hover:bg-[#241e15] text-[#94a3b8] hover:text-[#e59838] border border-[#3d2e1b] text-[10px] font-bold cursor-pointer transition-colors"
+                title="Collapse workflows tray"
+              >
+                [− COLLAPSE]
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">

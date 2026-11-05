@@ -126,9 +126,13 @@ import { ComposioService } from './services/ComposioService';
 import {
   TaskChain,
   isDirectiveTaskChain,
+  isHighLevelSupervisorObjective,
+  decomposeObjectiveWithSupervisor,
   deconstructDirectiveIntoChain,
   executeTaskChain,
+  saveMissionDossierToVfs,
 } from './services/TaskChainService';
+import { writeWorkspaceFile } from './engine/storageManager';
 import { TaskChainHUD } from './components/TaskChainHUD';
 import { PluginAuthModal, PluginAuthTarget } from './components/PluginAuthModal';
 import { FieldManualModal } from './components/FieldManualModal';
@@ -807,11 +811,15 @@ const CommandCenterContent: React.FC = () => {
   };
 
   /**
-   * Autonomous Task Chain Orchestrator:
+   * Autonomous Task Chain & Vance Supervisor Orchestrator:
    * Sequentially deploys operatives across sectors, transferring intelligence
    * and intermediate findings without requiring manual user re-prompting.
    */
-  const handleExecuteTaskChain = async (prompt: string, customChain?: TaskChain) => {
+  const handleExecuteTaskChain = async (
+    prompt: string,
+    customChain?: TaskChain,
+    supervisorId: string = 'vance'
+  ) => {
     const availableAgents = crewAgents.map((a) => ({
       id: a.id,
       name: a.customName || a.defaultName,
@@ -819,15 +827,19 @@ const CommandCenterContent: React.FC = () => {
       functionalRole: a.functionalRole,
     }));
 
-    const chain = customChain || deconstructDirectiveIntoChain(prompt, availableAgents);
+    setIsExecuting(true);
+    setDialogueText(`[ORCHESTRATOR ROUTING] Vance evaluating mission objective & choreographing multi-agent plan...`);
+    playBeep('tap');
+
+    const chain =
+      customChain || (await decomposeObjectiveWithSupervisor(prompt, availableAgents, supervisorId));
     if (!chain || chain.steps.length === 0) {
       handleExecuteDirective(prompt, null, true);
       return;
     }
 
     setActiveTaskChain(chain);
-    setIsExecuting(true);
-    setDialogueText(`[AUTONOMOUS TASK CHAIN INITIALIZED] "${chain.title}". Preparing ${chain.steps.length} sequential operative phases...`);
+    setDialogueText(`[AUTONOMOUS TASK CHAIN INITIALIZED] "${chain.title}". Vance assigned ${chain.steps.length} sequential operative phases...`);
     playBeep('tap');
 
     const enabledPlugins = plugins.filter((p) => p.connected).map((p) => p.id);
@@ -919,9 +931,13 @@ const CommandCenterContent: React.FC = () => {
     explicitAgentId?: string,
     explicitTargetRoom?: RoomId
   ) => {
-    // 0. Autonomous Multi-Step Task Chain Detection
-    if (!skipAmbiguityCheck && !attachment && !explicitAgentId && isDirectiveTaskChain(prompt)) {
-      handleExecuteTaskChain(prompt);
+    // 0. Autonomous Multi-Step Task Chain & Vance Supervisor Routing
+    if (
+      !skipAmbiguityCheck &&
+      !attachment &&
+      (isDirectiveTaskChain(prompt) || isHighLevelSupervisorObjective(prompt, explicitAgentId || activeAgent.id))
+    ) {
+      handleExecuteTaskChain(prompt, undefined, explicitAgentId || activeAgent.id);
       return;
     }
 
@@ -1129,6 +1145,43 @@ const CommandCenterContent: React.FC = () => {
         outputTokens: Math.round(newCard.tokenEstimate * 0.6),
         durationMs: 1400,
       });
+
+      // 7. Autonomous Inter-Agent Delegation Check (delegate_task_to_operative)
+      const delegationCall = newCard.toolCalls?.find(
+        (tc) => tc.toolName === 'delegate_task_to_operative'
+      );
+      if (delegationCall && delegationCall.livePayload?.target_agent) {
+        const targetRaw = String(delegationCall.livePayload.target_agent || '').toLowerCase();
+        const delegatedDirective = String(delegationCall.livePayload.directive || '');
+        const findings = String(delegationCall.livePayload.findings_to_pass || newCard.dialogue || '');
+
+        const targetCrew =
+          crewAgents.find(
+            (a) =>
+              a.id.toLowerCase().includes(targetRaw) ||
+              a.customName.toLowerCase().includes(targetRaw) ||
+              a.defaultName.toLowerCase().includes(targetRaw)
+          ) || crewAgents[1];
+
+        // Commit handoff note to VFS
+        const handoffLog = `# Autonomous Inter-Agent Handoff Log\n**From:** ${routedDisplayName}\n**To:** ${targetCrew.customName}\n**Timestamp:** ${new Date().toISOString()}\n\n## Directive\n${delegatedDirective}\n\n## Transferred Intelligence\n${findings}`;
+        writeWorkspaceFile(`logs/handoff_${Date.now()}.md`, handoffLog, 'markdown', 'logs');
+
+        setDialogueText(
+          `[AUTONOMOUS DELEGATION] ${routedDisplayName} ➔ ${targetCrew.customName}: Transferred findings. Dispatching operative immediately...`
+        );
+        playBeep('switch');
+
+        setTimeout(() => {
+          handleExecuteDirective(
+            `${delegatedDirective}\n\n================================================================================\n[AUTONOMOUS HANDOFF FROM ${routedDisplayName.toUpperCase()}]:\n${findings}\n================================================================================`,
+            null,
+            true,
+            targetCrew.id,
+            targetCrew.currentRoom
+          );
+        }, 1600);
+      }
 
       setTimeout(() => {
         setCompletionAlertAgentId(null);

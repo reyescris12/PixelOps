@@ -88,7 +88,8 @@ export class ModelGateway {
     model: string,
     apiKey: string,
     systemPrompt: string,
-    messages: (ModelGatewayMessage | any)[]
+    messages: (ModelGatewayMessage | any)[],
+    tools?: any[]
   ): Promise<string> {
     const targetModel = model || 'google/gemini-2.5-flash:free';
     const formattedMessages: any[] = [];
@@ -103,6 +104,14 @@ export class ModelGateway {
       formattedMessages.push({ role, content });
     }
 
+    const payload: any = {
+      model: targetModel,
+      messages: formattedMessages,
+    };
+    if (Array.isArray(tools) && tools.length > 0) {
+      payload.tools = tools;
+    }
+
     const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
@@ -111,10 +120,7 @@ export class ModelGateway {
         'HTTP-Referer': typeof window !== 'undefined' ? window.location.origin : 'https://pixelops.app',
         'X-Title': 'PixelOps Command Center',
       },
-      body: JSON.stringify({
-        model: targetModel,
-        messages: formattedMessages,
-      }),
+      body: JSON.stringify(payload),
     });
 
     if (!res.ok) {
@@ -124,7 +130,21 @@ export class ModelGateway {
     }
 
     const data = await res.json();
-    return data.choices?.[0]?.message?.content || '';
+    const choice = data.choices?.[0]?.message;
+
+    // Convert native tool_calls to uniform [AGENT_ACTION: tool_name] { ... } [/AGENT_ACTION] tags
+    if (Array.isArray(choice?.tool_calls) && choice.tool_calls.length > 0) {
+      const toolTags = choice.tool_calls
+        .map((tc: any) => {
+          const fnName = tc.function?.name || 'unknown_tool';
+          const fnArgs = tc.function?.arguments || '{}';
+          return `[AGENT_ACTION: ${fnName}] ${fnArgs} [/AGENT_ACTION]`;
+        })
+        .join('\n');
+      return choice?.content ? `${choice.content}\n\n${toolTags}` : toolTags;
+    }
+
+    return choice?.content || '';
   }
 
   /**
@@ -139,7 +159,8 @@ export class ModelGateway {
     apiKey: string,
     systemPrompt: string,
     messages: (ModelGatewayMessage | any)[],
-    tier?: InferenceTier
+    tier?: InferenceTier,
+    tools?: any[]
   ): Promise<string> {
     const ssoMode = typeof localStorage !== 'undefined' ? localStorage.getItem('pixelops_ai_sso_mode') : null;
     const openRouterKey =
@@ -170,7 +191,7 @@ export class ModelGateway {
       ) {
         targetModel = tier === 'fast' ? 'google/gemini-2.5-flash:free' : 'deepseek/deepseek-r1:free';
       }
-      return await this.callOpenRouter(targetModel, effectiveKey, systemPrompt, messages);
+      return await this.callOpenRouter(targetModel, effectiveKey, systemPrompt, messages, tools);
     }
 
     // 3. Manual BYOK Provider Routing (Gemini, Anthropic, OpenAI, Groq)

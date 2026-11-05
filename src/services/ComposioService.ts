@@ -2245,6 +2245,84 @@ export async function getGeminiTools(connectedAppNames?: string[]): Promise<any[
   return tools.map(sanitizeGeminiFunctionSchema);
 }
 
+export interface OpenAIToolDefinition {
+  type: 'function';
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, any>;
+  };
+}
+
+/**
+ * Converts a Gemini parameter schema tree (with uppercase types) into a standard
+ * lowercase JSON Schema compatible with OpenAI and OpenRouter function calling.
+ */
+export function convertGeminiSchemaToOpenAI(schema: any): Record<string, any> {
+  if (!schema || typeof schema !== 'object') {
+    return { type: 'object', properties: {} };
+  }
+
+  const rawType = String(schema.type || 'object').toLowerCase();
+  let type = rawType;
+  if (type === 'str') type = 'string';
+  if (type === 'num' || type === 'float') type = 'number';
+  if (type === 'int') type = 'integer';
+  if (type === 'bool') type = 'boolean';
+  if (type === 'list') type = 'array';
+  if (type === 'dict') type = 'object';
+
+  if (!['string', 'number', 'integer', 'boolean', 'array', 'object'].includes(type)) {
+    type = 'object';
+  }
+
+  const out: Record<string, any> = { type };
+
+  if (schema.description) {
+    out.description = String(schema.description);
+  }
+
+  if (Array.isArray(schema.enum) && schema.enum.length > 0) {
+    out.enum = schema.enum;
+  }
+
+  if (type === 'object') {
+    out.properties = {};
+    if (schema.properties && typeof schema.properties === 'object') {
+      for (const [propName, propVal] of Object.entries(schema.properties)) {
+        out.properties[propName] = convertGeminiSchemaToOpenAI(propVal);
+      }
+    }
+    if (Array.isArray(schema.required) && schema.required.length > 0) {
+      out.required = schema.required;
+    }
+  } else if (type === 'array') {
+    if (schema.items) {
+      out.items = convertGeminiSchemaToOpenAI(schema.items);
+    } else {
+      out.items = { type: 'string' };
+    }
+  }
+
+  return out;
+}
+
+/**
+ * Converts Composio Gemini function declarations into standard OpenAI/OpenRouter tool format:
+ * { type: 'function', function: { name, description, parameters } }
+ */
+export async function getOpenAITools(connectedAppNames?: string[]): Promise<OpenAIToolDefinition[]> {
+  const geminiTools = await getGeminiTools(connectedAppNames);
+  return geminiTools.map((gt) => ({
+    type: 'function' as const,
+    function: {
+      name: gt.name,
+      description: gt.description || `Execute ${gt.name}`,
+      parameters: convertGeminiSchemaToOpenAI(gt.parameters),
+    },
+  }));
+}
+
 /**
  * 5. Execute Composio Action Scoped to Connected Account and entityId (v3 Tools Execute)
  */
@@ -2540,6 +2618,8 @@ export const ComposioService = {
   disconnectAccount,
   getAvailableIntegrations,
   getGeminiTools,
+  getOpenAITools,
+  convertGeminiSchemaToOpenAI,
   fetchDynamicToolsForConnectedApps,
   invalidateDynamicToolsCache,
   executeComposioAction,

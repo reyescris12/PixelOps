@@ -26,6 +26,8 @@ import {
   getConnectedAccounts,
   normalizeAppSlug,
   getGeminiTools,
+  getOpenAITools,
+  convertGeminiSchemaToOpenAI,
   sanitizeGeminiFunctionSchema,
   executePublicGitHubFallback,
 } from './ComposioService';
@@ -4756,9 +4758,13 @@ export async function executeAgentDirective(params: {
 
       // Clean-slate system instruction: Purged of all restrictive protocols, conflicting rules, and bloated constraints
       const customAgentPrompt = (params.agentSystemPrompt || '').trim();
-      const systemInstruction = customAgentPrompt
+      let systemInstruction = customAgentPrompt
         ? customAgentPrompt
         : `You are ${params.activeAgentName || 'Agent'}, an AI assistant. Help the user complete their directives and tasks directly, clearly, and effectively using your available tools.`;
+
+      if (declaredToolNames) {
+        systemInstruction += `\n\n### Available Tools & Integrations:\n${declaredToolNames}\nWhen executing external or connected tool operations (e.g. GitHub, Slack, Gmail, Google Calendar, Notion, Linear, web search, code sandbox, file storage), you can invoke them directly or emit a structured action tag in your response:\n[AGENT_ACTION: <tool_name>] { "param": "value" } [/AGENT_ACTION]`;
+      }
 
       // Multi-Provider Execution Gateway: Route to Puter, OpenRouter, OpenAI, Groq, or Anthropic
       if (isPuterMode && !targetApiKey) {
@@ -4769,7 +4775,14 @@ export async function executeAgentDirective(params: {
             systemInstruction,
             [{ role: 'user', content: params.prompt }]
           );
-          return {
+
+          // Parse and execute any AGENT_ACTION tags emitted by Puter models
+          const actionCard = await parseAndExecuteAgentActionTags(puterReply, params);
+          if (actionCard) {
+            return await ensureReportPersistedAndAnnotated(actionCard, params);
+          }
+
+          const card: AgentExecutionCard = {
             id: `card-${Date.now()}`,
             prompt: params.prompt,
             dialogue: puterReply,
@@ -4787,6 +4800,7 @@ export async function executeAgentDirective(params: {
             timestamp: new Date().toISOString(),
             hasAttachment: Boolean(params.attachment),
           };
+          return await ensureReportPersistedAndAnnotated(card, params);
         } catch (puterErr: any) {
           console.warn('[ApiService] Puter execution failed, trying alternative route:', puterErr);
         }
@@ -4797,11 +4811,11 @@ export async function executeAgentDirective(params: {
           if (targetProvider === 'openai' || targetProvider === 'groq' || (targetProvider as any) === 'openrouter' || (isOpenRouterMode && !targetApiKey)) {
             const isOr = (targetProvider as any) === 'openrouter' || (isOpenRouterMode && !targetApiKey);
             const openAITools = activeDeclarations.map((d) => ({
-              type: 'function',
+              type: 'function' as const,
               function: {
                 name: d.name,
                 description: d.description,
-                parameters: d.parameters,
+                parameters: convertGeminiSchemaToOpenAI(d.parameters),
               },
             }));
 
@@ -4901,12 +4915,9 @@ export async function executeAgentDirective(params: {
                   async (signal) => {
                     return await fetch(endpoint, {
                       method: 'POST',
-                      headers: {
-                        'Content-Type': 'application/json',
-                        Authorization: `Bearer ${targetApiKey}`,
-                      },
+                      headers: requestHeaders,
                       body: JSON.stringify({
-                        model: targetModel,
+                        model: effectiveModel,
                         messages: [...initialMessages, choice, ...toolResponseMessages],
                         temperature: Number(params.temperature || 0.7),
                       }),
@@ -4916,7 +4927,7 @@ export async function executeAgentDirective(params: {
                   {
                     timeoutMs: 25000,
                     maxRetries: 1,
-                    operationName: `${targetProvider}_turn2_dispatch`,
+                    operationName: `${isOr ? 'openrouter' : targetProvider}_turn2_dispatch`,
                   }
                 );
 
@@ -4975,6 +4986,11 @@ export async function executeAgentDirective(params: {
               }
 
               const reply = choice?.content || 'Directive processed.';
+              const actionCard = await parseAndExecuteAgentActionTags(reply, params);
+              if (actionCard) {
+                return await ensureReportPersistedAndAnnotated(actionCard, params);
+              }
+
               const card: AgentExecutionCard = {
                 id: `card-${Date.now()}`,
                 prompt: params.prompt,
@@ -5181,6 +5197,11 @@ export async function executeAgentDirective(params: {
                 .filter((c: any) => c.type === 'text')
                 .map((c: any) => c.text)
                 .join('\n');
+
+              const actionCard = await parseAndExecuteAgentActionTags(textContent, params);
+              if (actionCard) {
+                return await ensureReportPersistedAndAnnotated(actionCard, params);
+              }
               const card: AgentExecutionCard = {
                 id: `card-${Date.now()}`,
                 prompt: params.prompt,

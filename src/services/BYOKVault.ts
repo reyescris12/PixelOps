@@ -9,7 +9,13 @@
  * Synchronizes with IndexedDB Web Crypto vault and LocalStorage for offline-first PWA execution.
  */
 
-import { LLMProviderType, loadLLMProviderConfig, saveLLMProviderConfig, testLLMProviderConnection } from './LLMProviderService';
+import {
+  LLMProviderType,
+  loadLLMProviderConfig,
+  saveLLMProviderConfig,
+  testLLMProviderConnection,
+  DEFAULT_PROVIDER_CONFIGS,
+} from './LLMProviderService';
 import { setGenericPassword, getGenericPassword } from './SecureVaultService';
 
 export interface ProviderVaultEntry {
@@ -146,11 +152,23 @@ export async function saveBYOKVaultEntry(
       localStorage.setItem(meta.storageKey, cleanKey);
       if (provider === 'gemini') {
         localStorage.setItem('gemini_api_key', cleanKey);
+      } else if (provider === 'openai') {
+        localStorage.setItem('openai_api_key', cleanKey);
+      } else if (provider === 'anthropic') {
+        localStorage.setItem('anthropic_api_key', cleanKey);
+      } else if (provider === 'groq') {
+        localStorage.setItem('groq_api_key', cleanKey);
       }
     } else {
       localStorage.removeItem(meta.storageKey);
       if (provider === 'gemini') {
         localStorage.removeItem('gemini_api_key');
+      } else if (provider === 'openai') {
+        localStorage.removeItem('openai_api_key');
+      } else if (provider === 'anthropic') {
+        localStorage.removeItem('anthropic_api_key');
+      } else if (provider === 'groq') {
+        localStorage.removeItem('groq_api_key');
       }
     }
     localStorage.setItem(`pixelops_${provider}_model`, cleanModel);
@@ -169,11 +187,13 @@ export async function saveBYOKVaultEntry(
 
   // 3. If this provider is currently active in LLMProviderConfig, update it as well
   const activeConfig = loadLLMProviderConfig();
-  if (activeConfig.providerId === provider) {
+  if (activeConfig.providerId === provider || (!activeConfig.apiKey && cleanKey)) {
     saveLLMProviderConfig({
       ...activeConfig,
-      apiKey: cleanKey,
-      modelName: cleanModel,
+      providerId: activeConfig.providerId === provider ? provider : activeConfig.providerId,
+      authMode: 'apikey',
+      apiKey: cleanKey || activeConfig.apiKey,
+      modelName: activeConfig.providerId === provider ? cleanModel : activeConfig.modelName,
     });
   }
 }
@@ -187,7 +207,7 @@ export async function testBYOKConnection(
   model?: string
 ): Promise<{ ok: boolean; message: string; model: string }> {
   const meta = SUPPORTED_VAULT_PROVIDERS[provider];
-  const targetKey = (apiKey || localStorage.getItem(meta.storageKey) || '').trim();
+  const targetKey = (apiKey || getProviderApiKey(provider) || '').trim();
   const targetModel = model || localStorage.getItem(`pixelops_${provider}_model`) || meta.defaultModel;
 
   if (!targetKey) {
@@ -202,7 +222,14 @@ export async function testBYOKConnection(
     providerId: provider as LLMProviderType,
     authMode: 'apikey' as const,
     apiKey: targetKey,
-    endpoint: provider === 'groq' ? 'https://api.groq.com/openai/v1' : '',
+    endpoint:
+      provider === 'groq'
+        ? 'https://api.groq.com/openai/v1'
+        : provider === 'anthropic'
+        ? 'https://api.anthropic.com'
+        : provider === 'openai'
+        ? 'https://api.openai.com/v1'
+        : '',
     modelName: targetModel,
   };
 
@@ -224,7 +251,7 @@ export function setActiveVaultProvider(
   const meta = SUPPORTED_VAULT_PROVIDERS[provider];
   if (!meta) return;
 
-  const key = (localStorage.getItem(meta.storageKey) || '').trim();
+  const key = getProviderApiKey(provider);
   const targetModel = model || localStorage.getItem(`pixelops_${provider}_model`) || meta.defaultModel;
 
   const current = loadLLMProviderConfig();
@@ -234,34 +261,104 @@ export function setActiveVaultProvider(
     authMode: 'apikey' as const,
     apiKey: key,
     modelName: targetModel,
+    endpoint:
+      provider === 'groq'
+        ? 'https://api.groq.com/openai/v1'
+        : provider === 'anthropic'
+        ? 'https://api.anthropic.com'
+        : provider === 'openai'
+        ? 'https://api.openai.com/v1'
+        : DEFAULT_PROVIDER_CONFIGS.gemini.defaultEndpoint,
   };
   saveLLMProviderConfig(updated);
 }
 
 /**
- * Returns the stored API key or active subscription token for a given provider
+ * Returns the stored API key or active subscription token for a given provider.
+ * Exhaustively checks all canonical and alias storage keys across localStorage,
+ * active configuration, connected accounts, and environment variables.
  */
 export function getProviderApiKey(provider: 'gemini' | 'anthropic' | 'openai' | 'groq'): string {
   const meta = SUPPORTED_VAULT_PROVIDERS[provider];
   if (!meta) return '';
 
   try {
+    // 1. Primary storage key from SUPPORTED_VAULT_PROVIDERS (e.g. pixelops_gemini_api_key)
     let key = (localStorage.getItem(meta.storageKey) || '').trim();
-    if (!key && provider === 'gemini') {
-      key = (localStorage.getItem('gemini_api_key') || '').trim();
-      if (!key) {
-        // Also check Google OAuth access token for subscription plans
-        const subToken = (localStorage.getItem('pixelops_google_access_token') || '').trim();
-        if (subToken) return subToken;
+    if (key && key !== 'MY_GEMINI_API_KEY') return key;
+
+    // 2. Provider-specific fallback storage aliases
+    if (provider === 'gemini') {
+      key = (
+        localStorage.getItem('gemini_api_key') ||
+        localStorage.getItem('apiKey') ||
+        localStorage.getItem('pixelops_api_key') ||
+        localStorage.getItem('GOOGLE_API_KEY') ||
+        (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GEMINI_API_KEY) ||
+        (typeof import.meta !== 'undefined' && (import.meta as any).env?.GEMINI_API_KEY) ||
+        ''
+      ).trim();
+      if (key && key !== 'MY_GEMINI_API_KEY') return key;
+
+      // Check Google OAuth access token (starts with ya29. or AIzaSy)
+      const subToken = (localStorage.getItem('pixelops_google_access_token') || '').trim();
+      if (subToken && (subToken.startsWith('ya29.') || subToken.startsWith('AIzaSy'))) {
+        return subToken;
+      }
+    } else if (provider === 'openai') {
+      key = (
+        localStorage.getItem('openai_api_key') ||
+        localStorage.getItem('pixelops_openai_key') ||
+        localStorage.getItem('OPENAI_API_KEY') ||
+        (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_OPENAI_API_KEY) ||
+        (typeof import.meta !== 'undefined' && (import.meta as any).env?.OPENAI_API_KEY) ||
+        ''
+      ).trim();
+      if (key) return key;
+    } else if (provider === 'anthropic') {
+      key = (
+        localStorage.getItem('anthropic_api_key') ||
+        localStorage.getItem('claude_api_key') ||
+        localStorage.getItem('pixelops_claude_api_key') ||
+        localStorage.getItem('ANTHROPIC_API_KEY') ||
+        (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_ANTHROPIC_API_KEY) ||
+        (typeof import.meta !== 'undefined' && (import.meta as any).env?.ANTHROPIC_API_KEY) ||
+        ''
+      ).trim();
+      if (key) return key;
+    } else if (provider === 'groq') {
+      key = (
+        localStorage.getItem('groq_api_key') ||
+        localStorage.getItem('pixelops_groq_key') ||
+        localStorage.getItem('GROQ_API_KEY') ||
+        (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GROQ_API_KEY) ||
+        (typeof import.meta !== 'undefined' && (import.meta as any).env?.GROQ_API_KEY) ||
+        ''
+      ).trim();
+      if (key) return key;
+    }
+
+    // 3. Check LLMProviderConfig connectedAccounts
+    const active = loadLLMProviderConfig();
+    const connToken = active.connectedAccounts?.[provider]?.accessToken?.trim();
+    if (connToken && !connToken.includes('google_ai_pro_') && !connToken.startsWith('eyJ')) {
+      return connToken;
+    }
+
+    // 4. Check active config apiKey if provider matches
+    if (active.providerId === provider && active.apiKey) {
+      const activeKey = active.apiKey.trim();
+      if (activeKey && activeKey !== 'MY_GEMINI_API_KEY') {
+        return activeKey;
       }
     }
-    if (!key) {
-      const active = loadLLMProviderConfig();
-      if (active.providerId === provider && active.apiKey) {
-        key = active.apiKey.trim();
-      }
+
+    // 5. If provider is gemini and active config has any valid key starting with AIzaSy
+    if (provider === 'gemini' && active.apiKey && active.apiKey.startsWith('AIzaSy')) {
+      return active.apiKey.trim();
     }
-    return key;
+
+    return '';
   } catch {
     return '';
   }
@@ -271,15 +368,12 @@ export function getProviderApiKey(provider: 'gemini' | 'anthropic' | 'openai' | 
  * Checks if a valid API key or credential exists for a specific provider
  */
 export function hasProviderApiKey(provider: 'gemini' | 'anthropic' | 'openai' | 'groq'): boolean {
-  if (provider === 'gemini') {
-    const key = getProviderApiKey('gemini');
-    if (key && key !== 'MY_GEMINI_API_KEY') return true;
-    const subToken = (localStorage.getItem('pixelops_google_access_token') || '').trim();
-    if (subToken) return true;
-    return false;
-  }
   const key = getProviderApiKey(provider);
-  return Boolean(key && key.length > 5);
+  if (!key) return false;
+  if (provider === 'gemini') {
+    return key !== 'MY_GEMINI_API_KEY' && key.length > 5;
+  }
+  return key.length > 5;
 }
 
 /**

@@ -1,6 +1,10 @@
 // components/GoogleAuthButton.tsx
 import React, { useEffect, useRef, useState } from 'react';
-import { connectSubscriptionAccount } from '../services/LLMProviderService';
+import {
+  connectSubscriptionAccount,
+  loadLLMProviderConfig,
+  saveLLMProviderConfig,
+} from '../services/LLMProviderService';
 
 export interface GoogleUserProfile {
   email: string;
@@ -72,6 +76,21 @@ export function initGoogleAuth(
               status: 'connected',
               connectedAt: new Date().toISOString(),
             });
+
+            // If user already has a BYOK Gemini API key, keep authMode on 'apikey'
+            // so the GIS login does not block or conflict with direct API key inference
+            const existingKey =
+              localStorage.getItem('pixelops_gemini_api_key') ||
+              localStorage.getItem('gemini_api_key') ||
+              localStorage.getItem('apiKey');
+            if (existingKey && existingKey.trim()) {
+              const current = loadLLMProviderConfig();
+              saveLLMProviderConfig({
+                ...current,
+                authMode: 'apikey',
+                apiKey: existingKey.trim(),
+              });
+            }
           } catch (connErr) {
             console.warn('[GoogleAuthButton] connectSubscriptionAccount error:', connErr);
           }

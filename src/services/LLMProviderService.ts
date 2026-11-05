@@ -211,6 +211,60 @@ export function normalizeGeminiModel(modelName?: string): string {
 }
 
 /**
+ * Helper to resolve an API key across standard and alias localStorage keys and env vars
+ */
+function resolveLocalApiKeyForProvider(pId: string): string {
+  try {
+    if (pId === 'gemini') {
+      return (
+        localStorage.getItem('pixelops_gemini_api_key') ||
+        localStorage.getItem('gemini_api_key') ||
+        localStorage.getItem('apiKey') ||
+        localStorage.getItem('pixelops_api_key') ||
+        localStorage.getItem('GOOGLE_API_KEY') ||
+        (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GEMINI_API_KEY) ||
+        (typeof import.meta !== 'undefined' && (import.meta as any).env?.GEMINI_API_KEY) ||
+        ''
+      ).trim();
+    }
+    if (pId === 'openai') {
+      return (
+        localStorage.getItem('pixelops_openai_api_key') ||
+        localStorage.getItem('openai_api_key') ||
+        localStorage.getItem('OPENAI_API_KEY') ||
+        (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_OPENAI_API_KEY) ||
+        (typeof import.meta !== 'undefined' && (import.meta as any).env?.OPENAI_API_KEY) ||
+        ''
+      ).trim();
+    }
+    if (pId === 'anthropic') {
+      return (
+        localStorage.getItem('pixelops_anthropic_api_key') ||
+        localStorage.getItem('anthropic_api_key') ||
+        localStorage.getItem('claude_api_key') ||
+        localStorage.getItem('ANTHROPIC_API_KEY') ||
+        (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_ANTHROPIC_API_KEY) ||
+        (typeof import.meta !== 'undefined' && (import.meta as any).env?.ANTHROPIC_API_KEY) ||
+        ''
+      ).trim();
+    }
+    if (pId === 'groq') {
+      return (
+        localStorage.getItem('pixelops_groq_api_key') ||
+        localStorage.getItem('groq_api_key') ||
+        localStorage.getItem('GROQ_API_KEY') ||
+        (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GROQ_API_KEY) ||
+        (typeof import.meta !== 'undefined' && (import.meta as any).env?.GROQ_API_KEY) ||
+        ''
+      ).trim();
+    }
+    return '';
+  } catch {
+    return '';
+  }
+}
+
+/**
  * Constructs the accurate endpoint URL and headers for Google Gemini.
  * Routes between Subscription Bearer Auth (Google Account / Google AI Pro) and BYOK API Key.
  */
@@ -226,37 +280,43 @@ export function getGeminiAuthHeadersAndUrl(
 } {
   const normModel = normalizeGeminiModel(modelName || config.modelName);
   const account = config.connectedAccounts?.gemini;
+  const rawSubToken = (account?.accessToken || '').trim();
+
+  // ONLY treat as subscription if token is an actual usable API key or genuine Google OAuth 2.0 access token (ya29.)
+  // Never treat a JWT ID token (starting with eyJ...) as a subscription bearer token for Gemini API!
+  const isUsableSubToken =
+    Boolean(rawSubToken) &&
+    !rawSubToken.includes('google_ai_pro_') &&
+    (rawSubToken.startsWith('AIzaSy') || rawSubToken.startsWith('ya29.'));
+
   const isSub =
     config.authMode === 'subscription' &&
     account?.status === 'connected' &&
-    Boolean(account?.accessToken) &&
-    !account.accessToken.includes('google_ai_pro_'); // Must be a real token, never mock!
+    isUsableSubToken;
 
-  if (isSub && account?.accessToken) {
-    const rawToken = account.accessToken.trim();
-    // If the token is a standard API key format (e.g. AIzaSy...), use ?key= and x-goog-api-key
-    if (rawToken.startsWith('AIzaSy')) {
+  if (isSub && rawSubToken) {
+    if (rawSubToken.startsWith('AIzaSy')) {
       return {
         url: `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
           normModel
-        )}:generateContent?key=${encodeURIComponent(rawToken)}`,
+        )}:generateContent?key=${encodeURIComponent(rawSubToken)}`,
         headers: {
           'Content-Type': 'application/json',
-          'x-goog-api-key': rawToken,
+          'x-goog-api-key': rawSubToken,
         },
         isSubscription: true,
         planName: account.planName || 'Google AI Pro Plan',
         accountEmail: account.email,
       };
     }
-    // Otherwise use Google OAuth Bearer token
+    // Genuine Google OAuth 2.0 Bearer token (ya29.)
     return {
       url: `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
         normModel
       )}:generateContent`,
       headers: {
         'Content-Type': 'application/json',
-        Authorization: `Bearer ${rawToken}`,
+        Authorization: `Bearer ${rawSubToken}`,
       },
       isSubscription: true,
       planName: account.planName || 'Google AI Pro Plan',
@@ -264,27 +324,24 @@ export function getGeminiAuthHeadersAndUrl(
     };
   }
 
-  // BYOK mode: Explicitly pull active key from config OR localStorage.getItem('pixelops_gemini_api_key')
+  // BYOK mode: Explicitly pull active key from config OR all possible storage locations
   let key = config.apiKey?.trim() || '';
-  if (!key) {
-    try {
-      key =
-        localStorage.getItem('pixelops_gemini_api_key')?.trim() ||
-        localStorage.getItem('gemini_api_key')?.trim() ||
-        localStorage.getItem('apiKey')?.trim() ||
-        '';
-    } catch {}
+  if (!key || key === 'MY_GEMINI_API_KEY') {
+    key = resolveLocalApiKeyForProvider('gemini');
+    if (!key && rawSubToken && rawSubToken.startsWith('AIzaSy')) {
+      key = rawSubToken;
+    }
   }
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
   };
-  if (key) {
+  if (key && key !== 'MY_GEMINI_API_KEY') {
     headers['x-goog-api-key'] = key;
   }
 
   return {
-    url: key
+    url: key && key !== 'MY_GEMINI_API_KEY'
       ? `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
           normModel
         )}:generateContent?key=${encodeURIComponent(key)}`
@@ -294,6 +351,7 @@ export function getGeminiAuthHeadersAndUrl(
     headers,
     isSubscription: false,
     planName: 'Developer API Key (BYOK)',
+    accountEmail: account?.email,
   };
 }
 
@@ -312,33 +370,59 @@ export function getLLMAuthInfo(config: LLMProviderConfig): {
   const pId = config.providerId || 'gemini';
   const planMeta = SUBSCRIPTION_PLANS[pId] || SUBSCRIPTION_PLANS.gemini;
   const account = config.connectedAccounts?.[pId];
+  const rawSubToken = (account?.accessToken || '').trim();
+  const isUsableSubToken =
+    Boolean(rawSubToken) &&
+    !rawSubToken.includes('google_ai_pro_') &&
+    (rawSubToken.startsWith('AIzaSy') || rawSubToken.startsWith('ya29.'));
+
+  // First check if a valid BYOK key exists for this provider
+  const byokKey =
+    resolveLocalApiKeyForProvider(pId) ||
+    (config.apiKey && config.apiKey !== 'MY_GEMINI_API_KEY' ? config.apiKey.trim() : '');
+  const hasByokKey = Boolean(byokKey && byokKey !== 'MY_GEMINI_API_KEY');
 
   if (config.authMode === 'subscription') {
-    const isConn =
-      account?.status === 'connected' &&
-      Boolean(account?.accessToken) &&
-      !account.accessToken.includes('google_ai_pro_');
-
+    const isConn = account?.status === 'connected' && isUsableSubToken;
+    if (isConn) {
+      return {
+        mode: 'subscription',
+        isConnected: true,
+        title: account?.planName || planMeta.planName,
+        subtitle: `Connected as ${account?.email || account?.displayName || 'Google Account'}`,
+        badge: planMeta.badge,
+        accountEmail: account?.email,
+        model: pId === 'gemini' ? normalizeGeminiModel(config.modelName) : config.modelName,
+      };
+    }
+    // If subscription is not active but user has a BYOK key, reflect BYOK status
+    if (hasByokKey) {
+      return {
+        mode: 'apikey',
+        isConnected: true,
+        title: `${DEFAULT_PROVIDER_CONFIGS[pId].label} (BYOK)`,
+        subtitle: 'Developer API Key Active',
+        badge: 'BYOK ACTIVE',
+        model: pId === 'gemini' ? normalizeGeminiModel(config.modelName) : config.modelName,
+      };
+    }
     return {
       mode: 'subscription',
-      isConnected: isConn,
+      isConnected: false,
       title: account?.planName || planMeta.planName,
-      subtitle: isConn
-        ? `Connected as ${account?.email || account?.displayName || 'Google Account'}`
-        : 'Subscription disconnected — Sign in to activate',
-      badge: isConn ? planMeta.badge : 'SIGN IN REQUIRED',
+      subtitle: 'Subscription disconnected — Add API Key in Settings',
+      badge: 'NO API KEY',
       accountEmail: account?.email,
       model: pId === 'gemini' ? normalizeGeminiModel(config.modelName) : config.modelName,
     };
   }
 
-  const hasKey = Boolean(config.apiKey && config.apiKey !== 'MY_GEMINI_API_KEY');
   return {
     mode: 'apikey',
-    isConnected: hasKey,
+    isConnected: hasByokKey,
     title: `${DEFAULT_PROVIDER_CONFIGS[pId].label} (BYOK)`,
-    subtitle: hasKey ? 'Developer API Key Verified' : 'API Key Unconfigured',
-    badge: hasKey ? 'BYOK ACTIVE' : 'NO API KEY',
+    subtitle: hasByokKey ? 'Developer API Key Verified' : 'API Key Unconfigured',
+    badge: hasByokKey ? 'BYOK ACTIVE' : 'NO API KEY',
     model: pId === 'gemini' ? normalizeGeminiModel(config.modelName) : config.modelName,
   };
 }
@@ -398,12 +482,14 @@ export function loadLLMProviderConfig(): LLMProviderConfig {
     const hasValidSubscription = Boolean(
       connectedAccounts[pId]?.status === 'connected' &&
         connectedAccounts[pId]?.accessToken &&
-        !connectedAccounts[pId]?.accessToken?.includes('google_ai_pro_')
+        !connectedAccounts[pId]?.accessToken?.includes('google_ai_pro_') &&
+        (connectedAccounts[pId]?.accessToken?.startsWith('ya29.') ||
+          connectedAccounts[pId]?.accessToken?.startsWith('AIzaSy'))
     );
 
     let authMode: AuthMode = parsed?.authMode || (hasValidSubscription ? 'subscription' : 'apikey');
-    if (!hasValidSubscription && parsed?.authMode === 'subscription' && !apiKey) {
-      authMode = 'subscription';
+    if (!hasValidSubscription) {
+      authMode = 'apikey';
     }
 
     const googleClientId =
@@ -440,8 +526,20 @@ export function saveLLMProviderConfig(config: LLMProviderConfig) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
     if (config.apiKey && config.apiKey.trim()) {
-      localStorage.setItem('pixelops_gemini_api_key', config.apiKey.trim());
-      localStorage.setItem('gemini_api_key', config.apiKey.trim());
+      const cleanKey = config.apiKey.trim();
+      if (config.providerId === 'gemini') {
+        localStorage.setItem('pixelops_gemini_api_key', cleanKey);
+        localStorage.setItem('gemini_api_key', cleanKey);
+      } else if (config.providerId === 'openai') {
+        localStorage.setItem('pixelops_openai_api_key', cleanKey);
+        localStorage.setItem('openai_api_key', cleanKey);
+      } else if (config.providerId === 'anthropic') {
+        localStorage.setItem('pixelops_anthropic_api_key', cleanKey);
+        localStorage.setItem('anthropic_api_key', cleanKey);
+      } else if (config.providerId === 'groq') {
+        localStorage.setItem('pixelops_groq_api_key', cleanKey);
+        localStorage.setItem('groq_api_key', cleanKey);
+      }
     }
     if (config.googleClientId && config.googleClientId.trim()) {
       localStorage.setItem('pixelops_google_client_id', config.googleClientId.trim());

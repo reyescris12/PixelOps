@@ -4005,7 +4005,7 @@ export async function generateLocalHeuristicCard(params: {
   // ==========================================
   // 7. UNRECOGNIZED FIELD DIRECTIVE (STANDBY / NO MOCK SUCCESS)
   // ==========================================
-  const dialogue = `${params.activeAgentName} (${params.activeAgentRole}): Directive "${rawPrompt}" does not match an active local execution trigger (search, run code, git, storage, or telemetry). Connect Gemini API in Settings or specify an explicit operative tool directive.`;
+  const dialogue = `${params.activeAgentName} (${params.activeAgentRole}): Directive "${rawPrompt}" ingested. No local client action matched this syntax. To execute natural language AI directives, ensure an active API key is saved in Settings [⚙️] under API KEY (BYOK).`;
 
   const fallbackCard: AgentExecutionCard = {
     id: `card-${Date.now()}`,
@@ -4572,8 +4572,30 @@ export async function executeAgentDirective(params: {
       // Check active LLM provider configuration (per-agent override or global)
       const llmConfig = loadLLMProviderConfig();
       const agentConfig = getAgentModelConfig(params.activeAgentName);
-      const targetProvider: 'gemini' | 'anthropic' | 'openai' | 'groq' =
+      let targetProvider: 'gemini' | 'anthropic' | 'openai' | 'groq' =
         params.agentProvider || agentConfig.provider || (llmConfig.providerId as any) || 'gemini';
+
+      let targetApiKey = getProviderApiKey(targetProvider);
+
+      // Smart fallback: If assigned provider has no key, check if another provider has a configured key
+      if (!targetApiKey || targetApiKey === 'MY_GEMINI_API_KEY') {
+        const candidateProviders: ('gemini' | 'groq' | 'openai' | 'anthropic')[] = [
+          (llmConfig.providerId as any) || 'gemini',
+          'gemini',
+          'groq',
+          'openai',
+          'anthropic',
+        ];
+        for (const cp of candidateProviders) {
+          const k = getProviderApiKey(cp);
+          if (k && k !== 'MY_GEMINI_API_KEY') {
+            targetProvider = cp;
+            targetApiKey = k;
+            break;
+          }
+        }
+      }
+
       const providerMeta =
         SUPPORTED_VAULT_PROVIDERS[targetProvider] || SUPPORTED_VAULT_PROVIDERS.gemini;
       const targetModel: string =
@@ -4583,22 +4605,23 @@ export async function executeAgentDirective(params: {
         providerMeta.defaultModel ||
         'gemini-3.8-flash';
 
-      const targetApiKey = getProviderApiKey(targetProvider);
       const geminiAuthInfo = getGeminiAuthHeadersAndUrl(llmConfig, targetModel);
       if (
         targetProvider === 'gemini' &&
         targetApiKey &&
-        !geminiAuthInfo.headers['x-goog-api-key'] &&
         !targetApiKey.startsWith('ya29.')
       ) {
         geminiAuthInfo.headers['x-goog-api-key'] = targetApiKey;
+        if (!geminiAuthInfo.url.includes('key=')) {
+          geminiAuthInfo.url = `${geminiAuthInfo.url}${geminiAuthInfo.url.includes('?') ? '&' : '?'}key=${encodeURIComponent(targetApiKey)}`;
+        }
       }
 
       const hasActiveAuth =
         targetProvider === 'gemini'
-          ? (llmConfig.authMode === 'subscription' && geminiAuthInfo.isSubscription) ||
-            Boolean(geminiAuthInfo.headers['x-goog-api-key']) ||
-            (Boolean(targetApiKey) && targetApiKey !== 'MY_GEMINI_API_KEY')
+          ? Boolean(geminiAuthInfo.headers['x-goog-api-key']) ||
+            (Boolean(targetApiKey) && targetApiKey !== 'MY_GEMINI_API_KEY') ||
+            (llmConfig.authMode === 'subscription' && geminiAuthInfo.isSubscription)
           : Boolean(targetApiKey && targetApiKey.length > 5);
 
       // Intercept any explicit external tool directives (Gmail, GitHub, Slack, Calendar, Notion, Linear)
@@ -4614,13 +4637,13 @@ export async function executeAgentDirective(params: {
         return {
           id: `card-${Date.now()}`,
           prompt: params.prompt,
-          dialogue: `⚠️ **[AUTHENTICATION REQUIRED: No ${provName} API Key Detected]**\n\nOperative **${params.activeAgentName}** is assigned to **${provName}** (\`${targetModel}\`), but no valid credentials were found in safehouse storage (\`${providerMeta.storageKey}\`).\n\nPlease open **Settings (Gear Icon)** in the Command Center header under **BYOK KEY VAULT** to configure your **${provName}** API key, or switch this operative to another configured provider.`,
+          dialogue: `⚠️ **[AUTHENTICATION REQUIRED: No API Key Detected]**\n\nOperative **${params.activeAgentName}** is standing by, but no active credentials were found in safehouse storage for **${provName}** (\`${providerMeta.storageKey}\`).\n\nPlease open **Settings (Gear Icon)** in the Command Center header under **API KEY (BYOK)** to enter and save your **${provName}** API key (or switch this operative to another configured provider).`,
           cardTitle: `${provName.toUpperCase()} API KEY REQUIRED`,
           actionCategory: 'AUTH_REQUIRED',
           steps: [
-            { label: 'Check Credentials', detail: `No active key for ${provName} in ${providerMeta.storageKey}`, status: 'completed' as const },
+            { label: 'Check Credentials', detail: `No active key found in ${providerMeta.storageKey}`, status: 'completed' as const },
             { label: 'Halt Execution', detail: 'Awaiting credentials to prevent unauthenticated failure', status: 'verified' as const },
-            { label: 'Prompt Commander', detail: 'Configure API key in Settings [⚙️] or switch operative model', status: 'queued' as const },
+            { label: 'Prompt Commander', detail: 'Configure API key in Settings [⚙️] under API KEY (BYOK)', status: 'queued' as const },
           ],
           toolCalls: [],
           tokenEstimate: 0,
@@ -4867,6 +4890,27 @@ export async function executeAgentDirective(params: {
                 hasAttachment: Boolean(params.attachment),
               };
               return await ensureReportPersistedAndAnnotated(card, params);
+            } else if (res && !res.ok) {
+              const errBody = await res.json().catch(() => ({}));
+              const errMsg = errBody?.error?.message || `HTTP ${res.status}`;
+              return {
+                id: `card-${Date.now()}`,
+                prompt: params.prompt,
+                dialogue: `⚠️ **[${targetProvider.toUpperCase()} API ERROR: ${errMsg}]**\n\nThe ${targetProvider.toUpperCase()} upstream endpoint rejected the request (HTTP ${res.status}).\n\n• Detail: ${errMsg}\n• Model: \`${targetModel}\`\n\nPlease check your ${targetProvider.toUpperCase()} API key in **Settings [⚙️]** under **API KEY (BYOK)**.`,
+                cardTitle: `${targetProvider.toUpperCase()} ERROR`,
+                actionCategory: 'AUTH_ERROR',
+                steps: [
+                  { label: 'Dispatch Request', detail: `Sent prompt to ${targetProvider} (${targetModel})`, status: 'completed' as const },
+                  { label: 'Upstream Rejection', detail: errMsg, status: 'verified' as const },
+                  { label: 'Check Settings', detail: 'Verify API key in Settings [⚙️]', status: 'queued' as const },
+                ],
+                toolCalls: [],
+                tokenEstimate: 0,
+                agentName: params.activeAgentName,
+                themeId: params.themeId,
+                timestamp: new Date().toISOString(),
+                hasAttachment: Boolean(params.attachment),
+              };
             }
           }
 
@@ -5052,26 +5096,70 @@ export async function executeAgentDirective(params: {
                 hasAttachment: Boolean(params.attachment),
               };
               return await ensureReportPersistedAndAnnotated(card, params);
+            } else if (res && !res.ok) {
+              const errBody = await res.json().catch(() => ({}));
+              const errMsg = errBody?.error?.message || `HTTP ${res.status}`;
+              return {
+                id: `card-${Date.now()}`,
+                prompt: params.prompt,
+                dialogue: `⚠️ **[ANTHROPIC API ERROR: ${errMsg}]**\n\nThe Anthropic Claude endpoint returned HTTP ${res.status}.\n\n• Detail: ${errMsg}\n• Model: \`${targetModel}\`\n\nPlease check your Anthropic API key in **Settings [⚙️]** under **API KEY (BYOK)**.`,
+                cardTitle: 'ANTHROPIC ERROR',
+                actionCategory: 'AUTH_ERROR',
+                steps: [
+                  { label: 'Dispatch Request', detail: `Sent prompt to Claude (${targetModel})`, status: 'completed' as const },
+                  { label: 'Upstream Rejection', detail: errMsg, status: 'verified' as const },
+                  { label: 'Check Settings', detail: 'Verify API key in Settings [⚙️]', status: 'queued' as const },
+                ],
+                toolCalls: [],
+                tokenEstimate: 0,
+                agentName: params.activeAgentName,
+                themeId: params.themeId,
+                timestamp: new Date().toISOString(),
+                hasAttachment: Boolean(params.attachment),
+              };
             }
           }
-        } catch (err) {
+        } catch (err: any) {
           console.warn(`[ApiService] ${targetProvider} dispatch failed:`, err);
+          return {
+            id: `card-${Date.now()}`,
+            prompt: params.prompt,
+            dialogue: `⚠️ **[${targetProvider.toUpperCase()} CONNECTION ERROR: ${err?.message || 'Network failure'}]**\n\nFailed to establish connection to ${targetProvider.toUpperCase()} (${targetModel}).\n\n• Error: ${err?.message || 'Network exception'}\n• Suggested Action: Verify your API key and network connection in **Settings [⚙️]**.`,
+            cardTitle: `${targetProvider.toUpperCase()} FAULT`,
+            actionCategory: 'NETWORK_ERROR',
+            steps: [
+              { label: 'Dispatch Connection', detail: `Endpoint: ${targetProvider}`, status: 'completed' as const },
+              { label: 'Connection Error', detail: err?.message || 'Fetch failed', status: 'verified' as const },
+              { label: 'Check Settings', detail: 'Verify API key in Settings [⚙️]', status: 'queued' as const },
+            ],
+            toolCalls: [],
+            tokenEstimate: 0,
+            agentName: params.activeAgentName,
+            themeId: params.themeId,
+            timestamp: new Date().toISOString(),
+            hasAttachment: Boolean(params.attachment),
+          };
         }
-        return generateLocalHeuristicCard(params);
       }
 
       // Google Gemini Direct Client-Side Execution (Subscription Bearer Token or BYOK Key)
       const geminiAuth = getGeminiAuthHeadersAndUrl(llmConfig, targetModel);
       const modelName = normalizeGeminiModel(targetModel);
-      const geminiUrl = geminiAuth.url;
-      const geminiHeaders = geminiAuth.headers;
+      let geminiUrl = geminiAuth.url;
+      const geminiHeaders: Record<string, string> = { ...geminiAuth.headers };
       if (
         targetProvider === 'gemini' &&
         targetApiKey &&
-        !geminiHeaders['x-goog-api-key'] &&
         !targetApiKey.startsWith('ya29.')
       ) {
         geminiHeaders['x-goog-api-key'] = targetApiKey;
+        // Strip any invalid OIDC ID token Bearer headers
+        if (geminiHeaders['Authorization']?.includes('eyJ')) {
+          delete geminiHeaders['Authorization'];
+        }
+        if (!geminiUrl.includes('key=')) {
+          geminiUrl = `${geminiUrl}${geminiUrl.includes('?') ? '&' : '?'}key=${encodeURIComponent(targetApiKey)}`;
+        }
       }
 
       const userParts: any[] = [];
@@ -5160,29 +5248,26 @@ export async function executeAgentDirective(params: {
 
           if (!turnRes.ok) {
             console.warn(`[ApiService] Gemini turn ${turnCount} failed with HTTP ${turnRes.status}.`);
-            if (turnRes.status === 400 || turnRes.status === 401 || turnRes.status === 403) {
-              const errBody = await turnRes.json().catch(() => ({}));
-              const errMsg = errBody?.error?.message || `HTTP ${turnRes.status}`;
-              return {
-                id: `card-${Date.now()}`,
-                prompt: params.prompt,
-                dialogue: `⚠️ **[GEMINI AUTHENTICATION ERROR: ${errMsg}]**\n\nThe Google Gemini API rejected the credentials. Please open **Settings (Gear Icon)** in the Command Center header to verify your Google AI Studio API key or reconnect your Google Account.`,
-                cardTitle: 'GEMINI CREDENTIAL REJECTED',
-                actionCategory: 'AUTH_ERROR',
-                steps: [
-                  { label: 'Verify Credentials', detail: `Google API returned HTTP ${turnRes.status}`, status: 'completed' as const },
-                  { label: 'Inspect Error', detail: errMsg, status: 'verified' as const },
-                  { label: 'Update Settings', detail: 'Provide a valid Google Gemini API key or reconnect account', status: 'queued' as const },
-                ],
-                toolCalls: [],
-                tokenEstimate: 0,
-                agentName: params.activeAgentName,
-                themeId: params.themeId,
-                timestamp: new Date().toISOString(),
-                hasAttachment: Boolean(params.attachment),
-              };
-            }
-            return generateLocalHeuristicCard(params);
+            const errBody = await turnRes.json().catch(() => ({}));
+            const errMsg = errBody?.error?.message || `HTTP ${turnRes.status}`;
+            return {
+              id: `card-${Date.now()}`,
+              prompt: params.prompt,
+              dialogue: `⚠️ **[GEMINI API ERROR: ${errMsg}]**\n\nThe Google Gemini API returned an error (HTTP ${turnRes.status}).\n\n• Detail: ${errMsg}\n• Model: \`${modelName}\`\n\nPlease check your Google Gemini API key in **Settings [⚙️]** under **API KEY (BYOK)** or verify your quota at ai.google.dev.`,
+              cardTitle: 'GEMINI INFERENCE ERROR',
+              actionCategory: 'AUTH_ERROR',
+              steps: [
+                { label: 'Dispatch Request', detail: `Sent prompt to ${modelName}`, status: 'completed' as const },
+                { label: 'Upstream Rejection', detail: errMsg, status: 'verified' as const },
+                { label: 'Check Settings', detail: 'Verify API key in Settings [⚙️]', status: 'queued' as const },
+              ],
+              toolCalls: [],
+              tokenEstimate: 0,
+              agentName: params.activeAgentName,
+              themeId: params.themeId,
+              timestamp: new Date().toISOString(),
+              hasAttachment: Boolean(params.attachment),
+            };
           }
 
           const turnData = await turnRes.json();
@@ -5555,8 +5640,25 @@ ${searchResults.map((s: { title: string; snippet: string; url: string }, idx: nu
         if (err instanceof RetroAgentError) {
           throw err;
         }
-        // Seamless fallback to heuristic card so execution never freezes
-        return generateLocalHeuristicCard(params);
+        console.error('[ApiService] executeAgentDirective uncaught exception:', err);
+        return {
+          id: `card-${Date.now()}`,
+          prompt: params.prompt,
+          dialogue: `⚠️ **[OPERATIONAL INFERENCE FAULT: ${err?.message || 'Inference link failure'}]**\n\nCould not execute directive through ${targetProvider.toUpperCase()} (\`${targetModel}\`).\n\n• Detail: ${err?.message || 'Network exception'}\n• Action Required: Please verify your API key and connection in **Settings [⚙️]** under **API KEY (BYOK)**.`,
+          cardTitle: 'INFERENCE LINK FAULT',
+          actionCategory: 'EXECUTION_ERROR',
+          steps: [
+            { label: 'Ingest Directive', detail: `Received: "${(params.prompt || '').slice(0, 40)}"`, status: 'completed' as const },
+            { label: 'Execution Exception', detail: err?.message || 'Network error', status: 'verified' as const },
+            { label: 'Check Settings', detail: 'Open Settings [⚙️] to inspect credentials', status: 'queued' as const },
+          ],
+          toolCalls: [],
+          tokenEstimate: 0,
+          agentName: params.activeAgentName,
+          themeId: params.themeId,
+          timestamp: new Date().toISOString(),
+          hasAttachment: Boolean(params.attachment),
+        };
       }
     },
     params.themeId,

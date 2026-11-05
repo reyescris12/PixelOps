@@ -159,14 +159,22 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     provider: 'gemini' | 'anthropic' | 'openai' | 'groq',
     key: string
   ) => {
+    const cleanKey = key.trim();
     setVaultEntries((prev) => ({
       ...prev,
-      [provider]: { ...prev[provider], apiKey: key },
+      [provider]: { ...prev[provider], apiKey: cleanKey },
     }));
-    saveBYOKVaultEntry(provider, key, vaultEntries[provider]?.selectedModel);
-    if (provider === llmConfig.providerId) {
-      setLlmConfig((prev) => ({ ...prev, apiKey: key }));
-    }
+    saveBYOKVaultEntry(provider, cleanKey, vaultEntries[provider]?.selectedModel);
+    setLlmConfig((prev) => {
+      const isCurrent = provider === prev.providerId;
+      const updated = {
+        ...prev,
+        authMode: 'apikey' as const,
+        apiKey: isCurrent ? cleanKey : prev.apiKey || (provider === 'gemini' ? cleanKey : prev.apiKey),
+      };
+      saveLLMProviderConfig(updated);
+      return updated;
+    });
   };
 
   const handleSelectVaultModel = (
@@ -254,11 +262,14 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setLlmTestStatus({ loading: true, message: 'Validating credentials with Google Gemini upstream...' });
     playBeep('tap');
     try {
+      const cleanKey = userGoogleKey.trim();
       const account = await connectUserSubscriptionAccount({
         providerId: 'gemini',
         email: userGoogleEmail.trim(),
-        credentialKey: userGoogleKey.trim(),
+        credentialKey: cleanKey,
       });
+      // Also automatically save to BYOK Vault so all agents and gateway pipelines have direct key access
+      await saveBYOKVaultEntry('gemini', cleanKey);
       const updated = loadLLMProviderConfig();
       setLlmConfig(updated);
       setUserGoogleKey('');
@@ -304,11 +315,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setLlmTestStatus({ loading: true, message: 'Connecting ChatGPT Plus / Pro credentials...' });
     playBeep('tap');
     try {
+      const cleanKey = userOpenAIKey.trim();
       const account = await connectUserSubscriptionAccount({
         providerId: 'openai',
         email: userOpenAIEmail.trim(),
-        credentialKey: userOpenAIKey.trim(),
+        credentialKey: cleanKey,
       });
+      await saveBYOKVaultEntry('openai', cleanKey);
       const updated = loadLLMProviderConfig();
       setLlmConfig(updated);
       setUserOpenAIKey('');
@@ -354,11 +367,13 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     setLlmTestStatus({ loading: true, message: 'Connecting Claude Pro credentials...' });
     playBeep('tap');
     try {
+      const cleanKey = userAnthropicKey.trim();
       const account = await connectUserSubscriptionAccount({
         providerId: 'anthropic',
         email: userAnthropicEmail.trim(),
-        credentialKey: userAnthropicKey.trim(),
+        credentialKey: cleanKey,
       });
+      await saveBYOKVaultEntry('anthropic', cleanKey);
       const updated = loadLLMProviderConfig();
       setLlmConfig(updated);
       setUserAnthropicKey('');
@@ -509,6 +524,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   };
 
   const handleSaveAll = () => {
+    // Persist all entries in the vault state to ensure zero lost keys
+    for (const [pId, entry] of Object.entries(vaultEntries) as [
+      'gemini' | 'anthropic' | 'openai' | 'groq',
+      any
+    ][]) {
+      if (entry?.apiKey) {
+        saveBYOKVaultEntry(pId, entry.apiKey, entry.selectedModel);
+      }
+    }
     saveLLMProviderConfig(llmConfig);
     onClose();
   };

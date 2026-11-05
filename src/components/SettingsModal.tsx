@@ -54,6 +54,7 @@ import {
   setLLMAuthMode,
   getLLMAuthInfo,
 } from '../services/LLMProviderService';
+import { GoogleAuthButton } from './GoogleAuthButton';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -647,9 +648,24 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                       <div className="flex items-center gap-2 my-0.5">
                         <div className="h-px bg-slate-800 flex-1" />
-                        <span className="text-[10px] text-slate-500 font-mono-tabular uppercase">or launch OAuth popup</span>
+                        <span className="text-[10px] text-slate-500 font-mono-tabular uppercase">or sign in with google</span>
                         <div className="h-px bg-slate-800 flex-1" />
                       </div>
+
+                      {/* Official Google Identity Services Sign-In Button */}
+                      <GoogleAuthButton
+                        clientId={googleClientIdInput.trim() || llmConfig.googleClientId}
+                        onSuccess={(email, name) => {
+                          const updated = loadLLMProviderConfig();
+                          setLlmConfig(updated);
+                          setLlmTestStatus({
+                            loading: false,
+                            ok: true,
+                            message: `Google Sign-In verified for ${name} (${email})! Google AI Pro active.`,
+                          });
+                          playBeep('complete');
+                        }}
+                      />
 
                       <button
                         type="button"

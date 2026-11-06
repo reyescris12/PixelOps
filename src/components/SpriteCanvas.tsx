@@ -3286,16 +3286,6 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
               </button>
             ))}
 
-            {onExecutePlaybook && (
-              <RoomActionPlaybookPanel
-                currentRoom={currentRoom}
-                onExecutePlaybook={onExecutePlaybook}
-                variant="pill"
-                onOpenVfs={onOpenVfs}
-                onOpenReconMonitor={onOpenReconOverlay}
-              />
-            )}
-
             {currentRoomStations.map((st) => {
               const isCurrentStation =
                 activeLiveAgent?.room === currentRoom &&

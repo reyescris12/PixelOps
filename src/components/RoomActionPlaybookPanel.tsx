@@ -805,10 +805,10 @@ export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = (
               setIsFloatingOpen(true);
             }}
             className="px-2 py-1 bg-[#0b1017]/85 hover:bg-[#121c29] text-[#38bdf8] border border-[#38bdf8]/60 hover:border-[#38bdf8] text-[10px] font-bold backdrop-blur-sm cursor-pointer flex items-center gap-1.5 shadow-[0_2px_10px_rgba(0,0,0,0.6)] active:scale-95 transition-all"
-            title="Open Watchtower Recon Deck (3 workflows)"
+            title="Open Sector Workflow Deck (3 workflows)"
           >
             <Radar className="w-3 h-3 text-[#38bdf8]" />
-            <span>[📡 RECON DECK (3) ▾]</span>
+            <span>[📡 SECTOR WORKFLOW DECK (3) ▾]</span>
           </button>
         ) : (
           <div className="bg-[#0b1017]/96 border border-[#38bdf8] shadow-[0_0_24px_rgba(56,189,248,0.35)] p-2 sm:p-2.5 backdrop-blur-md flex flex-col gap-1.5 max-w-[280px] sm:max-w-[320px] animate-in fade-in zoom-in-95 duration-150">
@@ -917,10 +917,10 @@ export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = (
               setIsFloatingOpen(true);
             }}
             className="px-2 py-1 bg-[#0b1017]/85 hover:bg-[#21170d] text-[#e59838] border border-[#e59838]/60 hover:border-[#e59838] text-[10px] font-bold backdrop-blur-sm cursor-pointer flex items-center gap-1.5 shadow-[0_2px_10px_rgba(0,0,0,0.6)] active:scale-95 transition-all"
-            title="Open Tactical Operator Deck (3 actions)"
+            title="Open Sector Workflow Deck (3 actions)"
           >
             <Zap className="w-3 h-3 text-[#e59838]" />
-            <span>[⚡ OPERATOR DECK (3) ▾]</span>
+            <span>[⚡ SECTOR WORKFLOW DECK (3) ▾]</span>
           </button>
         ) : (
           <div className="bg-[#0b1017]/96 border border-[#e59838] shadow-[0_0_24px_rgba(229,152,56,0.35)] p-2 sm:p-2.5 backdrop-blur-md flex flex-col gap-1.5 max-w-[280px] sm:max-w-[320px] animate-in fade-in zoom-in-95 duration-150">
@@ -1196,26 +1196,112 @@ export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = (
     );
   }
 
-  // --- LIBRARY / SATELLITE IMAGERY MODULE FLOATING PILL ---
-  if (hasSatelliteModuleInRoom && onOpenReconMonitor) {
+  // --- LIBRARY / SATELLITE IMAGERY & DEEP RESEARCH FLOATING DECK ---
+  if (currentRoom === 'library' || hasSatelliteModuleInRoom) {
+    const totalCount = playbooks.length + (onOpenReconMonitor ? 1 : 0);
     return (
       <div
         ref={floatingRef}
         className={`absolute top-2 right-2 sm:right-3 z-30 pointer-events-auto font-mono-tabular ${className}`}
       >
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            playBeep('tap');
-            onOpenReconMonitor();
-          }}
-          className="px-2 py-1 bg-[#061610]/90 hover:bg-[#0d291e] text-[#34d399] border border-[#10b981]/70 hover:border-[#34d399] text-[10px] font-bold backdrop-blur-sm cursor-pointer flex items-center gap-1.5 shadow-[0_2px_10px_rgba(0,0,0,0.6)] active:scale-95 transition-all"
-          title="Open Satellite Imagery Recon Monitor (SAT_RECON)"
-        >
-          <Radar className="w-3 h-3 text-[#34d399]" />
-          <span>[🛰️ RECON MONITOR]</span>
-        </button>
+        {!isFloatingOpen ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              playBeep('tap');
+              setIsFloatingOpen(true);
+            }}
+            className="px-2 py-1 bg-[#061610]/90 hover:bg-[#0d291e] text-[#34d399] border border-[#10b981]/70 hover:border-[#34d399] text-[10px] font-bold backdrop-blur-sm cursor-pointer flex items-center gap-1.5 shadow-[0_2px_10px_rgba(0,0,0,0.6)] active:scale-95 transition-all"
+            title="Open Sector Workflow Deck"
+          >
+            <Radar className="w-3 h-3 text-[#34d399]" />
+            <span>[🛰️ SECTOR WORKFLOW DECK ({totalCount}) ▾]</span>
+          </button>
+        ) : (
+          <div className="bg-[#06120e]/96 border border-[#10b981] shadow-[0_0_24px_rgba(16,185,129,0.35)] p-2 sm:p-2.5 backdrop-blur-md flex flex-col gap-1.5 max-w-[280px] sm:max-w-[320px] animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between gap-2 border-b border-[#133829] pb-1">
+              <span className="text-[10px] text-[#a7f3d0] uppercase font-bold tracking-wider flex items-center gap-1">
+                <Radar className="w-3 h-3 text-[#34d399]" />
+                <span>SAT &amp; INTEL WORKFLOW DECK</span>
+              </span>
+              <div className="flex items-center gap-1">
+                <span className="text-[9px] px-1 bg-[#0b291e] text-[#34d399] border border-[#10b981]/40 font-bold">
+                  LIBRARY
+                </span>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsFloatingOpen(false);
+                    playBeep('tap');
+                  }}
+                  className="p-0.5 text-[#94a3b8] hover:text-[#f3ead8] hover:bg-[#113024] cursor-pointer transition-colors"
+                  title="Minimize deck"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-1.5 pt-0.5">
+              {onOpenReconMonitor && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setIsFloatingOpen(false);
+                    playBeep('tap');
+                    onOpenReconMonitor();
+                  }}
+                  className="w-full text-left p-1.5 bg-[#0a1f17] hover:bg-[#113326] border border-[#10b981]/60 hover:border-[#34d399] transition-all cursor-pointer flex items-center justify-between gap-1.5 group"
+                >
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-bold text-[#34d399] flex items-center gap-1.5 truncate">
+                      <span>🛰️</span>
+                      <span className="truncate">Live Satellite Recon Monitor</span>
+                    </div>
+                    <div className="text-[9px] text-[#a7f3d0] truncate mt-0.5">
+                      NASA GIBS &amp; Esri Orbital Overlay
+                    </div>
+                  </div>
+                  <ChevronRight className="w-3.5 h-3.5 text-[#34d399] shrink-0" />
+                </button>
+              )}
+
+              {playbooks.map((pb) => {
+                const target = storedTargets[pb.id]?.targetName || 'Default Target';
+                return (
+                  <button
+                    key={pb.id}
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setIsFloatingOpen(false);
+                      playBeep('tap');
+                      onExecutePlaybook(pb);
+                    }}
+                    disabled={isExecuting}
+                    className="w-full text-left p-1.5 bg-[#0d1922] hover:bg-[#152636] border border-[#1e3345] hover:border-[#34d399] transition-all cursor-pointer flex items-center justify-between gap-1.5 group disabled:opacity-50"
+                  >
+                    <div className="min-w-0">
+                      <div className="text-[11px] font-bold text-[#f3ead8] flex items-center gap-1.5 truncate group-hover:text-[#34d399]">
+                        <span>{pb.icon}</span>
+                        <span className="truncate">{pb.shortTitle}</span>
+                      </div>
+                      <div className="text-[9px] text-[#94a3b8] truncate mt-0.5 flex items-center gap-1">
+                        <span>{pb.assignedOperativeName}</span>
+                        <span>·</span>
+                        <span className="text-[#fbbf24] truncate">[{target}]</span>
+                      </div>
+                    </div>
+                    <ChevronRight className="w-3.5 h-3.5 text-[#64748b] group-hover:text-[#34d399] shrink-0" />
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
     );
   }

@@ -109,7 +109,6 @@ import { TaskBriefModal, TaskBrief } from './components/TaskBriefModal';
 import { TerminalConsole } from './components/TerminalConsole';
 import { WorkspaceFileViewer } from './components/WorkspaceFileViewer';
 import { PlaybookModal } from './components/PlaybookModal';
-import { RoomActionPlaybookPanel } from './components/RoomActionPlaybookPanel';
 import { TaskQueuePanel } from './components/TaskQueuePanel';
 import {
   StrategyBoardTask,
@@ -2592,19 +2591,6 @@ const CommandCenterContent: React.FC = () => {
                 [⚡ BOOST +{decryptionBoost}%]
               </span>
             )}
-            <RoomActionPlaybookPanel
-              currentRoom={currentRoom}
-              onExecutePlaybook={handleOpenPlaybookSetup}
-              variant="pill"
-              onOpenVfs={() => {
-                setIsWorkspaceFilesOpen(true);
-                playBeep('tap');
-              }}
-              onOpenReconMonitor={() => {
-                setIsReconOverlayOpen((prev) => !prev);
-                playBeep('tap');
-              }}
-            />
           </div>
 
           {/* Right Zone: AI Subscription Plan + Night Shift + Telemetry */}
@@ -2742,23 +2728,6 @@ const CommandCenterContent: React.FC = () => {
               );
             }}
           />
-
-          {/* Dedicated Sector Action Deck Tray (Docked cleanly below the diorama canvas so the room is unobstructed) */}
-          <div className="w-full max-w-4xl mx-auto px-2 sm:px-4 mt-2">
-            <RoomActionPlaybookPanel
-              currentRoom={currentRoom}
-              onExecutePlaybook={handleOpenPlaybookSetup}
-              variant="banner"
-              onOpenVfs={() => {
-                setIsWorkspaceFilesOpen(true);
-                playBeep('tap');
-              }}
-              onOpenReconMonitor={() => {
-                setIsReconOverlayOpen(true);
-                playBeep('tap');
-              }}
-            />
-          </div>
 
           {/* Centered Amber Console Boxes below the Overworld Diorama */}
           <div className="mt-4">

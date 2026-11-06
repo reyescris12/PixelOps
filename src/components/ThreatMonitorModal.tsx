@@ -569,7 +569,7 @@ export const ThreatMonitorModal: React.FC<ThreatMonitorModalProps> = ({
             <div>
               <div className="flex items-center gap-2 flex-wrap">
                 <h2 className="text-sm sm:text-base font-bold tracking-wider text-cyan-300 uppercase">
-                  4-Pillar Threat Correlation &amp; Recon Monitor
+                  Threat Matrix &amp; Recon Monitor
                 </h2>
                 <span className="px-2 py-0.5 text-[10px] font-bold uppercase rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">
                   LIVE MACRO-TO-MICRO OSINT

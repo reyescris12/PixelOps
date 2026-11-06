@@ -851,9 +851,9 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
               type="button"
               onClick={onOpenThreatMatrixModal}
               className="px-2 py-1 text-[10px] font-bold rounded bg-cyan-950/80 hover:bg-cyan-900 text-cyan-200 border border-cyan-400/60 cursor-pointer whitespace-nowrap"
-              title="Open 4-Pillar Threat Correlation, Grid Stability, CISA KEV & Supply Chain Dossier"
+              title="Open Threat Matrix (4-Pillar Threat Correlation, Grid Stability, CISA KEV & Supply Chain)"
             >
-              [🛡️ 4-Pillar Dossier]
+              [🛡️ Threat Matrix]
             </button>
           )}
 

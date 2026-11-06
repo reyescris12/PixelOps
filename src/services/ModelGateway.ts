@@ -78,7 +78,8 @@ export class ModelGateway {
     systemPrompt: string = '',
     messages: (ModelGatewayMessage | any)[] = []
   ): Promise<string> {
-    return await puterChat(model, systemPrompt, messages);
+    const raw = await puterChat(model, systemPrompt, messages);
+    return normalizeModelToolCallTags(raw);
   }
 
   /**
@@ -144,7 +145,8 @@ export class ModelGateway {
       return choice?.content ? `${choice.content}\n\n${toolTags}` : toolTags;
     }
 
-    return choice?.content || '';
+    const rawContent = choice?.content || '';
+    return normalizeModelToolCallTags(rawContent);
   }
 
   /**
@@ -349,8 +351,103 @@ export class ModelGateway {
     }
 
     const data = await res.json();
-    return data.choices?.[0]?.message?.content || '';
+    const rawText = data.choices?.[0]?.message?.content || '';
+    return normalizeModelToolCallTags(rawText);
   }
+}
+
+/**
+ * Normalizes vendor-specific pseudo-XML tool calls
+ * (e.g. <tool_call> <function=live_web_search> <parameter=query> ... </parameter> </function> </tool_call>)
+ * into uniform [AGENT_ACTION: tool_name] { ... } [/AGENT_ACTION] syntax.
+ */
+export function normalizeModelToolCallTags(rawText: string): string {
+  if (!rawText) return '';
+  if (rawText.includes('[AGENT_ACTION:')) return rawText;
+
+  // 1. Match <function=tool_name> ... </function> (optionally wrapped in <tool_call> ... </tool_call>)
+  const xmlFnMatch = rawText.match(/<function=([a-zA-Z0-9_\-]+)>([\s\S]*?)<\/function>/i);
+  if (xmlFnMatch) {
+    const toolName = xmlFnMatch[1].trim();
+    const inner = xmlFnMatch[2];
+    const args: Record<string, any> = {};
+
+    const paramRegex = /<parameter=([a-zA-Z0-9_\-]+)>([\s\S]*?)(?:<\/parameter>|(?=<parameter=)|$)/gi;
+    let pMatch: RegExpExecArray | null;
+    let found = false;
+    while ((pMatch = paramRegex.exec(inner)) !== null) {
+      found = true;
+      const pName = pMatch[1].trim();
+      const pVal = pMatch[2].trim();
+      try {
+        args[pName] = JSON.parse(pVal);
+      } catch {
+        args[pName] = pVal;
+      }
+    }
+
+    if (!found && inner.trim()) {
+      try {
+        const parsed = JSON.parse(inner.trim());
+        if (typeof parsed === 'object' && parsed !== null) {
+          Object.assign(args, parsed);
+        } else {
+          args.query = inner.trim();
+        }
+      } catch {
+        args.query = inner.trim();
+      }
+    }
+
+    const cleanText = rawText
+      .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '')
+      .replace(/<function=[^>]+>[\s\S]*?<\/function>/gi, '')
+      .trim();
+
+    const tag = `[AGENT_ACTION: ${toolName}] ${JSON.stringify(args)} [/AGENT_ACTION]`;
+    return cleanText ? `${cleanText}\n\n${tag}` : tag;
+  }
+
+  // 2. Match <function name="tool_name"> ... </function>
+  const xmlAttrMatch = rawText.match(/<function\s+name=["']?([a-zA-Z0-9_\-]+)["']?>([\s\S]*?)<\/function>/i);
+  if (xmlAttrMatch) {
+    const toolName = xmlAttrMatch[1].trim();
+    const inner = xmlAttrMatch[2];
+    const args: Record<string, any> = {};
+
+    const paramRegex = /<parameter\s+name=["']?([a-zA-Z0-9_\-]+)["']?>([\s\S]*?)(?:<\/parameter>|(?=<parameter)|$)/gi;
+    let pMatch: RegExpExecArray | null;
+    while ((pMatch = paramRegex.exec(inner)) !== null) {
+      const pName = pMatch[1].trim();
+      const pVal = pMatch[2].trim();
+      args[pName] = pVal;
+    }
+
+    const cleanText = rawText
+      .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '')
+      .replace(/<function\s+name=[^>]+>[\s\S]*?<\/function>/gi, '')
+      .trim();
+
+    const tag = `[AGENT_ACTION: ${toolName}] ${JSON.stringify(args)} [/AGENT_ACTION]`;
+    return cleanText ? `${cleanText}\n\n${tag}` : tag;
+  }
+
+  // 3. Match <tool_call> { ... } </tool_call>
+  const jsonMatch = rawText.match(/<tool_call>\s*(\{[\s\S]*?\})\s*<\/tool_call>/i);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[1].trim());
+      const toolName = parsed.name || parsed.function || parsed.tool;
+      const toolArgs = parsed.arguments || parsed.parameters || parsed.args || {};
+      if (toolName) {
+        const cleanText = rawText.replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '').trim();
+        const tag = `[AGENT_ACTION: ${toolName}] ${JSON.stringify(typeof toolArgs === 'object' ? toolArgs : { query: toolArgs })} [/AGENT_ACTION]`;
+        return cleanText ? `${cleanText}\n\n${tag}` : tag;
+      }
+    } catch {}
+  }
+
+  return rawText;
 }
 
 export default ModelGateway;

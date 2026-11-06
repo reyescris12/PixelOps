@@ -4463,8 +4463,143 @@ export async function pingGeminiConnection(
  * - If no API key is set or offline/rate-limited, seamlessly runs via `generateLocalHeuristicCard`.
  */
 /**
- * Parses structured [AGENT_ACTION: tool_name] ... [/AGENT_ACTION] blocks from LLM responses
- * and executes the tool client-side, returning an AgentExecutionCard if an action was found.
+ * Strips all variants of tool call syntax (AGENT_ACTION, pseudo-XML, <tool_call>, <function=...>)
+ * from LLM text so no raw markup leaks into user-facing dialogue.
+ */
+export function stripAgentActionTags(rawText: string): string {
+  if (!rawText) return '';
+  return rawText
+    .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '')
+    .replace(/<function=[a-zA-Z0-9_\-]+>[\s\S]*?<\/function>/gi, '')
+    .replace(/<function\s+name=["']?[a-zA-Z0-9_\-]+["']?>[\s\S]*?<\/function>/gi, '')
+    .replace(/\[AGENT_ACTION:[\s\S]*?\[\/AGENT_ACTION\]/gi, '')
+    .replace(/\[TOOL_CALL:[\s\S]*?\[\/TOOL_CALL\]/gi, '')
+    .replace(/(?:<tool_call:\w+>|<call:\w+>)[\s\S]*?(?:<\/tool_call:\w+>|<\/call:\w+>)/gi, '')
+    .replace(/\[AGENT_STATUS:\s*(COMPLETE|WORKING)\]/gi, '')
+    .replace(/<\/?(?:tool_call|function|parameter)[^>]*>/gi, '')
+    .trim();
+}
+
+/**
+ * Extracts tool action details from multiple formats emitted by LLMs
+ * (standard [AGENT_ACTION], pseudo-XML <tool_call><function=...>, JSON in <tool_call>, etc.)
+ */
+export function extractAgentActionFromText(rawText: string): {
+  toolName: string;
+  toolArgs: Record<string, any>;
+  rawMatch: string;
+} | null {
+  if (!rawText) return null;
+
+  // 1. Standard [AGENT_ACTION: tool_name] { ... } [/AGENT_ACTION]
+  const actionMatch = rawText.match(/\[AGENT_ACTION:\s*([a-zA-Z0-9_\-]+)\]([\s\S]*?)\[\/AGENT_ACTION\]/i);
+  if (actionMatch) {
+    const toolName = actionMatch[1].trim();
+    const rawArgs = actionMatch[2].trim();
+    let toolArgs: Record<string, any> = {};
+    try {
+      toolArgs = JSON.parse(rawArgs);
+    } catch {
+      toolArgs = { query: rawArgs, input: rawArgs, code: rawArgs };
+    }
+    return { toolName, toolArgs, rawMatch: actionMatch[0] };
+  }
+
+  // 2. OpenRouter / Puter Pseudo-XML Tool Call:
+  // e.g. <tool_call> <function=live_web_search> <parameter=query> bitcoin price </parameter> </function> </tool_call>
+  const xmlFnMatch = rawText.match(/<function=([a-zA-Z0-9_\-]+)>([\s\S]*?)<\/function>/i);
+  if (xmlFnMatch) {
+    const toolName = xmlFnMatch[1].trim();
+    const innerContent = xmlFnMatch[2];
+    const toolArgs: Record<string, any> = {};
+
+    const paramRegex = /<parameter=([a-zA-Z0-9_\-]+)>([\s\S]*?)(?:<\/parameter>|(?=<parameter=)|$)/gi;
+    let pMatch: RegExpExecArray | null;
+    let foundParams = false;
+    while ((pMatch = paramRegex.exec(innerContent)) !== null) {
+      foundParams = true;
+      const paramName = pMatch[1].trim();
+      const paramValue = pMatch[2].trim();
+      try {
+        toolArgs[paramName] = JSON.parse(paramValue);
+      } catch {
+        toolArgs[paramName] = paramValue;
+      }
+    }
+
+    if (!foundParams && innerContent.trim()) {
+      try {
+        const parsed = JSON.parse(innerContent.trim());
+        if (typeof parsed === 'object' && parsed !== null) {
+          Object.assign(toolArgs, parsed);
+        } else {
+          toolArgs.query = innerContent.trim();
+        }
+      } catch {
+        toolArgs.query = innerContent.trim();
+      }
+    }
+
+    return { toolName, toolArgs, rawMatch: xmlFnMatch[0] };
+  }
+
+  // 3. Alternative XML format: <function name="..."> <parameter name="...">
+  const xmlAttrMatch = rawText.match(/<function\s+name=["']?([a-zA-Z0-9_\-]+)["']?>([\s\S]*?)<\/function>/i);
+  if (xmlAttrMatch) {
+    const toolName = xmlAttrMatch[1].trim();
+    const innerContent = xmlAttrMatch[2];
+    const toolArgs: Record<string, any> = {};
+
+    const paramRegex = /<parameter\s+name=["']?([a-zA-Z0-9_\-]+)["']?>([\s\S]*?)(?:<\/parameter>|(?=<parameter)|$)/gi;
+    let pMatch: RegExpExecArray | null;
+    while ((pMatch = paramRegex.exec(innerContent)) !== null) {
+      const paramName = pMatch[1].trim();
+      const paramVal = pMatch[2].trim();
+      toolArgs[paramName] = paramVal;
+    }
+
+    return { toolName, toolArgs, rawMatch: xmlAttrMatch[0] };
+  }
+
+  // 4. JSON inside <tool_call> ... </tool_call>
+  const jsonToolCallMatch = rawText.match(/<tool_call>([\s\S]*?)<\/tool_call>/i);
+  if (jsonToolCallMatch) {
+    const inner = jsonToolCallMatch[1].trim();
+    try {
+      const parsed = JSON.parse(inner);
+      const toolName = parsed.name || parsed.function || parsed.tool;
+      const toolArgs = parsed.arguments || parsed.parameters || parsed.args || {};
+      if (toolName) {
+        return {
+          toolName: String(toolName).trim(),
+          toolArgs: typeof toolArgs === 'object' && toolArgs !== null ? toolArgs : { query: String(toolArgs) },
+          rawMatch: jsonToolCallMatch[0],
+        };
+      }
+    } catch {}
+  }
+
+  // 5. Alternate bracket tags: [TOOL_CALL: name] { ... } [/TOOL_CALL]
+  const altTagMatch = rawText.match(/\[TOOL_CALL:\s*([a-zA-Z0-9_\-]+)\]([\s\S]*?)\[\/TOOL_CALL\]/i);
+  if (altTagMatch) {
+    const toolName = altTagMatch[1].trim();
+    const rawArgs = altTagMatch[2].trim();
+    let toolArgs: Record<string, any> = {};
+    try {
+      toolArgs = JSON.parse(rawArgs);
+    } catch {
+      toolArgs = { query: rawArgs };
+    }
+    return { toolName, toolArgs, rawMatch: altTagMatch[0] };
+  }
+
+  return null;
+}
+
+/**
+ * Parses structured [AGENT_ACTION: tool_name] ... [/AGENT_ACTION] or pseudo-XML
+ * <tool_call><function=...><parameter=...> blocks from LLM responses and executes the tool client-side,
+ * optionally calling onSynthesizeTurn2 to synthesize the live tool findings through the model.
  */
 export async function parseAndExecuteAgentActionTags(
   rawText: string,
@@ -4481,20 +4616,14 @@ export async function parseAndExecuteAgentActionTags(
       targetStationId: string;
       taskTag: string;
     }) => void;
-  }
+  },
+  onSynthesizeTurn2?: (executedToolMeta: ExecutedToolCall, toolResponse: any) => Promise<string | null>
 ): Promise<AgentExecutionCard | null> {
   if (!rawText) return null;
-  const actionMatch = rawText.match(/\[AGENT_ACTION:\s*([a-zA-Z0-9_\-]+)\]([\s\S]*?)\[\/AGENT_ACTION\]/i);
-  if (!actionMatch) return null;
+  const action = extractAgentActionFromText(rawText);
+  if (!action) return null;
 
-  const toolName = actionMatch[1].trim();
-  const rawArgs = actionMatch[2].trim();
-  let toolArgs: Record<string, any> = {};
-  try {
-    toolArgs = JSON.parse(rawArgs);
-  } catch {
-    toolArgs = { query: rawArgs, input: rawArgs, code: rawArgs };
-  }
+  const { toolName, toolArgs } = action;
 
   const primaryDest = resolveToolWorkflowDestination(toolName);
   params.onFunctionCallTriggered?.({
@@ -4511,24 +4640,34 @@ export async function parseAndExecuteAgentActionTags(
     args: toolArgs,
   });
 
-  const cleanDialogue = rawText
-    .replace(/\[AGENT_ACTION:[\s\S]*?\[\/AGENT_ACTION\]/gi, '')
-    .replace(/\[AGENT_STATUS:\s*(COMPLETE|WORKING)\]/gi, '')
-    .trim();
+  let finalDialogue = '';
+  if (onSynthesizeTurn2) {
+    try {
+      const turn2Res = await onSynthesizeTurn2(handlerOut.executedToolMeta, handlerOut.response);
+      if (turn2Res && turn2Res.trim().length > 10) {
+        finalDialogue = stripAgentActionTags(turn2Res);
+      }
+    } catch (t2Err) {
+      console.warn('[ApiService] Turn 2 synthesis error in action tag execution:', t2Err);
+    }
+  }
 
-  const finalDialogue = cleanDialogue
-    ? `${cleanDialogue}\n\n[ACTION EXECUTED] ${toolName}: ${handlerOut.executedToolMeta.resultSummary}`
-    : `[ACTION EXECUTED: ${toolName.toUpperCase()}]\nTelemetry: ${handlerOut.executedToolMeta.resultSummary}`;
+  if (!finalDialogue) {
+    const cleanDialogue = stripAgentActionTags(rawText);
+    finalDialogue = cleanDialogue
+      ? `${cleanDialogue}\n\n[ACTION EXECUTED] ${toolName}: ${handlerOut.executedToolMeta.resultSummary}`
+      : `[ACTION EXECUTED: ${toolName.toUpperCase()}]\nTelemetry: ${handlerOut.executedToolMeta.resultSummary}`;
+  }
 
   return {
     id: `card-${Date.now()}`,
     prompt: params.prompt || `Direct Action Execution`,
     dialogue: finalDialogue,
-    cardTitle: `${toolName.replace(/_/g, ' ').toUpperCase()} EXECUTED`,
+    cardTitle: `${toolName.replace(/_/g, ' ').toUpperCase()} COMPLETE`,
     actionCategory: 'Live Telemetry',
     steps: [
-      { label: 'Action Tag Detected', detail: `Parsed [AGENT_ACTION: ${toolName}]`, status: 'completed' },
-      { label: 'Tool Dispatched', detail: handlerOut.executedToolMeta.resultSummary || 'Executed client-side', status: 'verified' },
+      { label: 'Tool Invoked', detail: `Parsed action ${toolName}`, status: 'completed' },
+      { label: 'Telemetry Verified', detail: handlerOut.executedToolMeta.resultSummary || 'Executed client-side', status: 'verified' },
       { label: 'Ledger Synced', detail: 'Recorded to local mission ledger', status: 'completed' },
     ],
     toolCalls: [handlerOut.executedToolMeta],
@@ -5174,16 +5313,38 @@ CRITICAL MEMORY RECALL INSTRUCTION:
             [{ role: 'user', content: params.prompt }]
           );
 
-          // Parse and execute any AGENT_ACTION tags emitted by Puter models
-          const actionCard = await parseAndExecuteAgentActionTags(puterReply, params);
+          // Parse and execute any AGENT_ACTION or <tool_call> tags emitted by Puter models
+          const actionCard = await parseAndExecuteAgentActionTags(
+            puterReply,
+            params,
+            async (executedToolMeta, toolResponse) => {
+              try {
+                const turn2Prompt = `You have just invoked the tool "${executedToolMeta.toolName}" and received live data:\n${JSON.stringify(toolResponse)}\n\nSynthesize these live findings into your final in-character operational response to fulfill the user's directive: "${params.prompt}". Cite real numbers, prices, facts, or findings directly. Do not emit any further tool calls.`;
+                const turn2Reply = await ModelGateway.callPuterModel(
+                  puterModel,
+                  systemInstruction,
+                  [
+                    { role: 'user', content: params.prompt },
+                    { role: 'assistant', content: puterReply },
+                    { role: 'user', content: turn2Prompt },
+                  ]
+                );
+                return turn2Reply;
+              } catch (t2Err) {
+                console.warn('[ApiService] Puter Turn 2 error:', t2Err);
+                return null;
+              }
+            }
+          );
           if (actionCard) {
             return await ensureReportPersistedAndAnnotated(actionCard, params);
           }
 
+          const cleanPuterDialogue = stripAgentActionTags(puterReply);
           const card: AgentExecutionCard = {
             id: `card-${Date.now()}`,
             prompt: params.prompt,
-            dialogue: puterReply,
+            dialogue: cleanPuterDialogue || 'Directive completed via Puter.',
             cardTitle: `${(params.activeAgentName || 'Agent').toUpperCase()} · PUTER ZERO-KEY`,
             actionCategory: 'SSO_INFERENCE',
             steps: [
@@ -5369,6 +5530,58 @@ CRITICAL MEMORY RECALL INSTRUCTION:
                 }
               }
 
+              const reply = choice?.content || '';
+
+              // Check for action tags first (both [AGENT_ACTION] and pseudo-XML <tool_call> tags emitted by models)
+              const actionCard = await parseAndExecuteAgentActionTags(
+                reply,
+                params,
+                async (executedToolMeta, toolResponse) => {
+                  try {
+                    const turn2Res = await executeSafeOperation(
+                      async (signal) => {
+                        return await fetch(endpoint, {
+                          method: 'POST',
+                          headers: requestHeaders,
+                          body: JSON.stringify({
+                            model: effectiveModel,
+                            messages: [
+                              ...initialMessages,
+                              { role: 'assistant', content: reply },
+                              {
+                                role: 'user',
+                                content: `You have executed the tool "${executedToolMeta.toolName}" and received this live telemetry:\n${JSON.stringify(toolResponse)}\n\nSynthesize these live findings into your final in-character operational response to fulfill the directive: "${params.prompt}". Cite real numbers, prices, facts, or findings directly. Do not emit any tool calls.`,
+                              },
+                            ],
+                            temperature: Number(params.temperature || 0.7),
+                          }),
+                          signal,
+                        });
+                      },
+                      {
+                        timeoutMs: 25000,
+                        maxRetries: 1,
+                        operationName: `${isOr ? 'openrouter' : targetProvider}_text_tool_turn2`,
+                      }
+                    );
+
+                    if (turn2Res && turn2Res.ok) {
+                      const t2Data = await turn2Res.json();
+                      const t2Content = t2Data.choices?.[0]?.message?.content;
+                      if (t2Content) {
+                        return t2Content;
+                      }
+                    }
+                  } catch (t2Err) {
+                    console.warn('[ApiService] OpenRouter text-tool Turn 2 error:', t2Err);
+                  }
+                  return null;
+                }
+              );
+              if (actionCard) {
+                return await ensureReportPersistedAndAnnotated(actionCard, params);
+              }
+
               if (isRealTimeDataQuery(params.prompt)) {
                 return await ensureReportPersistedAndAnnotated(
                   buildRealTimeFailureCard({
@@ -5383,16 +5596,11 @@ CRITICAL MEMORY RECALL INSTRUCTION:
                 );
               }
 
-              const reply = choice?.content || 'Directive processed.';
-              const actionCard = await parseAndExecuteAgentActionTags(reply, params);
-              if (actionCard) {
-                return await ensureReportPersistedAndAnnotated(actionCard, params);
-              }
-
+              const cleanReply = stripAgentActionTags(reply);
               const card: AgentExecutionCard = {
                 id: `card-${Date.now()}`,
                 prompt: params.prompt,
-                dialogue: reply,
+                dialogue: cleanReply || 'Directive processed.',
                 cardTitle: `${providerMeta.name} Directive Execution`,
                 actionCategory: 'Operations',
                 steps: [
@@ -5577,6 +5785,16 @@ CRITICAL MEMORY RECALL INSTRUCTION:
                 }
               }
 
+              const textContent = contentList
+                .filter((c: any) => c.type === 'text')
+                .map((c: any) => c.text)
+                .join('\n');
+
+              const actionCard = await parseAndExecuteAgentActionTags(textContent, params);
+              if (actionCard) {
+                return await ensureReportPersistedAndAnnotated(actionCard, params);
+              }
+
               if (isRealTimeDataQuery(params.prompt)) {
                 return await ensureReportPersistedAndAnnotated(
                   buildRealTimeFailureCard({
@@ -5591,19 +5809,11 @@ CRITICAL MEMORY RECALL INSTRUCTION:
                 );
               }
 
-              const textContent = contentList
-                .filter((c: any) => c.type === 'text')
-                .map((c: any) => c.text)
-                .join('\n');
-
-              const actionCard = await parseAndExecuteAgentActionTags(textContent, params);
-              if (actionCard) {
-                return await ensureReportPersistedAndAnnotated(actionCard, params);
-              }
+              const cleanClaudeDialogue = stripAgentActionTags(textContent);
               const card: AgentExecutionCard = {
                 id: `card-${Date.now()}`,
                 prompt: params.prompt,
-                dialogue: textContent || 'Directive executed.',
+                dialogue: cleanClaudeDialogue || 'Directive executed.',
                 cardTitle: 'Claude Directive Execution',
                 actionCategory: 'Operations',
                 steps: [

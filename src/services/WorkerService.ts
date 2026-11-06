@@ -120,12 +120,13 @@ class BackgroundWorkerEngine {
 
 /**
  * Parses raw LLM text for structured action tags:
- * [AGENT_ACTION: <tool_name>]
- * { ...params }
- * [/AGENT_ACTION]
+ * [AGENT_ACTION: <tool_name>] { ...params } [/AGENT_ACTION]
+ * or pseudo-XML <tool_call><function=...><parameter=...>
  */
 export function parseAgentActionBlock(responseText: string): { toolName: string; toolArgs: Record<string, any> } | null {
   if (!responseText) return null;
+
+  // 1. Standard [AGENT_ACTION: tool_name]
   const actionMatch = responseText.match(/\[AGENT_ACTION:\s*(.*?)\]([\s\S]*?)\[\/AGENT_ACTION\]/i);
   if (actionMatch) {
     const toolName = actionMatch[1].trim();
@@ -137,6 +138,42 @@ export function parseAgentActionBlock(responseText: string): { toolName: string;
     }
     return { toolName, toolArgs };
   }
+
+  // 2. Pseudo-XML <tool_call><function=...><parameter=...>
+  const xmlFnMatch = responseText.match(/<function=([a-zA-Z0-9_\-]+)>([\s\S]*?)<\/function>/i);
+  if (xmlFnMatch) {
+    const toolName = xmlFnMatch[1].trim();
+    const inner = xmlFnMatch[2];
+    const toolArgs: Record<string, any> = {};
+
+    const paramRegex = /<parameter=([a-zA-Z0-9_\-]+)>([\s\S]*?)(?:<\/parameter>|(?=<parameter=)|$)/gi;
+    let pMatch: RegExpExecArray | null;
+    let found = false;
+    while ((pMatch = paramRegex.exec(inner)) !== null) {
+      found = true;
+      const pName = pMatch[1].trim();
+      const pVal = pMatch[2].trim();
+      try {
+        toolArgs[pName] = JSON.parse(pVal);
+      } catch {
+        toolArgs[pName] = pVal;
+      }
+    }
+    if (!found && inner.trim()) {
+      try {
+        const parsed = JSON.parse(inner.trim());
+        if (typeof parsed === 'object' && parsed !== null) {
+          Object.assign(toolArgs, parsed);
+        } else {
+          toolArgs.query = inner.trim();
+        }
+      } catch {
+        toolArgs.query = inner.trim();
+      }
+    }
+    return { toolName, toolArgs };
+  }
+
   return null;
 }
 

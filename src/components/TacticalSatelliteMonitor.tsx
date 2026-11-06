@@ -1,23 +1,20 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   Crosshair,
-  Globe,
-  Layers,
-  ZoomIn,
-  ZoomOut,
   Compass,
   Radar,
   Calendar,
+  ZoomIn,
+  ZoomOut,
   Eye,
-  Send,
-  Terminal,
-  RefreshCw,
+  Maximize2,
 } from 'lucide-react';
 
 export type SatelliteFeedLayerId =
+  | 'esri_world_imagery'
   | 'nasa_gibs_modis_terra'
   | 'nasa_gibs_viirs_snpp'
-  | 'esri_world_imagery';
+  | 'nasa_gibs_wvs_composite';
 
 export type PhosphorShaderMode = 'green_nvg' | 'amber_crt' | 'thermal_flir' | 'true_color';
 
@@ -38,7 +35,7 @@ export const TACTICAL_SECTOR_PRESETS: TacticalTargetPreset[] = [
     sectorCode: 'SECTOR-14 // CONUS-EAST',
     lat: 39.0438,
     lon: -77.4874,
-    defaultZoom: 7,
+    defaultZoom: 8,
     telemetryNote: 'Equinix Ashburn IXP & PJM high-voltage transmission corridor.',
   },
   {
@@ -47,7 +44,7 @@ export const TACTICAL_SECTOR_PRESETS: TacticalTargetPreset[] = [
     sectorCode: 'SECTOR-54 // SUEZ-CHOKELINE',
     lat: 30.5852,
     lon: 32.2654,
-    defaultZoom: 7,
+    defaultZoom: 8,
     telemetryNote: 'AAE-1 / SEACOM / EIG submarine fiber trunk & maritime transit chokepoint.',
   },
   {
@@ -56,7 +53,7 @@ export const TACTICAL_SECTOR_PRESETS: TacticalTargetPreset[] = [
     sectorCode: 'SECTOR-22 // EU-CENTRAL',
     lat: 50.1109,
     lon: 8.6821,
-    defaultZoom: 7,
+    defaultZoom: 8,
     telemetryNote: 'European continental synchronous grid & primary internet exchange node.',
   },
   {
@@ -65,7 +62,7 @@ export const TACTICAL_SECTOR_PRESETS: TacticalTargetPreset[] = [
     sectorCode: 'SECTOR-39 // HORMUZ-WATCH',
     lat: 26.5667,
     lon: 56.25,
-    defaultZoom: 7,
+    defaultZoom: 8,
     telemetryNote: 'AIS tanker chokepoint & regional GNSS L1 interference zone.',
   },
   {
@@ -74,7 +71,7 @@ export const TACTICAL_SECTOR_PRESETS: TacticalTargetPreset[] = [
     sectorCode: 'SECTOR-71 // APAC-MALACCA',
     lat: 1.3521,
     lon: 103.8198,
-    defaultZoom: 7,
+    defaultZoom: 8,
     telemetryNote: 'Trans-Pacific / Intra-Asia submarine cable landing & container port hub.',
   },
   {
@@ -83,7 +80,7 @@ export const TACTICAL_SECTOR_PRESETS: TacticalTargetPreset[] = [
     sectorCode: 'SECTOR-88 // APAC-NORTH',
     lat: 24.8138,
     lon: 120.9675,
-    defaultZoom: 7,
+    defaultZoom: 8,
     telemetryNote: 'Foundry power grid stability & high-density ADIZ/maritime telemetry.',
   },
 ];
@@ -174,19 +171,25 @@ export function parseReconTargetToCoords(input: string): {
     return TACTICAL_SECTOR_PRESETS[5];
   }
   if (lower.includes('london') || lower.includes('uk')) {
-    return { lat: 51.5074, lon: -0.1278, label: 'LINX London & UK Grid Sector', sectorCode: 'SECTOR-24 // UK-CORE', zoom: 8 };
+    return { lat: 51.5074, lon: -0.1278, label: 'LINX London & UK Grid Sector', sectorCode: 'SECTOR-24 // UK-CORE', zoom: 9 };
   }
-  if (lower.includes('tokyo') || lower.includes('japan')) {
-    return { lat: 35.6762, lon: 139.6503, label: 'TEPCO Tokyo & Trans-Pacific Cable Hub', sectorCode: 'SECTOR-79 // JP-EAST', zoom: 8 };
+  if (lower.includes('tokyo') || lower.includes('japan') || lower.includes('fukushima')) {
+    return { lat: 35.6762, lon: 139.6503, label: 'TEPCO Tokyo & Trans-Pacific Cable Hub', sectorCode: 'SECTOR-79 // JP-EAST', zoom: 9 };
   }
   if (lower.includes('new york') || lower.includes('nyc')) {
-    return { lat: 40.7128, lon: -74.006, label: 'NYISO Grid & Trans-Atlantic Landing', sectorCode: 'SECTOR-12 // NY-METRO', zoom: 8 };
+    return { lat: 40.7128, lon: -74.006, label: 'NYISO Grid & Trans-Atlantic Landing', sectorCode: 'SECTOR-12 // NY-METRO', zoom: 9 };
   }
   if (lower.includes('los angeles') || lower.includes('long beach') || lower.includes('california')) {
-    return { lat: 33.7405, lon: -118.2719, label: 'Port of Los Angeles / Long Beach Chokepoint', sectorCode: 'SECTOR-19 // US-WEST', zoom: 8 };
+    return { lat: 33.7405, lon: -118.2719, label: 'Port of Los Angeles / Long Beach Chokepoint', sectorCode: 'SECTOR-19 // US-WEST', zoom: 9 };
   }
   if (lower.includes('panama')) {
-    return { lat: 9.08, lon: -79.68, label: 'Panama Canal Maritime Lock Complex', sectorCode: 'SECTOR-44 // PANAMA', zoom: 8 };
+    return { lat: 9.08, lon: -79.68, label: 'Panama Canal Maritime Lock Complex', sectorCode: 'SECTOR-44 // PANAMA', zoom: 9 };
+  }
+  if (lower.includes('chernobyl') || lower.includes('ukraine') || lower.includes('crimea')) {
+    return { lat: 51.389, lon: 30.099, label: 'Chernobyl / Northern Black Sea Sector', sectorCode: 'SECTOR-61 // EE-WATCH', zoom: 8 };
+  }
+  if (lower.includes('reykjanes') || lower.includes('iceland')) {
+    return { lat: 63.88, lon: -22.43, label: 'Reykjanes Volcanic & Subsea Landing Zone', sectorCode: 'SECTOR-09 // NATL-NORTH', zoom: 8 };
   }
 
   return null;
@@ -219,8 +222,31 @@ export function buildSatelliteTileUrl(
     const clampedZ = Math.min(9, Math.max(1, z));
     return `https://gibs.earthdata.nasa.gov/wmts/epsg3857/best/VIIRS_SNPP_CorrectedReflectance_TrueColor/default/${dateStr}/GoogleMapsCompatible_Level9/${clampedZ}/${y}/${x}.jpg`;
   }
-  // Esri World Imagery (high-resolution down to street level z=17, zero key required)
+  // Esri World Imagery (high-resolution cloud-free satellite imagery down to street level z=17, zero key required)
   return `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/${z}/${y}/${x}`;
+}
+
+/**
+ * Builds a single seamless 2:1 widescreen NASA Worldview Snapshot URL (EPSG:4326)
+ * so wide viewports never suffer from 3x3 tile vertical cropping or seam distortion.
+ */
+export function buildSeamlessNasaWvsSnapshotUrl(
+  lat: number,
+  lon: number,
+  zoom: number,
+  dateStr: string,
+  gibsLayerName: string = 'MODIS_Terra_CorrectedReflectance_TrueColor,Coastlines_15m'
+): string {
+  // Calculate degree span based on zoom level (2:1 aspect ratio to match 1024x512 widescreen monitor)
+  const latSpan = Math.max(0.25, Math.min(25, 45 / Math.pow(2, Math.max(0, zoom - 3))));
+  const lonSpan = latSpan * 2.0;
+
+  const minLat = Math.max(-89.5, Number((lat - latSpan).toFixed(4)));
+  const maxLat = Math.min(89.5, Number((lat + latSpan).toFixed(4)));
+  const minLon = Math.max(-179.9, Number((lon - lonSpan).toFixed(4)));
+  const maxLon = Math.min(179.9, Number((lon + lonSpan).toFixed(4)));
+
+  return `https://wvs.earthdata.nasa.gov/api/v1/snapshot?REQUEST=GetSnapshot&TIME=${dateStr}&BBOX=${minLat},${minLon},${maxLat},${maxLon}&CRS=EPSG:4326&LAYERS=${gibsLayerName}&WRAP=DAY&FORMAT=image/jpeg&WIDTH=1200&HEIGHT=600`;
 }
 
 export interface TacticalSatelliteMonitorProps {
@@ -248,28 +274,60 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
   const [lon, setLon] = useState<number>(initialLon);
   const [targetLabel, setTargetLabel] = useState<string>(initialLabel);
   const [sectorCode, setSectorCode] = useState<string>(initialSectorCode);
-  const [zoom, setZoom] = useState<number>(7);
-  const [feedLayer, setFeedLayer] = useState<SatelliteFeedLayerId>('nasa_gibs_modis_terra');
+  const [zoom, setZoom] = useState<number>(8);
+  // Default to Esri World Imagery + NASA GIBS hybrid or NASA GIBS TrueColor with proper 1:1 square tile rendering
+  const [feedLayer, setFeedLayer] = useState<SatelliteFeedLayerId>('esri_world_imagery');
   const [shaderMode, setShaderMode] = useState<PhosphorShaderMode>('green_nvg');
   const [gibsDate, setGibsDate] = useState<string>(getDefaultNasaGibsDate);
   const [commandInput, setCommandInput] = useState<string>('');
   const [isFlyToLocking, setIsFlyToLocking] = useState<boolean>(false);
   const [tileErrors, setTileErrors] = useState<Record<string, boolean>>({});
+  const [wvsSnapshotError, setWvsSnapshotError] = useState<boolean>(false);
 
-  // Sync when parent props change (e.g. Operational Zone dropdown in ThreatMonitorModal)
+  // Sync when parent props change (e.g. Operational Zone dropdown or Agent Tool Call lock)
   useEffect(() => {
     setIsFlyToLocking(true);
     setLat(initialLat);
     setLon(initialLon);
     if (initialLabel) setTargetLabel(initialLabel);
     if (initialSectorCode) setSectorCode(initialSectorCode);
+    setWvsSnapshotError(false);
     const t = setTimeout(() => setIsFlyToLocking(false), 650);
     return () => clearTimeout(t);
   }, [initialLat, initialLon, initialLabel, initialSectorCode]);
 
-  // Automatically clamp zoom to 9 when using NASA GIBS Level9 layers, or allow up to 16 on Esri World Imagery
+  // Also listen directly for live agent tool call events ('pixelops:satellite-recon-lock')
+  useEffect(() => {
+    const handleAgentReconLock = (ev: Event) => {
+      const customEv = ev as CustomEvent<{
+        lat: number;
+        lon: number;
+        label: string;
+        layer?: string;
+        date?: string;
+      }>;
+      const detail = customEv.detail;
+      if (!detail || typeof detail.lat !== 'number' || typeof detail.lon !== 'number') return;
+
+      setIsFlyToLocking(true);
+      setLat(detail.lat);
+      setLon(detail.lon);
+      setTargetLabel(detail.label || `Target (${detail.lat.toFixed(3)}, ${detail.lon.toFixed(3)})`);
+      setSectorCode(`AGENT-LOCK // ${detail.lat.toFixed(2)}°, ${detail.lon.toFixed(2)}°`);
+      if (detail.date && /^\d{4}-\d{2}-\d{2}$/.test(detail.date)) {
+        setGibsDate(detail.date);
+      }
+      setWvsSnapshotError(false);
+      setTimeout(() => setIsFlyToLocking(false), 800);
+    };
+
+    window.addEventListener('pixelops:satellite-recon-lock', handleAgentReconLock);
+    return () => window.removeEventListener('pixelops:satellite-recon-lock', handleAgentReconLock);
+  }, []);
+
+  // Automatically clamp zoom to 9 when using NASA GIBS Level9 tile layers, or allow up to 16 on Esri World Imagery
   const effectiveZoom = useMemo(() => {
-    if (feedLayer.startsWith('nasa_gibs_')) {
+    if (feedLayer === 'nasa_gibs_modis_terra' || feedLayer === 'nasa_gibs_viirs_snpp') {
       return Math.min(9, Math.max(2, zoom));
     }
     return Math.min(16, Math.max(2, zoom));
@@ -280,12 +338,25 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
     [lat, lon, effectiveZoom]
   );
 
-  // Build 3x3 surrounding tile matrix for seamless wide tactical raster viewport
-  const tileGrid = useMemo(() => {
+  /**
+   * FIX FOR HORIZONTAL BANDING / VERTICAL CROP DISTORTION:
+   * Standard WMTS / XYZ tiles are strictly 256x256 squares (1:1 aspect ratio).
+   * In a widescreen monitor (~16:8 / 2:1 aspect ratio), a 3x3 grid forces each row to be squished/cropped to ~100px tall
+   * while 333px wide, cutting off 60% of every tile vertically and creating visible horizontal discontinuities!
+   *
+   * Instead, we render a 4-column x 2-row (or 5-column x 3-row) square-tile canvas positioned with exact
+   * fractional pixel offsets (`centerTile.fracX`, `centerTile.fracY`) so every 256x256 tile is rendered at a true
+   * 1:1 uncropped aspect ratio and joins seamlessly with its neighbors!
+   */
+  const TILE_SIZE_PX = 256;
+  const GRID_COLS = 5; // dx from -2 to +2
+  const GRID_ROWS = 3; // dy from -1 to +1
+
+  const seamlessTileCanvas = useMemo(() => {
     const n = Math.pow(2, centerTile.z);
     const tiles: Array<{
-      rowOffset: number;
-      colOffset: number;
+      dx: number;
+      dy: number;
       x: number;
       y: number;
       z: number;
@@ -295,25 +366,36 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
     }> = [];
 
     for (let dy = -1; dy <= 1; dy++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        const tileX = ((centerTile.x + dx) % n + n) % n;
+      for (let dx = -2; dx <= 2; dx++) {
+        const tileX = (((centerTile.x + dx) % n) + n) % n;
         const tileY = Math.max(0, Math.min(n - 1, centerTile.y + dy));
-        const url = buildSatelliteTileUrl(feedLayer, centerTile.z, tileY, tileX, gibsDate);
+        const activeLayerForTiles: SatelliteFeedLayerId =
+          feedLayer === 'nasa_gibs_wvs_composite' ? 'nasa_gibs_modis_terra' : feedLayer;
+        const url = buildSatelliteTileUrl(activeLayerForTiles, centerTile.z, tileY, tileX, gibsDate);
         const fallbackEsriUrl = buildSatelliteTileUrl('esri_world_imagery', centerTile.z, tileY, tileX, gibsDate);
         tiles.push({
-          rowOffset: dy,
-          colOffset: dx,
+          dx,
+          dy,
           x: tileX,
           y: tileY,
           z: centerTile.z,
           url,
           fallbackEsriUrl,
-          key: `${feedLayer}_${gibsDate}_${centerTile.z}_${tileY}_${tileX}`,
+          key: `${activeLayerForTiles}_${gibsDate}_${centerTile.z}_${tileY}_${tileX}`,
         });
       }
     }
     return tiles;
   }, [centerTile, feedLayer, gibsDate]);
+
+  const wvsCompositeUrl = useMemo(
+    () => buildSeamlessNasaWvsSnapshotUrl(lat, lon, effectiveZoom, gibsDate),
+    [lat, lon, effectiveZoom, gibsDate]
+  );
+
+  // Sub-tile pixel offset so the exact (lat, lon) coordinate sits dead-center under the crosshair
+  const offsetX = Math.round((0.5 - centerTile.fracX) * TILE_SIZE_PX);
+  const offsetY = Math.round((0.5 - centerTile.fracY) * TILE_SIZE_PX);
 
   const handleSelectPreset = (preset: TacticalTargetPreset) => {
     setIsFlyToLocking(true);
@@ -322,6 +404,7 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
     setTargetLabel(preset.label);
     setSectorCode(preset.sectorCode);
     setZoom(preset.defaultZoom);
+    setWvsSnapshotError(false);
     setTimeout(() => setIsFlyToLocking(false), 650);
   };
 
@@ -337,6 +420,7 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
       setTargetLabel(parsed.label);
       setSectorCode(parsed.sectorCode);
       if (parsed.zoom) setZoom(parsed.zoom);
+      setWvsSnapshotError(false);
       setTimeout(() => setIsFlyToLocking(false), 650);
     }
 
@@ -347,7 +431,7 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
   };
 
   const panByDegrees = (dLat: number, dLon: number) => {
-    const scale = Math.max(0.05, 8 / Math.pow(2, effectiveZoom - 3));
+    const scale = Math.max(0.03, 6 / Math.pow(2, effectiveZoom - 3));
     setLat((prev) => Math.max(-84, Math.min(84, Number((prev + dLat * scale).toFixed(4)))));
     setLon((prev) => {
       let next = prev + dLon * scale;
@@ -396,18 +480,18 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
             onChange={(e) => {
               const nextLayer = e.target.value as SatelliteFeedLayerId;
               setFeedLayer(nextLayer);
-              if (nextLayer === 'esri_world_imagery' && zoom < 11) {
-                setZoom(12);
-              } else if (nextLayer.startsWith('nasa_gibs_') && zoom > 9) {
-                setZoom(8);
+              setWvsSnapshotError(false);
+              if ((nextLayer === 'nasa_gibs_modis_terra' || nextLayer === 'nasa_gibs_viirs_snpp') && zoom > 9) {
+                setZoom(7);
               }
             }}
             className="px-2 py-1 text-[11px] bg-[#040a07] border border-emerald-500/50 rounded text-emerald-200 focus:outline-none"
             title="Select Zero-Key Satellite Imagery Source"
           >
-            <option value="nasa_gibs_modis_terra">NASA GIBS: MODIS Terra TrueColor (Daily Weather/Plumes)</option>
-            <option value="nasa_gibs_viirs_snpp">NASA GIBS: Suomi NPP VIIRS TrueColor (Daily Orbital)</option>
-            <option value="esri_world_imagery">Esri World Imagery (High-Res Street/Facility Level)</option>
+            <option value="esri_world_imagery">Esri World Imagery (Cloud-Free High-Res Optical)</option>
+            <option value="nasa_gibs_wvs_composite">NASA GIBS Worldview Widescreen Composite (MODIS Daily)</option>
+            <option value="nasa_gibs_modis_terra">NASA GIBS WMTS: MODIS Terra TrueColor (Daily Weather/Plumes)</option>
+            <option value="nasa_gibs_viirs_snpp">NASA GIBS WMTS: Suomi NPP VIIRS TrueColor (Daily Orbital)</option>
           </select>
 
           <select
@@ -429,7 +513,10 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
                 type="date"
                 value={gibsDate}
                 max={new Date().toISOString().split('T')[0]}
-                onChange={(e) => setGibsDate(e.target.value || getDefaultNasaGibsDate())}
+                onChange={(e) => {
+                  setGibsDate(e.target.value || getDefaultNasaGibsDate());
+                  setWvsSnapshotError(false);
+                }}
                 className="bg-transparent text-[10px] text-emerald-200 focus:outline-none"
                 title="NASA GIBS Orbital Pass Date"
               />
@@ -485,44 +572,86 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
       </div>
 
       {/* Main 2D Tactical Raster Viewport + Night-Vision CRT Shader + Radar Overlay */}
-      <div className={`relative w-full ${compact ? 'h-72 sm:h-80' : 'h-80 sm:h-[420px]'} bg-[#020804] select-none overflow-hidden`}>
+      <div
+        className={`relative w-full ${
+          compact ? 'h-72 sm:h-80' : 'h-80 sm:h-[430px]'
+        } bg-[#020804] select-none overflow-hidden`}
+      >
         {/* Filtered Tile Raster Container (.tactical-satellite-monitor) */}
-        <div className={`tactical-satellite-monitor ${shaderClass} w-full h-full relative`}>
-          <div className="grid grid-cols-3 grid-rows-3 w-full h-full">
-            {tileGrid.map((tile) => {
-              const useFallback = tileErrors[tile.key];
-              return (
-                <div key={tile.key} className="relative w-full h-full overflow-hidden bg-[#030b06]">
-                  <img
-                    src={useFallback ? tile.fallbackEsriUrl : tile.url}
-                    alt={`Satellite Tile Z${tile.z} Y${tile.y} X${tile.x}`}
-                    crossOrigin="anonymous"
-                    loading="eager"
-                    onError={() => {
-                      if (!useFallback) {
-                        setTileErrors((prev) => ({ ...prev, [tile.key]: true }));
-                      }
+        <div className={`tactical-satellite-monitor ${shaderClass} w-full h-full relative flex items-center justify-center`}>
+          {feedLayer === 'nasa_gibs_wvs_composite' && !wvsSnapshotError ? (
+            <img
+              src={wvsCompositeUrl}
+              alt={`NASA GIBS Composite ${targetLabel}`}
+              crossOrigin="anonymous"
+              onError={() => setWvsSnapshotError(true)}
+              className="w-full h-full object-cover block"
+            />
+          ) : (
+            /* True 1:1 Uncropped 256x256 Slippy Tile Canvas centered on exact (lat, lon) */
+            <div
+              className="relative shrink-0"
+              style={{
+                width: `${GRID_COLS * TILE_SIZE_PX}px`,
+                height: `${GRID_ROWS * TILE_SIZE_PX}px`,
+                transform: `translate(${offsetX}px, ${offsetY}px)`,
+                transition: isFlyToLocking ? 'transform 0.35s ease-out' : 'transform 0.15s ease-out',
+              }}
+            >
+              {seamlessTileCanvas.map((tile) => {
+                const useFallback = tileErrors[tile.key];
+                const leftPx = (tile.dx + 2) * TILE_SIZE_PX;
+                const topPx = (tile.dy + 1) * TILE_SIZE_PX;
+                return (
+                  <div
+                    key={tile.key}
+                    style={{
+                      position: 'absolute',
+                      left: `${leftPx}px`,
+                      top: `${topPx}px`,
+                      width: `${TILE_SIZE_PX}px`,
+                      height: `${TILE_SIZE_PX}px`,
                     }}
-                    className="w-full h-full object-cover block"
-                  />
-                  {/* Subtle Tile Grid Coordinate Watermark */}
-                  <span className="absolute bottom-1 right-1.5 text-[8px] text-emerald-300/50 font-mono pointer-events-none">
-                    [{tile.z}/{tile.y}/{tile.x}]
-                  </span>
-                </div>
-              );
-            })}
-          </div>
+                    className="bg-[#030b06]"
+                  >
+                    <img
+                      src={useFallback ? tile.fallbackEsriUrl : tile.url}
+                      alt={`Tile Z${tile.z} Y${tile.y} X${tile.x}`}
+                      crossOrigin="anonymous"
+                      loading="eager"
+                      onError={() => {
+                        if (!useFallback) {
+                          setTileErrors((prev) => ({ ...prev, [tile.key]: true }));
+                        }
+                      }}
+                      style={{
+                        width: `${TILE_SIZE_PX}px`,
+                        height: `${TILE_SIZE_PX}px`,
+                        display: 'block',
+                      }}
+                    />
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* Tactical HUD Overlays (Rendered above the CSS filter so HUD text & vector boxes stay razor-sharp) */}
         <div className="absolute inset-0 pointer-events-none z-30 flex flex-col justify-between p-3">
           {/* Top-Left & Top-Right HUD Telemetry Callouts */}
           <div className="flex items-start justify-between gap-2">
-            <div className="bg-black/75 border border-emerald-500/60 px-2.5 py-1.5 rounded text-[10px] text-emerald-300 space-y-0.5 shadow-[0_0_15px_rgba(0,0,0,0.8)]">
+            <div className="bg-black/80 border border-emerald-500/60 px-2.5 py-1.5 rounded text-[10px] text-emerald-300 space-y-0.5 shadow-[0_0_15px_rgba(0,0,0,0.85)]">
               <div className="font-bold text-emerald-200 flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                <span>ORBITAL FEED: {feedLayer === 'esri_world_imagery' ? 'ESRI WORLD IMAGERY (HI-RES)' : 'NASA GIBS WMTS (MODIS/VIIRS)'}</span>
+                <span>
+                  ORBITAL FEED:{' '}
+                  {feedLayer === 'esri_world_imagery'
+                    ? 'ESRI WORLD IMAGERY (CLOUD-FREE HI-RES)'
+                    : feedLayer === 'nasa_gibs_wvs_composite'
+                    ? 'NASA WORLDVIEW WIDESCREEN COMPOSITE'
+                    : 'NASA GIBS WMTS (MODIS / VIIRS DAILY)'}
+                </span>
               </div>
               <div>
                 LAT: <strong className="text-white">{lat.toFixed(4)}°</strong> | LON:{' '}
@@ -530,11 +659,11 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
                 <strong className="text-white">L{effectiveZoom}</strong>
               </div>
               <div className="text-emerald-400/90">
-                WMTS TILE: X={centerTile.x}, Y={centerTile.y}, Z={centerTile.z}
+                WMTS TILE: X={centerTile.x}, Y={centerTile.y}, Z={centerTile.z} (1:1 Uncropped Projection)
               </div>
             </div>
 
-            <div className="bg-black/75 border border-amber-500/60 px-2.5 py-1.5 rounded text-[10px] text-amber-300 text-right shadow-[0_0_15px_rgba(0,0,0,0.8)]">
+            <div className="bg-black/80 border border-amber-500/60 px-2.5 py-1.5 rounded text-[10px] text-amber-300 text-right shadow-[0_0_15px_rgba(0,0,0,0.85)]">
               <div className="font-bold uppercase">{threatBadgeText}</div>
               <div className="text-emerald-300">OPERATIVE OVERWATCH: {activeOperativeName.toUpperCase()}</div>
               <div className="text-[9px] text-slate-300">PASS DATE: {gibsDate} UTC</div>
@@ -551,7 +680,7 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
                 className="tactical-radar-cone absolute inset-0 rounded-full"
                 style={{
                   background:
-                    'conic-gradient(from 0deg, rgba(16, 185, 129, 0.28) 0deg, rgba(16, 185, 129, 0.0) 65deg, transparent 360deg)',
+                    'conic-gradient(from 0deg, rgba(16, 185, 129, 0.26) 0deg, rgba(16, 185, 129, 0.0) 65deg, transparent 360deg)',
                 }}
               />
               {/* Target Lock Bounding Box */}
@@ -561,7 +690,7 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
                 } transition-all duration-300 flex items-center justify-center shadow-[0_0_12px_rgba(16,185,129,0.5)]`}
               >
                 <div className="w-1.5 h-1.5 bg-emerald-300 rounded-full animate-ping" />
-                <span className="absolute -top-4 left-0 text-[8px] font-bold bg-black/80 text-emerald-300 px-1 border border-emerald-500/40 whitespace-nowrap">
+                <span className="absolute -top-4 left-0 text-[8px] font-bold bg-black/85 text-emerald-300 px-1 border border-emerald-500/40 whitespace-nowrap">
                   {isFlyToLocking ? 'FLY-TO ACQUIRING...' : 'LOCKED TARGET'}
                 </span>
               </div>
@@ -627,7 +756,10 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
               <button
                 type="button"
                 onClick={() => {
-                  if (feedLayer.startsWith('nasa_gibs_') && effectiveZoom >= 9) {
+                  if (
+                    (feedLayer === 'nasa_gibs_modis_terra' || feedLayer === 'nasa_gibs_viirs_snpp') &&
+                    effectiveZoom >= 9
+                  ) {
                     // Automatically switch to Esri World Imagery for street-level zoom > 9
                     setFeedLayer('esri_world_imagery');
                     setZoom(11);

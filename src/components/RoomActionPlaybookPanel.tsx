@@ -21,6 +21,7 @@ import {
   IntelligencePlaybookDef,
   loadUserPlaybookTargets,
 } from '../engine/intelligencePlaybooks';
+import { getRoomBoundSkills, subscribeModuleRegistry } from '../engine/moduleRegistry';
 import {
   useCrew,
   CLEARANCE_RANKS,
@@ -65,6 +66,7 @@ interface RoomActionPlaybookPanelProps {
   variant?: 'floating' | 'banner' | 'pill';
   onOpenVfs?: (targetPath?: string) => void;
   onExportDossier?: () => void;
+  onOpenReconMonitor?: () => void;
 }
 
 export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = ({
@@ -75,6 +77,7 @@ export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = (
   variant = 'floating',
   onOpenVfs,
   onExportDossier,
+  onOpenReconMonitor,
 }) => {
   const { playBeep, activeAgent } = useTheme();
   const { crewAgents, getCrewAgent } = useCrew();
@@ -141,6 +144,18 @@ export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = (
 
   const playbooks = getPlaybooksForRoom(currentRoom);
   const storedTargets = loadUserPlaybookTargets();
+  const [, setRegistryTick] = useState(0);
+
+  useEffect(() => {
+    return subscribeModuleRegistry(() => setRegistryTick((t) => t + 1));
+  }, []);
+
+  const roomBoundSkills = getRoomBoundSkills(currentRoom);
+  const hasSatelliteModuleInRoom =
+    currentRoom === 'library' ||
+    roomBoundSkills.some(
+      (s) => s.id === 'osint_satellite_plugin' || s.providedTools.includes('osint_satellite_recon')
+    );
 
   // Helper to test if a Composio app is active
   const isAppConnected = (appName: string): boolean => {
@@ -296,6 +311,23 @@ export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = (
       );
     }
 
+    if (hasSatelliteModuleInRoom && onOpenReconMonitor) {
+      return (
+        <button
+          type="button"
+          onClick={() => {
+            playBeep('tap');
+            onOpenReconMonitor();
+          }}
+          className={`px-2 py-0.5 font-bold text-[10px] sm:text-[11px] border transition-all cursor-pointer flex items-center gap-1.5 active:scale-95 whitespace-nowrap bg-[#0b291e] hover:bg-[#113d2d] text-[#34d399] border-[#10b981] ${className}`}
+          title="Open Tactical Satellite Recon Monitor (SAT_RECON)"
+        >
+          <Radar className="w-3 h-3" />
+          <span>[🛰️ RECON MONITOR]</span>
+        </button>
+      );
+    }
+
     return null;
   }
 
@@ -303,7 +335,12 @@ export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = (
   // BANNER VARIANT (Docked Out-of-the-Way Below Room Canvas)
   // ==========================================
   if (variant === 'banner') {
-    if (playbooks.length === 0 && currentRoom !== 'briefing_lounge' && currentRoom !== 'armory') {
+    if (
+      playbooks.length === 0 &&
+      currentRoom !== 'briefing_lounge' &&
+      currentRoom !== 'armory' &&
+      !hasSatelliteModuleInRoom
+    ) {
       return null;
     }
 
@@ -315,16 +352,122 @@ export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = (
               [⚡ SECTOR WORKFLOWS DECK]
             </span>
             <span className="text-[10px] text-[#94a3b8]">
-              {playbooks.length} Available in {currentRoom.toUpperCase().replace('_', ' ')}
+              {hasSatelliteModuleInRoom ? 'Satellite Recon Module Active' : `${playbooks.length} Available`} in {currentRoom.toUpperCase().replace('_', ' ')}
             </span>
           </div>
-          <button
-            type="button"
-            onClick={toggleBannerCollapse}
-            className="px-2 py-0.5 bg-[#172333] hover:bg-[#203248] text-[#38bdf8] border border-[#38bdf8]/40 text-[10px] font-bold cursor-pointer transition-colors"
-          >
-            [+ EXPAND WORKFLOWS]
-          </button>
+          <div className="flex items-center gap-2">
+            {hasSatelliteModuleInRoom && onOpenReconMonitor && (
+              <button
+                type="button"
+                onClick={() => {
+                  playBeep('tap');
+                  onOpenReconMonitor();
+                }}
+                className="px-2 py-0.5 bg-[#0c261c] hover:bg-[#133b2b] text-[#34d399] border border-[#10b981]/60 text-[10px] font-bold cursor-pointer transition-colors"
+              >
+                [🛰️ RECON MONITOR]
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={toggleBannerCollapse}
+              className="px-2 py-0.5 bg-[#172333] hover:bg-[#203248] text-[#38bdf8] border border-[#38bdf8]/40 text-[10px] font-bold cursor-pointer transition-colors"
+            >
+              [+ EXPAND WORKFLOWS]
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    // --- LIBRARY / SATELLITE IMAGERY MODULE SECTOR ---
+    if (currentRoom === 'library') {
+      return (
+        <div className={`bg-[#06120e]/92 border border-[#10b981]/50 p-2 sm:p-2.5 backdrop-blur-sm font-mono-tabular text-xs ${className}`}>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#133829] pb-1.5 mb-1.5">
+            <div className="flex items-center gap-2">
+              <Radar className="w-3.5 h-3.5 text-[#34d399]" />
+              <span className="font-bold text-[#34d399] text-[11px] uppercase tracking-wider">
+                🛰️ SATELLITE IMAGERY &amp; DEEP RESEARCH MODULE (SAT_RECON)
+              </span>
+              <span className="text-[9px] px-1 bg-[#0b291e] text-[#34d399] border border-[#10b981]/40 font-bold">
+                LIBRARY SECTOR
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              {onOpenReconMonitor && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    playBeep('tap');
+                    onOpenReconMonitor();
+                  }}
+                  className="px-2.5 py-0.5 bg-[#10b981] hover:bg-[#059669] text-[#04120c] border border-[#34d399] text-[10px] font-bold cursor-pointer transition-colors flex items-center gap-1 shadow-[0_0_10px_rgba(16,185,129,0.35)]"
+                >
+                  <Radar className="w-3 h-3" />
+                  <span>[🛰️ OPEN RECON MONITOR]</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={toggleBannerCollapse}
+                className="px-2 py-0.5 bg-[#091c15] hover:bg-[#113024] text-[#94a3b8] hover:text-[#34d399] border border-[#15382a] text-[10px] font-bold cursor-pointer transition-colors"
+                title="Collapse workflows tray"
+              >
+                [− COLLAPSE]
+              </button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+            {onOpenReconMonitor && (
+              <button
+                type="button"
+                onClick={() => {
+                  playBeep('tap');
+                  onOpenReconMonitor();
+                }}
+                className="text-left p-2 bg-[#0a1f17] hover:bg-[#113326] border border-[#10b981]/60 hover:border-[#34d399] transition-all cursor-pointer flex items-center justify-between gap-2 group"
+              >
+                <div className="min-w-0">
+                  <div className="font-bold text-[11px] text-[#34d399] flex items-center gap-1.5 truncate">
+                    <span>🛰️</span>
+                    <span className="truncate">Live Satellite Recon Monitor</span>
+                  </div>
+                  <div className="text-[9px] text-[#a7f3d0] truncate mt-0.5">
+                    Feed: <span className="text-[#fbbf24]">[NASA GIBS &amp; Esri World Imagery]</span>
+                  </div>
+                </div>
+                <ChevronRight className="w-3.5 h-3.5 text-[#34d399] shrink-0" />
+              </button>
+            )}
+            {playbooks.map((pb) => {
+              const target = storedTargets[pb.id]?.targetName || 'Default Target';
+              return (
+                <button
+                  key={pb.id}
+                  type="button"
+                  onClick={() => {
+                    playBeep('tap');
+                    onExecutePlaybook(pb);
+                  }}
+                  disabled={isExecuting}
+                  className="text-left p-2 bg-[#0d1922] hover:bg-[#152636] border border-[#1e3345] hover:border-[#34d399] transition-all cursor-pointer flex items-center justify-between gap-2 group disabled:opacity-50"
+                >
+                  <div className="min-w-0">
+                    <div className="font-bold text-[11px] text-[#f3ead8] flex items-center gap-1.5 truncate group-hover:text-[#34d399]">
+                      <span>{pb.icon}</span>
+                      <span className="truncate">{pb.shortTitle}</span>
+                    </div>
+                    <div className="text-[9px] text-[#94a3b8] truncate mt-0.5">
+                      Target: <span className="text-[#fbbf24]">[{target}]</span>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-3.5 h-3.5 text-[#64748b] group-hover:text-[#34d399] shrink-0" />
+                </button>
+              );
+            })}
+          </div>
         </div>
       );
     }
@@ -346,6 +489,19 @@ export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = (
               <span className="text-[10px] text-[#94a3b8] hidden md:inline">
                 Zero-Prompt OSINT & Surveillance Automation
               </span>
+              {hasSatelliteModuleInRoom && onOpenReconMonitor && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    playBeep('tap');
+                    onOpenReconMonitor();
+                  }}
+                  className="px-2 py-0.5 bg-[#0c261c] hover:bg-[#133b2b] text-[#34d399] border border-[#10b981]/60 text-[10px] font-bold cursor-pointer transition-colors flex items-center gap-1"
+                >
+                  <Radar className="w-3 h-3" />
+                  <span>[🛰️ RECON MONITOR]</span>
+                </button>
+              )}
               {currentRoom === 'archive_basement' && onOpenVfs && (
                 <button
                   type="button"
@@ -421,6 +577,19 @@ export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = (
               <span className="text-[10px] text-[#94a3b8] hidden md:inline">
                 1-Click Connected App Automations via Composio
               </span>
+              {hasSatelliteModuleInRoom && onOpenReconMonitor && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    playBeep('tap');
+                    onOpenReconMonitor();
+                  }}
+                  className="px-2 py-0.5 bg-[#0c261c] hover:bg-[#133b2b] text-[#34d399] border border-[#10b981]/60 text-[10px] font-bold cursor-pointer transition-colors flex items-center gap-1"
+                >
+                  <Radar className="w-3 h-3" />
+                  <span>[🛰️ RECON MONITOR]</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={toggleBannerCollapse}
@@ -593,6 +762,23 @@ export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = (
             </div>
           </div>
         </div>
+      );
+    }
+
+    if (hasSatelliteModuleInRoom && onOpenReconMonitor) {
+      return (
+        <button
+          type="button"
+          onClick={() => {
+            playBeep('tap');
+            onOpenReconMonitor();
+          }}
+          className={`px-2 py-0.5 font-bold text-[10px] sm:text-[11px] border transition-all cursor-pointer flex items-center gap-1.5 active:scale-95 whitespace-nowrap bg-[#0b291e] hover:bg-[#113d2d] text-[#34d399] border-[#10b981] ${className}`}
+          title="Open Tactical Satellite Recon Monitor (SAT_RECON)"
+        >
+          <Radar className="w-3 h-3" />
+          <span>[🛰️ RECON MONITOR]</span>
+        </button>
       );
     }
 
@@ -1006,6 +1192,30 @@ export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = (
             </button>
           </div>
         )}
+      </div>
+    );
+  }
+
+  // --- LIBRARY / SATELLITE IMAGERY MODULE FLOATING PILL ---
+  if (hasSatelliteModuleInRoom && onOpenReconMonitor) {
+    return (
+      <div
+        ref={floatingRef}
+        className={`absolute top-2 right-2 sm:right-3 z-30 pointer-events-auto font-mono-tabular ${className}`}
+      >
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            playBeep('tap');
+            onOpenReconMonitor();
+          }}
+          className="px-2 py-1 bg-[#061610]/90 hover:bg-[#0d291e] text-[#34d399] border border-[#10b981]/70 hover:border-[#34d399] text-[10px] font-bold backdrop-blur-sm cursor-pointer flex items-center gap-1.5 shadow-[0_2px_10px_rgba(0,0,0,0.6)] active:scale-95 transition-all"
+          title="Open Satellite Imagery Recon Monitor (SAT_RECON)"
+        >
+          <Radar className="w-3 h-3 text-[#34d399]" />
+          <span>[🛰️ RECON MONITOR]</span>
+        </button>
       </div>
     );
   }

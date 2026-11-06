@@ -32,6 +32,8 @@ import {
 import {
   getAgentRuntimeTools,
   resolveAgentOperationalState,
+  getRoomBoundSkills,
+  subscribeModuleRegistry,
 } from './engine/moduleRegistry';
 import { TerminalWindow } from './components/TerminalWindow';
 import { SettingsModal } from './components/SettingsModal';
@@ -465,6 +467,47 @@ const CommandCenterContent: React.FC = () => {
       unsub();
     };
   }, []);
+
+  // Subscribe to module registry changes & live agent satellite recon tool locks
+  const [, setModuleRegistryTick] = useState(0);
+  useEffect(() => {
+    const unsubRegistry = subscribeModuleRegistry(() => setModuleRegistryTick((t) => t + 1));
+
+    const handleSatelliteReconToolLock = (ev: Event) => {
+      const customEv = ev as CustomEvent<{
+        lat: number;
+        lon: number;
+        label: string;
+        layer?: string;
+        date?: string;
+      }>;
+      const detail = customEv.detail;
+      if (!detail || typeof detail.lat !== 'number' || typeof detail.lon !== 'number') return;
+
+      setReconMonitorTarget({
+        lat: detail.lat,
+        lon: detail.lon,
+        label: detail.label || `Target (${detail.lat.toFixed(3)}°, ${detail.lon.toFixed(3)}°)`,
+        sectorCode: `SAT_RECON // ${detail.lat.toFixed(2)}°, ${detail.lon.toFixed(2)}°`,
+      });
+      // Automatically pull up the Recon Monitor tab so the user sees what the agent is looking at
+      setActiveTab('hq');
+      setHqSubView('recon_monitor');
+    };
+
+    window.addEventListener('pixelops:satellite-recon-lock', handleSatelliteReconToolLock);
+    return () => {
+      unsubRegistry();
+      window.removeEventListener('pixelops:satellite-recon-lock', handleSatelliteReconToolLock);
+    };
+  }, []);
+
+  const currentRoomHasSatelliteModule =
+    currentRoom === 'library' ||
+    hqSubView === 'recon_monitor' ||
+    getRoomBoundSkills(currentRoom).some(
+      (s) => s.id === 'osint_satellite_plugin' || s.providedTools.includes('osint_satellite_recon')
+    );
 
   // Town Hall Meeting & Multi-Agent Roundtable States
   const [roundtableSessions, setRoundtableSessions] = useState<RoundtableMeetingSession[]>(
@@ -1159,6 +1202,41 @@ const CommandCenterContent: React.FC = () => {
             primaryCall.targetStationId,
             primaryCall.toolName.toUpperCase()
           );
+        }
+
+        // If any toolCall was osint_satellite_recon, automatically lock and open the Recon Monitor to what the agent inspected
+        const satCall = newCard.toolCalls.find((tc) => tc.toolName === 'osint_satellite_recon');
+        if (satCall) {
+          const payload = satCall.livePayload || {};
+          const satLat =
+            payload.target?.coordinates?.latitude ??
+            payload.target?.coordinates?.lat ??
+            satCall.args?.lat;
+          const satLon =
+            payload.target?.coordinates?.longitude ??
+            payload.target?.coordinates?.lon ??
+            satCall.args?.lon;
+          const satLabel =
+            payload.target?.location ||
+            payload.target?.name ||
+            satCall.args?.location ||
+            'Satellite Recon Target';
+
+          if (typeof satLat === 'number' && typeof satLon === 'number') {
+            setReconMonitorTarget({
+              lat: satLat,
+              lon: satLon,
+              label: String(satLabel),
+              sectorCode: `SAT_RECON // ${satLat.toFixed(2)}°, ${satLon.toFixed(2)}°`,
+            });
+          } else {
+            const parsedFromArgs = parseReconTargetToCoords(String(satLabel));
+            if (parsedFromArgs) {
+              setReconMonitorTarget(parsedFromArgs);
+            }
+          }
+          setActiveTab('hq');
+          setHqSubView('recon_monitor');
         }
       }
 
@@ -2658,6 +2736,11 @@ const CommandCenterContent: React.FC = () => {
                 setIsWorkspaceFilesOpen(true);
                 playBeep('tap');
               }}
+              onOpenReconMonitor={() => {
+                setActiveTab('hq');
+                setHqSubView('recon_monitor');
+                playBeep('tap');
+              }}
             />
           </div>
 
@@ -2764,22 +2847,24 @@ const CommandCenterContent: React.FC = () => {
                     >
                       📜 Command Log ({commandLedger.length})
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setHqSubView('recon_monitor');
-                        setActiveSpeakerAgentIndex(null);
-                        playBeep('tap');
-                      }}
-                      className={`px-3 py-1 font-mono-tabular text-xs cursor-pointer transition-colors flex items-center gap-1 ${
-                        hqSubView === 'recon_monitor'
-                          ? 'bg-[#10b981] text-[#05120c] font-bold'
-                          : 'text-[#34d399] hover:text-[#f3ead8]'
-                      }`}
-                      title="Open Live Zero-Key NASA GIBS & Esri Tactical Satellite Recon Monitor"
-                    >
-                      <span>🛰️ Recon Monitor</span>
-                    </button>
+                    {currentRoomHasSatelliteModule && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setHqSubView('recon_monitor');
+                          setActiveSpeakerAgentIndex(null);
+                          playBeep('tap');
+                        }}
+                        className={`px-3 py-1 font-mono-tabular text-xs cursor-pointer transition-colors flex items-center gap-1 ${
+                          hqSubView === 'recon_monitor'
+                            ? 'bg-[#10b981] text-[#05120c] font-bold'
+                            : 'text-[#34d399] hover:text-[#f3ead8]'
+                        }`}
+                        title="Open Live Zero-Key NASA GIBS & Esri Tactical Satellite Recon Monitor (Bound to Satellite Imagery Module)"
+                      >
+                        <span>🛰️ Recon Monitor (SAT_RECON)</span>
+                      </button>
+                    )}
                   </div>
                   <span className="hidden sm:inline font-mono-tabular text-[11px] text-[#9c8265]">
                     {hqSubView === 'town_hall'

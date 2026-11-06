@@ -2940,7 +2940,35 @@ ${findings || 'No additional telemetry findings attached.'}
         };
       }
 
-      const summary = `Satellite Recon: Resolved ${data.target?.name || 'Target'} (${data.target?.coordinates?.lat?.toFixed?.(2) || '30.58'}, ${data.target?.coordinates?.lon?.toFixed?.(2) || '32.34'}) - NASA GIBS multispectral snapshot generated`;
+      const resolvedLat =
+        data.target?.coordinates?.latitude ??
+        data.target?.coordinates?.lat ??
+        (args.lat !== undefined ? Number(args.lat) : 30.585);
+      const resolvedLon =
+        data.target?.coordinates?.longitude ??
+        data.target?.coordinates?.lon ??
+        (args.lon !== undefined ? Number(args.lon) : 32.343);
+      const resolvedLabel =
+        data.target?.location || data.target?.name || String(args.location || 'Suez Canal');
+
+      if (typeof window !== 'undefined') {
+        try {
+          window.dispatchEvent(
+            new CustomEvent('pixelops:satellite-recon-lock', {
+              detail: {
+                lat: Number(resolvedLat),
+                lon: Number(resolvedLon),
+                label: String(resolvedLabel),
+                layer: String(args.layer || data.satelliteLayer?.id || 'true_color'),
+                date: String(args.date || data.target?.observationDate || data.observationDate || ''),
+                rawPayload: data,
+              },
+            })
+          );
+        } catch {}
+      }
+
+      const summary = `Satellite Recon: Resolved ${resolvedLabel} (${Number(resolvedLat).toFixed(2)}, ${Number(resolvedLon).toFixed(2)}) - NASA GIBS multispectral snapshot generated`;
       return {
         id: fc.id,
         name,

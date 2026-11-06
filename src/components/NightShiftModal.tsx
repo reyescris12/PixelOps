@@ -34,6 +34,9 @@ import {
   ScheduleFrequency,
   loadNightShiftSchedules,
   saveNightShiftSchedules,
+  deleteNightShiftSchedule,
+  unrecordDeletedRoutine,
+  isRoutineDeleted,
   loadNightShiftNotifications,
   saveNightShiftNotifications,
   executeNightShiftTask,
@@ -245,6 +248,7 @@ export const NightShiftModal: React.FC<NightShiftModalProps> = ({
     const primaryPrompt = isChained ? formChainSteps[0].prompt : formPrompt.trim();
 
     if (editingScheduleId) {
+      unrecordDeletedRoutine(editingScheduleId);
       // Update existing
       const updated = schedules.map((s) => {
         if (s.id === editingScheduleId) {
@@ -260,6 +264,7 @@ export const NightShiftModal: React.FC<NightShiftModalProps> = ({
             safetyHaltOnAnomaly: formSafetyHalt,
             chainSteps: isChained ? formChainSteps : undefined,
             notificationConfig: notifConfig,
+            updatedAt: new Date().toISOString(),
           };
         }
         return s;
@@ -281,6 +286,7 @@ export const NightShiftModal: React.FC<NightShiftModalProps> = ({
         safetyHaltOnAnomaly: formSafetyHalt,
         runCount: 0,
         createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
         lastStatus: 'idle',
         chainSteps: isChained ? formChainSteps : undefined,
         notificationConfig: notifConfig,
@@ -297,7 +303,9 @@ export const NightShiftModal: React.FC<NightShiftModalProps> = ({
   // Toggle Schedule Active/Paused
   const handleToggleSchedule = (id: string) => {
     playBeep('tap');
-    const updated = schedules.map((s) => (s.id === id ? { ...s, enabled: !s.enabled } : s));
+    const updated = schedules.map((s) =>
+      s.id === id ? { ...s, enabled: !s.enabled, updatedAt: new Date().toISOString() } : s
+    );
     setSchedules(updated);
     saveNightShiftSchedules(updated);
   };
@@ -305,9 +313,12 @@ export const NightShiftModal: React.FC<NightShiftModalProps> = ({
   // Delete Schedule
   const handleDeleteSchedule = (id: string) => {
     playBeep('error');
-    const updated = schedules.filter((s) => s.id !== id);
+    if (runningTaskId === id) {
+      setRunningTaskId(null);
+      setLiveExecutionStep(null);
+    }
+    const updated = deleteNightShiftSchedule(id);
     setSchedules(updated);
-    saveNightShiftSchedules(updated);
   };
 
   // Run Now with Real-Time Step Progress
@@ -326,11 +337,17 @@ export const NightShiftModal: React.FC<NightShiftModalProps> = ({
         }
       );
 
+      // If user deleted the routine during execution, do not record or resurrect it
+      if (isRoutineDeleted(task.id)) {
+        return;
+      }
+
       const nextNotifs = [notif, ...notifications];
       setNotifications(nextNotifs);
       saveNightShiftNotifications(nextNotifs);
 
-      const nextSchedules = schedules.map((s) =>
+      const freshSchedules = loadNightShiftSchedules();
+      const nextSchedules = freshSchedules.map((s) =>
         s.id === task.id
           ? {
               ...s,
@@ -338,6 +355,7 @@ export const NightShiftModal: React.FC<NightShiftModalProps> = ({
               runCount: (s.runCount || 0) + 1,
               lastStatus: notif.status === 'completed' ? ('completed' as const) : ('guardrail_halt' as const),
               lastRunSummary: notif.summary.slice(0, 160),
+              updatedAt: new Date().toISOString(),
             }
           : s
       );

@@ -54,6 +54,7 @@ export interface NightShiftTaskSchedule {
   lastRunTime?: string;
   runCount: number;
   createdAt: string;
+  updatedAt?: string;
   // Multi-Agent Task Chaining
   chainSteps?: TaskChainStep[];
   // Multi-Channel Notifications
@@ -150,6 +151,97 @@ export function saveNightShiftSchedules(schedules: NightShiftTaskSchedule[]) {
   } catch {
     // Ignore storage quota
   }
+}
+
+const STORAGE_DELETED_SCHEDULES_KEY = 'pixelops_night_shift_deleted_ids_v1';
+
+/**
+ * In-memory set of actively cancelled or deleted tasks for instantaneous abort.
+ */
+export const activeCancelledTaskIds = new Set<string>();
+
+export function loadDeletedRoutineIds(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(STORAGE_DELETED_SCHEDULES_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return typeof parsed === 'object' && parsed !== null ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveDeletedRoutineIds(deletedMap: Record<string, string>) {
+  try {
+    localStorage.setItem(STORAGE_DELETED_SCHEDULES_KEY, JSON.stringify(deletedMap));
+  } catch {}
+}
+
+export function recordDeletedRoutine(id: string) {
+  activeCancelledTaskIds.add(id);
+  const current = loadDeletedRoutineIds();
+  current[id] = new Date().toISOString();
+  saveDeletedRoutineIds(current);
+}
+
+export function unrecordDeletedRoutine(id: string) {
+  activeCancelledTaskIds.delete(id);
+  const current = loadDeletedRoutineIds();
+  if (current[id]) {
+    delete current[id];
+    saveDeletedRoutineIds(current);
+  }
+}
+
+export function isRoutineDeleted(id: string): boolean {
+  if (activeCancelledTaskIds.has(id)) return true;
+  const deleted = loadDeletedRoutineIds();
+  return Boolean(deleted[id]);
+}
+
+export function cancelRunningRoutine(id: string) {
+  activeCancelledTaskIds.add(id);
+}
+
+/**
+ * Fully deletes a scheduled routine:
+ * 1. Halts any in-flight execution immediately via active cancellation token.
+ * 2. Writes a tombstone to localStorage so cloud sync pull cannot resurrect it.
+ * 3. Removes the routine from local schedules.
+ * 4. Dispatches deletion events to notify UI components.
+ * 5. Triggers an immediate cloud sync push so the cloud vault drops the routine without waiting.
+ */
+export function deleteNightShiftSchedule(id: string): NightShiftTaskSchedule[] {
+  // 1. Instantly register in-memory and persistent cancellation token
+  cancelRunningRoutine(id);
+  recordDeletedRoutine(id);
+
+  // 2. Remove from active schedules
+  const current = loadNightShiftSchedules();
+  const updated = current.filter((s) => s.id !== id);
+  saveNightShiftSchedules(updated);
+
+  // 3. Dispatch event
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('nightshift:routine-deleted', { detail: { id } }));
+  }
+
+  // 4. Asynchronously push updated state to cloud vault to drop routine on server
+  if (typeof window !== 'undefined') {
+    import('./SyncService')
+      .then(({ isAutoSyncEnabled, pushToCloud }) => {
+        try {
+          if (isAutoSyncEnabled()) {
+            pushToCloud().catch((err) =>
+              console.warn('[NightShift] Cloud push on delete error:', err)
+            );
+          }
+        } catch {}
+      })
+      .catch(() => {});
+  }
+
+  return updated;
 }
 
 export function loadNightShiftNotifications(): NightShiftNotification[] {
@@ -379,6 +471,22 @@ export async function executeNightShiftTask(
   enabledPlugins: string[],
   onStepProgress?: (stepNum: number, totalSteps: number, agentName: string) => void
 ): Promise<NightShiftNotification> {
+  // If task was already deleted or cancelled, abort immediately without execution
+  if (isRoutineDeleted(task.id) || activeCancelledTaskIds.has(task.id)) {
+    return {
+      id: `notif-cancelled-${Date.now()}`,
+      taskId: task.id,
+      taskTitle: task.title,
+      agentName: task.agentName,
+      timestamp: new Date().toISOString(),
+      summary: `[ROUTINE ABORTED] Routine "${task.title}" was deleted or cancelled. Execution halted.`,
+      tokenUsage: 0,
+      actionCount: 0,
+      status: 'guardrail_halt',
+      read: true,
+    };
+  }
+
   let status: 'completed' | 'guardrail_halt' | 'question_pending' | 'error' = 'completed';
   let summary = '';
   let tokenUsage = 0;
@@ -395,6 +503,13 @@ export async function executeNightShiftTask(
       let cumulativeContext = '';
 
       for (let i = 0; i < totalSteps; i++) {
+        // Inter-step abort check: stop immediately if routine was deleted or cancelled mid-pipeline
+        if (isRoutineDeleted(task.id) || activeCancelledTaskIds.has(task.id)) {
+          status = 'guardrail_halt';
+          summary = `[ROUTINE ABORTED] Routine was deleted or cancelled at step ${i + 1}/${totalSteps}. Pipeline terminated.`;
+          break;
+        }
+
         const step = task.chainSteps![i];
         onStepProgress?.(i + 1, totalSteps, step.agentName);
 
@@ -451,34 +566,39 @@ export async function executeNightShiftTask(
             .join('\n\n');
       }
     } else {
-      // Single operative execution
-      onStepProgress?.(1, 1, task.agentName);
+      if (isRoutineDeleted(task.id) || activeCancelledTaskIds.has(task.id)) {
+        status = 'guardrail_halt';
+        summary = `[ROUTINE ABORTED] Routine was deleted or cancelled. Execution skipped.`;
+      } else {
+        // Single operative execution
+        onStepProgress?.(1, 1, task.agentName);
 
-      const singleModelCfg = getAgentModelConfig(task.agentId || task.agentName);
-      const card = await executeAgentDirective({
-        prompt: `[NIGHT SHIFT ROUTINE] ${task.prompt}`,
-        themeId,
-        activeAgentName: task.agentName,
-        activeAgentRole: 'Autonomous Night Shift Operative',
-        enabledPlugins,
-        temperature: 0.65,
-        agentProvider: singleModelCfg.provider,
-        agentModel: singleModelCfg.model,
-      });
+        const singleModelCfg = getAgentModelConfig(task.agentId || task.agentName);
+        const card = await executeAgentDirective({
+          prompt: `[NIGHT SHIFT ROUTINE] ${task.prompt}`,
+          themeId,
+          activeAgentName: task.agentName,
+          activeAgentRole: 'Autonomous Night Shift Operative',
+          enabledPlugins,
+          temperature: 0.65,
+          agentProvider: singleModelCfg.provider,
+          agentModel: singleModelCfg.model,
+        });
 
-      tokenUsage = card.tokenEstimate || 350;
-      actionCount = card.toolCalls?.length || 1;
-      cardResult = card;
+        tokenUsage = card.tokenEstimate || 350;
+        actionCount = card.toolCalls?.length || 1;
+        cardResult = card;
 
-      if (tokenUsage > task.maxTokensPerRun || actionCount > task.maxActionsPerRun) {
-        if (task.safetyHaltOnAnomaly) {
-          status = 'guardrail_halt';
-          summary = `GUARDRAIL HALT: Exceeded per-run limits (Tokens: ${tokenUsage}/${task.maxTokensPerRun}, Actions: ${actionCount}/${task.maxActionsPerRun}). Execution paused for user review.`;
+        if (tokenUsage > task.maxTokensPerRun || actionCount > task.maxActionsPerRun) {
+          if (task.safetyHaltOnAnomaly) {
+            status = 'guardrail_halt';
+            summary = `GUARDRAIL HALT: Exceeded per-run limits (Tokens: ${tokenUsage}/${task.maxTokensPerRun}, Actions: ${actionCount}/${task.maxActionsPerRun}). Execution paused for user review.`;
+          } else {
+            summary = card.dialogue;
+          }
         } else {
           summary = card.dialogue;
         }
-      } else {
-        summary = card.dialogue;
       }
     }
   } catch (err: any) {
@@ -501,12 +621,16 @@ export async function executeNightShiftTask(
     chainStepResults: chainStepResults.length > 0 ? chainStepResults : undefined,
   };
 
-  // Dispatch multi-channel notifications
-  try {
-    const channels = await dispatchNightShiftAlerts(task, notif);
-    notif.dispatchedChannels = channels;
-  } catch (e) {
-    console.warn('[NightShift] Notification dispatch error:', e);
+  // Dispatch multi-channel notifications only if routine wasn't deleted/cancelled
+  if (!isRoutineDeleted(task.id) && !activeCancelledTaskIds.has(task.id)) {
+    try {
+      const channels = await dispatchNightShiftAlerts(task, notif);
+      notif.dispatchedChannels = channels;
+    } catch (e) {
+      console.warn('[NightShift] Notification dispatch error:', e);
+    }
+  } else {
+    console.log(`[NightShift] Routine ${task.id} was deleted; suppressing alert dispatch.`);
   }
 
   return notif;
@@ -515,6 +639,7 @@ export async function executeNightShiftTask(
 /**
  * Background Scheduler Worker: checks for due routines, executes them,
  * updates schedules, logs notifications, and dispatches multi-channel alerts.
+ * Uses atomic live checks to prevent resurrecting deleted or cancelled routines.
  */
 let isCheckingPendingTasks = false;
 
@@ -529,49 +654,66 @@ export async function runPendingNightShiftTasks(
 
   try {
     const schedules = loadNightShiftSchedules();
-    const dueTasks = schedules.filter((s) => s.enabled && isTaskDue(s));
+    const dueTasks = schedules.filter(
+      (s) => s.enabled && !isRoutineDeleted(s.id) && !activeCancelledTaskIds.has(s.id) && isTaskDue(s)
+    );
 
     if (dueTasks.length === 0) {
       return [];
     }
 
-    const currentNotifications = loadNightShiftNotifications();
-    const updatedSchedules = [...schedules];
-    let nextNotifications = [...currentNotifications];
-
     for (const task of dueTasks) {
-      // Mark task as running in schedule list
-      const taskIndex = updatedSchedules.findIndex((s) => s.id === task.id);
-      if (taskIndex !== -1) {
-        updatedSchedules[taskIndex] = {
-          ...updatedSchedules[taskIndex],
+      // 1. Verify task has not been deleted or disabled since dueTasks was filtered
+      if (isRoutineDeleted(task.id) || activeCancelledTaskIds.has(task.id)) {
+        continue;
+      }
+      const liveCheck = loadNightShiftSchedules().find((s) => s.id === task.id);
+      if (!liveCheck || !liveCheck.enabled) {
+        continue;
+      }
+
+      // 2. Atomically mark live task as running in storage
+      const runningList = loadNightShiftSchedules();
+      const runIdx = runningList.findIndex((s) => s.id === task.id);
+      if (runIdx !== -1) {
+        runningList[runIdx] = {
+          ...runningList[runIdx],
           lastStatus: 'running',
         };
-        saveNightShiftSchedules(updatedSchedules);
+        saveNightShiftSchedules(runningList);
       }
 
-      // Execute routine or task chain
+      // 3. Execute routine or task chain
       const notif = await executeNightShiftTask(task, themeId, enabledPlugins);
+
+      // 4. Re-check: Was this task deleted while it was executing?
+      if (isRoutineDeleted(task.id) || activeCancelledTaskIds.has(task.id)) {
+        console.log(`[NightShift] Task ${task.id} was deleted during execution; omitting schedule persistence.`);
+        continue;
+      }
+
       finishedNotifications.push(notif);
 
-      // Update schedule record with completion state
-      if (taskIndex !== -1) {
-        updatedSchedules[taskIndex] = {
-          ...updatedSchedules[taskIndex],
+      // 5. Update schedule record with completion state using fresh list
+      const freshList = loadNightShiftSchedules();
+      const freshIdx = freshList.findIndex((s) => s.id === task.id);
+      if (freshIdx !== -1) {
+        freshList[freshIdx] = {
+          ...freshList[freshIdx],
           lastRunTime: new Date().toISOString(),
-          runCount: (updatedSchedules[taskIndex].runCount || 0) + 1,
+          runCount: (freshList[freshIdx].runCount || 0) + 1,
           lastStatus: notif.status === 'completed' ? 'completed' : 'guardrail_halt',
           lastRunSummary: notif.summary.slice(0, 160),
+          updatedAt: new Date().toISOString(),
         };
+        saveNightShiftSchedules(freshList);
       }
 
-      nextNotifications = [notif, ...nextNotifications];
+      const currentNotifs = loadNightShiftNotifications();
+      saveNightShiftNotifications([notif, ...currentNotifs]);
     }
 
-    saveNightShiftSchedules(updatedSchedules);
-    saveNightShiftNotifications(nextNotifications);
-
-    if (typeof window !== 'undefined') {
+    if (finishedNotifications.length > 0 && typeof window !== 'undefined') {
       window.dispatchEvent(
         new CustomEvent('nightshift:routine-completed', {
           detail: { count: finishedNotifications.length, notifications: finishedNotifications },

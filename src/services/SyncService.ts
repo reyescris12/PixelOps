@@ -16,6 +16,8 @@ import {
   NightShiftTaskSchedule,
   loadNightShiftSchedules,
   saveNightShiftSchedules,
+  loadDeletedRoutineIds,
+  saveDeletedRoutineIds,
 } from './NightShiftService';
 import {
   ledgerDb,
@@ -46,6 +48,7 @@ export interface SyncPackage {
   device?: any;
   workspaceFiles: WorkspaceFileRecord[];
   routines: NightShiftTaskSchedule[];
+  deletedRoutineIds?: Record<string, string>;
   agentMemories: AgentMemoryDbEntry[];
   commandLedger: CommandLedgerEntry[];
   appSessionState: PersistedAppSessionState | null;
@@ -182,6 +185,7 @@ export async function assembleLocalSyncPackage(session: AuthSession): Promise<Sy
   ]);
 
   const routines = loadNightShiftSchedules();
+  const deletedRoutineIds = loadDeletedRoutineIds();
   const appSessionState = loadAppSessionSnapshot();
   const composioAccounts = getLocalConnectedAccounts();
   const composioEntityId = getOrCreateEntityId();
@@ -203,6 +207,7 @@ export async function assembleLocalSyncPackage(session: AuthSession): Promise<Sy
     device: session.device,
     workspaceFiles,
     routines,
+    deletedRoutineIds,
     agentMemories,
     commandLedger,
     appSessionState,
@@ -243,25 +248,53 @@ export async function applyRemoteSyncPackage(pkg: SyncPackage): Promise<void> {
     }
   }
 
-  // 2. Merge Night Shift Routines
-  if (Array.isArray(pkg.routines) && pkg.routines.length > 0) {
-    const currentRoutines = loadNightShiftSchedules();
-    const routineMap = new Map<string, NightShiftTaskSchedule>(
-      currentRoutines.map((r: NightShiftTaskSchedule) => [r.id, r])
-    );
+  // 2. Merge Night Shift Routines with Tombstone Deletion Defense
+  const localDeleted = loadDeletedRoutineIds();
+  const remoteDeleted = (pkg as any).deletedRoutineIds || {};
+  const mergedDeleted: Record<string, string> = { ...localDeleted, ...remoteDeleted };
+  saveDeletedRoutineIds(mergedDeleted);
 
+  const currentRoutines = loadNightShiftSchedules();
+  const routineMap = new Map<string, NightShiftTaskSchedule>(
+    currentRoutines.map((r: NightShiftTaskSchedule) => [r.id, r])
+  );
+
+  // Purge any local routine that has been tombstoned either locally or remotely
+  for (const [deletedId, deletedTimeStr] of Object.entries(mergedDeleted)) {
+    const deletedTime = new Date(deletedTimeStr || 0).getTime();
+    const existing = routineMap.get(deletedId);
+    if (existing) {
+      const existingTime = new Date(existing.updatedAt || existing.createdAt || 0).getTime();
+      if (deletedTime >= existingTime) {
+        routineMap.delete(deletedId);
+      }
+    }
+  }
+
+  // Merge remote routines, strictly checking against tombstone deletion map
+  if (Array.isArray(pkg.routines)) {
     for (const remoteRoutine of pkg.routines) {
+      const deletedAtStr = mergedDeleted[remoteRoutine.id];
+      if (deletedAtStr) {
+        const deletedTime = new Date(deletedAtStr).getTime();
+        const remoteTime = new Date(remoteRoutine.updatedAt || remoteRoutine.createdAt || 0).getTime();
+        if (deletedTime >= remoteTime) {
+          // Routine was deleted! Strictly prevent resurrection.
+          continue;
+        }
+      }
+
       const local = routineMap.get(remoteRoutine.id);
-      const remoteTime = new Date(remoteRoutine.createdAt || 0).getTime();
-      const localTime = local ? new Date(local.createdAt || 0).getTime() : 0;
+      const remoteTime = new Date(remoteRoutine.updatedAt || remoteRoutine.createdAt || 0).getTime();
+      const localTime = local ? new Date(local.updatedAt || local.createdAt || 0).getTime() : 0;
 
       if (!local || remoteTime >= localTime) {
         routineMap.set(remoteRoutine.id, remoteRoutine);
       }
     }
-
-    saveNightShiftSchedules(Array.from(routineMap.values()));
   }
+
+  saveNightShiftSchedules(Array.from(routineMap.values()));
 
   // 3. Merge Agent Memories into Dexie IndexedDB
   if (Array.isArray(pkg.agentMemories) && pkg.agentMemories.length > 0) {

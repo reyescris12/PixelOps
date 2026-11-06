@@ -20,6 +20,7 @@
 import { RoomId } from './roomData';
 import { loadRoomSkillBindings } from './moduleRegistry';
 import { writeWorkspaceFile, listWorkspaceFiles } from './storageManager';
+import { retrieveRelevantClassifiedBriefings } from '../services/ClassifiedFeedService';
 import { appendCommandLedgerEntry } from '../services/CommandLedgerDb';
 import {
   executeComposioAction,
@@ -1238,13 +1239,19 @@ async function runDeepReconPipeline(
     searchHits = [];
   }
 
-  onStageUpdate?.(2, `Delta Analysis: Filtering PR hype and isolating verifiable market deltas...`);
+  onStageUpdate?.(2, `Delta Analysis: Filtering PR hype and checking classified feed briefings for relevancy...`);
+  let classifiedHits: any[] = [];
+  try {
+    classifiedHits = await retrieveRelevantClassifiedBriefings(`${target.targetName} ${target.targetScope}`, 2);
+  } catch {
+    classifiedHits = [];
+  }
   await new Promise((r) => setTimeout(r, 500));
 
   onStageUpdate?.(3, `Dossier Generation: Compiling classified Markdown dossier...`);
 
   const threatLevel: 'ALPHA-CRITICAL' | 'BRAVO-ELEVATED' | 'CHARLIE-NOMINAL' =
-    searchHits.length > 2 ? 'BRAVO-ELEVATED' : 'CHARLIE-NOMINAL';
+    searchHits.length > 2 || classifiedHits.length > 0 ? 'BRAVO-ELEVATED' : 'CHARLIE-NOMINAL';
 
   const defaultDossier = `---
 title: Intelligence Dossier - Deep Reconnaissance
@@ -1254,6 +1261,7 @@ date: ${dateStr}
 threat_level: ${threatLevel}
 sources_consulted:
 ${searchHits.length > 0 ? searchHits.map((h: any) => `  - "${h.title || 'OSINT Source'}" (${h.url || 'Web Source'})`).join('\n') : '  - Public Web Grounding Telemetry'}
+${classifiedHits.length > 0 ? classifiedHits.map((b: any) => `  - "[Classified Source] ${b.title}" (VFS: ${b.path})`).join('\n') : ''}
 ---
 
 # Intelligence Dossier: Deep Reconnaissance
@@ -1294,6 +1302,18 @@ ${
     : `- Primary telemetry scanned across active public web endpoints.\n- Target ${target.targetName} operational perimeter verified.\n- Zero immediate disruptive anomalies detected.`
 }
 
+${
+  classifiedHits.length > 0
+    ? `\n---\n\n## 3. Verified Classified Telemetry (/intel/sources/classified_feed/)\n*Tactical situation briefings retrieved from S2 Underground telemetry archive:*\n` +
+      classifiedHits
+        .map(
+          (b: any, i: number) =>
+            `### [Classified Source #${i + 1}: ${b.title}]\n- **Source:** S2 Underground [Channel UCTq1zHztiV69Ur8t6jco4CQ]\n- **Published:** ${b.published}\n- **VFS Path:** \`${b.path}\`\n- **Threat Tags:** ${b.threatTags?.join(', ') || 'OSINT'}\n- **Summary:** ${b.summary}`
+        )
+        .join('\n\n') +
+      `\n`
+    : ''
+}
 ---
 
 ## 4. Impact & Action Delta
@@ -1316,6 +1336,12 @@ Current Date: ${dateStr}
 Threat Level: ${threatLevel}
 Extracted Quantitative Metrics: ${JSON.stringify(extractedMetrics)}
 Live OSINT Search Telemetry: ${JSON.stringify(searchHits, null, 2)}
+Classified Feed Briefings (/intel/sources/classified_feed/): ${JSON.stringify(classifiedHits, null, 2)}
+
+Classified Intelligence Source Directive:
+1. Context Check: Scan the local VFS directory /intel/sources/classified_feed/ for recent operational briefings.
+2. Relevancy Filter: Evaluate the extracted transcripts against the user's current directive. If the video content (e.g., infrastructure warnings, grid updates, EW/comms, supply chain anomalies) matches the target scope, integrate the data points into the final dossier.
+3. Discard Noise: If the source material is entirely irrelevant to the user's specific directive, omit it completely rather than forcing unrelated data into the report.
 
 Instructions:
 1. Deliver a comprehensive, high-value strategic reconnaissance dossier for "${target.targetName}".
@@ -2333,7 +2359,6 @@ ${
     ? cveHits.map((h: any, i: number) => `${i + 1}. **${h.title || 'Security Advisory'}**\n   Citation: ${h.url || 'Web Advisory'}\n   Technical Note: ${h.snippet || h.extract || 'Advisory checked.'}`).join('\n\n')
     : `- Zero active zero-day exploits or reported CVE advisories detected for \`${target.targetName}\`. Monitored dependency surface nominal.`
 }
-
 ---
 
 ## 4. Impact & Action Delta

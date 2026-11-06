@@ -54,7 +54,8 @@ import {
   synthesizeComprehensiveReport,
   uploadReportToWorkspaceFiles,
 } from './ReportService';
-import { writeWorkspaceFile } from '../engine/storageManager';
+import { writeWorkspaceFile, readWorkspaceFile, listWorkspaceFiles } from '../engine/storageManager';
+import { retrieveRelevantClassifiedBriefings } from './ClassifiedFeedService';
 import { addStrategyBoardTasks } from './StrategyBoardService';
 
 export {
@@ -2386,12 +2387,24 @@ ${findings || 'No additional telemetry findings attached.'}
         };
         summary = `VFS Write: Saved "${path}" (${content.length} chars) to IndexedDB`;
       } else if (action === 'list') {
-        const fileList = Object.entries(vfsStore).map(([p, meta]) => ({
-          path: p,
-          sizeBytes: meta.content.length,
-          format: meta.format,
-          updatedAt: meta.updatedAt,
-        }));
+        let fileList: any[] = [];
+        try {
+          const workspaceFiles = await listWorkspaceFiles();
+          fileList = workspaceFiles.map((f) => ({
+            path: f.path,
+            sizeBytes: f.sizeBytes,
+            format: f.format,
+            updatedAt: f.updatedAt,
+            category: f.category,
+          }));
+        } catch {
+          fileList = Object.entries(vfsStore).map(([p, meta]) => ({
+            path: p,
+            sizeBytes: meta.content.length,
+            format: meta.format,
+            updatedAt: meta.updatedAt,
+          }));
+        }
         fsResult = { status: 'listed', totalFiles: fileList.length, files: fileList };
         summary = `VFS List: Found ${fileList.length} files in local storage`;
       } else if (action === 'download_export') {
@@ -2424,16 +2437,27 @@ ${findings || 'No additional telemetry findings attached.'}
         };
         summary = `VFS Export: Exported and downloaded "${path}" (${exportContent.length} bytes)`;
       } else {
-        const record = vfsStore[path];
-        if (record) {
+        let contentToRead = vfsStore[path]?.content;
+        let updatedAt = vfsStore[path]?.updatedAt;
+        if (!contentToRead) {
+          try {
+            const dbFile = await readWorkspaceFile(path);
+            if (dbFile) {
+              contentToRead = dbFile.content;
+              updatedAt = dbFile.updatedAt;
+            }
+          } catch {}
+        }
+
+        if (contentToRead !== undefined) {
           fsResult = {
             status: 'read_success',
             path,
-            content: record.content,
-            sizeBytes: record.content.length,
-            updatedAt: record.updatedAt,
+            content: contentToRead,
+            sizeBytes: contentToRead.length,
+            updatedAt: updatedAt || new Date().toISOString(),
           };
-          summary = `VFS Read: Loaded "${path}" (${record.content.length} bytes)`;
+          summary = `VFS Read: Loaded "${path}" (${contentToRead.length} bytes)`;
         } else {
           fsResult = {
             status: 'not_found',
@@ -5808,6 +5832,47 @@ CRITICAL MEMORY RECALL INSTRUCTION:
 
       if (memoryContextStr) {
         systemInstruction += `\n${memoryContextStr}`;
+      }
+
+      // Autonomous Classified Feed Relevancy Filter (S2 Underground Telemetry in /intel/sources/classified_feed/)
+      let classifiedContextStr = '';
+      try {
+        const relevantBriefings = await retrieveRelevantClassifiedBriefings(params.prompt, 3);
+        if (relevantBriefings.length > 0) {
+          classifiedContextStr =
+            `\n\n### VERIFIED CLASSIFIED OPERATIONAL BRIEFINGS (/intel/sources/classified_feed/):\n` +
+            `The local VFS classified intelligence archive was scanned. The following tactical briefings thematically match the user's directive:\n\n` +
+            relevantBriefings
+              .map(
+                (b, idx) =>
+                  `[Classified Briefing #${idx + 1}: ${b.title}]\n` +
+                  `• Source: S2 Underground (Channel: UCTq1zHztiV69Ur8t6jco4CQ) | Published: ${b.published}\n` +
+                  `• Path: ${b.path}\n` +
+                  `• Classification: SENSITIVE / TACTICAL OSINT TELEMETRY\n` +
+                  `• Threat Tags: ${b.threatTags.join(', ')}\n` +
+                  `• Executive Summary: ${b.summary.slice(0, 400)}\n` +
+                  `• Transcript / Situation Telemetry:\n${b.content.slice(0, 1200).replace(/\n+/g, ' ')}`
+              )
+              .join('\n\n') +
+            `\n\n### CLASSIFIED INTELLIGENCE SOURCE DIRECTIVE:
+When executing a reconnaissance mission or gathering threat telemetry:
+1. Context Check: Scan the local VFS directory /intel/sources/classified_feed/ for recent operational briefings.
+2. Relevancy Filter: Evaluate the extracted transcripts against the user's current directive. If the video content (e.g., infrastructure warnings, grid updates, EW/comms, supply chain anomalies) matches the target scope, integrate the data points into the final dossier.
+3. Discard Noise: If the source material is entirely irrelevant to the user's specific directive, omit it completely rather than forcing unrelated data into the report.`;
+        } else {
+          classifiedContextStr =
+            `\n\n### CLASSIFIED INTELLIGENCE SOURCE DIRECTIVE:
+When executing a reconnaissance mission or gathering threat telemetry:
+1. Context Check: Scan the local VFS directory /intel/sources/classified_feed/ for recent operational briefings.
+2. Relevancy Filter: Evaluate the extracted transcripts against the user's current directive. If the video content (e.g., infrastructure warnings, grid updates, EW/comms, supply chain anomalies) matches the target scope, integrate the data points into the final dossier.
+3. Discard Noise: If the source material is entirely irrelevant to the user's specific directive, omit it completely rather than forcing unrelated data into the report.`;
+        }
+      } catch (classErr) {
+        console.warn('[CLASSIFIED ROUTER] Error evaluating classified feed briefings:', classErr);
+      }
+
+      if (classifiedContextStr) {
+        systemInstruction += `\n${classifiedContextStr}`;
       }
 
       // Multi-Provider Execution Gateway: Route to Puter, OpenRouter, OpenAI, Groq, or Anthropic

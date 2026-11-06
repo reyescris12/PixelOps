@@ -92,6 +92,7 @@ import { hasProviderApiKey, SUPPORTED_VAULT_PROVIDERS } from './services/BYOKVau
 import { saveAgentModelConfig } from './services/agentStore';
 import { NightShiftModal } from './components/NightShiftModal';
 import { loadNightShiftNotifications, runPendingNightShiftTasks } from './services/NightShiftService';
+import { initClassifiedFeedIngestion } from './services/ClassifiedFeedService';
 import { backgroundWorkerEngine } from './services/WorkerService';
 import { InboxProvider } from './context/InboxContext';
 import { CustomPluginConnector, loadCustomPlugins, saveCustomPlugins } from './services/PluginMarketplaceService';
@@ -228,13 +229,15 @@ const CommandCenterContent: React.FC = () => {
     };
   }, []);
 
-  // OpenRouter 1-Click OAuth PKCE Callback Listener
+  // OpenRouter 1-Click OAuth PKCE Callback Listener & Headless Classified Intel Ingestion
   useEffect(() => {
     handleOpenRouterCallback().then((res) => {
       if (res?.ok) {
         console.log('[OpenRouter] Authenticated successfully via 1-Click PKCE SSO');
       }
     });
+    // Silently initialize background classified feed ingestion pipeline
+    initClassifiedFeedIngestion();
   }, []);
   const [currentRoom, setCurrentRoom] = useState<RoomId>(
     () => restoredSession?.currentRoom || 'war_room'

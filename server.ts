@@ -11,6 +11,7 @@ import { onRequest as handleMaritimeOsint } from './functions/api/osint/maritime
 import { onRequest as handleHazardsOsint } from './functions/api/osint/hazards';
 import { onRequest as handleSatelliteOsint } from './functions/api/osint/satellite';
 import { onRequest as handleSpectrumOsint } from './functions/api/osint/spectrum';
+import { onRequest as handleClassifiedFeed } from './functions/api/intel/classified-feed';
 
 dotenv.config();
 
@@ -1750,6 +1751,7 @@ async function startServer() {
   app.all('/api/osint/hazards', adaptCloudflareHandler(handleHazardsOsint));
   app.all('/api/osint/satellite', adaptCloudflareHandler(handleSatelliteOsint));
   app.all('/api/osint/spectrum', adaptCloudflareHandler(handleSpectrumOsint));
+  app.all('/api/intel/classified-feed', adaptCloudflareHandler(handleClassifiedFeed));
 
   /**
    * Turn 1: Initial Gemini API Request with Dynamic Function Declarations (`tools`).
@@ -1861,7 +1863,13 @@ Before invoking any tool, analyze the user's intent:
 - PARAMETER VALIDATION:
   Ensure you correctly extract and validate required parameters (like repository owner/name, query strings, or channel names) from the user's directive before firing the tool.
 When the user asks for weather, atmospheric conditions, or forecasts, ALWAYS call "weather_lookup".
-When the user asks to search the web, look up real-world facts, news, flights, companies, or encyclopedia topics, ALWAYS call "live_web_search".`;
+When the user asks to search the web, look up real-world facts, news, flights, companies, or encyclopedia topics, ALWAYS call "live_web_search".
+
+CLASSIFIED INTELLIGENCE SOURCE DIRECTIVE:
+When executing a reconnaissance mission or gathering threat telemetry:
+1. Context Check: Scan the local VFS directory /intel/sources/classified_feed/ for recent operational briefings.
+2. Relevancy Filter: Evaluate the extracted transcripts against the user's current directive. If the video content (e.g., infrastructure warnings, grid updates, EW/comms, supply chain anomalies) matches the target scope, integrate the verified data points into the final dossier.
+3. Discard Noise: If the source material is entirely irrelevant to the user's specific directive, omit it completely rather than forcing unrelated data into the report.`;
 
       const userParts: any[] = [];
       if (attachment && attachment.data && attachment.mimeType) {

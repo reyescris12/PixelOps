@@ -741,38 +741,237 @@ export function saveUserPlaybookTarget(playbookId: PlaybookId, target: UserPlayb
   } catch {}
 }
 
+export type RoomWorkflowItemId =
+  | 'live_satellite_recon'
+  | 'wiretap_watch'
+  | 'deep_recon'
+  | 'morning_briefing'
+  | 'triage_gmail'
+  | 'calendar_brief'
+  | 'sync_github'
+  | 'open_vfs_files'
+  | 'operative_dossier';
+
+export interface RoomWorkflowCatalogItem {
+  id: RoomWorkflowItemId;
+  shortTitle: string;
+  icon: string;
+  description: string;
+  operativeName: string;
+  category: 'recon' | 'operator' | 'system';
+  playbookId?: PlaybookId;
+}
+
+export const ALL_WORKFLOW_DECK_ITEMS: RoomWorkflowCatalogItem[] = [
+  {
+    id: 'live_satellite_recon',
+    shortTitle: 'Live Satellite Recon Monitor',
+    icon: '🛰️',
+    description: 'NASA GIBS & Esri Orbital Overlay',
+    operativeName: 'Agent Nyx',
+    category: 'recon',
+  },
+  {
+    id: 'wiretap_watch',
+    shortTitle: 'Watchtower Wire-Tap',
+    icon: '📡',
+    description: 'Live website, pricing & changelog surveillance',
+    operativeName: 'Agent Nyx',
+    category: 'recon',
+    playbookId: 'wiretap_watch',
+  },
+  {
+    id: 'deep_recon',
+    shortTitle: 'Deep Entity Recon',
+    icon: '🔍',
+    description: 'Autonomous multi-query OSINT & entity dossier',
+    operativeName: 'Agent Nyx',
+    category: 'recon',
+    playbookId: 'deep_recon',
+  },
+  {
+    id: 'morning_briefing',
+    shortTitle: 'Morning Intel Briefing',
+    icon: '🌅',
+    description: '60-second daily executive situation briefing',
+    operativeName: 'Agent Vance',
+    category: 'recon',
+    playbookId: 'morning_briefing',
+  },
+  {
+    id: 'triage_gmail',
+    shortTitle: 'Triage Gmail to Tasks',
+    icon: '⚡',
+    description: 'Extract unread deliverables to Strategy Board',
+    operativeName: 'Agent Vance',
+    category: 'operator',
+    playbookId: 'triage_gmail',
+  },
+  {
+    id: 'calendar_brief',
+    shortTitle: 'Calendar Schedule Brief',
+    icon: '📅',
+    description: "Prep today's schedule & attendee talking points",
+    operativeName: 'Agent Vance',
+    category: 'operator',
+    playbookId: 'calendar_brief',
+  },
+  {
+    id: 'sync_github',
+    shortTitle: 'GitHub Repo Pulse',
+    icon: '🐛',
+    description: 'Sync open issues, PR reviews & CVE alerts',
+    operativeName: 'Agent Cipher',
+    category: 'operator',
+    playbookId: 'sync_github',
+  },
+  {
+    id: 'open_vfs_files',
+    shortTitle: 'Open VFS Vault Files',
+    icon: '📂',
+    description: 'Browse saved dossiers & classified briefings',
+    operativeName: 'System VFS',
+    category: 'system',
+  },
+  {
+    id: 'operative_dossier',
+    shortTitle: 'Operative Clearance & Dossier',
+    icon: '🪪',
+    description: 'View Clearance XP, Service Ribbons & export card',
+    operativeName: 'Crew Loadout',
+    category: 'system',
+  },
+];
+
+const ROOM_WORKFLOW_DECK_STORAGE_KEY = 'pixelops_room_workflow_decks_v1';
+
+export const DEFAULT_ROOM_WORKFLOW_DECKS: Record<string, RoomWorkflowItemId[]> = {
+  comms_tower: ['live_satellite_recon', 'wiretap_watch', 'deep_recon', 'morning_briefing'],
+  war_room: ['triage_gmail', 'calendar_brief', 'sync_github'],
+  server_vault: ['sync_github', 'triage_gmail', 'calendar_brief'],
+  armory: ['operative_dossier', 'sync_github'],
+  briefing_lounge: ['operative_dossier', 'morning_briefing'],
+  library: ['deep_recon', 'wiretap_watch', 'morning_briefing'],
+  archive_basement: ['open_vfs_files', 'wiretap_watch', 'deep_recon'],
+};
+
+type WorkflowDeckListener = () => void;
+const workflowDeckListeners = new Set<WorkflowDeckListener>();
+
+export function subscribeRoomWorkflowDecks(cb: WorkflowDeckListener): () => void {
+  workflowDeckListeners.add(cb);
+  return () => {
+    workflowDeckListeners.delete(cb);
+  };
+}
+
+function notifyWorkflowDeckListeners(): void {
+  for (const cb of Array.from(workflowDeckListeners)) {
+    try {
+      cb();
+    } catch {}
+  }
+}
+
+export function loadRoomWorkflowDecks(): Record<string, RoomWorkflowItemId[]> {
+  try {
+    const raw = localStorage.getItem(ROOM_WORKFLOW_DECK_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        return { ...DEFAULT_ROOM_WORKFLOW_DECKS, ...parsed };
+      }
+    }
+  } catch {}
+  return { ...DEFAULT_ROOM_WORKFLOW_DECKS };
+}
+
+export function saveRoomWorkflowDecks(decks: Record<string, RoomWorkflowItemId[]>): void {
+  try {
+    localStorage.setItem(ROOM_WORKFLOW_DECK_STORAGE_KEY, JSON.stringify(decks));
+  } catch {}
+  notifyWorkflowDeckListeners();
+}
+
+export function getRoomWorkflowDeckItems(roomId: string): RoomWorkflowItemId[] {
+  const all = loadRoomWorkflowDecks();
+  if (Array.isArray(all[roomId])) {
+    return all[roomId];
+  }
+  return ['live_satellite_recon', 'deep_recon', 'morning_briefing'];
+}
+
+export function toggleWorkflowInRoomDeck(roomId: string, itemId: RoomWorkflowItemId): void {
+  const all = loadRoomWorkflowDecks();
+  const current = Array.isArray(all[roomId]) ? [...all[roomId]] : [...getRoomWorkflowDeckItems(roomId)];
+  const idx = current.indexOf(itemId);
+  if (idx >= 0) {
+    current.splice(idx, 1);
+  } else {
+    current.push(itemId);
+  }
+  all[roomId] = current;
+  saveRoomWorkflowDecks(all);
+}
+
+export function moveWorkflowToRoomDeck(
+  fromRoomId: string,
+  toRoomId: string,
+  itemId: RoomWorkflowItemId
+): void {
+  const all = loadRoomWorkflowDecks();
+  const fromList = Array.isArray(all[fromRoomId])
+    ? [...all[fromRoomId]]
+    : [...getRoomWorkflowDeckItems(fromRoomId)];
+  const toList = Array.isArray(all[toRoomId])
+    ? [...all[toRoomId]]
+    : [...getRoomWorkflowDeckItems(toRoomId)];
+
+  all[fromRoomId] = fromList.filter((id) => id !== itemId);
+  if (!toList.includes(itemId)) {
+    toList.push(itemId);
+  }
+  all[toRoomId] = toList;
+  saveRoomWorkflowDecks(all);
+}
+
+export function reorderWorkflowInRoomDeck(
+  roomId: string,
+  itemId: RoomWorkflowItemId,
+  direction: 'up' | 'down'
+): void {
+  const all = loadRoomWorkflowDecks();
+  const current = Array.isArray(all[roomId]) ? [...all[roomId]] : [...getRoomWorkflowDeckItems(roomId)];
+  const idx = current.indexOf(itemId);
+  if (idx < 0) return;
+  const swapIdx = direction === 'up' ? idx - 1 : idx + 1;
+  if (swapIdx < 0 || swapIdx >= current.length) return;
+  const temp = current[idx];
+  current[idx] = current[swapIdx];
+  current[swapIdx] = temp;
+  all[roomId] = current;
+  saveRoomWorkflowDecks(all);
+}
+
+export function resetRoomWorkflowDecksToDefault(): void {
+  saveRoomWorkflowDecks({ ...DEFAULT_ROOM_WORKFLOW_DECKS });
+}
+
 /**
  * Returns all Playbooks available for a given room.
  */
 export function getPlaybooksForRoom(roomId: RoomId): IntelligencePlaybookDef[] {
-  // Check dynamically mounted room skills
-  try {
-    const roomBindings = loadRoomSkillBindings();
-    const skills = roomBindings[roomId] || [];
-    if (
-      skills.includes('osint_maritime_plugin') ||
-      skills.includes('osint_hazard_plugin') ||
-      skills.includes('code_sandbox_plugin')
-    ) {
-      return [
-        INTELLIGENCE_PLAYBOOKS.triage_gmail,
-        INTELLIGENCE_PLAYBOOKS.calendar_brief,
-        INTELLIGENCE_PLAYBOOKS.sync_github,
-      ];
-    }
-    if (
-      skills.includes('osint_satellite_plugin') ||
-      skills.includes('osint_spectrum_plugin') ||
-      skills.includes('web_search_plugin')
-    ) {
-      return [
-        INTELLIGENCE_PLAYBOOKS.wiretap_watch,
-        INTELLIGENCE_PLAYBOOKS.deep_recon,
-        INTELLIGENCE_PLAYBOOKS.morning_briefing,
-      ];
-    }
-  } catch {}
+  const deckItems = getRoomWorkflowDeckItems(roomId);
+  const playbooksFromDeck = deckItems
+    .map((id) => ALL_WORKFLOW_DECK_ITEMS.find((item) => item.id === id)?.playbookId)
+    .filter((pbId): pbId is PlaybookId => Boolean(pbId && INTELLIGENCE_PLAYBOOKS[pbId]))
+    .map((pbId) => INTELLIGENCE_PLAYBOOKS[pbId]);
 
+  if (playbooksFromDeck.length > 0) {
+    return playbooksFromDeck;
+  }
+
+  // Fallback if no playbooks are assigned in custom deck
   if (roomId === 'comms_tower' || roomId === 'archive_basement' || roomId === 'library') {
     return [
       INTELLIGENCE_PLAYBOOKS.wiretap_watch,
@@ -780,21 +979,9 @@ export function getPlaybooksForRoom(roomId: RoomId): IntelligencePlaybookDef[] {
       INTELLIGENCE_PLAYBOOKS.morning_briefing,
     ];
   }
-  if (
-    roomId === 'war_room' ||
-    roomId === 'server_vault' ||
-    roomId === 'armory' ||
-    roomId === 'briefing_lounge'
-  ) {
-    return [
-      INTELLIGENCE_PLAYBOOKS.triage_gmail,
-      INTELLIGENCE_PLAYBOOKS.calendar_brief,
-      INTELLIGENCE_PLAYBOOKS.sync_github,
-    ];
-  }
   return [
-    INTELLIGENCE_PLAYBOOKS.deep_recon,
-    INTELLIGENCE_PLAYBOOKS.morning_briefing,
+    INTELLIGENCE_PLAYBOOKS.triage_gmail,
+    INTELLIGENCE_PLAYBOOKS.calendar_brief,
     INTELLIGENCE_PLAYBOOKS.sync_github,
   ];
 }

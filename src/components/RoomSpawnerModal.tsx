@@ -37,6 +37,13 @@ import {
   mountSkillToRoom,
   unmountSkillFromRoom,
 } from '../engine/moduleRegistry';
+import {
+  ALL_WORKFLOW_DECK_ITEMS,
+  RoomWorkflowItemId,
+  loadRoomWorkflowDecks,
+  toggleWorkflowInRoomDeck,
+  moveWorkflowToRoomDeck,
+} from '../engine/intelligencePlaybooks';
 import { RoomId } from './SpriteCanvas';
 
 interface RoomSpawnerModalProps {
@@ -58,6 +65,7 @@ export const RoomSpawnerModal: React.FC<RoomSpawnerModalProps> = ({
   const [allRoomIds, setAllRoomIds] = useState(getAllRoomIds());
   const [roomBindings, setRoomBindings] = useState(loadRoomSkillBindings());
   const [stationBindings, setStationBindings] = useState(loadStationSkillBindings());
+  const [workflowDecks, setWorkflowDecks] = useState(loadRoomWorkflowDecks());
   const [selectedRoomId, setSelectedRoomId] = useState<string>(currentRoom);
   const [notification, setNotification] = useState<string | null>(null);
 
@@ -89,6 +97,7 @@ export const RoomSpawnerModal: React.FC<RoomSpawnerModalProps> = ({
     setAllRoomIds(getAllRoomIds());
     setRoomBindings(loadRoomSkillBindings());
     setStationBindings(loadStationSkillBindings());
+    setWorkflowDecks(loadRoomWorkflowDecks());
   };
 
   useEffect(() => {
@@ -706,6 +715,90 @@ export const RoomSpawnerModal: React.FC<RoomSpawnerModalProps> = ({
                   </div>
                 </div>
               )}
+
+              {/* Sector Workflow Deck Assignment */}
+              <div className="bg-[#0f1420] border border-[#1e293b] p-3 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-bold text-[#34d399] uppercase tracking-wide">
+                    SECTOR WORKFLOW DECK ASSIGNMENT // [{selectedRoomId.toUpperCase()}]
+                  </span>
+                  <span className="text-[10px] text-[#64748b]">
+                    Choose which workflows appear in this room&apos;s hanging deck or move them to another room
+                  </span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                  {ALL_WORKFLOW_DECK_ITEMS.map((wf) => {
+                    const currentDeck = workflowDecks[selectedRoomId] || [];
+                    const isAssigned = currentDeck.includes(wf.id);
+                    return (
+                      <div
+                        key={wf.id}
+                        className={`p-2 border text-xs flex flex-col justify-between gap-1.5 ${
+                          isAssigned
+                            ? 'bg-[#0b221a] border-[#10b981]/60 text-[#f3ead8]'
+                            : 'bg-[#090d14] border-[#1e293b] text-[#94a3b8]'
+                        }`}
+                      >
+                        <div>
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="font-bold truncate flex items-center gap-1">
+                              <span>{wf.icon}</span>
+                              <span className="truncate">{wf.shortTitle}</span>
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                toggleWorkflowInRoomDeck(selectedRoomId, wf.id);
+                                refreshState();
+                                showFeedback(
+                                  isAssigned
+                                    ? `REMOVED [${wf.shortTitle.toUpperCase()}] FROM [${selectedRoomId.toUpperCase()}] DECK`
+                                    : `ADDED [${wf.shortTitle.toUpperCase()}] TO [${selectedRoomId.toUpperCase()}] DECK`
+                                );
+                              }}
+                              className={`px-1.5 py-0.5 text-[9px] font-bold border cursor-pointer shrink-0 ${
+                                isAssigned
+                                  ? 'bg-[#f43f5e]/20 border-[#f43f5e]/60 text-[#f43f5e]'
+                                  : 'bg-[#10b981]/20 border-[#10b981]/60 text-[#34d399]'
+                              }`}
+                            >
+                              {isAssigned ? 'REMOVE' : '+ ADD'}
+                            </button>
+                          </div>
+                          <span className="text-[10px] text-[#64748b] block mt-0.5 truncate">
+                            {wf.description}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between gap-1 pt-1 border-t border-[#1e293b]/70">
+                          <span className="text-[9px] text-[#64748b]">Move to:</span>
+                          <select
+                            value=""
+                            onChange={(e) => {
+                              const destRoom = e.target.value;
+                              if (!destRoom) return;
+                              moveWorkflowToRoomDeck(selectedRoomId, destRoom, wf.id);
+                              refreshState();
+                              showFeedback(
+                                `MOVED [${wf.shortTitle.toUpperCase()}] \u2192 [${destRoom.toUpperCase()}]`
+                              );
+                            }}
+                            className="bg-[#131a29] border border-[#1e293b] text-[9px] text-[#38bdf8] px-1 py-0.5 outline-none cursor-pointer"
+                          >
+                            <option value="">Select room...</option>
+                            {allRoomIds
+                              .filter((rId) => rId !== selectedRoomId)
+                              .map((rId) => (
+                                <option key={rId} value={rId}>
+                                  &rarr; {allRooms[rId]?.shortBadge || rId.toUpperCase()}
+                                </option>
+                              ))}
+                          </select>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
           )}
         </div>

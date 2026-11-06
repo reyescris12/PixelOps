@@ -16,10 +16,20 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { RoomId } from '../engine/roomData';
+import { getAllRooms, getAllRoomIds } from '../engine/roomManager';
 import {
   getPlaybooksForRoom,
+  INTELLIGENCE_PLAYBOOKS,
   IntelligencePlaybookDef,
   loadUserPlaybookTargets,
+  ALL_WORKFLOW_DECK_ITEMS,
+  RoomWorkflowItemId,
+  getRoomWorkflowDeckItems,
+  toggleWorkflowInRoomDeck,
+  moveWorkflowToRoomDeck,
+  reorderWorkflowInRoomDeck,
+  resetRoomWorkflowDecksToDefault,
+  subscribeRoomWorkflowDecks,
 } from '../engine/intelligencePlaybooks';
 import { getRoomBoundSkills, subscribeModuleRegistry } from '../engine/moduleRegistry';
 import {
@@ -53,9 +63,13 @@ import {
   Copy,
   ChevronRight,
   ChevronDown,
+  ChevronUp,
   X,
   ExternalLink,
   Zap,
+  SlidersHorizontal,
+  ArrowRightLeft,
+  RotateCcw,
 } from 'lucide-react';
 
 interface RoomActionPlaybookPanelProps {
@@ -111,6 +125,7 @@ export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = (
   // Auto-collapse floating panel on room change so it never obstructs newly viewed sectors
   useEffect(() => {
     setIsFloatingOpen(false);
+    setIsCustomizingDeck(false);
   }, [currentRoom]);
 
   // Click-outside and Escape key listener when floating HUD is open
@@ -145,10 +160,20 @@ export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = (
   const playbooks = getPlaybooksForRoom(currentRoom);
   const storedTargets = loadUserPlaybookTargets();
   const [, setRegistryTick] = useState(0);
+  const [isCustomizingDeck, setIsCustomizingDeck] = useState(false);
 
   useEffect(() => {
-    return subscribeModuleRegistry(() => setRegistryTick((t) => t + 1));
+    const unsub1 = subscribeModuleRegistry(() => setRegistryTick((t) => t + 1));
+    const unsub2 = subscribeRoomWorkflowDecks(() => setRegistryTick((t) => t + 1));
+    return () => {
+      unsub1();
+      unsub2();
+    };
   }, []);
+
+  const roomDeckItems = getRoomWorkflowDeckItems(currentRoom);
+  const allRooms = getAllRooms();
+  const allRoomIds = getAllRoomIds();
 
   const roomBoundSkills = getRoomBoundSkills(currentRoom);
   const hasSatelliteModuleInRoom =
@@ -786,525 +811,466 @@ export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = (
   }
 
   // ==========================================
-  // FLOATING HUD VARIANT (Collapsible & Unobtrusive)
+  // FLOATING HUD VARIANT (Unified Customizable Sector Workflow Deck)
   // ==========================================
 
-  // --- PILLAR 1: Pocket Recon & Watchtower (COMMS TOWER & BASEMENT) ---
-  if (currentRoom === 'comms_tower' || currentRoom === 'archive_basement') {
-    return (
-      <div
-        ref={floatingRef}
-        className={`absolute top-2 right-2 sm:right-3 z-30 pointer-events-auto font-mono-tabular ${className}`}
-      >
-        {!isFloatingOpen ? (
+  const gmailConnected = isAppConnected('gmail');
+  const calendarConnected = isAppConnected('googlecalendar') || isAppConnected('calendar');
+  const githubConnected = isAppConnected('github');
+
+  const agent = activeCrewAgent;
+  const clearanceLvl = (agent?.clearanceLevel || 1) as ClearanceLevelNumber;
+  const clearance = CLEARANCE_RANKS[clearanceLvl];
+  const xp = agent?.xp || 0;
+  const minXp = clearance.minXp;
+  const maxXp = clearance.maxXp;
+  const nextTargetXp = maxXp === Infinity ? 500 : maxXp;
+  const progressPct =
+    maxXp === Infinity
+      ? 100
+      : Math.min(100, Math.max(0, Math.round(((xp - minXp) / (maxXp - minXp)) * 100)));
+  const activeRibbons = (agent?.serviceRibbons || []) as ServiceRibbonId[];
+  const agentDisplayName = agent?.customName || agent?.defaultName || 'Operative';
+
+  const currentRoomBadge =
+    allRooms[currentRoom]?.shortBadge || currentRoom.toUpperCase().replace(/_/g, ' ');
+
+  const isAmberRoom = currentRoom === 'war_room' || currentRoom === 'server_vault';
+  const isPurpleRoom = currentRoom === 'briefing_lounge' || currentRoom === 'armory';
+  const isEmeraldRoom =
+    currentRoom === 'library' || roomDeckItems.includes('live_satellite_recon');
+
+  const accentHex = isAmberRoom
+    ? '#e59838'
+    : isPurpleRoom
+    ? '#c084fc'
+    : isEmeraldRoom
+    ? '#34d399'
+    : '#38bdf8';
+
+  const borderHex = isAmberRoom
+    ? '#e59838'
+    : isPurpleRoom
+    ? '#a855f7'
+    : isEmeraldRoom
+    ? '#10b981'
+    : '#38bdf8';
+
+  const renderDeckItem = (itemId: RoomWorkflowItemId) => {
+    const def = ALL_WORKFLOW_DECK_ITEMS.find((i) => i.id === itemId);
+    if (!def) return null;
+
+    if (itemId === 'live_satellite_recon') {
+      if (!onOpenReconMonitor) return null;
+      return (
+        <button
+          key={itemId}
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setIsFloatingOpen(false);
+            playBeep('tap');
+            onOpenReconMonitor();
+          }}
+          className="w-full text-left p-1.5 bg-[#0a1f17] hover:bg-[#113326] border border-[#10b981]/60 hover:border-[#34d399] transition-all cursor-pointer flex items-center justify-between gap-1.5 group"
+        >
+          <div className="min-w-0">
+            <div className="text-[11px] font-bold text-[#34d399] flex items-center gap-1.5 truncate">
+              <span>🛰️</span>
+              <span className="truncate">Live Satellite Recon Monitor</span>
+            </div>
+            <div className="text-[9px] text-[#a7f3d0] truncate mt-0.5">
+              NASA GIBS &amp; Esri Orbital Overlay
+            </div>
+          </div>
+          <ChevronRight className="w-3.5 h-3.5 text-[#34d399] shrink-0" />
+        </button>
+      );
+    }
+
+    if (itemId === 'open_vfs_files') {
+      if (!onOpenVfs) return null;
+      return (
+        <button
+          key={itemId}
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setIsFloatingOpen(false);
+            playBeep('tap');
+            onOpenVfs('intel/');
+          }}
+          className="w-full text-left p-1.5 bg-[#101c2a] hover:bg-[#17283b] border border-[#38bdf8]/50 hover:border-[#38bdf8] transition-all cursor-pointer flex items-center justify-between gap-1.5 group"
+        >
+          <div className="min-w-0">
+            <div className="text-[11px] font-bold text-[#38bdf8] flex items-center gap-1.5 truncate">
+              <span>📂</span>
+              <span className="truncate">Open VFS Vault Files</span>
+            </div>
+            <div className="text-[9px] text-[#94a3b8] truncate mt-0.5">
+              Browse /intel/ dossiers &amp; classified feeds
+            </div>
+          </div>
+          <ChevronRight className="w-3.5 h-3.5 text-[#38bdf8] shrink-0" />
+        </button>
+      );
+    }
+
+    if (itemId === 'operative_dossier') {
+      return (
+        <div
+          key={itemId}
+          className="p-1.5 bg-[#141221] border border-[#3d2956] flex flex-col gap-1.5"
+        >
+          <div className="flex items-center justify-between">
+            <div className="text-[11px] font-bold text-[#f3ead8] flex items-center gap-1.5 truncate">
+              <span>🪪</span>
+              <span className="truncate">{agentDisplayName}</span>
+              <span className="text-[9px] text-[#94a3b8]">({agent?.role})</span>
+            </div>
+            <span
+              className="text-[9px] font-bold px-1.5 py-0.2 border shrink-0"
+              style={{
+                color: clearance.terminalRGB,
+                borderColor: `${clearance.terminalRGB}66`,
+                backgroundColor: `${clearance.terminalRGB}15`,
+              }}
+            >
+              {clearance.badge} · {xp} XP
+            </span>
+          </div>
+
+          <div className="w-full h-1.5 bg-[#1f192b] overflow-hidden border border-[#3d2956]">
+            <div
+              className="h-full transition-all duration-500"
+              style={{
+                width: `${progressPct}%`,
+                backgroundColor: clearance.terminalRGB,
+              }}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-1">
+            {Object.entries(SERVICE_RIBBONS).map(([key, rDef]) => {
+              const isEarned = activeRibbons.includes(key as ServiceRibbonId);
+              return (
+                <div
+                  key={key}
+                  className={`p-1 border text-[8px] flex items-center gap-1 truncate ${
+                    isEarned
+                      ? 'bg-[#122319] text-[#4ade80] border-[#22c55e]/50 font-bold'
+                      : 'bg-[#10141c] text-[#475569] border-[#1e293b] opacity-60'
+                  }`}
+                  title={isEarned ? `${rDef.title}: ${rDef.description}` : `Locked: ${rDef.description}`}
+                >
+                  <span>{rDef.icon}</span>
+                  <span className="truncate">{rDef.title}</span>
+                </div>
+              );
+            })}
+          </div>
+
           <button
             type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              playBeep('tap');
-              setIsFloatingOpen(true);
-            }}
-            className="px-2 py-1 bg-[#0b1017]/85 hover:bg-[#121c29] text-[#38bdf8] border border-[#38bdf8]/60 hover:border-[#38bdf8] text-[10px] font-bold backdrop-blur-sm cursor-pointer flex items-center gap-1.5 shadow-[0_2px_10px_rgba(0,0,0,0.6)] active:scale-95 transition-all"
-            title="Open Sector Workflow Deck (3 workflows)"
+            onClick={handleExportDossierCard}
+            className="w-full py-1 px-2 bg-[#a855f7] text-[#0d0914] font-bold text-[10px] border border-[#a855f7] hover:bg-[#9333ea] cursor-pointer transition-all flex items-center justify-center gap-1"
           >
-            <Radar className="w-3 h-3 text-[#38bdf8]" />
-            <span>[📡 SECTOR WORKFLOW DECK (3) ▾]</span>
+            {copiedDossier ? (
+              <>
+                <Check className="w-3 h-3 text-[#0d0914]" />
+                <span>DOSSIER COPIED &amp; SAVED!</span>
+              </>
+            ) : (
+              <>
+                <Copy className="w-3 h-3" />
+                <span>[🪪 EXPORT OPERATIVE DOSSIER]</span>
+              </>
+            )}
           </button>
-        ) : (
-          <div className="bg-[#0b1017]/96 border border-[#38bdf8] shadow-[0_0_24px_rgba(56,189,248,0.35)] p-2 sm:p-2.5 backdrop-blur-md flex flex-col gap-1.5 max-w-[280px] sm:max-w-[320px] animate-in fade-in zoom-in-95 duration-150">
-            {/* Deck Header */}
-            <div className="flex items-center justify-between gap-2 border-b border-[#1e344e] pb-1">
-              <span className="text-[10px] text-[#94a3b8] uppercase font-bold tracking-wider flex items-center gap-1">
-                <Radar className="w-3 h-3 text-[#38bdf8]" />
-                <span>WATCHTOWER RECON DECK</span>
+        </div>
+      );
+    }
+
+    if (def.playbookId) {
+      const pb = INTELLIGENCE_PLAYBOOKS[def.playbookId];
+      if (!pb) return null;
+      const target = storedTargets[pb.id]?.targetName || 'Default Target';
+
+      let appBadge: string | null = null;
+      let isConnected = false;
+      if (pb.id === 'triage_gmail') {
+        appBadge = 'GMAIL';
+        isConnected = gmailConnected;
+      } else if (pb.id === 'calendar_brief') {
+        appBadge = 'GCAL';
+        isConnected = calendarConnected;
+      } else if (pb.id === 'sync_github') {
+        appBadge = 'GITHUB';
+        isConnected = githubConnected;
+      }
+
+      return (
+        <button
+          key={itemId}
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            setIsFloatingOpen(false);
+            playBeep('tap');
+            onExecutePlaybook(pb);
+          }}
+          disabled={isExecuting}
+          className="w-full text-left p-1.5 bg-[#121924] hover:bg-[#192536] border border-[#23354d] hover:border-[#38bdf8] transition-all cursor-pointer flex items-center justify-between gap-1.5 group disabled:opacity-50"
+        >
+          <div className="min-w-0">
+            <div className="text-[11px] font-bold text-[#f3ead8] flex items-center gap-1.5 truncate group-hover:text-[#38bdf8]">
+              <span>{pb.icon}</span>
+              <span className="truncate">{pb.shortTitle}</span>
+            </div>
+            <div className="text-[9px] text-[#94a3b8] truncate mt-0.5 flex items-center gap-1">
+              <span>{pb.assignedOperativeName}</span>
+              <span>·</span>
+              <span className="text-[#fbbf24] truncate">[{target}]</span>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-1.5 shrink-0">
+            {appBadge && (
+              <span
+                className={`text-[8px] font-bold px-1 py-0.2 border flex items-center gap-1 ${
+                  isConnected
+                    ? 'bg-[#102919] text-[#4ade80] border-[#22c55e]/40'
+                    : 'bg-[#2b1f11] text-[#fbbf24] border-[#f59e0b]/40'
+                }`}
+              >
+                <span
+                  className={`w-1 h-1 rounded-full ${
+                    isConnected ? 'bg-[#4ade80]' : 'bg-[#fbbf24]'
+                  }`}
+                />
+                <span>{appBadge}</span>
               </span>
-              <div className="flex items-center gap-1">
-                <span className="text-[9px] px-1 bg-[#102236] text-[#38bdf8] border border-[#38bdf8]/40 font-bold">
-                  {currentRoom === 'archive_basement' ? 'BASEMENT' : 'COMMS'}
-                </span>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setIsFloatingOpen(false);
-                    playBeep('tap');
-                  }}
-                  className="p-0.5 text-[#94a3b8] hover:text-[#f3ead8] hover:bg-[#1a293d] cursor-pointer transition-colors"
-                  title="Minimize deck"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            </div>
+            )}
+            <ChevronRight className="w-3.5 h-3.5 text-[#64748b] group-hover:text-[#38bdf8] shrink-0" />
+          </div>
+        </button>
+      );
+    }
 
-            <div className="text-[10px] text-[#cbd5e1] leading-tight">
-              Deploy automated OSINT sweeps & continuous watchtower surveillance:
-            </div>
+    return null;
+  };
 
-            {/* 3 Universal 1-Tap Mission Buttons */}
-            <div className="flex flex-col gap-1.5 pt-0.5">
-              {playbooks.map((pb) => {
-                const target = storedTargets[pb.id]?.targetName || 'Default Target';
-                return (
-                  <button
-                    key={pb.id}
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setIsFloatingOpen(false);
-                      playBeep('tap');
-                      onExecutePlaybook(pb);
-                    }}
-                    disabled={isExecuting}
-                    className="w-full text-left p-1.5 bg-[#121c29] hover:bg-[#1a293d] border border-[#233852] hover:border-[#38bdf8] transition-all cursor-pointer flex items-center justify-between gap-1.5 group disabled:opacity-50"
-                  >
-                    <div className="min-w-0">
-                      <div className="text-[11px] font-bold text-[#f3ead8] flex items-center gap-1.5 truncate group-hover:text-[#38bdf8]">
-                        <span>{pb.icon}</span>
-                        <span className="truncate">{pb.shortTitle}</span>
-                      </div>
-                      <div className="text-[9px] text-[#94a3b8] truncate mt-0.5 flex items-center gap-1">
-                        <span>{pb.assignedOperativeName}</span>
-                        <span>·</span>
-                        <span className="text-[#fbbf24] truncate">[{target}]</span>
-                      </div>
-                    </div>
-                    <ChevronRight className="w-3.5 h-3.5 text-[#64748b] group-hover:text-[#38bdf8] shrink-0" />
-                  </button>
-                );
-              })}
-            </div>
-
-            {/* Basement VFS Files Link */}
-            {currentRoom === 'archive_basement' && onOpenVfs && (
+  return (
+    <div
+      ref={floatingRef}
+      className={`absolute top-2 right-2 sm:right-3 z-30 pointer-events-auto font-mono-tabular ${className}`}
+    >
+      {!isFloatingOpen ? (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            playBeep('tap');
+            setIsFloatingOpen(true);
+          }}
+          style={{
+            color: accentHex,
+            borderColor: `${borderHex}aa`,
+          }}
+          className="px-2 py-1 bg-[#0b1017]/90 hover:bg-[#131d2b] border text-[10px] font-bold backdrop-blur-sm cursor-pointer flex items-center gap-1.5 shadow-[0_2px_10px_rgba(0,0,0,0.65)] active:scale-95 transition-all"
+          title={`Open Sector Workflow Deck for ${currentRoomBadge} (${roomDeckItems.length} workflows)`}
+        >
+          <Radar className="w-3 h-3" style={{ color: accentHex }} />
+          <span>[⚡ SECTOR WORKFLOW DECK ({roomDeckItems.length}) ▾]</span>
+        </button>
+      ) : (
+        <div
+          style={{ borderColor: borderHex }}
+          className="bg-[#0b1017]/96 border shadow-[0_0_24px_rgba(0,0,0,0.75)] p-2 sm:p-2.5 backdrop-blur-md flex flex-col gap-1.5 w-[290px] sm:w-[340px] max-h-[48dvh] overflow-y-auto animate-in fade-in zoom-in-95 duration-150"
+        >
+          {/* Deck Header */}
+          <div className="flex items-center justify-between gap-2 border-b border-[#1e2d3d] pb-1">
+            <span
+              style={{ color: accentHex }}
+              className="text-[10px] uppercase font-bold tracking-wider flex items-center gap-1 truncate"
+            >
+              <Radar className="w-3 h-3 shrink-0" />
+              <span className="truncate">{currentRoomBadge} WORKFLOW DECK</span>
+            </span>
+            <div className="flex items-center gap-1 shrink-0">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  playBeep('tap');
+                  setIsCustomizingDeck((prev) => !prev);
+                }}
+                className={`px-1.5 py-0.5 text-[9px] font-bold border cursor-pointer flex items-center gap-1 transition-colors ${
+                  isCustomizingDeck
+                    ? 'bg-[#e59838]/20 text-[#fde047] border-[#e59838]'
+                    : 'bg-[#131e2e] text-[#94a3b8] hover:text-[#f3ead8] border-[#263850]'
+                }`}
+                title="Customize which workflows appear in this room's deck or move them to another room"
+              >
+                <SlidersHorizontal className="w-2.5 h-2.5" />
+                <span>{isCustomizingDeck ? 'DONE' : 'EDIT DECK'}</span>
+              </button>
               <button
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
                   setIsFloatingOpen(false);
+                  setIsCustomizingDeck(false);
                   playBeep('tap');
-                  onOpenVfs('intel/');
                 }}
-                className="mt-1 py-1 px-2 bg-[#142333] hover:bg-[#1b324a] text-[#38bdf8] border border-[#38bdf8]/50 text-[10px] font-bold cursor-pointer transition-colors flex items-center justify-center gap-1"
+                className="p-0.5 text-[#94a3b8] hover:text-[#f3ead8] hover:bg-[#1a293d] cursor-pointer transition-colors"
+                title="Minimize deck"
               >
-                <FolderArchive className="w-3 h-3" />
-                <span>[📂 OPEN BASEMENT VFS FILES]</span>
+                <X className="w-3.5 h-3.5" />
               </button>
-            )}
+            </div>
           </div>
-        )}
-      </div>
-    );
-  }
 
-  // --- PILLAR 2: 1-Click Cross-App Operator (WAR ROOM & SERVER VAULT) ---
-  if (currentRoom === 'war_room' || currentRoom === 'server_vault') {
-    const gmailConnected = isAppConnected('gmail');
-    const calendarConnected = isAppConnected('googlecalendar') || isAppConnected('calendar');
-    const githubConnected = isAppConnected('github');
-
-    return (
-      <div
-        ref={floatingRef}
-        className={`absolute top-2 right-2 sm:right-3 z-30 pointer-events-auto font-mono-tabular ${className}`}
-      >
-        {!isFloatingOpen ? (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              playBeep('tap');
-              setIsFloatingOpen(true);
-            }}
-            className="px-2 py-1 bg-[#0b1017]/85 hover:bg-[#21170d] text-[#e59838] border border-[#e59838]/60 hover:border-[#e59838] text-[10px] font-bold backdrop-blur-sm cursor-pointer flex items-center gap-1.5 shadow-[0_2px_10px_rgba(0,0,0,0.6)] active:scale-95 transition-all"
-            title="Open Sector Workflow Deck (3 actions)"
-          >
-            <Zap className="w-3 h-3 text-[#e59838]" />
-            <span>[⚡ SECTOR WORKFLOW DECK (3) ▾]</span>
-          </button>
-        ) : (
-          <div className="bg-[#0b1017]/96 border border-[#e59838] shadow-[0_0_24px_rgba(229,152,56,0.35)] p-2 sm:p-2.5 backdrop-blur-md flex flex-col gap-1.5 max-w-[280px] sm:max-w-[320px] animate-in fade-in zoom-in-95 duration-150">
-            {/* Deck Header */}
-            <div className="flex items-center justify-between gap-2 border-b border-[#3b2d18] pb-1">
-              <span className="text-[10px] text-[#94a3b8] uppercase font-bold tracking-wider flex items-center gap-1">
-                <Zap className="w-3 h-3 text-[#e59838]" />
-                <span>TACTICAL OPERATOR DECK</span>
-              </span>
-              <div className="flex items-center gap-1">
-                <span className="text-[9px] px-1 bg-[#261d10] text-[#e59838] border border-[#e59838]/40 font-bold">
-                  {currentRoom === 'war_room' ? 'WAR ROOM' : 'VAULT'}
-                </span>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setIsFloatingOpen(false);
-                    playBeep('tap');
-                  }}
-                  className="p-0.5 text-[#94a3b8] hover:text-[#f3ead8] hover:bg-[#261d10] cursor-pointer transition-colors"
-                  title="Minimize deck"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            </div>
-
-            <div className="text-[10px] text-[#cbd5e1] leading-tight">
-              1-Click automations connected to your personal apps via Composio:
-            </div>
-
-            {/* 3 Cross-App Playbook Buttons with Connection Dots */}
-            <div className="flex flex-col gap-1.5 pt-0.5">
-              {playbooks.map((pb) => {
-                const target = storedTargets[pb.id]?.targetName || 'Default Target';
-                let isConnected = false;
-                let appBadge = 'APP';
-
-                if (pb.id === 'triage_gmail') {
-                  isConnected = gmailConnected;
-                  appBadge = 'GMAIL';
-                } else if (pb.id === 'calendar_brief') {
-                  isConnected = calendarConnected;
-                  appBadge = 'GCAL';
-                } else if (pb.id === 'sync_github') {
-                  isConnected = githubConnected;
-                  appBadge = 'GITHUB';
-                }
-
-                return (
+          {!isCustomizingDeck ? (
+            <>
+              {roomDeckItems.length === 0 ? (
+                <div className="p-2.5 text-center bg-[#0f1622] border border-[#1e293b] text-[10px] text-[#94a3b8]">
+                  No workflows assigned to {currentRoomBadge}. Click{' '}
                   <button
-                    key={pb.id}
                     type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setIsFloatingOpen(false);
-                      playBeep('tap');
-                      onExecutePlaybook(pb);
-                    }}
-                    disabled={isExecuting}
-                    className="w-full text-left p-1.5 bg-[#17140f] hover:bg-[#261e14] border border-[#3d2e1b] hover:border-[#e59838] transition-all cursor-pointer flex items-center justify-between gap-1.5 group disabled:opacity-50"
+                    onClick={() => setIsCustomizingDeck(true)}
+                    className="text-[#38bdf8] underline font-bold cursor-pointer"
                   >
-                    <div className="min-w-0">
-                      <div className="text-[11px] font-bold text-[#f3ead8] flex items-center gap-1.5 truncate group-hover:text-[#e59838]">
-                        <span>{pb.icon}</span>
-                        <span className="truncate">{pb.shortTitle}</span>
-                      </div>
-                      <div className="text-[9px] text-[#94a3b8] truncate mt-0.5 flex items-center gap-1">
-                        <span>{pb.assignedOperativeName}</span>
-                        <span>·</span>
-                        <span className="text-[#fbbf24] truncate">[{target}]</span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <span
-                        className={`text-[8px] font-bold px-1 py-0.2 border flex items-center gap-1 ${
-                          isConnected
-                            ? 'bg-[#102919] text-[#4ade80] border-[#22c55e]/40'
-                            : 'bg-[#2b1f11] text-[#fbbf24] border-[#f59e0b]/40'
-                        }`}
-                      >
-                        <span
-                          className={`w-1 h-1 rounded-full ${
-                            isConnected ? 'bg-[#4ade80]' : 'bg-[#fbbf24]'
-                          }`}
-                        />
-                        <span>{appBadge}</span>
-                      </span>
-                      <ChevronRight className="w-3.5 h-3.5 text-[#64748b] group-hover:text-[#e59838]" />
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // --- PILLAR 3: Operative Progression & Loadout Deck (LOUNGE & ARMORY) ---
-  if (currentRoom === 'briefing_lounge' || currentRoom === 'armory') {
-    const agent = activeCrewAgent;
-    const clearanceLvl = (agent?.clearanceLevel || 1) as ClearanceLevelNumber;
-    const clearance = CLEARANCE_RANKS[clearanceLvl];
-    const xp = agent?.xp || 0;
-    const minXp = clearance.minXp;
-    const maxXp = clearance.maxXp;
-    const nextTargetXp = maxXp === Infinity ? 500 : maxXp;
-    const progressPct =
-      maxXp === Infinity
-        ? 100
-        : Math.min(100, Math.max(0, Math.round(((xp - minXp) / (maxXp - minXp)) * 100)));
-
-    const activeRibbons = (agent?.serviceRibbons || []) as ServiceRibbonId[];
-    const agentDisplayName = agent?.customName || agent?.defaultName || 'Operative';
-
-    return (
-      <div
-        ref={floatingRef}
-        className={`absolute top-2 right-2 sm:right-3 z-30 pointer-events-auto font-mono-tabular ${className}`}
-      >
-        {!isFloatingOpen ? (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              playBeep('tap');
-              setIsFloatingOpen(true);
-            }}
-            className="px-2 py-1 bg-[#0b1017]/85 hover:bg-[#1e1329] text-[#c084fc] border border-[#a855f7]/60 hover:border-[#a855f7] text-[10px] font-bold backdrop-blur-sm cursor-pointer flex items-center gap-1.5 shadow-[0_2px_10px_rgba(0,0,0,0.6)] active:scale-95 transition-all"
-            title="Open Operative Progression Deck"
-          >
-            <Award className="w-3 h-3 text-[#c084fc]" />
-            <span>[🪪 {clearance.badge} · {xp} XP ▾]</span>
-          </button>
-        ) : (
-          <div className="bg-[#0c1017]/96 border border-[#a855f7] shadow-[0_0_24px_rgba(168,85,247,0.35)] p-2 sm:p-2.5 backdrop-blur-md flex flex-col gap-1.5 max-w-[280px] sm:max-w-[320px] animate-in fade-in zoom-in-95 duration-150">
-            {/* Deck Header */}
-            <div className="flex items-center justify-between gap-2 border-b border-[#341d4e] pb-1">
-              <span className="text-[10px] text-[#94a3b8] uppercase font-bold tracking-wider flex items-center gap-1">
-                <Award className="w-3 h-3 text-[#c084fc]" />
-                <span>OPERATIVE LOADOUT</span>
-              </span>
-              <div className="flex items-center gap-1">
-                <span className="text-[9px] px-1 bg-[#251336] text-[#c084fc] border border-[#a855f7]/40 font-bold">
-                  {currentRoom === 'armory' ? 'ARMORY' : 'LOUNGE'}
-                </span>
+                    EDIT DECK
+                  </button>{' '}
+                  to add workflows here.
+                </div>
+              ) : (
+                <div className="flex flex-col gap-1.5 pt-0.5">
+                  {roomDeckItems.map((itemId) => renderDeckItem(itemId))}
+                </div>
+              )}
+            </>
+          ) : (
+            /* Interactive Deck Customizer: Toggle, Reorder, or Move Workflows to Another Room */
+            <div className="flex flex-col gap-1.5 pt-0.5">
+              <div className="flex items-center justify-between text-[9px] text-[#94a3b8] bg-[#0f1724] px-2 py-1 border border-[#1e293b]">
+                <span>Check to show in {currentRoomBadge}, or move to another room:</span>
                 <button
                   type="button"
                   onClick={(e) => {
                     e.stopPropagation();
-                    setIsFloatingOpen(false);
                     playBeep('tap');
+                    resetRoomWorkflowDecksToDefault();
                   }}
-                  className="p-0.5 text-[#94a3b8] hover:text-[#f3ead8] hover:bg-[#251336] cursor-pointer transition-colors"
-                  title="Minimize deck"
+                  className="text-[#e59838] hover:text-[#fde047] font-bold flex items-center gap-0.5 cursor-pointer shrink-0 ml-1"
+                  title="Reset all room workflow decks to defaults"
                 >
-                  <X className="w-3.5 h-3.5" />
+                  <RotateCcw className="w-2.5 h-2.5" />
+                  <span>RESET</span>
                 </button>
               </div>
-            </div>
 
-            {/* Active Agent Profile Card */}
-            <div className="p-1.5 bg-[#141221] border border-[#2b1f40] flex flex-col gap-1">
-              <div className="flex items-center justify-between">
-                <div className="text-[11px] font-bold text-[#f3ead8] flex items-center gap-1.5">
-                  <span className="text-sm">🪪</span>
-                  <span>{agentDisplayName}</span>
-                  <span className="text-[9px] text-[#94a3b8]">({agent?.role})</span>
-                </div>
-                <span
-                  className="text-[9px] font-bold px-1.5 py-0.2 border"
-                  style={{
-                    color: clearance.terminalRGB,
-                    borderColor: `${clearance.terminalRGB}66`,
-                    backgroundColor: `${clearance.terminalRGB}15`,
-                  }}
-                >
-                  {clearance.badge}
-                </span>
-              </div>
-
-              <div className="text-[10px] font-semibold" style={{ color: clearance.terminalRGB }}>
-                {clearance.title}
-              </div>
-
-              {/* XP Progress Bar */}
-              <div className="mt-1">
-                <div className="flex items-center justify-between text-[9px] text-[#94a3b8] mb-0.5">
-                  <span>CLEARANCE XP</span>
-                  <span className="font-bold text-[#f3ead8]">
-                    {xp} / {nextTargetXp} XP ({progressPct}%)
-                  </span>
-                </div>
-                <div className="w-full h-1.5 bg-[#1f192b] overflow-hidden border border-[#3d2956]">
-                  <div
-                    className="h-full transition-all duration-500"
-                    style={{
-                      width: `${progressPct}%`,
-                      backgroundColor: clearance.terminalRGB,
-                    }}
-                  />
-                </div>
-              </div>
-
-              {/* Missions Completed Counter */}
-              <div className="text-[9px] text-[#94a3b8] flex items-center justify-between pt-0.5">
-                <span>Missions Verified:</span>
-                <strong className="text-[#4ade80]">{agent?.missionsCompleted || 0} completed</strong>
-              </div>
-            </div>
-
-            {/* Service Ribbons Bar */}
-            <div className="p-1.5 bg-[#0f1420] border border-[#1e273a] flex flex-col gap-1">
-              <div className="text-[9px] uppercase font-bold text-[#94a3b8] flex items-center justify-between">
-                <span>EARNED SERVICE RIBBONS</span>
-                <span className="text-[#38bdf8]">{activeRibbons.length}/4</span>
-              </div>
-              <div className="grid grid-cols-2 gap-1">
-                {Object.entries(SERVICE_RIBBONS).map(([key, def]) => {
-                  const isEarned = activeRibbons.includes(key as ServiceRibbonId);
+              <div className="flex flex-col gap-1 max-h-[34dvh] overflow-y-auto pr-0.5">
+                {ALL_WORKFLOW_DECK_ITEMS.map((item) => {
+                  const isAssignedHere = roomDeckItems.includes(item.id);
+                  const orderIdx = roomDeckItems.indexOf(item.id);
                   return (
                     <div
-                      key={key}
-                      className={`p-1 border text-[9px] flex items-center gap-1 truncate ${
-                        isEarned
-                          ? 'bg-[#122319] text-[#4ade80] border-[#22c55e]/50 font-bold'
-                          : 'bg-[#10141c] text-[#475569] border-[#1e293b] opacity-60'
+                      key={item.id}
+                      className={`p-1.5 border text-[10px] flex flex-col gap-1 transition-colors ${
+                        isAssignedHere
+                          ? 'bg-[#10221c] border-[#10b981]/60 text-[#f3ead8]'
+                          : 'bg-[#0e131d] border-[#1e293b] text-[#94a3b8]'
                       }`}
-                      title={isEarned ? `${def.title}: ${def.description}` : `Locked: ${def.description}`}
                     >
-                      <span>{def.icon}</span>
-                      <span className="truncate">{def.title}</span>
+                      <div className="flex items-center justify-between gap-1.5">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            playBeep('tap');
+                            toggleWorkflowInRoomDeck(currentRoom, item.id);
+                          }}
+                          className="flex items-center gap-1.5 text-left min-w-0 flex-1 cursor-pointer"
+                        >
+                          <span
+                            className={`w-3.5 h-3.5 flex items-center justify-center border text-[9px] font-bold shrink-0 ${
+                              isAssignedHere
+                                ? 'bg-[#10b981] border-[#34d399] text-[#04120c]'
+                                : 'bg-[#090d14] border-[#334155] text-transparent'
+                            }`}
+                          >
+                            ✓
+                          </span>
+                          <span className="shrink-0">{item.icon}</span>
+                          <span className="font-bold truncate">{item.shortTitle}</span>
+                        </button>
+
+                        {isAssignedHere && roomDeckItems.length > 1 && (
+                          <div className="flex items-center gap-0.5 shrink-0">
+                            <button
+                              type="button"
+                              disabled={orderIdx === 0}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                playBeep('tap');
+                                reorderWorkflowInRoomDeck(currentRoom, item.id, 'up');
+                              }}
+                              className="p-0.5 bg-[#162436] hover:bg-[#1f334d] text-[#cbd5e1] disabled:opacity-30 cursor-pointer"
+                              title="Move Up"
+                            >
+                              <ChevronUp className="w-3 h-3" />
+                            </button>
+                            <button
+                              type="button"
+                              disabled={orderIdx === roomDeckItems.length - 1}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                playBeep('tap');
+                                reorderWorkflowInRoomDeck(currentRoom, item.id, 'down');
+                              }}
+                              className="p-0.5 bg-[#162436] hover:bg-[#1f334d] text-[#cbd5e1] disabled:opacity-30 cursor-pointer"
+                              title="Move Down"
+                            >
+                              <ChevronDown className="w-3 h-3" />
+                            </button>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Move to another room selector */}
+                      <div className="flex items-center justify-between gap-1.5 pl-5 text-[9px]">
+                        <span className="text-[#64748b] truncate">{item.description}</span>
+                        <select
+                          value=""
+                          onChange={(e) => {
+                            const targetRoom = e.target.value;
+                            if (!targetRoom) return;
+                            playBeep('tap');
+                            moveWorkflowToRoomDeck(currentRoom, targetRoom, item.id);
+                          }}
+                          className="bg-[#090d14] border border-[#263850] text-[#38bdf8] px-1 py-0.5 text-[9px] rounded outline-none cursor-pointer shrink-0"
+                          title="Move this workflow to another room's deck"
+                        >
+                          <option value="">Move to room...</option>
+                          {allRoomIds
+                            .filter((rId) => rId !== currentRoom)
+                            .map((rId) => (
+                              <option key={rId} value={rId}>
+                                &rarr; {allRooms[rId]?.shortBadge || rId.toUpperCase()}
+                              </option>
+                            ))}
+                        </select>
+                      </div>
                     </div>
                   );
                 })}
               </div>
             </div>
-
-            {/* Unlockable Cosmetic Loadout Preview */}
-            <div className="p-1.5 bg-[#12141c] border border-[#212738] text-[9px] text-[#94a3b8]">
-              <span className="text-[#c084fc] font-bold">CLEARANCE UNLOCK: </span>
-              <span className="text-[#cbd5e1]">
-                Preset: {clearance.unlockedThemePreset} · Sprites: {clearance.unlockedVariants.join(', ')}
-              </span>
-            </div>
-
-            {/* Export Dossier Card Button */}
-            <button
-              type="button"
-              onClick={handleExportDossierCard}
-              className="w-full py-1.5 px-2 bg-[#a855f7] text-[#0d0914] font-bold text-[11px] border border-[#a855f7] hover:bg-[#9333ea] active:translate-y-0.5 cursor-pointer transition-all flex items-center justify-center gap-1.5 shadow-[0_0_12px_rgba(168,85,247,0.35)]"
-              title="Export shareable Operative Dossier Card to clipboard and file"
-            >
-              {copiedDossier ? (
-                <>
-                  <Check className="w-3.5 h-3.5 text-[#0d0914]" />
-                  <span>DOSSIER CARD COPIED & DOWNLOADED!</span>
-                </>
-              ) : (
-                <>
-                  <Copy className="w-3 h-3 fill-current" />
-                  <span>[🪪 EXPORT OPERATIVE DOSSIER CARD]</span>
-                </>
-              )}
-            </button>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  // --- LIBRARY / SATELLITE IMAGERY & DEEP RESEARCH FLOATING DECK ---
-  if (currentRoom === 'library' || hasSatelliteModuleInRoom) {
-    const totalCount = playbooks.length + (onOpenReconMonitor ? 1 : 0);
-    return (
-      <div
-        ref={floatingRef}
-        className={`absolute top-2 right-2 sm:right-3 z-30 pointer-events-auto font-mono-tabular ${className}`}
-      >
-        {!isFloatingOpen ? (
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              playBeep('tap');
-              setIsFloatingOpen(true);
-            }}
-            className="px-2 py-1 bg-[#061610]/90 hover:bg-[#0d291e] text-[#34d399] border border-[#10b981]/70 hover:border-[#34d399] text-[10px] font-bold backdrop-blur-sm cursor-pointer flex items-center gap-1.5 shadow-[0_2px_10px_rgba(0,0,0,0.6)] active:scale-95 transition-all"
-            title="Open Sector Workflow Deck"
-          >
-            <Radar className="w-3 h-3 text-[#34d399]" />
-            <span>[🛰️ SECTOR WORKFLOW DECK ({totalCount}) ▾]</span>
-          </button>
-        ) : (
-          <div className="bg-[#06120e]/96 border border-[#10b981] shadow-[0_0_24px_rgba(16,185,129,0.35)] p-2 sm:p-2.5 backdrop-blur-md flex flex-col gap-1.5 max-w-[280px] sm:max-w-[320px] animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between gap-2 border-b border-[#133829] pb-1">
-              <span className="text-[10px] text-[#a7f3d0] uppercase font-bold tracking-wider flex items-center gap-1">
-                <Radar className="w-3 h-3 text-[#34d399]" />
-                <span>SAT &amp; INTEL WORKFLOW DECK</span>
-              </span>
-              <div className="flex items-center gap-1">
-                <span className="text-[9px] px-1 bg-[#0b291e] text-[#34d399] border border-[#10b981]/40 font-bold">
-                  LIBRARY
-                </span>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setIsFloatingOpen(false);
-                    playBeep('tap');
-                  }}
-                  className="p-0.5 text-[#94a3b8] hover:text-[#f3ead8] hover:bg-[#113024] cursor-pointer transition-colors"
-                  title="Minimize deck"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            </div>
-
-            <div className="flex flex-col gap-1.5 pt-0.5">
-              {onOpenReconMonitor && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setIsFloatingOpen(false);
-                    playBeep('tap');
-                    onOpenReconMonitor();
-                  }}
-                  className="w-full text-left p-1.5 bg-[#0a1f17] hover:bg-[#113326] border border-[#10b981]/60 hover:border-[#34d399] transition-all cursor-pointer flex items-center justify-between gap-1.5 group"
-                >
-                  <div className="min-w-0">
-                    <div className="text-[11px] font-bold text-[#34d399] flex items-center gap-1.5 truncate">
-                      <span>🛰️</span>
-                      <span className="truncate">Live Satellite Recon Monitor</span>
-                    </div>
-                    <div className="text-[9px] text-[#a7f3d0] truncate mt-0.5">
-                      NASA GIBS &amp; Esri Orbital Overlay
-                    </div>
-                  </div>
-                  <ChevronRight className="w-3.5 h-3.5 text-[#34d399] shrink-0" />
-                </button>
-              )}
-
-              {playbooks.map((pb) => {
-                const target = storedTargets[pb.id]?.targetName || 'Default Target';
-                return (
-                  <button
-                    key={pb.id}
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setIsFloatingOpen(false);
-                      playBeep('tap');
-                      onExecutePlaybook(pb);
-                    }}
-                    disabled={isExecuting}
-                    className="w-full text-left p-1.5 bg-[#0d1922] hover:bg-[#152636] border border-[#1e3345] hover:border-[#34d399] transition-all cursor-pointer flex items-center justify-between gap-1.5 group disabled:opacity-50"
-                  >
-                    <div className="min-w-0">
-                      <div className="text-[11px] font-bold text-[#f3ead8] flex items-center gap-1.5 truncate group-hover:text-[#34d399]">
-                        <span>{pb.icon}</span>
-                        <span className="truncate">{pb.shortTitle}</span>
-                      </div>
-                      <div className="text-[9px] text-[#94a3b8] truncate mt-0.5 flex items-center gap-1">
-                        <span>{pb.assignedOperativeName}</span>
-                        <span>·</span>
-                        <span className="text-[#fbbf24] truncate">[{target}]</span>
-                      </div>
-                    </div>
-                    <ChevronRight className="w-3.5 h-3.5 text-[#64748b] group-hover:text-[#34d399] shrink-0" />
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  return null;
+          )}
+        </div>
+      )}
+    </div>
+  );
 };

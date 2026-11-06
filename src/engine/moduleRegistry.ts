@@ -191,7 +191,7 @@ export const AVAILABLE_SKILLS: SkillModuleDef[] = [
     systemPromptModifier:
       'You have access to open satellite reconnaissance imagery. Use osint_satellite_recon to generate high-resolution snapshot URLs of target coordinates.',
     providedTools: ['osint_satellite_recon'],
-    recommendedRoom: 'library',
+    recommendedRoom: 'comms_tower',
     iconName: 'Search',
   },
   {
@@ -214,12 +214,12 @@ const STATION_BINDINGS_STORAGE_KEY = 'pixelops_station_skill_bindings_v1';
 
 // Default initial bindings bridging rooms to capabilities
 const DEFAULT_ROOM_BINDINGS: Record<string, string[]> = {
-  comms_tower: ['api_gateway_plugin', 'web_search_plugin', 'osint_spectrum_plugin'],
+  comms_tower: ['api_gateway_plugin', 'web_search_plugin', 'osint_spectrum_plugin', 'osint_satellite_plugin'],
   war_room: ['code_sandbox_plugin', 'api_gateway_plugin', 'osint_hazard_plugin'],
   server_vault: ['code_sandbox_plugin', 'memory_lookup_plugin', 'osint_maritime_plugin'],
   armory: ['code_sandbox_plugin'],
   briefing_lounge: ['memory_lookup_plugin'],
-  library: ['web_search_plugin', 'osint_satellite_plugin'],
+  library: ['web_search_plugin', 'deep_research'],
   archive_basement: ['fs_storage_plugin', 'memory_lookup_plugin'],
   cyber_lab: ['code_sandbox_plugin', 'github_scraper'],
   quantum_vault: ['memory_lookup_plugin', 'crypto_vault'],
@@ -228,12 +228,12 @@ const DEFAULT_ROOM_BINDINGS: Record<string, string[]> = {
 
 const DEFAULT_STATION_BINDINGS: Record<string, string> = {
   comms_cipher_rig: 'api_gateway_plugin',
-  comms_dish_console: 'osint_spectrum_plugin',
+  comms_dish_console: 'osint_satellite_plugin',
   war_left_desk: 'code_sandbox_plugin',
   war_center_desk: 'osint_hazard_plugin',
   vault_laptop: 'memory_lookup_plugin',
   vault_core_rack: 'osint_maritime_plugin',
-  lib_front_desk: 'osint_satellite_plugin',
+  lib_front_desk: 'deep_research',
   lib_card_catalog: 'web_search_plugin',
   basement_omega_safe: 'fs_storage_plugin',
   cyber_bench: 'code_sandbox_plugin',

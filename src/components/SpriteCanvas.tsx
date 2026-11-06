@@ -2448,11 +2448,15 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
               <button
                 key={station.id}
                 type="button"
-                onMouseEnter={() => setHoveredStation(station)}
+                onMouseEnter={() =>
+                  setHoveredStation((prev) => (prev?.id === station.id ? prev : station))
+                }
                 onMouseLeave={() =>
                   setHoveredStation((prev) => (prev?.id === station.id ? null : prev))
                 }
-                onFocus={() => setHoveredStation(station)}
+                onFocus={() =>
+                  setHoveredStation((prev) => (prev?.id === station.id ? prev : station))
+                }
                 onBlur={() =>
                   setHoveredStation((prev) => (prev?.id === station.id ? null : prev))
                 }
@@ -2468,21 +2472,21 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
                   top: `${station.yPct}%`,
                   transform: 'translate(-50%, -100%)',
                 }}
-                className="absolute z-15 w-16 h-14 flex flex-col items-center justify-end pb-1 cursor-pointer group focus:outline-none"
+                className="absolute z-15 w-16 h-14 flex flex-col items-center justify-end pb-1 cursor-pointer group focus:outline-none overflow-visible"
                 aria-label={`${station.label} (${station.taskTag})`}
               >
-                {/* Only render subtle glowing pixel-art tooltip when an agent is actively interacting or user hovers */}
-                {(interactingAgent || isHovered) && (
-                  <span
-                    className={`font-mono-tabular text-[9px] sm:text-[10px] tracking-wider uppercase whitespace-nowrap pointer-events-none select-none transition-opacity ${
-                      isHovered
-                        ? `text-[#e59838] ${PIXEL_TEXT_SHADOW_AMBER}`
-                        : `text-[#4ade80]/90 ${PIXEL_TEXT_SHADOW_GREEN}`
-                    }`}
-                  >
-                    ◈ {station.label} {boundSkill ? `[${boundSkill.shortCode}]` : ''}
-                  </span>
-                )}
+                {/* Always mounted label with opacity transition so hovering never shifts layout or triggers mouseEnter/mouseLeave jitter */}
+                <span
+                  className={`absolute bottom-1 left-1/2 -translate-x-1/2 font-mono-tabular text-[9px] sm:text-[10px] tracking-wider uppercase whitespace-nowrap pointer-events-none select-none transition-opacity duration-100 ${
+                    interactingAgent || isHovered ? 'opacity-100' : 'opacity-0'
+                  } ${
+                    isHovered
+                      ? `text-[#e59838] ${PIXEL_TEXT_SHADOW_AMBER}`
+                      : `text-[#4ade80]/90 ${PIXEL_TEXT_SHADOW_GREEN}`
+                  }`}
+                >
+                  ◈ {station.label} {boundSkill ? `[${boundSkill.shortCode}]` : ''}
+                </span>
               </button>
             );
           })}
@@ -3173,9 +3177,9 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
         style={{ borderColor: 'var(--theme-border-color)' }}
       >
         {/* Row 1: All Operatives' Terminal Status Tags + Active Room Object Readout */}
-        <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center justify-between gap-2 min-h-[20px] overflow-hidden">
           {/* Sleek Terminal-Style Dynamic RGB / Amber Agent Status Tags */}
-          <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-3 shrink-0 overflow-x-auto no-scrollbar">
             {crewAgents.map((crew, idx) => {
               const st = liveAgents[idx];
               if (!crew || !st) return null;
@@ -3236,17 +3240,17 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
           </div>
 
           {/* Room Object Interaction Readout (Holo-Tables, Terminal Racks, etc.) */}
-          <div className="flex items-center gap-2 text-[10px] truncate">
+          <div className="flex items-center justify-end gap-2 text-[10px] truncate min-w-0 flex-1 text-right">
             {walkingTransition ? (
-              <span className="text-[#e59838] flex items-center gap-1">
-                <Footprints className="w-3 h-3 inline" />
-                <span>
+              <span className="text-[#e59838] flex items-center gap-1 truncate">
+                <Footprints className="w-3 h-3 inline shrink-0" />
+                <span className="truncate">
                   TRANSIT: {getRoomMeta(walkingTransition.fromRoom).shortBadge}{' '}
                   &rarr; {getRoomMeta(walkingTransition.toRoom).shortBadge}
                 </span>
               </span>
             ) : isRoutingCamera ? (
-              <span className="theme-text-primary theme-glow-text">
+              <span className="theme-text-primary theme-glow-text truncate">
                 CAMERA LOCK: {activeRoomMeta.shortBadge} [{activeRoomMeta.sectorCode}]
               </span>
             ) : interactingStationInRoom ? (
@@ -3261,7 +3265,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
                   : ' (CLICK TO ASSIGN)'}
               </span>
             ) : (
-              <span className="text-[#64748b]">
+              <span className="text-[#64748b] truncate">
                 SECTOR CLEAR · HOVER OR CLICK STATION TO ASSIGN
               </span>
             )}
@@ -3269,8 +3273,8 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
         </div>
 
         {/* Row 2: Unboxed Terminal Sector-Dispatch & Deck-Lift Controls */}
-        <div className="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-[#141a26] text-[10px]">
-          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
+        <div className="flex items-center justify-between gap-2 pt-1 border-t border-[#141a26] text-[10px] min-h-[24px] overflow-hidden">
+          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar min-w-0 flex-1">
             <span className="text-[#64748b] flex items-center gap-1 shrink-0">
               <ArrowRightLeft className="w-3 h-3 text-[#e59838]" />
               <span>DISPATCH {activeCrewMember.customName.toUpperCase()}:</span>
@@ -3280,7 +3284,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
                 key={targetRoom}
                 type="button"
                 onClick={() => onMoveAgentToRoom(activeCrewMember.id, targetRoom)}
-                className="text-[#e59838] hover:text-[#fde047] cursor-pointer whitespace-nowrap"
+                className="text-[#e59838] hover:text-[#fde047] cursor-pointer whitespace-nowrap shrink-0"
               >
                 [&rarr; {getRoomMeta(targetRoom).shortBadge}]
               </button>
@@ -3295,7 +3299,9 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
                 <button
                   key={st.id}
                   type="button"
-                  onMouseEnter={() => setHoveredStation(st)}
+                  onMouseEnter={() =>
+                    setHoveredStation((prev) => (prev?.id === st.id ? prev : st))
+                  }
                   onMouseLeave={() =>
                     setHoveredStation((prev) => (prev?.id === st.id ? null : prev))
                   }
@@ -3303,7 +3309,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
                     commandAgentWalkTo(activeAgentIdx, currentRoom, st.id);
                     playBeep('tap');
                   }}
-                  className={`cursor-pointer whitespace-nowrap transition-colors ${
+                  className={`cursor-pointer whitespace-nowrap shrink-0 transition-colors ${
                     isCurrentStation
                       ? 'text-[#4ade80] font-bold'
                       : 'text-[#94a3b8] hover:text-[#4ade80]'

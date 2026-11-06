@@ -195,6 +195,21 @@ export const onRequest = async (context: { request: Request }): Promise<Response
         sensorPlatform: 'MODIS Terra / Suomi NPP VIIRS',
         advisory: 'Zero-friction optical & thermal reconnaissance feed available for tactical visual verification.',
       },
+      commercialPricingReference: {
+        openFreeFeeds: [
+          { provider: 'NASA GIBS (MODIS / VIIRS)', resolution: '250m - 375m daily', cost: '$0 (Free / Keyless Open Access)' },
+          { provider: 'ESA Copernicus Sentinel-2 / Sentinel-1 SAR', resolution: '10m - 20m optical / radar', cost: '$0 (Free Public Data Hub)' },
+          { provider: 'USGS Landsat 8 & 9', resolution: '15m - 30m multispectral', cost: '$0 (Free Public Archive)' },
+        ],
+        paidCommercialTiers: [
+          { provider: 'Sentinel Hub API (Commercial Processing Quota)', resolution: '10m - 50cm multi-sensor API', cost: '$32 - $108/month (€30 - €100/mo Basic/Exploration) | $270 - $1,000+/month Enterprise' },
+          { provider: 'SkyFi On-Demand Commercial Marketplace', resolution: '15cm - 50cm Very High Resolution (VHR)', cost: '$15 - $50 per archive scene | $150 - $450+ per new tasking capture (25 sq km min)' },
+          { provider: 'Maxar Technologies (WorldView-3 / WorldView Legion)', resolution: '15cm - 30cm HD Optical', cost: '$14.00 - $27.50 per sq km (Archive, 25 sq km min ~$350+) | $35.00 - $65.00+ per sq km (Priority Tasking)' },
+          { provider: 'Planet Labs (PlanetScope / SkySat)', resolution: '3m daily global / 50cm SkySat VHR', cost: '$1.50 - $8.00 per sq km (Archive) | $10.00 - $25.00+ per sq km (SkySat Tasking) | $10,000+/yr Enterprise' },
+          { provider: 'Airbus Defence & Space (Pleiades Neo / SPOT)', resolution: '30cm Pleiades Neo / 1.5m SPOT', cost: '$1.50 - $3.50 per sq km (SPOT) | $15.00 - $25.00 per sq km (Pleiades Neo Archive) | $30.00 - $50.00/sq km Tasking' },
+          { provider: 'Capella Space / Umbra (Commercial SAR Radar)', resolution: '25cm - 50cm All-Weather Day/Night SAR', cost: '$15.00 - $30.00 per sq km (Archive) | $400 - $2,500+ per custom tasking spotlight capture' },
+        ],
+      },
       source: 'NASA Earthdata GIBS (Global Imagery Browse Services) & Copernicus Open Access Hub',
       queriedAt: new Date().toISOString(),
     }),

@@ -103,6 +103,58 @@
   will-change: filter;
 }
 
+/* Tactical CRT / Night-Vision Satellite Recon Monitor Shader */
+.tactical-satellite-monitor {
+  position: relative;
+  overflow: hidden;
+  filter: sepia(100%) hue-rotate(90deg) saturate(300%) contrast(150%);
+  /* Adds a green military monochrome or night-vision HUD look to any satellite tile */
+  box-shadow: inset 0 0 10px rgba(0, 255, 0, 0.5);
+}
+
+.tactical-satellite-monitor.phosphor-amber {
+  filter: sepia(100%) hue-rotate(5deg) saturate(320%) contrast(150%);
+  box-shadow: inset 0 0 10px rgba(245, 158, 11, 0.5);
+}
+
+.tactical-satellite-monitor.phosphor-thermal {
+  filter: invert(100%) sepia(80%) hue-rotate(180deg) saturate(280%) contrast(160%);
+  box-shadow: inset 0 0 10px rgba(6, 182, 212, 0.55);
+}
+
+.tactical-satellite-monitor.phosphor-truecolor {
+  filter: contrast(115%) saturate(120%);
+  box-shadow: inset 0 0 12px rgba(34, 211, 238, 0.35);
+}
+
+.tactical-satellite-monitor::after {
+  content: " ";
+  display: block;
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  right: 0;
+  background: linear-gradient(rgba(18, 16, 16, 0) 50%, rgba(0, 0, 0, 0.25) 50%);
+  background-size: 100% 4px;
+  pointer-events: none; /* Creates the authentic CRT scanline effect over the map */
+  z-index: 20;
+}
+
+@keyframes tactical-radar-sweep {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.tactical-radar-cone {
+  animation: tactical-radar-sweep 6s linear infinite;
+  transform-origin: center center;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   ::before,

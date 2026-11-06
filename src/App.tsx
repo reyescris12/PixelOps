@@ -99,6 +99,7 @@ import { CustomPluginConnector, loadCustomPlugins, saveCustomPlugins } from './s
 import { CustomPluginModal } from './components/CustomPluginModal';
 import { TelemetryModal } from './components/TelemetryModal';
 import { ThreatMonitorModal } from './components/ThreatMonitorModal';
+import { TacticalSatelliteMonitor, parseReconTargetToCoords } from './components/TacticalSatelliteMonitor';
 import { AgentFactoryModal } from './components/AgentFactoryModal';
 import { recordTelemetryExecution } from './services/TelemetryStore';
 import { analyzePromptAmbiguity } from './engine/taskBriefEngine';
@@ -154,7 +155,7 @@ import {
 import { handleOpenRouterCallback } from './services/OpenRouterAuth';
 
 type NavTab = 'hq' | 'crew' | 'plugins' | 'themes';
-type HqSubView = 'terminal' | 'town_hall' | 'command_log' | 'task_queue';
+type HqSubView = 'terminal' | 'town_hall' | 'command_log' | 'task_queue' | 'recon_monitor';
 
 const CommandCenterContent: React.FC = () => {
   const {
@@ -306,6 +307,17 @@ const CommandCenterContent: React.FC = () => {
   const [nightShiftUnreadCount, setNightShiftUnreadCount] = useState<number>(() => loadNightShiftNotifications().filter((n) => !n.read).length);
   const [isTelemetryOpen, setIsTelemetryOpen] = useState(false);
   const [isThreatMonitorOpen, setIsThreatMonitorOpen] = useState(false);
+  const [reconMonitorTarget, setReconMonitorTarget] = useState<{
+    lat: number;
+    lon: number;
+    label: string;
+    sectorCode: string;
+  }>({
+    lat: 30.5852,
+    lon: 32.2654,
+    label: 'Suez Canal & Red Sea Subsea Cable Corridor',
+    sectorCode: 'SECTOR-54 // SUEZ-CHOKELINE',
+  });
   const [isAgentFactoryOpen, setIsAgentFactoryOpen] = useState(false);
   const [isTerminalConsoleOpen, setIsTerminalConsoleOpen] = useState(false);
   const [isWorkspaceFilesOpen, setIsWorkspaceFilesOpen] = useState(false);
@@ -1048,6 +1060,17 @@ const CommandCenterContent: React.FC = () => {
     setDialogueText(`[DIRECTIVE INGESTED] Dispatching ${routedDisplayName} to ${getRoomMetadata(targetRoom)?.shortBadge || String(targetRoom).toUpperCase()} (${assignmentTaskTag})...`);
     setIsExecuting(true);
     setExecutingAgentIds((prev) => Array.from(new Set([...prev, routedAgent.id])));
+
+    // Automatically bind agent recon coordinates to the Satellite Recon Monitor viewport if directive mentions a sector/location
+    const detectedReconCoords = parseReconTargetToCoords(prompt);
+    if (detectedReconCoords) {
+      setReconMonitorTarget({
+        lat: detectedReconCoords.lat,
+        lon: detectedReconCoords.lon,
+        label: detectedReconCoords.label,
+        sectorCode: detectedReconCoords.sectorCode,
+      });
+    }
     setIsGameActive(false);
     setIsGameClosing(false);
     setDecryptionBoost(0);
@@ -2741,10 +2764,28 @@ const CommandCenterContent: React.FC = () => {
                     >
                       📜 Command Log ({commandLedger.length})
                     </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setHqSubView('recon_monitor');
+                        setActiveSpeakerAgentIndex(null);
+                        playBeep('tap');
+                      }}
+                      className={`px-3 py-1 font-mono-tabular text-xs cursor-pointer transition-colors flex items-center gap-1 ${
+                        hqSubView === 'recon_monitor'
+                          ? 'bg-[#10b981] text-[#05120c] font-bold'
+                          : 'text-[#34d399] hover:text-[#f3ead8]'
+                      }`}
+                      title="Open Live Zero-Key NASA GIBS & Esri Tactical Satellite Recon Monitor"
+                    >
+                      <span>🛰️ Recon Monitor</span>
+                    </button>
                   </div>
                   <span className="hidden sm:inline font-mono-tabular text-[11px] text-[#9c8265]">
                     {hqSubView === 'town_hall'
                       ? 'MULTI-AGENT ROUNDTABLE · WAR ROOM'
+                      : hqSubView === 'recon_monitor'
+                      ? 'NASA GIBS & ESRI ORBITAL FEED · NIGHT-VISION CRT'
                       : 'DEXIE INDEXEDDB · APPEND-ONLY LEDGER'}
                   </span>
                 </div>
@@ -2855,6 +2896,40 @@ const CommandCenterContent: React.FC = () => {
                     onSelectSpeakerAgentIndex={setActiveSpeakerAgentIndex}
                     participantsWithNotes={participantsWithNotes}
                   />
+                ) : hqSubView === 'recon_monitor' ? (
+                  <div className="w-full max-w-4xl mx-auto px-3 sm:px-0 flex flex-col gap-3">
+                    <TacticalSatelliteMonitor
+                      initialLat={reconMonitorTarget.lat}
+                      initialLon={reconMonitorTarget.lon}
+                      initialLabel={reconMonitorTarget.label}
+                      initialSectorCode={reconMonitorTarget.sectorCode}
+                      activeOperativeName={activeAgent.name}
+                      threatBadgeText="THREAT LEVEL: BRAVO - ORBITAL OVERWATCH ACTIVE"
+                      onDispatchReconDirective={(directive, coords) => {
+                        setReconMonitorTarget({
+                          lat: coords.lat,
+                          lon: coords.lon,
+                          label: coords.label,
+                          sectorCode: `SECTOR-LOCK // ${coords.lat.toFixed(2)},${coords.lon.toFixed(2)}`,
+                        });
+                        handleExecuteDirective(
+                          `${directive} [Orbital Target Lock: ${coords.label} at ${coords.lat.toFixed(4)}, ${coords.lon.toFixed(4)}]`
+                        );
+                      }}
+                    />
+                    <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-[#0b131d] border border-cyan-500/40 rounded text-xs font-mono">
+                      <span className="text-cyan-300">
+                        Need the full 4-Pillar Macro-to-Micro Threat Correlation, Grid Stability, CISA KEV &amp; Supply Chain Dossier?
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setIsThreatMonitorOpen(true)}
+                        className="px-3 py-1 rounded bg-cyan-500/20 hover:bg-cyan-500/35 border border-cyan-400/60 text-cyan-200 font-bold cursor-pointer"
+                      >
+                        [🛡️ Open Full 4-Pillar Threat Matrix]
+                      </button>
+                    </div>
+                  </div>
                 ) : (
                   <CommandLogScreen
                     entries={commandLedger}

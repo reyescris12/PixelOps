@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { writeWorkspaceFile } from '../engine/storageManager';
 import { retrieveRelevantClassifiedBriefings } from '../services/ClassifiedFeedService';
+import { TacticalSatelliteMonitor, parseReconTargetToCoords } from './TacticalSatelliteMonitor';
 
 export interface ThreatCorrelationItem {
   id: string;
@@ -125,7 +126,7 @@ export const ThreatMonitorModal: React.FC<ThreatMonitorModalProps> = ({
   const [selectedZone, setSelectedZone] = useState<string>('north_america');
   const [customLocation, setCustomLocation] = useState<string>('');
   const [selectedOperative, setSelectedOperative] = useState<'Agent Nyx' | 'Agent Vance' | 'Agent Cipher'>('Agent Nyx');
-  const [activePillarTab, setActivePillarTab] = useState<'all' | 'correlation' | 'grid' | 'cyber' | 'supply'>('all');
+  const [activePillarTab, setActivePillarTab] = useState<'all' | 'satellite' | 'correlation' | 'grid' | 'cyber' | 'supply'>('all');
 
   const [telemetry, setTelemetry] = useState<ThreatMatrixPayload | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -690,7 +691,8 @@ export const ThreatMonitorModal: React.FC<ThreatMonitorModalProps> = ({
         {/* Pillar Filter Tabs */}
         <div className="px-4 py-2 bg-slate-950 border-b border-slate-800 flex items-center gap-1.5 overflow-x-auto">
           {[
-            { id: 'all', label: 'All 4 Pillars (Integrated View)', icon: Globe },
+            { id: 'all', label: 'All 4 Pillars + Satellite Recon', icon: Globe },
+            { id: 'satellite', label: '🛰️ Tactical Satellite Monitor (NASA GIBS / Esri)', icon: Radar },
             { id: 'correlation', label: '1. Threat Correlation Matrix', icon: ShieldAlert },
             { id: 'grid', label: '2. Infrastructure & Grid Stability', icon: Zap },
             { id: 'cyber', label: '3. Cyber & Vulnerability Radar', icon: Lock },
@@ -717,6 +719,45 @@ export const ThreatMonitorModal: React.FC<ThreatMonitorModalProps> = ({
 
         {/* Main 4-Pillar Grid Content */}
         <div className="p-4 overflow-y-auto space-y-4 flex-1 bg-[#070b12]">
+          {/* Live Zero-Key NASA GIBS & Esri Tactical Satellite Raster Monitor */}
+          {(activePillarTab === 'all' || activePillarTab === 'satellite') && (
+            <TacticalSatelliteMonitor
+              initialLat={
+                parseReconTargetToCoords(customLocation)?.lat ??
+                telemetry?.operationalZone?.coordinates?.lat ??
+                30.5852
+              }
+              initialLon={
+                parseReconTargetToCoords(customLocation)?.lon ??
+                telemetry?.operationalZone?.coordinates?.lon ??
+                32.2654
+              }
+              initialLabel={
+                parseReconTargetToCoords(customLocation)?.label ??
+                telemetry?.operationalZone?.label ??
+                'Suez Canal & Red Sea Subsea Cable Corridor'
+              }
+              initialSectorCode={
+                parseReconTargetToCoords(customLocation)?.sectorCode ??
+                `SECTOR-${selectedZone.toUpperCase()}`
+              }
+              activeOperativeName={selectedOperative}
+              threatBadgeText={
+                telemetry?.infrastructureAndGrid?.threatBadge ||
+                'THREAT LEVEL: BRAVO - REGIONAL GRID STRAIN'
+              }
+              compact={activePillarTab === 'all'}
+              onDispatchReconDirective={(directive, coords) => {
+                setCustomLocation(`${coords.lat.toFixed(4)}, ${coords.lon.toFixed(4)}`);
+                fetchThreatMatrix(selectedZone, `${coords.label} (${coords.lat.toFixed(3)}, ${coords.lon.toFixed(3)})`);
+                setSweepStatusBanner({
+                  message: `Satellite Recon Monitor locked onto ${coords.label} [${coords.lat.toFixed(4)}°, ${coords.lon.toFixed(4)}°] for directive: "${directive}"`,
+                  type: 'info',
+                });
+              }}
+            />
+          )}
+
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {/* =====================================================================
                 PILLAR 1: THE THREAT CORRELATION MATRIX (MACRO-TO-MICRO FEED)

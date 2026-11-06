@@ -7,6 +7,10 @@ import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, FunctionDeclaration, Type } from '@google/genai';
 import dotenv from 'dotenv';
+import { onRequest as handleMaritimeOsint } from './functions/api/osint/maritime';
+import { onRequest as handleHazardsOsint } from './functions/api/osint/hazards';
+import { onRequest as handleSatelliteOsint } from './functions/api/osint/satellite';
+import { onRequest as handleSpectrumOsint } from './functions/api/osint/spectrum';
 
 dotenv.config();
 
@@ -443,6 +447,111 @@ const SERVER_TOOL_DECLARATIONS: Record<string, FunctionDeclaration> = {
         },
       },
       required: ['query'],
+    },
+  },
+  osint_maritime_tracker: {
+    name: 'osint_maritime_tracker',
+    description:
+      'Query zero-friction real-time Automatic Identification System (AIS) maritime intelligence, vessel lookups (by name, MMSI, or IMO), strategic chokepoint transit delays (Suez, Malacca, Hormuz, Panama, Bab-el-Mandeb), dark-vessel indicators, and port congestion telemetry without API keys.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        query: {
+          type: Type.STRING,
+          description: 'Search query for vessel name, MMSI, IMO, chokepoint, or port.',
+        },
+        chokepoint: {
+          type: Type.STRING,
+          description: 'Optional strategic chokepoint: suez, malacca, hormuz, panama, bab_el_mandeb, gibraltar, bosphorus, taiwan_strait, dover.',
+        },
+        vesselName: {
+          type: Type.STRING,
+          description: 'Vessel name to look up in the live AIS transponder registry.',
+        },
+        mmsi: {
+          type: Type.STRING,
+          description: 'Maritime Mobile Service Identity 9-digit transponder number.',
+        },
+        port: {
+          type: Type.STRING,
+          description: 'Target destination port for congestion analytics.',
+        },
+      },
+    },
+  },
+  osint_hazard_tracker: {
+    name: 'osint_hazard_tracker',
+    description:
+      'Query real-time global seismic and natural hazard telemetry from USGS Earthquake feeds and GDACS (Global Disaster Alert and Coordination System) without API keys. Tracks earthquakes, tsunamis, tropical cyclones, volcanic eruptions, and floods.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        min_magnitude: {
+          type: Type.NUMBER,
+          description: 'Minimum earthquake magnitude (e.g., 2.5, 4.5, 6.0). Default is 2.5.',
+        },
+        timespan: {
+          type: Type.STRING,
+          description: 'Time window for seismic events: hour, day, week, or month. Default is day.',
+        },
+        hazard_type: {
+          type: Type.STRING,
+          description: 'Hazard classification: earthquake, tsunami, cyclone, volcano, flood, or all.',
+        },
+        region: {
+          type: Type.STRING,
+          description: 'Geographic region or country keyword to filter hazards.',
+        },
+      },
+    },
+  },
+  osint_satellite_recon: {
+    name: 'osint_satellite_recon',
+    description:
+      'Conduct open satellite reconnaissance and multispectral environmental observation via NASA GIBS, NASA FIRMS thermal anomaly detection, and Copernicus Sentinel metadata without API keys. Returns direct high-resolution satellite imagery snapshot URLs and tactical links.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        location: {
+          type: Type.STRING,
+          description: 'Target location, strategic chokepoint, or coordinates (e.g., "Suez Canal", "Reykjanes", "Chernobyl", "Crimea", "Taiwan").',
+        },
+        lat: {
+          type: Type.NUMBER,
+          description: 'Target geographic latitude (-90 to 90).',
+        },
+        lon: {
+          type: Type.NUMBER,
+          description: 'Target geographic longitude (-180 to 180).',
+        },
+        date: {
+          type: Type.STRING,
+          description: 'Observation date in YYYY-MM-DD format (defaults to latest available daily pass).',
+        },
+        layer: {
+          type: Type.STRING,
+          description: 'Multispectral imagery layer: true_color, viirs_hd, false_color_infrared, or night_lights.',
+        },
+      },
+      required: ['location'],
+    },
+  },
+  osint_spectrum_analyzer: {
+    name: 'osint_spectrum_analyzer',
+    description:
+      'Query real-time global electronic warfare spectrum telemetry, civil aviation GNSS/GPS jamming and spoofing incident corridors (Eastern Mediterranean, Baltic Sea, Black Sea, Persian Gulf), and NOAA Space Weather Prediction Center (SWPC) geomagnetic storms (Kp-index) and solar flare radio blackout data without API keys.',
+    parameters: {
+      type: Type.OBJECT,
+      properties: {
+        region: {
+          type: Type.STRING,
+          description: 'Target EW / GNSS corridor: eastern_med, baltic, black_sea, persian_gulf, myanmar, korea_dmz, or all.',
+        },
+        interference_type: {
+          type: Type.STRING,
+          description: 'Interference mode filter: jamming, spoofing, space_weather, solar_flare, or all.',
+        },
+      },
     },
   },
 };
@@ -1598,6 +1707,51 @@ async function startServer() {
   app.post('/api/fetch', handleFetchRequest);
 
   /**
+   * Zero-Friction OSINT Intelligence Endpoints (Keyless / Public Telemetry)
+   */
+  const adaptCloudflareHandler = (
+    handler: (context: { request: Request }) => Promise<Response>
+  ) => {
+    return async (req: express.Request, res: express.Response) => {
+      try {
+        const protocol = req.protocol || 'http';
+        const host = req.get('host') || 'localhost';
+        const fullUrl = `${protocol}://${host}${req.originalUrl}`;
+
+        let body: string | undefined = undefined;
+        if (req.method !== 'GET' && req.method !== 'HEAD') {
+          body = typeof req.body === 'string' ? req.body : JSON.stringify(req.body);
+        }
+
+        const webReq = new Request(fullUrl, {
+          method: req.method,
+          headers: req.headers as any,
+          body: body,
+        });
+
+        const webRes = await handler({ request: webReq });
+        res.status(webRes.status);
+        webRes.headers.forEach((value, key) => {
+          res.setHeader(key, value);
+        });
+        const resText = await webRes.text();
+        res.send(resText);
+      } catch (err: any) {
+        res.status(500).json({
+          status: 'error',
+          error: 'OSINT_HANDLER_ERROR',
+          message: err?.message || 'Failed to process OSINT request.',
+        });
+      }
+    };
+  };
+
+  app.all('/api/osint/maritime', adaptCloudflareHandler(handleMaritimeOsint));
+  app.all('/api/osint/hazards', adaptCloudflareHandler(handleHazardsOsint));
+  app.all('/api/osint/satellite', adaptCloudflareHandler(handleSatelliteOsint));
+  app.all('/api/osint/spectrum', adaptCloudflareHandler(handleSpectrumOsint));
+
+  /**
    * Turn 1: Initial Gemini API Request with Dynamic Function Declarations (`tools`).
    * If Gemini decides to invoke one or more `functionCalls`, returns `{ requiresToolExecution: true, functionCalls, modelContent }`
    * so the client service layer (`ApiService.ts`) can intercept the function call, animate the agent to the Server Vault / Library,
@@ -1636,7 +1790,11 @@ async function startServer() {
       } else {
         baseDeclarations.push(
           SERVER_TOOL_DECLARATIONS.live_web_search,
-          SERVER_TOOL_DECLARATIONS.weather_lookup
+          SERVER_TOOL_DECLARATIONS.weather_lookup,
+          SERVER_TOOL_DECLARATIONS.osint_maritime_tracker,
+          SERVER_TOOL_DECLARATIONS.osint_hazard_tracker,
+          SERVER_TOOL_DECLARATIONS.osint_satellite_recon,
+          SERVER_TOOL_DECLARATIONS.osint_spectrum_analyzer
         );
         for (const pluginId of enabledPlugins) {
           if (pluginId === 'calendar') baseDeclarations.push(SERVER_TOOL_DECLARATIONS.calendar_schedule_event);
@@ -1661,8 +1819,16 @@ async function startServer() {
         }
       }
 
+      const CORE_AGENT_TOOLS = new Set([
+        'live_web_search',
+        'weather_lookup',
+        'osint_maritime_tracker',
+        'osint_hazard_tracker',
+        'osint_satellite_recon',
+        'osint_spectrum_analyzer',
+      ]);
       if (Array.isArray(agentAssignedTools) && agentAssignedTools.length > 0) {
-        const allowedSet = new Set(agentAssignedTools);
+        const allowedSet = new Set([...agentAssignedTools, ...CORE_AGENT_TOOLS]);
         activeDeclarations = baseDeclarations.filter((d) => allowedSet.has(d.name));
       } else {
         activeDeclarations = baseDeclarations;

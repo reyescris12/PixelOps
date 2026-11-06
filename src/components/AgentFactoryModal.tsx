@@ -56,6 +56,26 @@ const AVAILABLE_TOOLS_CATALOG: Array<{ id: string; label: string; description: s
     label: 'Encrypted Dossier Vault',
     description: 'Query classified local archives and mission lore telemetry records.',
   },
+  {
+    id: 'osint_maritime_tracker',
+    label: 'Maritime AIS Tracking',
+    description: 'Track real-time ship transits, chokepoint delays (Suez, Panama, Hormuz), and dark vessels.',
+  },
+  {
+    id: 'osint_hazard_tracker',
+    label: 'Global Hazards & USGS',
+    description: 'Monitor real-time seismic events, tsunamis, volcanic eruptions, and disaster alerts.',
+  },
+  {
+    id: 'osint_satellite_recon',
+    label: 'NASA Satellite Recon',
+    description: 'Pull high-resolution multispectral imagery snapshots (NASA GIBS & Copernicus Sentinel).',
+  },
+  {
+    id: 'osint_spectrum_analyzer',
+    label: 'Spectrum & GNSS Telemetry',
+    description: 'Track GPS jamming/spoofing corridors and NOAA solar flare / geomagnetic storm levels.',
+  },
 ];
 
 interface AgentFactoryModalProps {

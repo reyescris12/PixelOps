@@ -98,6 +98,7 @@ import { InboxProvider } from './context/InboxContext';
 import { CustomPluginConnector, loadCustomPlugins, saveCustomPlugins } from './services/PluginMarketplaceService';
 import { CustomPluginModal } from './components/CustomPluginModal';
 import { TelemetryModal } from './components/TelemetryModal';
+import { ThreatMonitorModal } from './components/ThreatMonitorModal';
 import { AgentFactoryModal } from './components/AgentFactoryModal';
 import { recordTelemetryExecution } from './services/TelemetryStore';
 import { analyzePromptAmbiguity } from './engine/taskBriefEngine';
@@ -304,6 +305,7 @@ const CommandCenterContent: React.FC = () => {
   const [isNightShiftOpen, setIsNightShiftOpen] = useState(false);
   const [nightShiftUnreadCount, setNightShiftUnreadCount] = useState<number>(() => loadNightShiftNotifications().filter((n) => !n.read).length);
   const [isTelemetryOpen, setIsTelemetryOpen] = useState(false);
+  const [isThreatMonitorOpen, setIsThreatMonitorOpen] = useState(false);
   const [isAgentFactoryOpen, setIsAgentFactoryOpen] = useState(false);
   const [isTerminalConsoleOpen, setIsTerminalConsoleOpen] = useState(false);
   const [isWorkspaceFilesOpen, setIsWorkspaceFilesOpen] = useState(false);
@@ -2542,6 +2544,18 @@ const CommandCenterContent: React.FC = () => {
             <button
               type="button"
               onClick={() => {
+                setIsThreatMonitorOpen(true);
+                playBeep('tap');
+              }}
+              className="px-2 py-0.5 bg-[#0c1c26] hover:bg-[#132c3b] border border-[#22d3ee]/60 hover:border-[#22d3ee] text-[#67e8f9] flex items-center gap-1 cursor-pointer transition-colors"
+              title="Open 4-Pillar Threat Correlation Matrix, Grid Stability, Cyber CVE Radar & Supply Chain Recon Monitor"
+            >
+              <span>[🛡️ THREAT MATRIX]</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
                 setIsNightShiftOpen(true);
                 playBeep('tap');
               }}
@@ -3095,6 +3109,58 @@ const CommandCenterContent: React.FC = () => {
       <TelemetryModal
         isOpen={isTelemetryOpen}
         onClose={() => setIsTelemetryOpen(false)}
+      />
+
+      <ThreatMonitorModal
+        isOpen={isThreatMonitorOpen}
+        onClose={() => setIsThreatMonitorOpen(false)}
+        onOpenVaultFile={() => {
+          setIsThreatMonitorOpen(false);
+          setIsWorkspaceFilesOpen(true);
+        }}
+        onOpenLlmSettings={() => {
+          setIsThreatMonitorOpen(false);
+          setIsSettingsOpen(true);
+        }}
+        onInjectTerminalReport={async ({ agentName, title, markdown, savedFilePath }) => {
+          const newCard: AgentExecutionCard = {
+            id: `threat_recon_${Date.now()}`,
+            agentName,
+            cardTitle: title,
+            dialogue: markdown,
+            timestamp: new Date().toISOString(),
+            prompt: `Autonomous Recon Sweep: ${title}`,
+            actionCategory: 'THREAT CORRELATION & RECON MONITOR',
+            themeId: theme.id,
+            tokenEstimate: 620,
+            steps: [
+              { label: 'Macro-to-Micro Threat Correlation', detail: 'Cross-referenced subsea fiber, grid, CISA KEV & logistics feeds', status: 'completed' },
+              { label: 'VFS Vault Archival', detail: savedFilePath ? `Saved dossier to /${savedFilePath}` : 'Archived to local IndexedDB Vault', status: 'verified' },
+            ],
+            toolCalls: [
+              {
+                pluginId: 'osint_threat_matrix',
+                toolName: 'threat_correlation_recon_sweep',
+                args: { savedFilePath: savedFilePath || '/intel/dossiers/' },
+                resultSummary: title,
+              },
+            ],
+          };
+          const nextCards = [newCard, ...executionCards];
+          setExecutionCards(nextCards);
+          saveExecutionCards(nextCards);
+          setDialogueText(`[RECON DOSSIER FILED] ${agentName}: "${title}" archived to VFS Vault (${savedFilePath || '/intel/dossiers/'}) and posted to Terminal Feed.`);
+          playBeep('complete');
+          await appendCommandLedgerEntry({
+            timestamp: newCard.timestamp,
+            command_input: newCard.prompt,
+            involved_agent: agentName,
+            tool_used: 'threat_correlation_recon_sweep',
+            result_summary: title,
+            success_boost_achieved: 15,
+          });
+          await refreshCommandLedger();
+        }}
       />
 
       <AgentFactoryModal

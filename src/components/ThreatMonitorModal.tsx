@@ -21,7 +21,11 @@ import {
 } from 'lucide-react';
 import { writeWorkspaceFile } from '../engine/storageManager';
 import { retrieveRelevantClassifiedBriefings } from '../services/ClassifiedFeedService';
-import { TacticalSatelliteMonitor, parseReconTargetToCoords } from './TacticalSatelliteMonitor';
+import {
+  TacticalSatelliteMonitor,
+  parseReconTargetToCoords,
+  resolveReconLocationAsync,
+} from './TacticalSatelliteMonitor';
 
 export interface ThreatCorrelationItem {
   id: string;
@@ -129,6 +133,12 @@ export const ThreatMonitorModal: React.FC<ThreatMonitorModalProps> = ({
   const [activePillarTab, setActivePillarTab] = useState<'all' | 'satellite' | 'correlation' | 'grid' | 'cyber' | 'supply'>('all');
 
   const [telemetry, setTelemetry] = useState<ThreatMatrixPayload | null>(null);
+  const [resolvedCustomCoords, setResolvedCustomCoords] = useState<{
+    lat: number;
+    lon: number;
+    label: string;
+    sectorCode: string;
+  } | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [isRunningSweep, setIsRunningSweep] = useState<boolean>(false);
   const [sweepStatusBanner, setSweepStatusBanner] = useState<{
@@ -250,15 +260,30 @@ export const ThreatMonitorModal: React.FC<ThreatMonitorModalProps> = ({
   const fetchThreatMatrix = useCallback(
     async (zoneId: string, customLoc: string) => {
       setIsLoading(true);
+      const trimmedLoc = customLoc.trim();
+
+      // Geocode postal code / city / coordinates concurrently so the Tactical Satellite Monitor flies to the exact spot
+      let geoCoords: { lat: number; lon: number; label: string; sectorCode: string } | null = null;
+      if (trimmedLoc) {
+        geoCoords = await resolveReconLocationAsync(trimmedLoc, zoneId);
+        setResolvedCustomCoords(geoCoords);
+      } else {
+        setResolvedCustomCoords(null);
+      }
+
       try {
         const params = new URLSearchParams({ zone: zoneId });
-        if (customLoc.trim()) {
-          params.set('customLocation', customLoc.trim());
+        if (trimmedLoc) {
+          params.set('customLocation', trimmedLoc);
         }
         const res = await fetch(`/api/osint/threat-matrix?${params.toString()}`);
         if (res.ok) {
           const data: ThreatMatrixPayload = await res.json();
           if (data && data.status === 'ok') {
+            if (geoCoords && data.operationalZone) {
+              data.operationalZone.coordinates = { lat: geoCoords.lat, lon: geoCoords.lon };
+              data.operationalZone.label = geoCoords.label;
+            }
             setTelemetry(data);
             setIsLoading(false);
             return data;
@@ -269,6 +294,10 @@ export const ThreatMonitorModal: React.FC<ThreatMonitorModalProps> = ({
       }
 
       const fallback = buildFallbackTelemetry(zoneId, customLoc);
+      if (geoCoords && fallback.operationalZone) {
+        fallback.operationalZone.coordinates = { lat: geoCoords.lat, lon: geoCoords.lon };
+        fallback.operationalZone.label = geoCoords.label;
+      }
       setTelemetry(fallback);
       setIsLoading(false);
       return fallback;
@@ -597,10 +626,10 @@ export const ThreatMonitorModal: React.FC<ThreatMonitorModalProps> = ({
               </select>
             </div>
 
-            {/* 2. Specific Coordinates / City Override */}
+            {/* 2. Specific Postal Code / City / Coordinates Override */}
             <div>
               <label className="block text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-1 flex items-center gap-1">
-                <Globe className="w-3 h-3 text-cyan-400" /> Specific City or Coordinates (Optional)
+                <Globe className="w-3 h-3 text-cyan-400" /> Postal Code, City, or Coordinates (Optional)
               </label>
               <div className="flex gap-1.5">
                 <input
@@ -610,7 +639,7 @@ export const ThreatMonitorModal: React.FC<ThreatMonitorModalProps> = ({
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') fetchThreatMatrix(selectedZone, customLocation);
                   }}
-                  placeholder="e.g., Ashburn VA, Frankfurt, 30.04N 31.23E"
+                  placeholder="e.g., 90210, SW1A 1AA, Ashburn VA, 30.04N 31.23E"
                   className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-400"
                 />
                 <button
@@ -723,21 +752,25 @@ export const ThreatMonitorModal: React.FC<ThreatMonitorModalProps> = ({
           {(activePillarTab === 'all' || activePillarTab === 'satellite') && (
             <TacticalSatelliteMonitor
               initialLat={
+                resolvedCustomCoords?.lat ??
                 parseReconTargetToCoords(customLocation)?.lat ??
                 telemetry?.operationalZone?.coordinates?.lat ??
                 30.5852
               }
               initialLon={
+                resolvedCustomCoords?.lon ??
                 parseReconTargetToCoords(customLocation)?.lon ??
                 telemetry?.operationalZone?.coordinates?.lon ??
                 32.2654
               }
               initialLabel={
+                resolvedCustomCoords?.label ??
                 parseReconTargetToCoords(customLocation)?.label ??
                 telemetry?.operationalZone?.label ??
                 'Suez Canal & Red Sea Subsea Cable Corridor'
               }
               initialSectorCode={
+                resolvedCustomCoords?.sectorCode ??
                 parseReconTargetToCoords(customLocation)?.sectorCode ??
                 `SECTOR-${selectedZone.toUpperCase()}`
               }

@@ -167,6 +167,91 @@ async function fetchLiveCisaKevVulnerabilities(): Promise<
   return [];
 }
 
+async function geocodeCustomLocation(
+  rawQuery: string,
+  baseCoords: { lat: number; lon: number }
+): Promise<{ lat: number; lon: number; resolvedLabel?: string }> {
+  const q = (rawQuery || '').trim();
+  if (!q) return baseCoords;
+
+  // 1. Comma-separated lat, lon
+  const commaCoord = q.match(
+    /(?:^|[^\d.])(-?\d{1,2}(?:\.\d+)?)\s*([NSns])?\s*,\s*(-?\d{1,3}(?:\.\d+)?)\s*([EWew])?(?!\d)/
+  );
+  if (commaCoord) {
+    let lat = parseFloat(commaCoord[1]);
+    let lon = parseFloat(commaCoord[3]);
+    if (commaCoord[2]?.toUpperCase() === 'S') lat = -Math.abs(lat);
+    if (commaCoord[4]?.toUpperCase() === 'W') lon = -Math.abs(lon);
+    if (!isNaN(lat) && !isNaN(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180) {
+      return { lat, lon };
+    }
+  }
+
+  // 2. US 5-digit ZIP Code via Zippopotam.us
+  const usZip = q.match(/^(\d{5})(?:-\d{4})?(?:\s*,?\s*(?:usa?|united states))?$/i);
+  if (usZip) {
+    try {
+      const res = await fetchWithTimeout(`https://api.zippopotam.us/us/${usZip[1]}`, {}, 3000);
+      if (res && res.ok) {
+        const data: any = await res.json();
+        const place = data?.places?.[0];
+        if (place?.latitude && place?.longitude) {
+          return {
+            lat: Number(place.latitude),
+            lon: Number(place.longitude),
+            resolvedLabel: `${place['place name']}, ${place['state abbreviation'] || place.state} ${usZip[1]}, USA`,
+          };
+        }
+      }
+    } catch {}
+  }
+
+  // 3. UK Postcode via postcodes.io
+  const ukMatch = q.match(/^([A-Z]{1,2}\d[A-Z\d]?)\s*(\d[A-Z]{2})$/i);
+  if (ukMatch) {
+    const formatted = `${ukMatch[1].toUpperCase()} ${ukMatch[2].toUpperCase()}`;
+    try {
+      const res = await fetchWithTimeout(
+        `https://api.postcodes.io/postcodes/${encodeURIComponent(formatted)}`,
+        {},
+        3000
+      );
+      if (res && res.ok) {
+        const data: any = await res.json();
+        if (data?.result?.latitude && data?.result?.longitude) {
+          return {
+            lat: Number(data.result.latitude),
+            lon: Number(data.result.longitude),
+            resolvedLabel: `${formatted}, ${data.result.admin_district || data.result.region || 'UK'}`,
+          };
+        }
+      }
+    } catch {}
+  }
+
+  // 4. Nominatim fallback
+  try {
+    const res = await fetchWithTimeout(
+      `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=1`,
+      { headers: { 'User-Agent': 'PixelOps-ThreatMatrix/2.0 (tactical-recon)' } },
+      3200
+    );
+    if (res && res.ok) {
+      const data: any = await res.json();
+      if (Array.isArray(data) && data.length > 0) {
+        return {
+          lat: Number(data[0].lat),
+          lon: Number(data[0].lon),
+          resolvedLabel: data[0].display_name,
+        };
+      }
+    }
+  } catch {}
+
+  return baseCoords;
+}
+
 export const onRequest = async (context: { request: Request }): Promise<Response> => {
   const { request } = context;
 
@@ -190,8 +275,13 @@ export const onRequest = async (context: { request: Request }): Promise<Response
   }
 
   const baseZone = OPERATIONAL_ZONES[zoneKey] || OPERATIONAL_ZONES.north_america;
-  const activeZoneLabel = customLocation ? `${customLocation} (${baseZone.label.split(' (')[0]})` : baseZone.label;
-  const zoneSearchContext = customLocation || baseZone.label.split(' (')[0];
+  const resolvedGeo: { lat: number; lon: number; resolvedLabel?: string } = customLocation
+    ? await geocodeCustomLocation(customLocation, baseZone.coordinates)
+    : baseZone.coordinates;
+  const activeZoneLabel = customLocation
+    ? `${resolvedGeo.resolvedLabel || customLocation} (${baseZone.label.split(' (')[0]})`
+    : baseZone.label;
+  const zoneSearchContext = resolvedGeo.resolvedLabel || customLocation || baseZone.label.split(' (')[0];
 
   // Fetch live signals across all 4 pillars concurrently
   const [cableAndBackboneNews, gridAndPowerNews, supplyChainNews, cisaKevList] = await Promise.all([
@@ -344,7 +434,7 @@ export const onRequest = async (context: { request: Request }): Promise<Response
         id: baseZone.id,
         label: activeZoneLabel,
         customLocation: customLocation || null,
-        coordinates: baseZone.coordinates,
+        coordinates: { lat: resolvedGeo.lat, lon: resolvedGeo.lon },
         primaryGridName: baseZone.primaryGridName,
         primaryBackboneCorridor: baseZone.primaryBackboneCorridor,
         primaryMaritimeChokepoint: baseZone.primaryMaritimeChokepoint,

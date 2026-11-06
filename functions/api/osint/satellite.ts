@@ -110,7 +110,7 @@ export const onRequest = async (context: { request: Request }): Promise<Response
   // Resolve target coordinates
   let resolvedLocationName = locationQuery;
   if ((lat === undefined || lon === undefined) && locationQuery) {
-    const locLower = locationQuery.toLowerCase();
+    const locLower = locationQuery.toLowerCase().trim();
     for (const [key, landmark] of Object.entries(LANDMARK_COORDINATES)) {
       if (locLower.includes(key) || locLower.includes(landmark.name.toLowerCase())) {
         lat = landmark.lat;
@@ -118,6 +118,66 @@ export const onRequest = async (context: { request: Request }): Promise<Response
         resolvedLocationName = landmark.name;
         break;
       }
+    }
+
+    // Check US 5-digit ZIP code via Zippopotam.us first so US ZIP codes don't match foreign postcodes in Nominatim
+    const usZipMatch = locationQuery.trim().match(/^(\d{5})(?:-\d{4})?(?:\s*,?\s*(?:usa?|united states))?$/i);
+    if ((lat === undefined || lon === undefined) && usZipMatch) {
+      const zip5 = usZipMatch[1];
+      try {
+        const zipRes = await fetch(`https://api.zippopotam.us/us/${zip5}`);
+        if (zipRes.ok) {
+          const zipData: any = await zipRes.json();
+          const place = zipData?.places?.[0];
+          if (place && place.latitude && place.longitude) {
+            lat = Number(place.latitude);
+            lon = Number(place.longitude);
+            resolvedLocationName = `${place['place name']}, ${place['state abbreviation'] || place.state} ${zip5}, USA`;
+          }
+        }
+      } catch {}
+    }
+
+    // Check UK Postcode via postcodes.io (zero-key official UK postcode API)
+    const ukMatch = locationQuery.trim().match(/^([A-Z]{1,2}\d[A-Z\d]?)\s*(\d[A-Z]{2})$/i);
+    if ((lat === undefined || lon === undefined) && ukMatch) {
+      const formattedUk = `${ukMatch[1].toUpperCase()} ${ukMatch[2].toUpperCase()}`;
+      try {
+        const ukRes = await fetch(`https://api.postcodes.io/postcodes/${encodeURIComponent(formattedUk)}`);
+        if (ukRes.ok) {
+          const ukData: any = await ukRes.json();
+          if (ukData?.result && typeof ukData.result.latitude === 'number' && typeof ukData.result.longitude === 'number') {
+            lat = Number(ukData.result.latitude);
+            lon = Number(ukData.result.longitude);
+            resolvedLocationName = [
+              formattedUk,
+              ukData.result.admin_district || ukData.result.parish,
+              ukData.result.region,
+              'UK',
+            ]
+              .filter(Boolean)
+              .join(', ');
+          }
+        }
+      } catch {}
+    }
+
+    // Check Canadian Postal Code via Zippopotam.us
+    const caMatch = locationQuery.trim().match(/^([A-Z]\d[A-Z])\s*(\d[A-Z]\d)?$/i);
+    if ((lat === undefined || lon === undefined) && caMatch) {
+      const fsa = caMatch[1].toUpperCase();
+      try {
+        const caRes = await fetch(`https://api.zippopotam.us/ca/${fsa}`);
+        if (caRes.ok) {
+          const caData: any = await caRes.json();
+          const place = caData?.places?.[0];
+          if (place && place.latitude && place.longitude) {
+            lat = Number(place.latitude);
+            lon = Number(place.longitude);
+            resolvedLocationName = `${place['place name']}, ${place['state abbreviation'] || place.state} ${locationQuery.toUpperCase()}, Canada`;
+          }
+        }
+      } catch {}
     }
 
     // If still not resolved, query OpenStreetMap Nominatim keyless geocoder

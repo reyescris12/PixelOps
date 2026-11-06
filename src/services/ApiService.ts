@@ -17,6 +17,7 @@ import {
 } from '../engine/moduleRegistry';
 import { getAllRoomStations } from '../engine/roomManager';
 import { loadCustomPlugins, executeCustomPlugin } from './PluginMarketplaceService';
+import { resolveReconLocationAsync } from '../components/TacticalSatelliteMonitor';
 import { getLast50Commands, ledgerDb, recordAgentMemory, getAgentMemoriesForAgent } from './CommandLedgerDb';
 import { getPluginCredential } from '../engine/pluginAuthManager';
 import {
@@ -2913,9 +2914,19 @@ ${findings || 'No additional telemetry findings attached.'}
       }
 
       if (!data) {
-        const loc = String(args.location || 'Suez Canal');
-        const lat = args.lat !== undefined ? Number(args.lat) : 30.585;
-        const lon = args.lon !== undefined ? Number(args.lon) : 32.343;
+        let loc = String(args.location || args.q || args.query || 'Suez Canal');
+        let lat = args.lat !== undefined ? Number(args.lat) : undefined;
+        let lon = args.lon !== undefined ? Number(args.lon) : undefined;
+        if ((lat === undefined || lon === undefined || isNaN(lat) || isNaN(lon)) && loc) {
+          const geocoded = await resolveReconLocationAsync(loc);
+          if (geocoded) {
+            lat = geocoded.lat;
+            lon = geocoded.lon;
+            loc = geocoded.label;
+          }
+        }
+        if (lat === undefined || isNaN(lat)) lat = 30.585;
+        if (lon === undefined || isNaN(lon)) lon = 32.343;
         const dateStr = args.date || new Date().toISOString().slice(0, 10);
         const delta = 1.0;
         const bbox = `${lat - delta},${lon - delta},${lat + delta},${lon + delta}`;

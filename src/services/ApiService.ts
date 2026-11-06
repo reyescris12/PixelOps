@@ -940,8 +940,11 @@ export function cleanSearchQuery(rawQuery: string): CleanedSearchResult {
   // Strip conversational agent names: "Vance, search for..." -> "search for..."
   q = q.replace(/^(?:vance|cipher|nyx|agent\s+\w+|operative\s+\w+)[,:\s-]+/i, '');
 
-  // Strip common search verb lead-ins
-  q = q.replace(/^(?:please\s+)?(?:search(?:\s+the\s+web)?(?:\s+for)?|look\s+up|find(?:\s+out)?(?:\s+about)?|research|investigate|query|browse|google|fetch|check(?:\s+the)?)\s+/i, '');
+  // Strip common search verb and conversational question lead-ins
+  q = q.replace(
+    /^(?:please\s+)?(?:can\s+you\s+|could\s+you\s+)?(?:tell\s+me\s+|search(?:\s+the\s+web)?(?:\s+for)?\s+|look\s+up\s+|find(?:\s+out)?(?:\s+about)?\s+|research\s+|investigate\s+|query\s+|browse\s+|google\s+|fetch\s+|check(?:\s+the)?\s+)?(?:what(?:'s|s|\s+is|\s+are)\s+(?:the\s+)?|how\s+much\s+(?:does|do|is|are)\s+(?:the\s+)?)?/i,
+    ''
+  );
 
   // Strip trailing action clauses: "and write a report", "and compile key takeaways", "and summarize"
   q = q.replace(/\s+(?:and\s+)?(?:compile|write|generate|draft|save|create|put|summarize|give\s+me|report|output).*$/i, '');
@@ -973,7 +976,7 @@ export function cleanSearchQuery(rawQuery: string): CleanedSearchResult {
   const coreQuery = cleanCore;
 
   // OSINT Intent Classification
-  const isFinancialOrMarket = /\b(price|pricing|cost|costs|rate|rates|fee|fees|tier|tiers|subscription|plan|plans|discount|market|stock|shares|ticker|crypto|token|coin|btc|eth|sol|valuation|mrr|arr|revenue|earnings|quote|live ticker|current price)\b/i.test(q);
+  const isFinancialOrMarket = /\b(price|pricing|cost|costs|rate|rates|fee|fees|tier|tiers|subscription|plan|plans|discount|market|stock|shares|ticker|crypto|token|coin|btc|eth|sol|valuation|mrr|arr|revenue|earnings|quote|live ticker|current price|how much|worth|msrp|salary)\b/i.test(rawQuery);
   const isVersionOrRelease = /\b(release|releases|changelog|version|v\d+|update|updates|patch|deprecated|breaking changes|cve|advisory|vulnerability|roadmap)\b/i.test(q);
   const isNewsOrEvent = /\b(news|today|latest|current|recent|breaking|announcement|events|headline|headlines)\b/i.test(q);
   const isExplicitWiki = /\b(wikipedia|wiki|encyclopedia|biography of|history of)\b/i.test(q);
@@ -982,11 +985,8 @@ export function cleanSearchQuery(rawQuery: string): CleanedSearchResult {
   // RULE 1: TEMPORAL & FRESHNESS ANCHORS
   // Force search query builder to append temporal anchors (2026, live ticker, current price, latest release)
   if (isFinancialOrMarket) {
-    if (!q.includes('2026')) {
-      q = `${q} 2026`;
-    }
-    if (!/\b(price|pricing|ticker|quote)\b/i.test(q)) {
-      q = `${q} current price`;
+    if (!/\b(price|pricing|cost|costs|ticker|quote|rate|fee)\b/i.test(q)) {
+      q = `${q} price cost`;
     }
   } else if (isVersionOrRelease) {
     if (!q.includes('2026')) {
@@ -1031,24 +1031,6 @@ function synthesizeDomainIntel(query: string): {
   fullExtract: string;
 } {
   const q = query.toLowerCase();
-
-  // Satellite Imagery & Commercial Earth Observation Pricing
-  if (/\b(satellite|satellites|imagery|sentinel|copernicus|gibs|maxar|planet|skyfi|airbus|sar)\b/i.test(q)) {
-    return {
-      title: 'Commercial & Open Satellite Imagery Pricing Breakdown (2026)',
-      summary: 'Open feeds (NASA GIBS, ESA Sentinel-2, Landsat) are $0/Free. Paid commercial VHR imagery starts at $15-$50/scene (SkyFi), $32-$108/mo (Sentinel Hub API), $1.50-$8.00/sq km (PlanetScope), and $14.00-$27.50/sq km (Maxar WorldView archive; $35-$65/sq km tasking).',
-      fullExtract: 'Verified 2026 Satellite Imagery Pricing Matrix: (1) Free Open-Source Feeds: NASA GIBS ($0, 250m-375m daily), ESA Copernicus Sentinel-2 ($0, 10m-20m optical), USGS Landsat 8/9 ($0, 15m-30m). (2) Commercial API Quotas: Sentinel Hub API costs $32-$108/month (€30-€100/mo) for standard commercial processing, or $270-$1,000/month for Enterprise. (3) On-Demand Commercial Marketplace (SkyFi / Apollo): Archive VHR (15cm-50cm) starts at $15-$50 per image (25 sq km); New satellite tasking costs $150-$450+ per capture. (4) Maxar Technologies (WorldView-3 / Legion 15cm-30cm HD): Archive imagery is $14.00-$27.50 per sq km (25 sq km minimum ~$350-$685); Priority tasking is $35.00-$65.00+ per sq km. (5) Planet Labs: PlanetScope (3m daily) archive is $1.50-$8.00/sq km; SkySat (50cm) tasking is $10.00-$25.00/sq km. (6) Capella Space / Umbra Commercial SAR (25cm-50cm all-weather radar): Archive $15.00-$30.00/sq km; Custom spotlight tasking $400-$2,500+ per scene.',
-    };
-  }
-
-  // Financial / Market pricing synthesis
-  if (/\b(price|pricing|cost|tier|market|stock|ticker|crypto|arr|rate)\b/i.test(q)) {
-    return {
-      title: `${query.charAt(0).toUpperCase() + query.slice(1)} - Commercial Pricing & Tier Structure`,
-      summary: `Commercial pricing for "${query}" typically follows tiered usage-based and enterprise licensing structures ranging from $0 (Free/Open Tier) and $20-$99/month (Pro/Standard) to $250-$1,000+/month (Enterprise custom SLA).`,
-      fullExtract: `Commercial Pricing & Licensing Overview for ${query}: Standard self-serve developer/pro tiers average $20-$99/month or usage-based metered billing, while dedicated enterprise deployments with custom rate limits and SLA guarantees range from $250/month to $2,500+/month.`,
-    };
-  }
 
   // Release / Version changelog real-time synthesis
   if (/\b(release|changelog|version|patch|update)\b/i.test(q)) {
@@ -1343,10 +1325,10 @@ ${findings || 'No additional telemetry findings attached.'}
       }
     }
 
-    // 2. Live Web Search via Multi-Engine Intelligence (Real-Time Binance/Coinbase/CoinGecko Oracles + GitHub Public Index + Jina Reader)
+    // 2. Live Web Search via Multi-Engine Intelligence (Real-Time Oracles + Multi-Source Web Search + Jina Reader)
     if (name === 'live_web_search') {
       const rawQuery = String(args.query || 'Technology Analysis').trim();
-      const limit = Math.min(5, Math.max(1, Number(args.maxResults) || 3));
+      const limit = Math.min(10, Math.max(4, Number(args.maxResults) || 6));
       const cleanResult = cleanSearchQuery(rawQuery);
       const {
         primary: cleanQuery,
@@ -1493,16 +1475,6 @@ ${findings || 'No additional telemetry findings attached.'}
             } catch {}
           }
         }
-
-        // Commercial & Open Satellite Imagery Pricing Oracle
-        if (/\b(satellite|satellites|imagery|sentinel|copernicus|gibs|maxar|planet|skyfi|airbus|sar)\b/i.test(lowerQ)) {
-          results.push({
-            title: 'Commercial & Open Satellite Imagery Pricing Schedule (2026)',
-            snippet: 'Open Feeds: NASA GIBS & ESA Sentinel-2 ($0 Free). Paid Commercial: Sentinel Hub API ($32-$108/mo), SkyFi VHR Archive ($15-$50/scene) & Tasking ($150-$450+), PlanetScope ($1.50-$8.00/sq km), Maxar WorldView HD ($14.00-$27.50/sq km archive; $35-$65/sq km tasking).',
-            extract: 'Verified 2026 Satellite Imagery Pricing Matrix: (1) Free Zero-Friction OSINT Feeds: NASA GIBS ($0, 250m-375m daily), ESA Copernicus Sentinel-2 ($0, 10m-20m optical), USGS Landsat 8/9 ($0, 15m-30m). (2) Commercial Processing APIs: Sentinel Hub API costs $32-$108/month (€30-€100/mo Basic/Exploration) or $270-$1,000/month (Enterprise). (3) On-Demand Commercial Marketplaces (SkyFi / Apollo): Archive VHR (15cm-50cm) starts at $15-$50 per image (25 sq km); New satellite tasking starts at $150-$450+ per capture. (4) Maxar Technologies (WorldView-3 / WorldView Legion 15cm-30cm HD): Archive imagery is $14.00-$27.50 per sq km (25 sq km min ~$350-$685); Priority tasking is $35.00-$65.00+ per sq km. (5) Planet Labs: PlanetScope (3m daily) archive is $1.50-$8.00/sq km; SkySat (50cm) tasking is $10.00-$25.00/sq km. (6) Capella Space / Umbra Commercial SAR (25cm-50cm all-weather radar): Archive $15.00-$30.00/sq km; Custom spotlight tasking $400-$2,500+ per scene.',
-            url: 'https://www.sentinel-hub.com/pricing/',
-          });
-        }
       }
 
       // B. Public GitHub Index (If query matches owner/repo pattern or mentions GitHub/repositories)
@@ -1571,7 +1543,7 @@ ${findings || 'No additional telemetry findings attached.'}
         }
       }
 
-      // C. Live Real-Time Multi-Engine Web Search (Google, DuckDuckGo, Algolia HackerNews, Wikipedia, Jina Reader, Local Domain Mesh)
+      // C. Live Real-Time Multi-Engine Web Search (DuckDuckGo Organic, Yahoo Organic, Jina Reader, Yahoo Finance, CoinGecko, Reddit, Google News, Wikipedia)
       const effectiveSearchTerm = (coreQuery && coreQuery.length > 2 ? coreQuery : cleanQuery) || rawQuery;
 
       // 0. Direct URL / Domain Inspection (If operative query specifies a direct website or URL)
@@ -1606,30 +1578,63 @@ ${findings || 'No additional telemetry findings attached.'}
         } catch {}
       }
 
-      // 1. Google Real-Time Intelligence Engine (Google News Live RSS + Google Search Index via /api/search)
+      // 1. Multi-Source Live Search Engine (/api/search -> DuckDuckGo HTML, Yahoo Organic, Jina, Yahoo Finance, CoinGecko, Reddit, Google News, Deep Page Number Scraper)
       if (results.length < limit) {
         try {
-          const googleSearchData = await executeSafeOperation(
+          const multiSearchData = await executeSafeOperation(
             async (signal) => {
-              const res = await fetch(`/api/search?q=${encodeURIComponent(cleanQuery)}&limit=${limit}`, { signal });
+              const res = await fetch(`/api/search?q=${encodeURIComponent(rawQuery)}&limit=${limit}`, { signal });
               if (res.ok) return await res.json();
               return null;
             },
-            { timeoutMs: 4000, maxRetries: 1, fallbackValue: null, operationName: 'live_web_search_google_api' }
+            { timeoutMs: 9500, maxRetries: 1, fallbackValue: null, operationName: 'live_web_search_multi_engine' }
           );
 
-          if (googleSearchData && Array.isArray(googleSearchData.results)) {
-            for (const item of googleSearchData.results) {
+          if (multiSearchData && Array.isArray(multiSearchData.results)) {
+            for (const item of multiSearchData.results) {
               if (results.length >= limit) break;
               if (!item || !item.url) continue;
               if (results.some((r) => r.url === item.url)) continue;
+              const srcTag = item.source ? `[${item.source}] ` : '';
               results.push({
-                title: item.title,
+                title: `${srcTag}${item.title}`,
                 snippet: item.snippet,
                 extract: item.extract || item.snippet,
                 url: item.url,
               });
             }
+          }
+        } catch {}
+      }
+
+      // 1a. Client-side Reddit Public JSON Search Fallback (Real-world pricing discussions & benchmarks if /api/search was offline)
+      if (results.length < limit) {
+        try {
+          const redditData = await executeSafeOperation(
+            async (signal) => {
+              const res = await fetch(
+                `https://www.reddit.com/search.json?q=${encodeURIComponent(cleanQuery)}&sort=relevance&limit=3`,
+                { headers: { Accept: 'application/json' }, signal }
+              );
+              if (res.ok) return await res.json();
+              return null;
+            },
+            { timeoutMs: 3800, maxRetries: 1, fallbackValue: null, operationName: 'reddit_public_search' }
+          );
+          const children = redditData?.data?.children || [];
+          for (const child of children) {
+            if (results.length >= limit) break;
+            const post = child?.data;
+            if (!post || !post.title) continue;
+            const postUrl = post.permalink ? `https://www.reddit.com${post.permalink}` : post.url;
+            if (!postUrl || results.some((r) => r.url === postUrl)) continue;
+            const body = String(post.selftext || '').replace(/\s+/g, ' ').trim();
+            results.push({
+              title: `[Reddit r/${post.subreddit || 'search'}] ${post.title}`,
+              snippet: (body ? `${post.title} — ${body}` : post.title).slice(0, 360),
+              extract: `[Reddit r/${post.subreddit || 'search'}] ${post.title}: ${body.slice(0, 600)}`,
+              url: postUrl,
+            });
           }
         } catch {}
       }
@@ -2930,11 +2935,6 @@ ${findings || 'No additional telemetry findings attached.'}
           links: {
             nasaWorldviewPortal: worldviewUrl,
             copernicusBrowser: `https://browser.dataprocessingspace.copernicus.eu/?lat=${lat}&lng=${lon}&zoom=11`,
-          },
-          commercialPricingReference: {
-            openFreeFeeds: 'NASA GIBS ($0 Free), ESA Copernicus Sentinel-2 ($0 Free), USGS Landsat 8/9 ($0 Free)',
-            paidCommercialTiers:
-              'Sentinel Hub API ($32-$108/mo), SkyFi On-Demand VHR ($15-$50/archive scene, $150-$450+ tasking), PlanetScope ($1.50-$8.00/sq km), Maxar WorldView HD ($14.00-$27.50/sq km archive, $35-$65/sq km tasking), Capella SAR ($15-$30/sq km archive)',
           },
           timestamp: new Date().toISOString(),
         };
@@ -5283,12 +5283,6 @@ export function validateRealTimeToolSuccess(executedTools: ExecutedToolCall[], _
           }
         }
       }
-      if (payload.commercialPricingReference) {
-        const m = extractNumericalMetrics(JSON.stringify(payload.commercialPricingReference));
-        for (const p of m.prices) {
-          if (!verifiedPrices.includes(p)) verifiedPrices.push(p);
-        }
-      }
       if (payload.condition || payload.temperature || (Array.isArray(payload.results) && payload.results.length > 0)) {
         hasLiveTelemetry = true;
       }
@@ -5906,20 +5900,51 @@ When executing a reconnaissance mission or gathering threat telemetry:
             return await ensureReportPersistedAndAnnotated(actionCard, params);
           }
 
-          const cleanPuterDialogue = stripAgentActionTags(puterReply);
+          let finalPuterDialogue = stripAgentActionTags(puterReply) || 'Directive completed via Puter.';
+          const autoPuterTools: ExecutedToolCall[] = [];
+
+          if (isRealTimeDataQuery(params.prompt)) {
+            try {
+              const searchOut = await executeFunctionCallHandler({
+                name: 'live_web_search',
+                args: { query: params.prompt, maxResults: 6 },
+              });
+              autoPuterTools.push(searchOut.executedToolMeta);
+              const searchResults: Array<{ title: string; snippet: string; url: string }> =
+                searchOut.response?.results || [];
+              if (searchResults.length > 0) {
+                try {
+                  const turn2Prompt = `Live multi-source web search results for "${params.prompt}":\n${JSON.stringify(searchOut.response)}\n\nSynthesize these real-time findings into your response. Cite the exact numbers, prices, and rates found across these multiple online sources along with their source names/URLs. Do not emit any tool calls.`;
+                  const synthPuter = await ModelGateway.callPuterModel(
+                    puterModel,
+                    systemInstruction,
+                    [
+                      { role: 'user', content: params.prompt },
+                      { role: 'user', content: turn2Prompt },
+                    ]
+                  );
+                  const cleanedSynth = stripAgentActionTags(synthPuter);
+                  if (cleanedSynth && cleanedSynth.length > 40) {
+                    finalPuterDialogue = cleanedSynth;
+                  }
+                } catch {}
+              }
+            } catch {}
+          }
+
           const card: AgentExecutionCard = {
             id: `card-${Date.now()}`,
             prompt: params.prompt,
-            dialogue: cleanPuterDialogue || 'Directive completed via Puter.',
+            dialogue: finalPuterDialogue,
             cardTitle: `${(params.activeAgentName || 'Agent').toUpperCase()} · PUTER ZERO-KEY`,
-            actionCategory: 'SSO_INFERENCE',
+            actionCategory: autoPuterTools.length > 0 ? 'Live Telemetry' : 'SSO_INFERENCE',
             steps: [
               { label: 'Puter SSO Link', detail: `Connected to ${puterModel}`, status: 'completed' as const },
-              { label: 'Inference Synthesis', detail: 'Zero-key multi-model execution completed', status: 'completed' as const },
+              { label: 'Inference Synthesis', detail: autoPuterTools.length > 0 ? (autoPuterTools[0].resultSummary || 'Multi-source telemetry verified') : 'Zero-key multi-model execution completed', status: 'completed' as const },
               { label: 'Mission Verified', detail: 'Directive fulfilled via Puter.js', status: 'verified' as const },
             ],
-            toolCalls: [],
-            tokenEstimate: Math.round(puterReply.length / 4),
+            toolCalls: autoPuterTools,
+            tokenEstimate: Math.round(finalPuterDialogue.length / 4),
             agentName: params.activeAgentName,
             themeId: params.themeId,
             timestamp: new Date().toISOString(),
@@ -6138,21 +6163,47 @@ When executing a reconnaissance mission or gathering threat telemetry:
               const autoExecutedTools: ExecutedToolCall[] = [];
               let finalDialogue = cleanReply || 'Directive processed.';
 
-              // If the user asked a real-time or pricing query and the model didn't call a tool, enrich with live_web_search automatically
+              // If the user asked a real-time or pricing query and the model didn't call a tool, enrich with live_web_search automatically and synthesize
               if (isRealTimeDataQuery(params.prompt)) {
                 try {
                   const searchOut = await executeFunctionCallHandler({
                     name: 'live_web_search',
-                    args: { query: params.prompt },
+                    args: { query: params.prompt, maxResults: 6 },
                   });
                   autoExecutedTools.push(searchOut.executedToolMeta);
                   const searchResults: Array<{ title: string; snippet: string; url: string }> =
                     searchOut.response?.results || [];
-                  if (searchResults.length > 0 && (!cleanReply || cleanReply.length < 120)) {
-                    finalDialogue = `${cleanReply ? `${cleanReply}\n\n---\n` : ''}### Verified Live Web Telemetry\n${searchResults
-                      .slice(0, 3)
-                      .map((r, i) => `${i + 1}. **[${r.title}](${r.url})** — ${r.snippet}`)
-                      .join('\n')}`;
+                  if (searchResults.length > 0) {
+                    try {
+                      const synthRes = await executeSafeOperation(
+                        async (signal) => {
+                          return await fetch(endpoint, {
+                            method: 'POST',
+                            headers: requestHeaders,
+                            body: JSON.stringify({
+                              model: effectiveModel,
+                              messages: [
+                                ...initialMessages,
+                                {
+                                  role: 'user',
+                                  content: `Live multi-source web search telemetry gathered for "${params.prompt}":\n${JSON.stringify(searchOut.response)}\n\nSynthesize these real-time findings into your response. Cite the exact numbers, prices, and rates found across these multiple online sources along with their source names and URLs. Do not emit any tool calls.`,
+                                },
+                              ],
+                              temperature: Number(params.temperature || 0.7),
+                            }),
+                            signal,
+                          });
+                        },
+                        { timeoutMs: 22000, maxRetries: 1, operationName: `${isOr ? 'openrouter' : targetProvider}_realtime_synth` }
+                      );
+                      if (synthRes && synthRes.ok) {
+                        const synthData = await synthRes.json();
+                        const synthContent = stripAgentActionTags(synthData.choices?.[0]?.message?.content || '');
+                        if (synthContent && synthContent.length > 40) {
+                          finalDialogue = synthContent;
+                        }
+                      }
+                    } catch {}
                   }
                 } catch {}
               }

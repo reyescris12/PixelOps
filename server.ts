@@ -12,6 +12,7 @@ import { onRequest as handleHazardsOsint } from './functions/api/osint/hazards';
 import { onRequest as handleSatelliteOsint } from './functions/api/osint/satellite';
 import { onRequest as handleSpectrumOsint } from './functions/api/osint/spectrum';
 import { onRequest as handleClassifiedFeed } from './functions/api/intel/classified-feed';
+import { onRequest as handleUniversalSearch } from './functions/api/search';
 
 dotenv.config();
 
@@ -1615,9 +1616,7 @@ async function startServer() {
       fetchedAt: new Date().toISOString(),
     });
   };
-
-  app.get('/api/search', handleSearchRequest);
-  app.post('/api/search', handleSearchRequest);
+  void handleSearchRequest;
 
   /**
    * Universal Web Crawler & URL Reader Proxy
@@ -1752,6 +1751,10 @@ async function startServer() {
   app.all('/api/osint/satellite', adaptCloudflareHandler(handleSatelliteOsint));
   app.all('/api/osint/spectrum', adaptCloudflareHandler(handleSpectrumOsint));
   app.all('/api/intel/classified-feed', adaptCloudflareHandler(handleClassifiedFeed));
+  app.all(
+    '/api/search',
+    adaptCloudflareHandler((ctx) => handleUniversalSearch({ request: ctx.request, env: process.env as any }))
+  );
 
   /**
    * Turn 1: Initial Gemini API Request with Dynamic Function Declarations (`tools`).

@@ -543,6 +543,9 @@ export interface TacticalSatelliteMonitorProps {
   threatBadgeText?: string;
   onDispatchReconDirective?: (directive: string, coords: { lat: number; lon: number; label: string }) => void;
   compact?: boolean;
+  overlayMode?: boolean;
+  onCloseOverlay?: () => void;
+  onOpenThreatMatrixModal?: () => void;
 }
 
 export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> = ({
@@ -554,6 +557,9 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
   threatBadgeText = 'THREAT LEVEL: BRAVO - REGIONAL GRID STRAIN',
   onDispatchReconDirective,
   compact = false,
+  overlayMode = false,
+  onCloseOverlay,
+  onOpenThreatMatrixModal,
 }) => {
   const [lat, setLat] = useState<number>(initialLat);
   const [lon, setLon] = useState<number>(initialLon);
@@ -764,10 +770,14 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
       : '';
 
   return (
-    <div className="w-full bg-[#070b11] border-2 border-emerald-500/60 rounded-lg shadow-[0_0_35px_rgba(16,185,129,0.2)] overflow-hidden font-mono text-slate-100">
+    <div
+      className={`w-full ${
+        overlayMode ? 'h-full flex flex-col rounded-none border-0' : 'rounded-lg border-2 border-emerald-500/60 shadow-[0_0_35px_rgba(16,185,129,0.2)]'
+      } bg-[#070b11] overflow-hidden font-mono text-slate-100`}
+    >
       {/* Top Recon Monitor Control Header */}
-      <div className="px-3.5 py-2.5 bg-gradient-to-r from-[#06120e] via-[#0b1f17] to-[#06120e] border-b border-emerald-500/40 flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2.5">
+      <div className="px-3 py-1.5 sm:px-3.5 sm:py-2 bg-gradient-to-r from-[#06120e] via-[#0b1f17] to-[#06120e] border-b border-emerald-500/40 flex flex-wrap items-center justify-between gap-2 shrink-0">
+        <div className="flex items-center gap-2">
           <div className="p-1.5 rounded bg-emerald-500/20 border border-emerald-400/60 text-emerald-300">
             <Radar className="w-4 h-4 animate-spin" style={{ animationDuration: '6s' }} />
           </div>
@@ -835,11 +845,33 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
               />
             </div>
           )}
+
+          {onOpenThreatMatrixModal && (
+            <button
+              type="button"
+              onClick={onOpenThreatMatrixModal}
+              className="px-2 py-1 text-[10px] font-bold rounded bg-cyan-950/80 hover:bg-cyan-900 text-cyan-200 border border-cyan-400/60 cursor-pointer whitespace-nowrap"
+              title="Open 4-Pillar Threat Correlation, Grid Stability, CISA KEV & Supply Chain Dossier"
+            >
+              [🛡️ 4-Pillar Dossier]
+            </button>
+          )}
+
+          {onCloseOverlay && (
+            <button
+              type="button"
+              onClick={onCloseOverlay}
+              className="px-2.5 py-1 text-[10px] font-bold rounded bg-red-950/80 hover:bg-red-900 text-red-200 border border-red-400/60 cursor-pointer whitespace-nowrap"
+              title="Close Recon Monitor Overlay and return to Room View"
+            >
+              [✕ CLOSE RECON]
+            </button>
+          )}
         </div>
       </div>
 
       {/* Quick Sector Coordinate Lock Bar + Agent Coordinate Binding Input */}
-      <div className="px-3.5 py-2 bg-[#0a1118] border-b border-slate-800 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2">
+      <div className="px-3 py-1.5 sm:px-3.5 bg-[#0a1118] border-b border-slate-800 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-2 shrink-0">
         <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5">
           <span className="text-[10px] uppercase font-bold text-emerald-400 shrink-0 mr-1 flex items-center gap-1">
             <Compass className="w-3 h-3" /> Lock Sector:
@@ -901,7 +933,11 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
       {/* Main 2D Tactical Raster Viewport + Night-Vision CRT Shader + Radar Overlay */}
       <div
         className={`relative w-full ${
-          compact ? 'h-72 sm:h-80' : 'h-80 sm:h-[430px]'
+          overlayMode
+            ? 'flex-1 min-h-0'
+            : compact
+            ? 'h-72 sm:h-80'
+            : 'h-80 sm:h-[430px]'
         } bg-[#020804] select-none overflow-hidden`}
       >
         {/* Filtered Tile Raster Container (.tactical-satellite-monitor) */}

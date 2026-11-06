@@ -197,8 +197,9 @@ const CommandCenterContent: React.FC = () => {
     () => restoredSession?.activeTab || 'hq'
   );
   const [hqSubView, setHqSubView] = useState<HqSubView>(() => {
-    if (restoredSession?.hqSubView && (restoredSession.hqSubView as string) !== 'toolkits') {
-      return restoredSession.hqSubView;
+    const saved = restoredSession?.hqSubView as string | undefined;
+    if (saved && saved !== 'toolkits' && saved !== 'recon_monitor') {
+      return restoredSession!.hqSubView;
     }
     return 'terminal';
   });
@@ -309,6 +310,7 @@ const CommandCenterContent: React.FC = () => {
   const [nightShiftUnreadCount, setNightShiftUnreadCount] = useState<number>(() => loadNightShiftNotifications().filter((n) => !n.read).length);
   const [isTelemetryOpen, setIsTelemetryOpen] = useState(false);
   const [isThreatMonitorOpen, setIsThreatMonitorOpen] = useState(false);
+  const [isReconOverlayOpen, setIsReconOverlayOpen] = useState(false);
   const [reconMonitorTarget, setReconMonitorTarget] = useState<{
     lat: number;
     lon: number;
@@ -490,9 +492,8 @@ const CommandCenterContent: React.FC = () => {
         label: detail.label || `Target (${detail.lat.toFixed(3)}°, ${detail.lon.toFixed(3)}°)`,
         sectorCode: `SAT_RECON // ${detail.lat.toFixed(2)}°, ${detail.lon.toFixed(2)}°`,
       });
-      // Automatically pull up the Recon Monitor tab so the user sees what the agent is looking at
-      setActiveTab('hq');
-      setHqSubView('recon_monitor');
+      // Automatically pull up the Recon Monitor overlay over the rooms so the Briefing Terminal below stays open for prompts
+      setIsReconOverlayOpen(true);
     };
 
     window.addEventListener('pixelops:satellite-recon-lock', handleSatelliteReconToolLock);
@@ -501,13 +502,6 @@ const CommandCenterContent: React.FC = () => {
       window.removeEventListener('pixelops:satellite-recon-lock', handleSatelliteReconToolLock);
     };
   }, []);
-
-  const currentRoomHasSatelliteModule =
-    currentRoom === 'library' ||
-    hqSubView === 'recon_monitor' ||
-    getRoomBoundSkills(currentRoom).some(
-      (s) => s.id === 'osint_satellite_plugin' || s.providedTools.includes('osint_satellite_recon')
-    );
 
   // Town Hall Meeting & Multi-Agent Roundtable States
   const [roundtableSessions, setRoundtableSessions] = useState<RoundtableMeetingSession[]>(
@@ -1235,8 +1229,7 @@ const CommandCenterContent: React.FC = () => {
               setReconMonitorTarget(parsedFromArgs);
             }
           }
-          setActiveTab('hq');
-          setHqSubView('recon_monitor');
+          setIsReconOverlayOpen(true);
         }
       }
 
@@ -2607,6 +2600,10 @@ const CommandCenterContent: React.FC = () => {
                 setIsWorkspaceFilesOpen(true);
                 playBeep('tap');
               }}
+              onOpenReconMonitor={() => {
+                setIsReconOverlayOpen((prev) => !prev);
+                playBeep('tap');
+              }}
             />
           </div>
 
@@ -2645,13 +2642,17 @@ const CommandCenterContent: React.FC = () => {
             <button
               type="button"
               onClick={() => {
-                setIsThreatMonitorOpen(true);
+                setIsReconOverlayOpen((prev) => !prev);
                 playBeep('tap');
               }}
-              className="px-2 py-0.5 bg-[#0c1c26] hover:bg-[#132c3b] border border-[#22d3ee]/60 hover:border-[#22d3ee] text-[#67e8f9] flex items-center gap-1 cursor-pointer transition-colors"
-              title="Open 4-Pillar Threat Correlation Matrix, Grid Stability, Cyber CVE Radar & Supply Chain Recon Monitor"
+              className={`px-2 py-0.5 border flex items-center gap-1 cursor-pointer transition-colors ${
+                isReconOverlayOpen
+                  ? 'bg-[#0c2e21] border-[#10b981] text-[#34d399] font-bold shadow-[0_0_12px_rgba(16,185,129,0.4)]'
+                  : 'bg-[#091e16] hover:bg-[#0e2d21] border-[#10b981]/60 hover:border-[#10b981] text-[#6ee7b7]'
+              }`}
+              title="Toggle Tactical Satellite Recon Monitor Overlay over the Safehouse Rooms (Keep Briefing Terminal open below to prompt agents live)"
             >
-              <span>[🛡️ THREAT MATRIX]</span>
+              <span>[🛰️ RECON MONITOR]</span>
             </button>
 
             <button
@@ -2724,6 +2725,22 @@ const CommandCenterContent: React.FC = () => {
               setIsWorkspaceFilesOpen(true);
               playBeep('tap');
             }}
+            isReconOverlayOpen={isReconOverlayOpen}
+            onOpenReconOverlay={() => setIsReconOverlayOpen(true)}
+            onCloseReconOverlay={() => setIsReconOverlayOpen(false)}
+            reconTarget={reconMonitorTarget}
+            onOpenThreatMatrixModal={() => setIsThreatMonitorOpen(true)}
+            onDispatchReconDirective={(directive, coords) => {
+              setReconMonitorTarget({
+                lat: coords.lat,
+                lon: coords.lon,
+                label: coords.label,
+                sectorCode: `SECTOR-LOCK // ${coords.lat.toFixed(2)},${coords.lon.toFixed(2)}`,
+              });
+              handleExecuteDirective(
+                `${directive} [Orbital Target Lock: ${coords.label} at ${coords.lat.toFixed(4)}, ${coords.lon.toFixed(4)}]`
+              );
+            }}
           />
 
           {/* Dedicated Sector Action Deck Tray (Docked cleanly below the diorama canvas so the room is unobstructed) */}
@@ -2737,8 +2754,7 @@ const CommandCenterContent: React.FC = () => {
                 playBeep('tap');
               }}
               onOpenReconMonitor={() => {
-                setActiveTab('hq');
-                setHqSubView('recon_monitor');
+                setIsReconOverlayOpen(true);
                 playBeep('tap');
               }}
             />
@@ -2847,30 +2863,10 @@ const CommandCenterContent: React.FC = () => {
                     >
                       📜 Command Log ({commandLedger.length})
                     </button>
-                    {currentRoomHasSatelliteModule && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setHqSubView('recon_monitor');
-                          setActiveSpeakerAgentIndex(null);
-                          playBeep('tap');
-                        }}
-                        className={`px-3 py-1 font-mono-tabular text-xs cursor-pointer transition-colors flex items-center gap-1 ${
-                          hqSubView === 'recon_monitor'
-                            ? 'bg-[#10b981] text-[#05120c] font-bold'
-                            : 'text-[#34d399] hover:text-[#f3ead8]'
-                        }`}
-                        title="Open Live Zero-Key NASA GIBS & Esri Tactical Satellite Recon Monitor (Bound to Satellite Imagery Module)"
-                      >
-                        <span>🛰️ Recon Monitor (SAT_RECON)</span>
-                      </button>
-                    )}
                   </div>
                   <span className="hidden sm:inline font-mono-tabular text-[11px] text-[#9c8265]">
                     {hqSubView === 'town_hall'
                       ? 'MULTI-AGENT ROUNDTABLE · WAR ROOM'
-                      : hqSubView === 'recon_monitor'
-                      ? 'NASA GIBS & ESRI ORBITAL FEED · NIGHT-VISION CRT'
                       : 'DEXIE INDEXEDDB · APPEND-ONLY LEDGER'}
                   </span>
                 </div>
@@ -2981,40 +2977,6 @@ const CommandCenterContent: React.FC = () => {
                     onSelectSpeakerAgentIndex={setActiveSpeakerAgentIndex}
                     participantsWithNotes={participantsWithNotes}
                   />
-                ) : hqSubView === 'recon_monitor' ? (
-                  <div className="w-full max-w-4xl mx-auto px-3 sm:px-0 flex flex-col gap-3">
-                    <TacticalSatelliteMonitor
-                      initialLat={reconMonitorTarget.lat}
-                      initialLon={reconMonitorTarget.lon}
-                      initialLabel={reconMonitorTarget.label}
-                      initialSectorCode={reconMonitorTarget.sectorCode}
-                      activeOperativeName={activeAgent.name}
-                      threatBadgeText="THREAT LEVEL: BRAVO - ORBITAL OVERWATCH ACTIVE"
-                      onDispatchReconDirective={(directive, coords) => {
-                        setReconMonitorTarget({
-                          lat: coords.lat,
-                          lon: coords.lon,
-                          label: coords.label,
-                          sectorCode: `SECTOR-LOCK // ${coords.lat.toFixed(2)},${coords.lon.toFixed(2)}`,
-                        });
-                        handleExecuteDirective(
-                          `${directive} [Orbital Target Lock: ${coords.label} at ${coords.lat.toFixed(4)}, ${coords.lon.toFixed(4)}]`
-                        );
-                      }}
-                    />
-                    <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 bg-[#0b131d] border border-cyan-500/40 rounded text-xs font-mono">
-                      <span className="text-cyan-300">
-                        Need the full 4-Pillar Macro-to-Micro Threat Correlation, Grid Stability, CISA KEV &amp; Supply Chain Dossier?
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setIsThreatMonitorOpen(true)}
-                        className="px-3 py-1 rounded bg-cyan-500/20 hover:bg-cyan-500/35 border border-cyan-400/60 text-cyan-200 font-bold cursor-pointer"
-                      >
-                        [🛡️ Open Full 4-Pillar Threat Matrix]
-                      </button>
-                    </div>
-                  </div>
                 ) : (
                   <CommandLogScreen
                     entries={commandLedger}

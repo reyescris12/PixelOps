@@ -38,6 +38,7 @@ import {
 } from '../engine/moduleRegistry';
 import { RoomSpawnerModal } from './RoomSpawnerModal';
 import { RoomActionPlaybookPanel } from './RoomActionPlaybookPanel';
+import { TacticalSatelliteMonitor } from './TacticalSatelliteMonitor';
 import type { IntelligencePlaybookDef } from '../engine/intelligencePlaybooks';
 import { getOperativeReadiness } from '../services/OperativeReadinessService';
 
@@ -1562,6 +1563,17 @@ interface SpriteCanvasProps {
   onCallMeeting?: () => void;
   onExecutePlaybook?: (playbook: IntelligencePlaybookDef) => void;
   onOpenVfs?: (targetPath?: string) => void;
+  isReconOverlayOpen?: boolean;
+  onOpenReconOverlay?: () => void;
+  onCloseReconOverlay?: () => void;
+  reconTarget?: {
+    lat: number;
+    lon: number;
+    label: string;
+    sectorCode: string;
+  };
+  onDispatchReconDirective?: (directive: string, coords: { lat: number; lon: number; label: string }) => void;
+  onOpenThreatMatrixModal?: () => void;
 }
 
 const UPPER_DECK_ROOMS: RoomId[] = ['comms_tower', 'war_room', 'server_vault', 'armory'];
@@ -1659,6 +1671,12 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
   onCallMeeting,
   onExecutePlaybook,
   onOpenVfs,
+  isReconOverlayOpen = false,
+  onOpenReconOverlay,
+  onCloseReconOverlay,
+  reconTarget,
+  onDispatchReconDirective,
+  onOpenThreatMatrixModal,
 }) => {
   const { theme, themeId, activeAgent, setActiveAgentId, playBeep } = useTheme();
   const { crewAgents, getCrewAgentByIndex, updateAgentRoom } = useCrew();
@@ -2924,6 +2942,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
             onExecutePlaybook={onExecutePlaybook}
             variant="floating"
             onOpenVfs={onOpenVfs}
+            onOpenReconMonitor={onOpenReconOverlay}
           />
         )}
 
@@ -3113,6 +3132,36 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
           onSequenceComplete={(boost) => onGameSequenceComplete?.(boost)}
           onAbort={onAbortGame}
         />
+
+        {/* Tactical Satellite Recon Monitor Overlay (Covers the room & agents so the Briefing Terminal below stays open for live prompts) */}
+        <AnimatePresence>
+          {isReconOverlayOpen && (
+            <motion.div
+              key="recon-monitor-room-overlay"
+              initial={{ opacity: 0, scale: 0.98 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.98 }}
+              transition={{ duration: 0.2 }}
+              onPointerDown={(e) => e.stopPropagation()}
+              onPointerMove={(e) => e.stopPropagation()}
+              onPointerUp={(e) => e.stopPropagation()}
+              className="absolute inset-0 z-50 bg-[#050b08] flex flex-col overflow-hidden cursor-default"
+            >
+              <TacticalSatelliteMonitor
+                initialLat={reconTarget?.lat ?? 30.5852}
+                initialLon={reconTarget?.lon ?? 32.2654}
+                initialLabel={reconTarget?.label ?? 'Suez Canal & Red Sea Subsea Cable Corridor'}
+                initialSectorCode={reconTarget?.sectorCode ?? 'SECTOR-54 // SUEZ-CHOKELINE'}
+                activeOperativeName={activeCrewMember.customName || activeAgent.name}
+                threatBadgeText="THREAT LEVEL: BRAVO - ORBITAL OVERWATCH ACTIVE"
+                overlayMode={true}
+                onCloseOverlay={onCloseReconOverlay}
+                onOpenThreatMatrixModal={onOpenThreatMatrixModal}
+                onDispatchReconDirective={onDispatchReconDirective}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Integrated 16-Bit Tactical Bottom Screen Tray:
@@ -3243,6 +3292,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
                 onExecutePlaybook={onExecutePlaybook}
                 variant="pill"
                 onOpenVfs={onOpenVfs}
+                onOpenReconMonitor={onOpenReconOverlay}
               />
             )}
 

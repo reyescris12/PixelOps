@@ -18,6 +18,7 @@
  */
 
 import { RoomId } from './roomData';
+import { loadRoomSkillBindings } from './moduleRegistry';
 import { writeWorkspaceFile, listWorkspaceFiles } from './storageManager';
 import { appendCommandLedgerEntry } from '../services/CommandLedgerDb';
 import {
@@ -743,21 +744,58 @@ export function saveUserPlaybookTarget(playbookId: PlaybookId, target: UserPlayb
  * Returns all Playbooks available for a given room.
  */
 export function getPlaybooksForRoom(roomId: RoomId): IntelligencePlaybookDef[] {
-  if (roomId === 'comms_tower' || roomId === 'archive_basement') {
+  // Check dynamically mounted room skills
+  try {
+    const roomBindings = loadRoomSkillBindings();
+    const skills = roomBindings[roomId] || [];
+    if (
+      skills.includes('osint_maritime_plugin') ||
+      skills.includes('osint_hazard_plugin') ||
+      skills.includes('code_sandbox_plugin')
+    ) {
+      return [
+        INTELLIGENCE_PLAYBOOKS.triage_gmail,
+        INTELLIGENCE_PLAYBOOKS.calendar_brief,
+        INTELLIGENCE_PLAYBOOKS.sync_github,
+      ];
+    }
+    if (
+      skills.includes('osint_satellite_plugin') ||
+      skills.includes('osint_spectrum_plugin') ||
+      skills.includes('web_search_plugin')
+    ) {
+      return [
+        INTELLIGENCE_PLAYBOOKS.wiretap_watch,
+        INTELLIGENCE_PLAYBOOKS.deep_recon,
+        INTELLIGENCE_PLAYBOOKS.morning_briefing,
+      ];
+    }
+  } catch {}
+
+  if (roomId === 'comms_tower' || roomId === 'archive_basement' || roomId === 'library') {
     return [
       INTELLIGENCE_PLAYBOOKS.wiretap_watch,
       INTELLIGENCE_PLAYBOOKS.deep_recon,
       INTELLIGENCE_PLAYBOOKS.morning_briefing,
     ];
   }
-  if (roomId === 'war_room' || roomId === 'server_vault') {
+  if (
+    roomId === 'war_room' ||
+    roomId === 'server_vault' ||
+    roomId === 'armory' ||
+    roomId === 'briefing_lounge'
+  ) {
     return [
       INTELLIGENCE_PLAYBOOKS.triage_gmail,
       INTELLIGENCE_PLAYBOOKS.calendar_brief,
       INTELLIGENCE_PLAYBOOKS.sync_github,
     ];
   }
-  return [];
+  return [
+    INTELLIGENCE_PLAYBOOKS.deep_recon,
+    INTELLIGENCE_PLAYBOOKS.morning_briefing,
+    INTELLIGENCE_PLAYBOOKS.sync_github,
+  ];
 }
 
 /**

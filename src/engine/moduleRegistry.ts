@@ -155,6 +155,58 @@ export const AVAILABLE_SKILLS: SkillModuleDef[] = [
     recommendedRoom: 'comms_tower',
     iconName: 'Radar',
   },
+  {
+    id: 'osint_maritime_plugin',
+    name: 'Maritime AIS Radar & Vessel Tracking',
+    shortCode: 'AIS_RADAR',
+    category: 'data',
+    description:
+      'Real-time Automatic Identification System (AIS) vessel transponder tracking, strategic chokepoint transit delays (Suez, Panama, Hormuz), and dark vessel indicators.',
+    systemPromptModifier:
+      'You have live access to global AIS maritime telemetry. Use osint_maritime_tracker to monitor naval transits, shipping chokepoints, and port congestion.',
+    providedTools: ['osint_maritime_tracker'],
+    recommendedRoom: 'server_vault',
+    iconName: 'Radar',
+  },
+  {
+    id: 'osint_hazard_plugin',
+    name: 'Global Hazards & Seismic Intel (USGS)',
+    shortCode: 'HAZARD_INTEL',
+    category: 'research',
+    description:
+      'Real-time global seismic feeds from USGS (all magnitudes, M4.5+, significant events) and multi-hazard alerts from GDACS (tsunamis, cyclones, volcanoes, floods).',
+    systemPromptModifier:
+      'You have live telemetry for global seismic events and natural hazards. Cross-reference USGS telemetry before evaluating infrastructure disruptions.',
+    providedTools: ['osint_hazard_tracker'],
+    recommendedRoom: 'war_room',
+    iconName: 'Database',
+  },
+  {
+    id: 'osint_satellite_plugin',
+    name: 'NASA GIBS Satellite Reconnaissance',
+    shortCode: 'SAT_RECON',
+    category: 'research',
+    description:
+      'Direct high-resolution multispectral optical, infrared, and nighttime lights satellite snapshots from NASA GIBS & Copernicus Sentinel metadata.',
+    systemPromptModifier:
+      'You have access to open satellite reconnaissance imagery. Use osint_satellite_recon to generate high-resolution snapshot URLs of target coordinates.',
+    providedTools: ['osint_satellite_recon'],
+    recommendedRoom: 'library',
+    iconName: 'Search',
+  },
+  {
+    id: 'osint_spectrum_plugin',
+    name: 'Spectrum & GNSS Interference (EW)',
+    shortCode: 'SPECTRUM_EW',
+    category: 'security',
+    description:
+      'Real-time civil aviation GNSS jamming & spoofing corridor index combined with NOAA SWPC solar flare and geomagnetic storm levels (Kp-index).',
+    systemPromptModifier:
+      'You have real-time spectrum and electronic warfare telemetry. Check regional GPS degradation and space weather before evaluating communications or flight path deviations.',
+    providedTools: ['osint_spectrum_analyzer'],
+    recommendedRoom: 'comms_tower',
+    iconName: 'Radar',
+  },
 ];
 
 const ROOM_BINDINGS_STORAGE_KEY = 'pixelops_room_skill_bindings_v1';
@@ -162,12 +214,12 @@ const STATION_BINDINGS_STORAGE_KEY = 'pixelops_station_skill_bindings_v1';
 
 // Default initial bindings bridging rooms to capabilities
 const DEFAULT_ROOM_BINDINGS: Record<string, string[]> = {
-  comms_tower: ['api_gateway_plugin', 'web_search_plugin'],
-  war_room: ['code_sandbox_plugin', 'api_gateway_plugin'],
-  server_vault: ['code_sandbox_plugin', 'memory_lookup_plugin'],
+  comms_tower: ['api_gateway_plugin', 'web_search_plugin', 'osint_spectrum_plugin'],
+  war_room: ['code_sandbox_plugin', 'api_gateway_plugin', 'osint_hazard_plugin'],
+  server_vault: ['code_sandbox_plugin', 'memory_lookup_plugin', 'osint_maritime_plugin'],
   armory: ['code_sandbox_plugin'],
   briefing_lounge: ['memory_lookup_plugin'],
-  library: ['web_search_plugin'],
+  library: ['web_search_plugin', 'osint_satellite_plugin'],
   archive_basement: ['fs_storage_plugin', 'memory_lookup_plugin'],
   cyber_lab: ['code_sandbox_plugin', 'github_scraper'],
   quantum_vault: ['memory_lookup_plugin', 'crypto_vault'],
@@ -176,10 +228,12 @@ const DEFAULT_ROOM_BINDINGS: Record<string, string[]> = {
 
 const DEFAULT_STATION_BINDINGS: Record<string, string> = {
   comms_cipher_rig: 'api_gateway_plugin',
+  comms_dish_console: 'osint_spectrum_plugin',
   war_left_desk: 'code_sandbox_plugin',
+  war_center_desk: 'osint_hazard_plugin',
   vault_laptop: 'memory_lookup_plugin',
-  vault_core_rack: 'code_sandbox_plugin',
-  lib_front_desk: 'web_search_plugin',
+  vault_core_rack: 'osint_maritime_plugin',
+  lib_front_desk: 'osint_satellite_plugin',
   lib_card_catalog: 'web_search_plugin',
   basement_omega_safe: 'fs_storage_plugin',
   cyber_bench: 'code_sandbox_plugin',

@@ -1,4 +1,10 @@
 import type { RoomId } from '../components/SpriteCanvas';
+import {
+  loadStationSkillBindings,
+  loadRoomSkillBindings,
+  AVAILABLE_SKILLS,
+} from '../engine/moduleRegistry';
+import { getAllRoomStations } from '../engine/roomManager';
 
 export interface RoomEquipmentAsset {
   stationId: string;
@@ -91,10 +97,101 @@ export function savePlacedGearState(state: Record<string, RoomEquipmentAsset>) {
 
 /**
  * Checks if a workstation supports a given tool and is powered on.
+ * Dynamically recognizes:
+ * 1. PlacedGear equipment configurations
+ * 2. Workstation-specific skill bindings from the Module Registry
+ * 3. Room-level skill bindings mounted by the user
  */
 export function workstationSupportsTool(stationId: string, toolName: string): boolean {
+  // 1. Check direct placed gear asset
   const gear = loadPlacedGearState();
   const asset = gear[stationId];
-  if (!asset || !asset.isPowered) return false;
-  return asset.supportedTools.includes(toolName);
+  if (asset && asset.isPowered && asset.supportedTools.includes(toolName)) {
+    return true;
+  }
+
+  // 2. Check if workstation is specifically bound to a skill providing this tool
+  try {
+    const stationBindings = loadStationSkillBindings();
+    const boundSkillId = stationBindings[stationId];
+    if (boundSkillId) {
+      const skill = AVAILABLE_SKILLS.find((s) => s.id === boundSkillId);
+      if (skill && skill.providedTools.includes(toolName)) {
+        return true;
+      }
+    }
+
+    // 3. Check if the parent room of this workstation has the skill mounted
+    const allStations = getAllRoomStations();
+    let parentRoomId: string | null = null;
+    for (const [rId, stations] of Object.entries(allStations)) {
+      if (stations.some((st) => st.id === stationId)) {
+        parentRoomId = rId;
+        break;
+      }
+    }
+
+    if (parentRoomId) {
+      const roomBindings = loadRoomSkillBindings();
+      const mountedSkillIds = roomBindings[parentRoomId] || [];
+      for (const skillId of mountedSkillIds) {
+        const skill = AVAILABLE_SKILLS.find((s) => s.id === skillId);
+        if (skill && skill.providedTools.includes(toolName)) {
+          return true;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[GEAR CHECK] Error resolving dynamic skill support for tool:', err);
+  }
+
+  return false;
+}
+
+/**
+ * Moves a physical workstation/gear asset to whichever room the user designates.
+ */
+export function moveEquipmentToRoom(stationId: string, targetRoom: RoomId): void {
+  const gear = loadPlacedGearState();
+  if (gear[stationId]) {
+    gear[stationId].room = targetRoom;
+    savePlacedGearState(gear);
+  }
+}
+
+/**
+ * Binds a specific tool capability to a piece of placed gear.
+ */
+export function bindToolToEquipment(stationId: string, toolName: string): void {
+  const gear = loadPlacedGearState();
+  if (gear[stationId]) {
+    if (!gear[stationId].supportedTools.includes(toolName)) {
+      gear[stationId].supportedTools.push(toolName);
+      savePlacedGearState(gear);
+    }
+  }
+}
+
+/**
+ * Unbinds a tool capability from a piece of placed gear.
+ */
+export function unbindToolFromEquipment(stationId: string, toolName: string): void {
+  const gear = loadPlacedGearState();
+  if (gear[stationId]) {
+    gear[stationId].supportedTools = gear[stationId].supportedTools.filter((t) => t !== toolName);
+    savePlacedGearState(gear);
+  }
+}
+
+/**
+ * Toggles equipment power state on or off.
+ */
+export function toggleEquipmentPower(stationId: string): boolean {
+  const gear = loadPlacedGearState();
+  if (gear[stationId]) {
+    gear[stationId].isPowered = !gear[stationId].isPowered;
+    savePlacedGearState(gear);
+    return gear[stationId].isPowered;
+  }
+  return false;
 }

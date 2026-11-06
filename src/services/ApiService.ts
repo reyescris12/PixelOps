@@ -9,7 +9,13 @@ import {
 } from './BYOKVault';
 import { getAgentModelConfig, AgentProvider } from './agentStore';
 import { ModelGateway } from './ModelGateway';
-import { workstationSupportsTool } from './PlacedGearService';
+import { workstationSupportsTool, loadPlacedGearState } from './PlacedGearService';
+import {
+  loadStationSkillBindings,
+  loadRoomSkillBindings,
+  AVAILABLE_SKILLS,
+} from '../engine/moduleRegistry';
+import { getAllRoomStations } from '../engine/roomManager';
 import { loadCustomPlugins, executeCustomPlugin } from './PluginMarketplaceService';
 import { getLast50Commands, ledgerDb, recordAgentMemory, getAgentMemoriesForAgent } from './CommandLedgerDb';
 import { getPluginCredential } from '../engine/pluginAuthManager';
@@ -521,10 +527,24 @@ export function buildDynamicToolDeclarations(
       GEMINI_TOOL_DECLARATIONS.osint_satellite_recon,
       GEMINI_TOOL_DECLARATIONS.osint_spectrum_analyzer,
     ],
+    osint_plugin: [
+      GEMINI_TOOL_DECLARATIONS.osint_maritime_tracker,
+      GEMINI_TOOL_DECLARATIONS.osint_hazard_tracker,
+      GEMINI_TOOL_DECLARATIONS.osint_satellite_recon,
+      GEMINI_TOOL_DECLARATIONS.osint_spectrum_analyzer,
+    ],
     maritime: [GEMINI_TOOL_DECLARATIONS.osint_maritime_tracker],
+    osint_maritime: [GEMINI_TOOL_DECLARATIONS.osint_maritime_tracker],
+    osint_maritime_plugin: [GEMINI_TOOL_DECLARATIONS.osint_maritime_tracker],
     hazards: [GEMINI_TOOL_DECLARATIONS.osint_hazard_tracker],
+    osint_hazard: [GEMINI_TOOL_DECLARATIONS.osint_hazard_tracker],
+    osint_hazard_plugin: [GEMINI_TOOL_DECLARATIONS.osint_hazard_tracker],
     satellite: [GEMINI_TOOL_DECLARATIONS.osint_satellite_recon],
+    osint_satellite: [GEMINI_TOOL_DECLARATIONS.osint_satellite_recon],
+    osint_satellite_plugin: [GEMINI_TOOL_DECLARATIONS.osint_satellite_recon],
     spectrum: [GEMINI_TOOL_DECLARATIONS.osint_spectrum_analyzer],
+    osint_spectrum: [GEMINI_TOOL_DECLARATIONS.osint_spectrum_analyzer],
+    osint_spectrum_plugin: [GEMINI_TOOL_DECLARATIONS.osint_spectrum_analyzer],
   };
 
   const addedNames = new Set(declarations.map((d) => d.name));
@@ -579,6 +599,60 @@ export function resolveToolWorkflowDestination(toolName: string): {
   targetStationId: string;
   taskTag: string;
 } {
+  // 1. Dynamic Workstation Skill Bindings (User-defined pin to any workstation in any room)
+  try {
+    const stationBindings = loadStationSkillBindings();
+    const allStations = getAllRoomStations();
+    for (const [stId, skillId] of Object.entries(stationBindings)) {
+      const skill = AVAILABLE_SKILLS.find((s) => s.id === skillId);
+      if (skill && skill.providedTools.includes(toolName)) {
+        for (const [rId, stations] of Object.entries(allStations)) {
+          if (stations.some((st) => st.id === stId)) {
+            return {
+              pluginId: skill.id,
+              targetRoom: rId as RoomId,
+              targetStationId: stId,
+              taskTag: skill.shortCode || 'BOUND SKILL',
+            };
+          }
+        }
+      }
+    }
+
+    // 2. Dynamic Room Skill Bindings (User-defined mount to any standard or custom room)
+    const roomBindings = loadRoomSkillBindings();
+    for (const [rId, skillIds] of Object.entries(roomBindings)) {
+      for (const skillId of skillIds) {
+        const skill = AVAILABLE_SKILLS.find((s) => s.id === skillId);
+        if (skill && skill.providedTools.includes(toolName)) {
+          const stationsInRoom = allStations[rId] || [];
+          const targetStationId = stationsInRoom[0]?.id || `${rId}_desk`;
+          return {
+            pluginId: skill.id,
+            targetRoom: rId as RoomId,
+            targetStationId,
+            taskTag: skill.shortCode || 'ROOM SKILL',
+          };
+        }
+      }
+    }
+
+    // 3. Dynamic Placed Gear State (Physical gear placed or moved to any room)
+    const gear = loadPlacedGearState();
+    for (const [stId, asset] of Object.entries(gear)) {
+      if (asset && asset.isPowered && asset.supportedTools.includes(toolName)) {
+        return {
+          pluginId: asset.stationId,
+          targetRoom: asset.room,
+          targetStationId: stId,
+          taskTag: 'PLACED GEAR',
+        };
+      }
+    }
+  } catch (err) {
+    console.warn('[ROUTING] Dynamic skill destination resolution failed, using fallback static route:', err);
+  }
+
   if (toolName.startsWith('composio_') || toolName.startsWith('COMPOSIO_')) {
     const lower = toolName.toLowerCase();
     if (lower.includes('github')) {

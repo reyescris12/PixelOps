@@ -30,6 +30,9 @@ import {
   AlertCircle,
   Database,
   ExternalLink,
+  CheckSquare,
+  Square,
+  FolderInput,
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import {
@@ -38,11 +41,14 @@ import {
   readWorkspaceFile,
   writeWorkspaceFile,
   deleteWorkspaceFile,
+  deleteMultipleWorkspaceFiles,
+  moveMultipleWorkspaceFiles,
   exportWorkspaceFile,
   copyWorkspaceFileContent,
   seedInitialWorkspaceFiles,
   getWorkspaceCategories,
 } from '../engine/storageManager';
+import { pushToCloud } from '../services/SyncService';
 
 export interface WorkspaceFileViewerProps {
   isOpen: boolean;
@@ -69,6 +75,15 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
   const [editContent, setEditContent] = useState<string>('');
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [deleteConfirmPath, setDeleteConfirmPath] = useState<string | null>(null);
+
+  // Multi-select & Batch Organization state
+  const [isMultiSelectMode, setIsMultiSelectMode] = useState<boolean>(false);
+  const [selectedPaths, setSelectedPaths] = useState<Set<string>>(new Set());
+  const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState<boolean>(false);
+  const [bulkMoveFolder, setBulkMoveFolder] = useState<string>('archive');
+  const [customMoveFolder, setCustomMoveFolder] = useState<string>('');
+  const [isBulkProcessing, setIsBulkProcessing] = useState<boolean>(false);
+  const [singleMoveFolder, setSingleMoveFolder] = useState<string>('');
 
   // New file creation dialog
   const [isCreatingNew, setIsCreatingNew] = useState<boolean>(false);
@@ -103,6 +118,14 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
     try {
       const allFiles = await listWorkspaceFiles();
       setFiles(allFiles);
+      const validPaths = new Set(allFiles.map((f) => f.path));
+      setSelectedPaths((prev) => {
+        const next = new Set<string>();
+        prev.forEach((p) => {
+          if (validPaths.has(p)) next.add(p);
+        });
+        return next;
+      });
 
       const cats = await getWorkspaceCategories();
       setCategories(['all', ...cats]);
@@ -234,6 +257,118 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
     setDeleteConfirmPath(null);
     setMobileActiveTab('files');
     await loadFiles(false);
+    pushToCloud().catch(() => {});
+  };
+
+  const handleToggleSelectFile = (path: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    playBeep('tap');
+    setSelectedPaths((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      return next;
+    });
+    setBulkDeleteConfirm(false);
+  };
+
+  const handleToggleFolderSelection = (folderFiles: WorkspaceFileRecord[], e: React.MouseEvent) => {
+    e.stopPropagation();
+    playBeep('tap');
+    setSelectedPaths((prev) => {
+      const next = new Set(prev);
+      const allSelected =
+        folderFiles.length > 0 && folderFiles.every((f) => next.has(f.path));
+      if (allSelected) {
+        folderFiles.forEach((f) => next.delete(f.path));
+      } else {
+        folderFiles.forEach((f) => next.add(f.path));
+      }
+      return next;
+    });
+    setBulkDeleteConfirm(false);
+  };
+
+  const handleSelectAllFiltered = () => {
+    playBeep('tap');
+    setSelectedPaths((prev) => {
+      const allFilteredSelected =
+        filteredFiles.length > 0 && filteredFiles.every((f) => prev.has(f.path));
+      if (allFilteredSelected) {
+        return new Set();
+      }
+      return new Set(filteredFiles.map((f) => f.path));
+    });
+    setBulkDeleteConfirm(false);
+  };
+
+  const handleClearSelection = () => {
+    playBeep('tap');
+    setSelectedPaths(new Set());
+    setBulkDeleteConfirm(false);
+  };
+
+  const handleBulkDelete = async () => {
+    const pathsToDelete = Array.from(selectedPaths);
+    if (pathsToDelete.length === 0) return;
+    setIsBulkProcessing(true);
+    playBeep('error');
+    try {
+      await deleteMultipleWorkspaceFiles(pathsToDelete);
+      setSelectedPaths(new Set());
+      setBulkDeleteConfirm(false);
+      await loadFiles(false);
+      pushToCloud().catch(() => {});
+    } finally {
+      setIsBulkProcessing(false);
+    }
+  };
+
+  const handleBulkMove = async () => {
+    const pathsToMove = Array.from(selectedPaths);
+    const targetFolder =
+      bulkMoveFolder === 'custom'
+        ? customMoveFolder.trim().replace(/^\/+|\/+$/g, '')
+        : bulkMoveFolder;
+    if (pathsToMove.length === 0 || !targetFolder) return;
+    setIsBulkProcessing(true);
+    playBeep('complete');
+    try {
+      const moved = await moveMultipleWorkspaceFiles(pathsToMove, targetFolder);
+      setExpandedFolders((prev) => ({
+        ...prev,
+        [targetFolder]: true,
+      }));
+      setSelectedPaths(new Set(moved.map((m) => m.path)));
+      if (moved.length > 0) {
+        setSelectedFile(moved[0]);
+        setEditContent(moved[0].content);
+      }
+      await loadFiles(true);
+      pushToCloud().catch(() => {});
+    } finally {
+      setIsBulkProcessing(false);
+    }
+  };
+
+  const handleSingleMove = async (targetFolder: string) => {
+    if (!selectedFile || !targetFolder) return;
+    playBeep('complete');
+    const moved = await moveMultipleWorkspaceFiles([selectedFile.path], targetFolder);
+    setExpandedFolders((prev) => ({
+      ...prev,
+      [targetFolder]: true,
+    }));
+    setSingleMoveFolder('');
+    if (moved.length > 0) {
+      setSelectedFile(moved[0]);
+      setEditContent(moved[0].content);
+    }
+    await loadFiles(true);
+    pushToCloud().catch(() => {});
   };
 
   const handleSaveEdit = async () => {
@@ -250,6 +385,7 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
       setSelectedFile(updated);
       setViewMode('rendered');
       await loadFiles(true);
+      pushToCloud().catch(() => {});
     } finally {
       setIsSaving(false);
     }
@@ -266,6 +402,7 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
       setEditContent(created.content);
       setViewMode('rendered');
       setMobileActiveTab('preview');
+      pushToCloud().catch(() => {});
     } catch (e) {
       console.error('Failed to create file:', e);
     }
@@ -544,6 +681,140 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
                     );
                   })}
                 </div>
+
+                {/* Multi-Select & Batch Selection Toolbar */}
+                <div className="flex items-center justify-between pt-1.5 border-t border-slate-800/80 text-[11px]">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      playBeep('tap');
+                      setIsMultiSelectMode((prev) => !prev);
+                    }}
+                    className={`flex items-center gap-1.5 px-2 py-0.5 rounded font-bold transition-colors cursor-pointer border ${
+                      isMultiSelectMode || selectedPaths.size > 0
+                        ? 'bg-emerald-950/80 text-emerald-300 border-emerald-700'
+                        : 'bg-slate-900 text-slate-300 border-slate-700 hover:border-slate-500 hover:text-white'
+                    }`}
+                    title="Toggle Multi-Select mode to manage, move, or delete multiple files"
+                  >
+                    <CheckSquare className="w-3 h-3" />
+                    <span>
+                      {selectedPaths.size > 0
+                        ? `${selectedPaths.size} Selected`
+                        : 'Multi-Select'}
+                    </span>
+                  </button>
+
+                  <div className="flex items-center gap-1">
+                    {filteredFiles.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleSelectAllFiltered}
+                        className="px-1.5 py-0.5 rounded bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white text-[10px] font-semibold cursor-pointer transition-colors"
+                      >
+                        {filteredFiles.every((f) => selectedPaths.has(f.path))
+                          ? 'Deselect All'
+                          : 'Select All'}
+                      </button>
+                    )}
+                    {selectedPaths.size > 0 && (
+                      <button
+                        type="button"
+                        onClick={handleClearSelection}
+                        className="px-1.5 py-0.5 rounded bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-white text-[10px] cursor-pointer transition-colors"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Batch Action Panel (Move / Organize & Bulk Delete) */}
+                {selectedPaths.size > 0 && (
+                  <div className="p-2 rounded bg-[#111722] border border-slate-700 flex flex-col gap-2 text-[11px]">
+                    {/* Organize / Move to Folder */}
+                    <div className="flex flex-col gap-1.5">
+                      <div className="flex items-center justify-between text-[10px] text-slate-400 font-semibold uppercase tracking-wider">
+                        <span className="flex items-center gap-1">
+                          <FolderInput className="w-3 h-3 text-amber-400" />
+                          <span>Move {selectedPaths.size} file(s) to folder:</span>
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-1">
+                        <select
+                          value={bulkMoveFolder}
+                          onChange={(e) => setBulkMoveFolder(e.target.value)}
+                          className="flex-1 bg-[#0a0d14] border border-slate-700 rounded px-1.5 py-1 text-[11px] text-white font-mono focus:outline-none focus:border-slate-500"
+                        >
+                          <option value="reports">reports/</option>
+                          <option value="intel">intel/</option>
+                          <option value="archive">archive/</option>
+                          <option value="logs">logs/</option>
+                          <option value="config">config/</option>
+                          <option value="data">data/</option>
+                          <option value="custom">Custom folder...</option>
+                        </select>
+                        <button
+                          type="button"
+                          disabled={
+                            isBulkProcessing ||
+                            (bulkMoveFolder === 'custom' && !customMoveFolder.trim())
+                          }
+                          onClick={handleBulkMove}
+                          className="px-2.5 py-1 rounded bg-amber-600 hover:bg-amber-500 disabled:opacity-40 text-black font-bold text-[10px] uppercase cursor-pointer transition-colors shrink-0"
+                        >
+                          Move
+                        </button>
+                      </div>
+                      {bulkMoveFolder === 'custom' && (
+                        <input
+                          type="text"
+                          value={customMoveFolder}
+                          onChange={(e) => setCustomMoveFolder(e.target.value)}
+                          placeholder="Folder name (e.g. briefings)"
+                          className="w-full bg-[#0a0d14] border border-slate-700 rounded px-2 py-1 text-[11px] text-white font-mono focus:outline-none focus:border-slate-500"
+                        />
+                      )}
+                    </div>
+
+                    {/* Bulk Delete with Confirmation */}
+                    <div className="pt-1.5 border-t border-slate-800 flex items-center justify-between">
+                      {bulkDeleteConfirm ? (
+                        <div className="w-full flex items-center justify-between bg-red-950/80 border border-red-700 px-2 py-1 rounded">
+                          <span className="text-[10px] text-red-200 font-semibold">
+                            Delete {selectedPaths.size} file(s) permanently?
+                          </span>
+                          <div className="flex items-center gap-1">
+                            <button
+                              type="button"
+                              disabled={isBulkProcessing}
+                              onClick={handleBulkDelete}
+                              className="px-2 py-0.5 bg-red-600 hover:bg-red-500 text-white rounded text-[10px] font-bold cursor-pointer"
+                            >
+                              {isBulkProcessing ? '...' : 'Yes, Delete'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setBulkDeleteConfirm(false)}
+                              className="px-1.5 py-0.5 text-slate-300 hover:text-white text-[10px] cursor-pointer"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setBulkDeleteConfirm(true)}
+                          className="w-full flex items-center justify-center gap-1.5 px-2.5 py-1 rounded bg-red-950/60 hover:bg-red-900/80 text-red-300 hover:text-white border border-red-800/80 font-bold text-[11px] transition-colors cursor-pointer"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                          <span>Delete Selected ({selectedPaths.size})</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Directory Tree View */}
@@ -583,32 +854,56 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
                 ) : (
                   Object.entries(filesByFolder).map(([folderName, folderFiles]) => {
                     const isExpanded = expandedFolders[folderName] ?? true;
+                    const allInFolderSelected =
+                      folderFiles.length > 0 &&
+                      folderFiles.every((f) => selectedPaths.has(f.path));
+                    const someInFolderSelected =
+                      folderFiles.some((f) => selectedPaths.has(f.path));
+
                     return (
                       <div key={folderName} className="space-y-1">
                         {/* Folder Header */}
-                        <button
-                          type="button"
-                          onClick={() => toggleFolder(folderName)}
-                          className="w-full flex items-center gap-2 px-1.5 py-1 text-slate-400 hover:text-slate-200 hover:bg-white/5 rounded text-left font-bold select-none cursor-pointer"
-                        >
-                          {isExpanded ? (
-                            <FolderOpen className="w-3.5 h-3.5 text-amber-400" />
-                          ) : (
-                            <Folder className="w-3.5 h-3.5 text-amber-400" />
-                          )}
-                          <span className="uppercase text-[11px] tracking-wider">
-                            {folderName}/
-                          </span>
-                          <span className="ml-auto text-[10px] text-slate-600 font-normal">
-                            ({folderFiles.length})
-                          </span>
-                        </button>
+                        <div className="w-full flex items-center gap-1.5 px-1.5 py-1 text-slate-400 hover:text-slate-200 hover:bg-white/5 rounded select-none">
+                          <button
+                            type="button"
+                            onClick={(e) => handleToggleFolderSelection(folderFiles, e)}
+                            className="p-0.5 text-slate-400 hover:text-emerald-400 transition-colors cursor-pointer shrink-0"
+                            title={`Select/deselect all ${folderFiles.length} file(s) in ${folderName}/`}
+                          >
+                            {allInFolderSelected ? (
+                              <CheckSquare className="w-3.5 h-3.5 text-emerald-400" />
+                            ) : someInFolderSelected ? (
+                              <CheckSquare className="w-3.5 h-3.5 text-amber-400 opacity-80" />
+                            ) : (
+                              <Square className="w-3.5 h-3.5 text-slate-600 hover:text-slate-300" />
+                            )}
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => toggleFolder(folderName)}
+                            className="flex-1 flex items-center gap-2 text-left font-bold cursor-pointer min-w-0"
+                          >
+                            {isExpanded ? (
+                              <FolderOpen className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                            ) : (
+                              <Folder className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                            )}
+                            <span className="uppercase text-[11px] tracking-wider truncate">
+                              {folderName}/
+                            </span>
+                            <span className="ml-auto text-[10px] text-slate-600 font-normal shrink-0">
+                              ({folderFiles.length})
+                            </span>
+                          </button>
+                        </div>
 
                         {/* Files under folder */}
                         {isExpanded && (
                           <div className="pl-3.5 space-y-0.5 border-l border-slate-800 ml-2">
                             {folderFiles.map((file) => {
                               const isSelected = selectedFile?.path === file.path;
+                              const isChecked = selectedPaths.has(file.path);
                               const basename = file.path.split('/').pop() || file.path;
                               const isMd = file.format === 'markdown';
                               const isJson = file.format === 'json';
@@ -621,22 +916,44 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
                                 : '';
 
                               return (
-                                <button
+                                <div
                                   key={file.path}
-                                  type="button"
-                                  onClick={() => handleSelectFile(file)}
-                                  className={`w-full flex items-center justify-between gap-2 px-2.5 py-2.5 sm:py-1.5 rounded text-left transition-colors cursor-pointer group active:bg-white/10 ${
-                                    isSelected
+                                  onClick={() => {
+                                    if (isMultiSelectMode) {
+                                      handleToggleSelectFile(file.path);
+                                    } else {
+                                      handleSelectFile(file);
+                                    }
+                                  }}
+                                  className={`w-full flex items-center justify-between gap-2 px-2 py-2.5 sm:py-1.5 rounded text-left transition-colors cursor-pointer group active:bg-white/10 ${
+                                    isChecked
+                                      ? 'bg-emerald-950/30 text-white font-semibold'
+                                      : isSelected
                                       ? 'bg-white/10 text-white font-semibold'
                                       : 'text-slate-400 hover:text-slate-200 hover:bg-white/5'
                                   }`}
                                   style={{
-                                    borderLeft: isSelected
+                                    borderLeft: isChecked
+                                      ? '3px solid #10b981'
+                                      : isSelected
                                       ? `3px solid ${themeColors.accent}`
                                       : '3px solid transparent',
                                   }}
                                 >
                                   <div className="flex items-start gap-2 overflow-hidden flex-1 min-w-0">
+                                    <button
+                                      type="button"
+                                      onClick={(e) => handleToggleSelectFile(file.path, e)}
+                                      className="mt-0.5 text-slate-500 hover:text-emerald-400 transition-colors cursor-pointer shrink-0"
+                                      title={isChecked ? 'Deselect file' : 'Select file'}
+                                    >
+                                      {isChecked ? (
+                                        <CheckSquare className="w-3.5 h-3.5 text-emerald-400" />
+                                      ) : (
+                                        <Square className="w-3.5 h-3.5 text-slate-600 group-hover:text-slate-400" />
+                                      )}
+                                    </button>
+
                                     {isMd ? (
                                       <FileText className="w-3.5 h-3.5 text-sky-400 shrink-0 mt-0.5" />
                                     ) : isJson ? (
@@ -656,6 +973,19 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
                                     </div>
                                   </div>
                                   <div className="flex items-center gap-1.5 shrink-0">
+                                    {isMultiSelectMode && (
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleSelectFile(file);
+                                        }}
+                                        className="px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-[9px] text-slate-300 hover:text-white"
+                                        title="Preview file"
+                                      >
+                                        View
+                                      </button>
+                                    )}
                                     <span className="text-[10px] text-slate-500 group-hover:text-slate-400">
                                       {file.sizeBytes > 1024
                                         ? `${Math.round(file.sizeBytes / 1024 * 10) / 10}KB`
@@ -665,7 +995,7 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
                                       →
                                     </span>
                                   </div>
-                                </button>
+                                </div>
                               );
                             })}
                           </div>
@@ -808,6 +1138,28 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
                         <Download className="w-3.5 h-3.5" />
                         <span className="hidden sm:inline">Download</span>
                       </button>
+
+                      {/* Quick Move / Organize Folder Select */}
+                      <div className="hidden sm:flex items-center">
+                        <select
+                          value={singleMoveFolder}
+                          onChange={(e) => {
+                            if (e.target.value) {
+                              handleSingleMove(e.target.value);
+                            }
+                          }}
+                          className="bg-[#1e293b] hover:bg-[#334155] text-white border border-slate-600 rounded px-2 py-1 text-xs font-semibold cursor-pointer focus:outline-none"
+                          title="Move current file to another folder"
+                        >
+                          <option value="">Move to...</option>
+                          <option value="reports">reports/</option>
+                          <option value="intel">intel/</option>
+                          <option value="archive">archive/</option>
+                          <option value="logs">logs/</option>
+                          <option value="config">config/</option>
+                          <option value="data">data/</option>
+                        </select>
+                      </div>
 
                       {/* Delete File Button */}
                       {deleteConfirmPath === selectedFile.path ? (

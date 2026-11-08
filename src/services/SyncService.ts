@@ -11,6 +11,10 @@ import {
   WorkspaceFileRecord,
   listWorkspaceFiles,
   writeWorkspaceFile,
+  deleteWorkspaceFile,
+  normalizeFilePath,
+  loadDeletedWorkspaceFiles,
+  saveDeletedWorkspaceFiles,
 } from '../engine/storageManager';
 import {
   NightShiftTaskSchedule,
@@ -47,6 +51,7 @@ export interface SyncPackage {
   username?: string;
   device?: any;
   workspaceFiles: WorkspaceFileRecord[];
+  deletedWorkspaceFilePaths?: Record<string, string>;
   routines: NightShiftTaskSchedule[];
   deletedRoutineIds?: Record<string, string>;
   agentMemories: AgentMemoryDbEntry[];
@@ -186,6 +191,7 @@ export async function assembleLocalSyncPackage(session: AuthSession): Promise<Sy
 
   const routines = loadNightShiftSchedules();
   const deletedRoutineIds = loadDeletedRoutineIds();
+  const deletedWorkspaceFilePaths = loadDeletedWorkspaceFiles();
   const appSessionState = loadAppSessionSnapshot();
   const composioAccounts = getLocalConnectedAccounts();
   const composioEntityId = getOrCreateEntityId();
@@ -206,6 +212,7 @@ export async function assembleLocalSyncPackage(session: AuthSession): Promise<Sy
     username: session.user.username,
     device: session.device,
     workspaceFiles,
+    deletedWorkspaceFilePaths,
     routines,
     deletedRoutineIds,
     agentMemories,
@@ -224,22 +231,63 @@ export async function assembleLocalSyncPackage(session: AuthSession): Promise<Sy
 export async function applyRemoteSyncPackage(pkg: SyncPackage): Promise<void> {
   if (!pkg || typeof pkg !== 'object') return;
 
-  // 1. Merge Workspace Files into IndexedDB (Last-Write-Wins based on updatedAt)
-  if (Array.isArray(pkg.workspaceFiles) && pkg.workspaceFiles.length > 0) {
-    const currentFiles = await listWorkspaceFiles().catch(() => []);
-    const currentFileMap = new Map<string, WorkspaceFileRecord>(
-      currentFiles.map((f) => [f.path, f])
-    );
+  // 1. Merge Workspace Files into IndexedDB with Tombstone Deletion Defense
+  const localDeletedFiles = loadDeletedWorkspaceFiles();
+  const remoteDeletedFiles: Record<string, string> = (pkg as any).deletedWorkspaceFilePaths || {};
+  const mergedDeletedFiles: Record<string, string> = { ...localDeletedFiles };
 
+  for (const [rawPath, remoteDelTs] of Object.entries(remoteDeletedFiles)) {
+    const norm = normalizeFilePath(rawPath);
+    if (!norm || typeof remoteDelTs !== 'string') continue;
+    const existingDelTs = mergedDeletedFiles[norm];
+    if (!existingDelTs || new Date(remoteDelTs).getTime() >= new Date(existingDelTs).getTime()) {
+      mergedDeletedFiles[norm] = remoteDelTs;
+    }
+  }
+  saveDeletedWorkspaceFiles(mergedDeletedFiles);
+
+  const currentFiles = await listWorkspaceFiles().catch(() => []);
+  const currentFileMap = new Map<string, WorkspaceFileRecord>(
+    currentFiles.map((f) => [normalizeFilePath(f.path), f])
+  );
+
+  // Purge any local file that has been tombstoned either locally or remotely
+  for (const [deletedPath, deletedTimeStr] of Object.entries(mergedDeletedFiles)) {
+    const normPath = normalizeFilePath(deletedPath);
+    const deletedTime = new Date(deletedTimeStr || 0).getTime();
+    const existingLocal = currentFileMap.get(normPath);
+    if (existingLocal) {
+      const existingTime = new Date(existingLocal.updatedAt || 0).getTime();
+      if (deletedTime >= existingTime) {
+        await deleteWorkspaceFile(normPath).catch(() => {});
+        currentFileMap.delete(normPath);
+      }
+    }
+  }
+
+  // Merge remote workspace files, strictly checking against tombstone deletion map so deleted files never resurrect
+  if (Array.isArray(pkg.workspaceFiles) && pkg.workspaceFiles.length > 0) {
     for (const remoteFile of pkg.workspaceFiles) {
-      const localFile = currentFileMap.get(remoteFile.path);
+      const normPath = normalizeFilePath(remoteFile.path);
+      if (!normPath) continue;
+
+      const deletedAtStr = mergedDeletedFiles[normPath];
       const remoteTime = new Date(remoteFile.updatedAt || 0).getTime();
+      if (deletedAtStr) {
+        const deletedTime = new Date(deletedAtStr).getTime();
+        if (deletedTime >= remoteTime) {
+          // File was deleted! Strictly prevent resurrection.
+          continue;
+        }
+      }
+
+      const localFile = currentFileMap.get(normPath);
       const localTime = localFile ? new Date(localFile.updatedAt || 0).getTime() : 0;
 
       // Only overwrite if remote is newer or doesn't exist locally
       if (!localFile || remoteTime >= localTime) {
         await writeWorkspaceFile(
-          remoteFile.path,
+          normPath,
           remoteFile.content,
           remoteFile.format,
           remoteFile.category
@@ -598,6 +646,31 @@ export function startAutoSync(): () => void {
   };
   document.addEventListener('visibilitychange', handleVisibility);
 
+  // Immediately push workspace file changes (deletions, moves, saves) to cloud + local cache
+  let fileSyncTimer: any = null;
+  const handleWorkspaceFilesChanged = () => {
+    if (fileSyncTimer) clearTimeout(fileSyncTimer);
+    fileSyncTimer = setTimeout(() => {
+      const session = getActiveSession();
+      if (session) {
+        pushToCloud().catch(() => {});
+      } else {
+        // Update local cloud cache even if not signed in
+        const localCache = getLocalCloudCache();
+        if (localCache) {
+          Promise.all([listWorkspaceFiles().catch(() => []), Promise.resolve(loadDeletedWorkspaceFiles())]).then(
+            ([files, deletedMap]) => {
+              localCache.workspaceFiles = files;
+              localCache.deletedWorkspaceFilePaths = deletedMap;
+              setLocalCloudCache(localCache);
+            }
+          );
+        }
+      }
+    }, 350);
+  };
+  window.addEventListener('pixelops:workspace_files_changed', handleWorkspaceFilesChanged);
+
   // Perform initial sync on startup if logged in
   if (getActiveSession()) {
     setTimeout(() => {
@@ -607,8 +680,10 @@ export function startAutoSync(): () => void {
 
   return () => {
     stopAutoSync();
+    if (fileSyncTimer) clearTimeout(fileSyncTimer);
     window.removeEventListener('focus', handleFocus);
     document.removeEventListener('visibilitychange', handleVisibility);
+    window.removeEventListener('pixelops:workspace_files_changed', handleWorkspaceFilesChanged);
   };
 }
 

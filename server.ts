@@ -1199,6 +1199,22 @@ async function startServer() {
         if (rawUserId && store.users[rawUserId]) store.users[rawUserId].composioApiKey = incomingApiKey;
       }
 
+      // Merge deletedWorkspaceFilePaths & deletedRoutineIds tombstones with existing server vault so deletions never resurrect
+      const existingPkg = store.vaults[userKey] || (rawUserId ? store.vaults[rawUserId] : null);
+      const mergedDeletedFiles: Record<string, string> = {
+        ...(existingPkg?.deletedWorkspaceFilePaths || {}),
+        ...(syncPackage.deletedWorkspaceFilePaths || {}),
+      };
+      syncPackage.deletedWorkspaceFilePaths = mergedDeletedFiles;
+      if (Array.isArray(syncPackage.workspaceFiles)) {
+        syncPackage.workspaceFiles = syncPackage.workspaceFiles.filter((f: any) => {
+          const norm = String(f?.path || '').trim().replace(/\\/g, '/').replace(/^\/+/, '');
+          const delTs = mergedDeletedFiles[norm];
+          if (!delTs) return true;
+          return new Date(f?.updatedAt || 0).getTime() > new Date(delTs).getTime();
+        });
+      }
+
       store.vaults[userKey] = syncPackage;
       if (rawUserId) store.vaults[rawUserId] = syncPackage;
 

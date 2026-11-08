@@ -113,6 +113,17 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
         syncPackage.composioApiKey = incomingApiKey;
       }
 
+      // Ensure deletedWorkspaceFilePaths tombstones strip any stale files in the pushed package
+      const deletedFilesMap: Record<string, string> = syncPackage.deletedWorkspaceFilePaths || {};
+      if (Array.isArray(syncPackage.workspaceFiles) && Object.keys(deletedFilesMap).length > 0) {
+        syncPackage.workspaceFiles = syncPackage.workspaceFiles.filter((f: any) => {
+          const norm = String(f?.path || '').trim().replace(/\\/g, '/').replace(/^\/+/, '');
+          const delTs = deletedFilesMap[norm];
+          if (!delTs) return true;
+          return new Date(f?.updatedAt || 0).getTime() > new Date(delTs).getTime();
+        });
+      }
+
       const incomingDevice = syncPackage.device || {
         deviceId,
         deviceName,

@@ -22,9 +22,111 @@ export interface WorkspaceFileRecord {
 }
 
 const VFS_KEY = 'pixelops_vfs_files_v1';
+const DELETED_FILES_KEY = 'pixelops_deleted_workspace_files_v1';
 
 // In-memory fallback cache for headless or sandboxed runs
 const memoryFileMap = new Map<string, WorkspaceFileRecord>();
+const memoryDeletedFilesMap = new Map<string, string>();
+
+/**
+ * Loads the tombstone map of deleted workspace file paths (`path -> deletedAt ISO timestamp`).
+ * Prevents deleted files from resurrecting during multi-device cloud sync or background feed ingestion.
+ */
+export function loadDeletedWorkspaceFiles(): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const [k, v] of memoryDeletedFilesMap.entries()) {
+    result[k] = v;
+  }
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const raw = localStorage.getItem(DELETED_FILES_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object') {
+          for (const [rawPath, ts] of Object.entries(parsed)) {
+            const norm = normalizeFilePath(rawPath);
+            if (norm && typeof ts === 'string') {
+              result[norm] = ts;
+              memoryDeletedFilesMap.set(norm, ts);
+            }
+          }
+        }
+      }
+    } catch {
+      // Ignore parse error
+    }
+  }
+  return result;
+}
+
+/**
+ * Saves the tombstone map of deleted workspace file paths to LocalStorage.
+ */
+export function saveDeletedWorkspaceFiles(deletedMap: Record<string, string>): void {
+  const normalized: Record<string, string> = {};
+  for (const [rawPath, ts] of Object.entries(deletedMap || {})) {
+    const norm = normalizeFilePath(rawPath);
+    if (norm && typeof ts === 'string') {
+      normalized[norm] = ts;
+      memoryDeletedFilesMap.set(norm, ts);
+    }
+  }
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(DELETED_FILES_KEY, JSON.stringify(normalized));
+    } catch {
+      // Ignore storage quota
+    }
+  }
+}
+
+/**
+ * Records a deletion tombstone for a workspace file path.
+ */
+export function recordDeletedWorkspaceFile(rawPath: string, deletedAt?: string): void {
+  const norm = normalizeFilePath(rawPath);
+  if (!norm) return;
+  const ts = deletedAt || new Date().toISOString();
+  const current = loadDeletedWorkspaceFiles();
+  current[norm] = ts;
+  saveDeletedWorkspaceFiles(current);
+}
+
+/**
+ * Clears a deletion tombstone if the user or an agent explicitly creates/overwrites the file.
+ */
+export function clearDeletedWorkspaceFileTombstone(rawPath: string): void {
+  const norm = normalizeFilePath(rawPath);
+  if (!norm) return;
+  memoryDeletedFilesMap.delete(norm);
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const raw = localStorage.getItem(DELETED_FILES_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === 'object' && parsed[norm]) {
+          delete parsed[norm];
+          localStorage.setItem(DELETED_FILES_KEY, JSON.stringify(parsed));
+        }
+      }
+    } catch {}
+  }
+}
+
+/**
+ * Checks whether a workspace file path has been deleted by the user (and not subsequently recreated).
+ */
+export function isWorkspaceFileDeleted(rawPath: string, candidateUpdatedAt?: string): boolean {
+  const norm = normalizeFilePath(rawPath);
+  if (!norm) return false;
+  const deletedMap = loadDeletedWorkspaceFiles();
+  const deletedAtStr = deletedMap[norm];
+  if (!deletedAtStr) return false;
+  if (!candidateUpdatedAt) return true;
+  const deletedTime = new Date(deletedAtStr).getTime();
+  const candidateTime = new Date(candidateUpdatedAt).getTime();
+  return deletedTime >= candidateTime;
+}
 
 /**
  * Resolves category from path prefix or explicitly provided category.
@@ -188,7 +290,9 @@ export async function listWorkspaceFiles(categoryFilter?: string): Promise<Works
     }
   }
 
-  let fileList = Array.from(mergedMap.values());
+  let fileList = Array.from(mergedMap.values()).filter(
+    (f) => !isWorkspaceFileDeleted(f.path, f.updatedAt)
+  );
 
   // Filter by category if requested
   if (categoryFilter && categoryFilter !== 'all') {
@@ -213,6 +317,9 @@ export async function readWorkspaceFile(rawPath: string): Promise<WorkspaceFileR
     if (ledgerDb && ledgerDb.workspace_files) {
       const entry = await ledgerDb.workspace_files.where('path').equals(norm).first();
       if (entry) {
+        if (isWorkspaceFileDeleted(norm, entry.updatedAt)) {
+          return null;
+        }
         return {
           id: entry.id,
           path: norm,
@@ -237,6 +344,9 @@ export async function readWorkspaceFile(rawPath: string): Promise<WorkspaceFileR
         const vfs = JSON.parse(raw);
         if (vfs[norm]) {
           const meta = vfs[norm];
+          if (isWorkspaceFileDeleted(norm, meta.updatedAt)) {
+            return null;
+          }
           const content = meta.content || '';
           return {
             path: norm,
@@ -254,7 +364,10 @@ export async function readWorkspaceFile(rawPath: string): Promise<WorkspaceFileR
 
   // 3. Try In-Memory Map
   if (memoryFileMap.has(norm)) {
-    return memoryFileMap.get(norm)!;
+    const rec = memoryFileMap.get(norm)!;
+    if (!isWorkspaceFileDeleted(norm, rec.updatedAt)) {
+      return rec;
+    }
   }
 
   return null;
@@ -274,6 +387,9 @@ export async function writeWorkspaceFile(
   const format = resolveFormatFromPath(norm, explicitFormat);
   const updatedAt = new Date().toISOString();
   const sizeBytes = (content || '').length;
+
+  // Clear any prior deletion tombstone since this file is being explicitly created/updated
+  clearDeletedWorkspaceFileTombstone(norm);
 
   const record: WorkspaceFileRecord = {
     path: norm,
@@ -329,23 +445,40 @@ export async function writeWorkspaceFile(
   // 3. Keep in-memory cache
   memoryFileMap.set(norm, record);
 
+  if (typeof window !== 'undefined') {
+    try {
+      window.dispatchEvent(
+        new CustomEvent('pixelops:workspace_files_changed', {
+          detail: { action: 'write', paths: [norm] },
+        })
+      );
+    } catch {}
+  }
+
   return record;
 }
 
 /**
- * Deletes a workspace file from IndexedDB, LocalStorage VFS, and memory.
+ * Deletes a workspace file from IndexedDB, LocalStorage VFS, and memory,
+ * and records a deletion tombstone so sync/background tasks never resurrect it.
  */
 export async function deleteWorkspaceFile(rawPath: string): Promise<boolean> {
   const norm = normalizeFilePath(rawPath);
+  if (!norm) return false;
   let deleted = false;
+
+  // Record deletion tombstone first
+  recordDeletedWorkspaceFile(norm);
 
   // 1. Delete from Dexie/IndexedDB
   try {
     if (ledgerDb && ledgerDb.workspace_files) {
-      const existing = await ledgerDb.workspace_files.where('path').equals(norm).first();
-      if (existing && existing.id !== undefined) {
-        await ledgerDb.workspace_files.delete(existing.id);
-        deleted = true;
+      const existing = await ledgerDb.workspace_files.where('path').equals(norm).toArray();
+      for (const item of existing) {
+        if (item.id !== undefined) {
+          await ledgerDb.workspace_files.delete(item.id);
+          deleted = true;
+        }
       }
     }
   } catch {
@@ -358,10 +491,16 @@ export async function deleteWorkspaceFile(rawPath: string): Promise<boolean> {
       const raw = localStorage.getItem(VFS_KEY);
       if (raw) {
         const vfs = JSON.parse(raw);
-        if (vfs[norm]) {
-          delete vfs[norm];
+        let modified = false;
+        for (const k of Object.keys(vfs)) {
+          if (normalizeFilePath(k) === norm) {
+            delete vfs[k];
+            modified = true;
+            deleted = true;
+          }
+        }
+        if (modified) {
           localStorage.setItem(VFS_KEY, JSON.stringify(vfs));
-          deleted = true;
         }
       }
     } catch {}
@@ -373,7 +512,143 @@ export async function deleteWorkspaceFile(rawPath: string): Promise<boolean> {
     deleted = true;
   }
 
+  if (typeof window !== 'undefined') {
+    try {
+      window.dispatchEvent(
+        new CustomEvent('pixelops:workspace_files_changed', {
+          detail: { action: 'delete', paths: [norm] },
+        })
+      );
+    } catch {}
+  }
+
   return deleted;
+}
+
+/**
+ * Deletes multiple workspace files in a single batch operation and records deletion tombstones
+ * for all of them so they do not reappear on sync or reload.
+ */
+export async function deleteMultipleWorkspaceFiles(rawPaths: string[]): Promise<number> {
+  if (!Array.isArray(rawPaths) || rawPaths.length === 0) return 0;
+  const normPaths = Array.from(new Set(rawPaths.map((p) => normalizeFilePath(p)).filter(Boolean)));
+  if (normPaths.length === 0) return 0;
+
+  const nowIso = new Date().toISOString();
+  const currentDeleted = loadDeletedWorkspaceFiles();
+  for (const norm of normPaths) {
+    currentDeleted[norm] = nowIso;
+  }
+  saveDeletedWorkspaceFiles(currentDeleted);
+
+  let deletedCount = 0;
+
+  // 1. Delete from Dexie/IndexedDB
+  try {
+    if (ledgerDb && ledgerDb.workspace_files) {
+      const existing = await ledgerDb.workspace_files.where('path').anyOf(normPaths).toArray();
+      const idsToDelete = existing.map((e) => e.id).filter((id): id is number => id !== undefined);
+      if (idsToDelete.length > 0) {
+        await ledgerDb.workspace_files.bulkDelete(idsToDelete);
+        deletedCount = Math.max(deletedCount, idsToDelete.length);
+      }
+    }
+  } catch {
+    // Continue
+  }
+
+  // 2. Delete from LocalStorage VFS
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const raw = localStorage.getItem(VFS_KEY);
+      if (raw) {
+        const vfs = JSON.parse(raw);
+        const targetSet = new Set(normPaths);
+        let vfsDeleted = 0;
+        for (const k of Object.keys(vfs)) {
+          if (targetSet.has(normalizeFilePath(k))) {
+            delete vfs[k];
+            vfsDeleted++;
+          }
+        }
+        if (vfsDeleted > 0) {
+          localStorage.setItem(VFS_KEY, JSON.stringify(vfs));
+          deletedCount = Math.max(deletedCount, vfsDeleted);
+        }
+      }
+    } catch {}
+  }
+
+  // 3. Remove from in-memory cache
+  for (const norm of normPaths) {
+    if (memoryFileMap.has(norm)) {
+      memoryFileMap.delete(norm);
+    }
+  }
+
+  if (typeof window !== 'undefined') {
+    try {
+      window.dispatchEvent(
+        new CustomEvent('pixelops:workspace_files_changed', {
+          detail: { action: 'bulk_delete', paths: normPaths },
+        })
+      );
+    } catch {}
+  }
+
+  return Math.max(deletedCount, normPaths.length);
+}
+
+/**
+ * Moves / organizes multiple workspace files into a target folder/category,
+ * recording tombstones for their old paths so the old locations never resurrect on sync.
+ */
+export async function moveMultipleWorkspaceFiles(
+  rawPaths: string[],
+  targetFolder: string
+): Promise<WorkspaceFileRecord[]> {
+  const cleanFolder = targetFolder
+    .trim()
+    .replace(/^[\\/]+|[\\/]+$/g, '')
+    .toLowerCase();
+  if (!cleanFolder || !Array.isArray(rawPaths) || rawPaths.length === 0) return [];
+
+  const movedRecords: WorkspaceFileRecord[] = [];
+  for (const rawPath of rawPaths) {
+    const oldNorm = normalizeFilePath(rawPath);
+    if (!oldNorm) continue;
+
+    const existing = await readWorkspaceFile(oldNorm);
+    if (!existing) continue;
+
+    const baseName = oldNorm.split('/').pop() || oldNorm;
+    const newPath = normalizeFilePath(`${cleanFolder}/${baseName}`);
+    if (newPath === oldNorm) {
+      movedRecords.push(existing);
+      continue;
+    }
+
+    const written = await writeWorkspaceFile(
+      newPath,
+      existing.content,
+      existing.format,
+      resolveCategoryFromPath(newPath, cleanFolder.split('/')[0])
+    );
+    await deleteWorkspaceFile(oldNorm);
+    movedRecords.push(written);
+  }
+
+  if (typeof window !== 'undefined' && movedRecords.length > 0) {
+    try {
+      window.dispatchEvent(
+        new CustomEvent('pixelops:workspace_files_changed', {
+          detail: { action: 'bulk_move', paths: movedRecords.map((r) => r.path) },
+        })
+      );
+    } catch {}
+  }
+
+  return movedRecords;
 }
 
 /**

@@ -14,6 +14,7 @@ import {
   writeWorkspaceFile,
   readWorkspaceFile,
   deleteWorkspaceFile,
+  isWorkspaceFileDeleted,
 } from '../engine/storageManager';
 import {
   S2_WIRE_FEED_URL,
@@ -127,6 +128,11 @@ export async function ingestClassifiedFeedHeadless(): Promise<{
           dispatch.timestamp
         );
         const filePath = `${CLASSIFIED_FEED_DIR}${fileName}`;
+
+        // Respect user deletion tombstones: if the user deleted this dispatch, do not recreate it
+        if (isWorkspaceFileDeleted(filePath)) {
+          continue;
+        }
 
         const existing = await readWorkspaceFile(filePath);
         if (existing && existing.content && existing.content.length > 200) {

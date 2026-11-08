@@ -579,11 +579,10 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
   const [tileErrors, setTileErrors] = useState<Record<string, boolean>>({});
   const [wvsSnapshotError, setWvsSnapshotError] = useState<boolean>(false);
   const [showTacticalPins, setShowTacticalPins] = useState<boolean>(true);
+  const [hasActivePinDossier, setHasActivePinDossier] = useState<boolean>(false);
   const [intelligencePins, setIntelligencePins] = useState<TacticalIntelPin[]>([
     {
-      id: 's2-1',
-      x: 64,
-      y: 44,
+      id: 's2-suez',
       title: 'S2 Wire // Red Sea Subsea Trunk Alert',
       summary: 'BLUF: Elevated naval & maritime transponder anomalies detected near Bab el-Mandeb & Suez submarine fiber corridors.',
       priority: 'HIGH',
@@ -593,32 +592,58 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
       lon: 32.2654,
     },
     {
-      id: 'usgs-1',
-      x: 34,
-      y: 58,
+      id: 'usgs-hormuz',
       title: 'USGS Seismic // M4.8 Tectonic Event',
-      summary: 'Automated seismic sensor trigger along subsea fault line; zero tsunami warning issued.',
+      summary: 'Automated seismic sensor trigger along Hormuz / Zagros fault line; zero tsunami warning issued.',
       priority: 'MEDIUM',
       category: 'SEISMIC',
       timestamp: '28m ago',
-      lat: 26.566,
+      lat: 26.5667,
       lon: 56.25,
     },
     {
-      id: 'grid-1',
-      x: 48,
-      y: 30,
-      title: 'ENTSO-E / IXP Backbone Telemetry',
-      summary: 'BGP routing & synchronous grid frequency nominal; high-capacity fiber relay under active overwatch.',
+      id: 'grid-frankfurt',
+      title: 'ENTSO-E / DE-CIX Backbone Telemetry',
+      summary: 'BGP routing & synchronous grid frequency nominal; high-capacity European fiber relay under active overwatch.',
       priority: 'MEDIUM',
       category: 'INFRASTRUCTURE',
       timestamp: '42m ago',
       lat: 50.1109,
       lon: 8.6821,
     },
+    {
+      id: 'ixp-ashburn',
+      title: 'US-East IXP & PJM Grid Node (Ashburn)',
+      summary: 'Primary North American cloud interconnect & high-voltage transmission substation operating at nominal load.',
+      priority: 'MEDIUM',
+      category: 'INFRASTRUCTURE',
+      timestamp: '55m ago',
+      lat: 39.0438,
+      lon: -77.4874,
+    },
+    {
+      id: 'apac-malacca',
+      title: 'Malacca Strait Maritime & Subsea Chokepoint',
+      summary: 'High-density AIS vessel transit and trans-Pacific subsea cable landing station telemetry nominal.',
+      priority: 'MEDIUM',
+      category: 'MARITIME',
+      timestamp: '1h ago',
+      lat: 1.3521,
+      lon: 103.8198,
+    },
+    {
+      id: 'apac-taiwan',
+      title: 'S2 Wire // Taiwan Strait & Hsinchu Grid Overwatch',
+      summary: 'BLUF: Elevated ADIZ maritime/air patrol activity monitored near semiconductor foundry power corridor.',
+      priority: 'HIGH',
+      category: 'S2 WIRE',
+      timestamp: '1h ago',
+      lat: 24.8138,
+      lon: 120.9675,
+    },
   ]);
 
-  // Hydrate live S2 Wire & OSINT intelligence pins from local VFS Vault
+  // Hydrate live S2 Wire & OSINT intelligence pins from local VFS Vault with fixed geographic coordinates
   useEffect(() => {
     let mounted = true;
     listWorkspaceFiles('intel')
@@ -629,12 +654,38 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
           .slice(0, 4);
         if (!wireFiles.length) return;
 
-        const pinPositions = [
-          { x: 64, y: 42 },
-          { x: 35, y: 56 },
-          { x: 52, y: 28 },
-          { x: 74, y: 66 },
+        // Fixed geographic anchors for S2 Wire regional theaters so pins never drift when panning
+        const fixedAnchors = [
+          { lat: 30.62, lon: 32.32 }, // Suez / Eastern Med
+          { lat: 50.14, lon: 8.72 },  // Central Europe
+          { lat: 39.08, lon: -77.44 }, // US-East
+          { lat: 24.85, lon: 121.02 }, // Indo-Pacific
         ];
+
+        const inferCoordsFromText = (text: string, index: number): { lat: number; lon: number } => {
+          const explicit = parseExplicitLatLon(text);
+          if (explicit) return explicit;
+          const lower = text.toLowerCase();
+          if (lower.includes('red sea') || lower.includes('suez') || lower.includes('cairo') || lower.includes('mediterranean')) {
+            return { lat: 30.5852, lon: 32.2654 };
+          }
+          if (lower.includes('hormuz') || lower.includes('persian gulf') || lower.includes('iran')) {
+            return { lat: 26.5667, lon: 56.25 };
+          }
+          if (lower.includes('taiwan') || lower.includes('hsinchu') || lower.includes('pacific') || lower.includes('china')) {
+            return { lat: 24.8138, lon: 120.9675 };
+          }
+          if (lower.includes('malacca') || lower.includes('singapore')) {
+            return { lat: 1.3521, lon: 103.8198 };
+          }
+          if (lower.includes('europe') || lower.includes('frankfurt') || lower.includes('germany') || lower.includes('uk') || lower.includes('london') || lower.includes('nato')) {
+            return { lat: 50.1109, lon: 8.6821 };
+          }
+          if (lower.includes('ashburn') || lower.includes('virginia') || lower.includes('pjm') || lower.includes('conus') || lower.includes('united states')) {
+            return { lat: 39.0438, lon: -77.4874 };
+          }
+          return fixedAnchors[index % fixedAnchors.length];
+        };
 
         const dynamicPins: TacticalIntelPin[] = wireFiles.map((file, idx) => {
           const cleanBody = file.content
@@ -648,11 +699,9 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
           const isHigh =
             /critical|high|alert|strike|outage|jamming|kinetic|sev/i.test(file.title + ' ' + file.content) ||
             idx === 0;
-          const pos = pinPositions[idx % pinPositions.length];
+          const coords = inferCoordsFromText(`${file.title} ${file.content}`, idx);
           return {
             id: `vfs-pin-${file.id || idx}`,
-            x: pos.x,
-            y: pos.y,
             title: file.title || 'S2 Wire Intelligence Dispatch',
             summary: summarySnippet || 'Structured SITREP dispatch archived in local VFS.',
             priority: isHigh ? 'HIGH' : 'MEDIUM',
@@ -661,13 +710,13 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
               hour: '2-digit',
               minute: '2-digit',
             }),
-            lat,
-            lon,
+            lat: coords.lat,
+            lon: coords.lon,
           };
         });
 
         setIntelligencePins((prev) => {
-          const base = prev.filter((p) => !p.id.startsWith('vfs-pin-')).slice(0, 2);
+          const base = prev.filter((p) => !p.id.startsWith('vfs-pin-'));
           return [...dynamicPins, ...base];
         });
       })
@@ -675,7 +724,7 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
     return () => {
       mounted = false;
     };
-  }, [lat, lon]);
+  }, []);
 
   // Sync when parent props change (e.g. Operational Zone dropdown or Agent Tool Call lock)
   useEffect(() => {
@@ -830,22 +879,25 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
       }
       setWvsSnapshotError(false);
       setGeocodeStatusMsg(`Locked: ${resolved.label} (${resolved.lat.toFixed(4)}°, ${resolved.lon.toFixed(4)}°)`);
-      setTimeout(() => setIsFlyToLocking(false), 650);
-      setTimeout(() => setGeocodeStatusMsg(null), 5000);
-
-      if (onDispatchReconDirective) {
-        onDispatchReconDirective(rawQuery, {
+      setIntelligencePins((prev) => {
+        const customPin: TacticalIntelPin = {
+          id: `recon-target-${resolved.lat.toFixed(3)}-${resolved.lon.toFixed(3)}`,
+          title: resolved.label,
+          summary: `Active orbital reconnaissance lock acquired at ${resolved.lat.toFixed(4)}°, ${resolved.lon.toFixed(4)}°. Ready for agent telemetry correlation.`,
+          priority: 'HIGH',
+          category: 'RECON TARGET',
+          timestamp: 'Just now',
           lat: resolved.lat,
           lon: resolved.lon,
-          label: resolved.label,
-        });
-      }
+        };
+        const filtered = prev.filter((p) => p.id !== customPin.id);
+        return [customPin, ...filtered];
+      });
+      setTimeout(() => setIsFlyToLocking(false), 650);
+      setTimeout(() => setGeocodeStatusMsg(null), 5000);
     } else {
       setGeocodeStatusMsg(`Could not resolve "${rawQuery}" — try adding country or city (e.g. "90210, US")`);
       setTimeout(() => setGeocodeStatusMsg(null), 5000);
-      if (onDispatchReconDirective) {
-        onDispatchReconDirective(rawQuery, { lat, lon, label: targetLabel });
-      }
     }
   };
 
@@ -1118,15 +1170,27 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
           <div className="absolute inset-0 z-20">
             <TacticalMapOverlay
               intelligencePins={intelligencePins}
-              mapCenter={{ x: lon, y: lat }}
+              centerLat={lat}
+              centerLon={lon}
+              zoom={effectiveZoom}
+              onSelectPin={(pin) => setHasActivePinDossier(Boolean(pin))}
+              onFlyToPin={(pin) => {
+                setIsFlyToLocking(true);
+                setLat(pin.lat);
+                setLon(pin.lon);
+                setTargetLabel(pin.title);
+                setSectorCode(`PIN-LOCK // ${pin.lat.toFixed(2)}°, ${pin.lon.toFixed(2)}°`);
+                setWvsSnapshotError(false);
+                setTimeout(() => setIsFlyToLocking(false), 650);
+              }}
               onDispatchPinDirective={
                 onDispatchReconDirective
                   ? (pin) => {
                       onDispatchReconDirective(
                         `Execute tactical OSINT & S2 Wire verification on target pin "${pin.title}" — ${pin.summary}`,
                         {
-                          lat: pin.lat ?? lat,
-                          lon: pin.lon ?? lon,
+                          lat: pin.lat,
+                          lon: pin.lon,
                           label: pin.title,
                         }
                       );
@@ -1199,15 +1263,17 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
 
           {/* Bottom HUD Controls: Pan / Zoom + Telemetry Note */}
           <div className="flex flex-wrap items-end justify-between gap-2">
-            <div className="hidden sm:block bg-black/80 border border-emerald-500/50 px-2.5 py-1.5 rounded text-[10px] text-emerald-200 max-w-md">
-              <span className="font-bold text-emerald-400 uppercase block text-[9px]">
-                {sectorCode} // LIVE AGENT TELEMETRY:
-              </span>
-              <span>
-                {TACTICAL_SECTOR_PRESETS.find((p) => p.sectorCode === sectorCode)?.telemetryNote ||
-                  `Real-time orbital raster locked on ${targetLabel}. Tap any canvas node pin to inspect S2 Wire / sensor telemetry.`}
-              </span>
-            </div>
+            {!hasActivePinDossier && (
+              <div className="hidden sm:block bg-black/80 border border-emerald-500/50 px-2.5 py-1.5 rounded text-[10px] text-emerald-200 max-w-md">
+                <span className="font-bold text-emerald-400 uppercase block text-[9px]">
+                  {sectorCode} // LIVE AGENT TELEMETRY:
+                </span>
+                <span>
+                  {TACTICAL_SECTOR_PRESETS.find((p) => p.sectorCode === sectorCode)?.telemetryNote ||
+                    `Real-time orbital raster locked on ${targetLabel}. Tap any canvas node pin to inspect S2 Wire / sensor telemetry.`}
+                </span>
+              </div>
+            )}
 
             {/* Interactive Map Controls (pointer-events-auto) */}
             <div className="pointer-events-auto flex items-center gap-1 bg-black/85 border border-emerald-500/60 p-1 rounded ml-auto">

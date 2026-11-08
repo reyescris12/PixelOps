@@ -14,6 +14,7 @@ import { onRequest as handleSpectrumOsint } from './functions/api/osint/spectrum
 import { onRequest as handleThreatMatrixOsint } from './functions/api/osint/threat-matrix';
 import { onRequest as handleClassifiedFeed } from './functions/api/intel/classified-feed';
 import { onRequest as handleUniversalSearch } from './functions/api/search';
+import { fetchS2WireFeed, buildAgentSITREPContext } from './server/services/s2Parser.js';
 
 dotenv.config();
 
@@ -1853,9 +1854,22 @@ async function startServer() {
             `\n\nCRITICAL MEMORY RECALL INSTRUCTION:\n- You remember everything the user has ever told you and all tasks in this memory ledger.\n- If the user asks what you remember, references past directives, asks about previous work, or follow-up questions, actively draw upon and cite these memories.\n- NEVER say you don't have memory or cannot recall past interactions.`
           : '';
 
+      const isReconOrSitrepSweep = /\b(recon|sitrep|the\s+wire|s2|threat\s+matrix|intel|briefing|osint|infrastructure|grid|supply\s+chain)\b/i.test(
+        String(prompt || '')
+      );
+      let s2SitrepBlock = '';
+      if (isReconOrSitrepSweep) {
+        try {
+          const dispatches = await fetchS2WireFeed();
+          if (dispatches && dispatches.length > 0) {
+            s2SitrepBlock = `\n\n### S2 UNDERGROUND WIRE SITREP STREAM:\n${buildAgentSITREPContext(dispatches)}`;
+          }
+        } catch {}
+      }
+
       const systemInstruction = agentSystemPrompt
-        ? `${agentSystemPrompt}${memoryContextStr}\nAvailable Assigned Tools: ${declaredToolNames}.`
-        : `${personaInstruction}\nYou are currently responding as ${activeAgentName} (${activeAgentRole}).${memoryContextStr}\nAvailable Function Calling Tools: ${declaredToolNames}.
+        ? `${agentSystemPrompt}${memoryContextStr}${s2SitrepBlock}\nAvailable Assigned Tools: ${declaredToolNames}.`
+        : `${personaInstruction}\nYou are currently responding as ${activeAgentName} (${activeAgentRole}).${memoryContextStr}${s2SitrepBlock}\nAvailable Function Calling Tools: ${declaredToolNames}.
 CRITICAL INTENT-DRIVEN TOOL SELECTION GUARDRAILS:
 Before invoking any tool, analyze the user's intent:
 - READ / LIST / SEARCH / AUDIT INTENT:
@@ -1870,11 +1884,11 @@ Before invoking any tool, analyze the user's intent:
 When the user asks for weather, atmospheric conditions, or forecasts, ALWAYS call "weather_lookup".
 When the user asks to search the web, look up real-world facts, news, flights, companies, or encyclopedia topics, ALWAYS call "live_web_search".
 
-CLASSIFIED INTELLIGENCE SOURCE DIRECTIVE:
+S2 WIRE SITREP INTELLIGENCE DIRECTIVE:
 When executing a reconnaissance mission or gathering threat telemetry:
-1. Context Check: Scan the local VFS directory /intel/sources/classified_feed/ for recent operational briefings.
-2. Relevancy Filter: Evaluate the extracted transcripts against the user's current directive. If the video content (e.g., infrastructure warnings, grid updates, EW/comms, supply chain anomalies) matches the target scope, integrate the verified data points into the final dossier.
-3. Discard Noise: If the source material is entirely irrelevant to the user's specific directive, omit it completely rather than forcing unrelated data into the report.`;
+1. Analyze the text-based situational reports (SITREPs formatted with //The Wire//, //BLUF://, //TEARLINE//, and //END REPORT//) from the S2 Wire feed or /intel/sources/classified_feed/.
+2. Extract macro anomalies, infrastructure risks, and actionable intelligence points into a structured dossier for the Director-tier operator.
+3. If the user's directive is unrelated to the SITREP stream, omit unrelated dispatches cleanly.`;
 
       const userParts: any[] = [];
       if (attachment && attachment.data && attachment.mimeType) {

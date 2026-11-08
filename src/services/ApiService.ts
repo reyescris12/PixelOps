@@ -58,7 +58,11 @@ import {
   uploadReportToWorkspaceFiles,
 } from './ReportService';
 import { writeWorkspaceFile, readWorkspaceFile, listWorkspaceFiles } from '../engine/storageManager';
-import { retrieveRelevantClassifiedBriefings } from './ClassifiedFeedService';
+import {
+  retrieveRelevantClassifiedBriefings,
+  fetchS2WireFeed,
+  buildAgentSITREPContext,
+} from './ClassifiedFeedService';
 import { addStrategyBoardTasks } from './StrategyBoardService';
 
 export {
@@ -5923,41 +5927,30 @@ CRITICAL MEMORY RECALL INSTRUCTION:
         systemInstruction += `\n${memoryContextStr}`;
       }
 
-      // Autonomous Classified Feed Relevancy Filter (S2 Underground Telemetry in /intel/sources/classified_feed/)
+      // Autonomous S2 Underground Wire Text SITREP Ingestion & Relevancy Filter (/intel/sources/classified_feed/)
       let classifiedContextStr = '';
       try {
-        const relevantBriefings = await retrieveRelevantClassifiedBriefings(params.prompt, 3);
+        const relevantBriefings = await retrieveRelevantClassifiedBriefings(params.prompt, 5);
         if (relevantBriefings.length > 0) {
+          const sitrepContext = buildAgentSITREPContext(
+            relevantBriefings.map((b) => ({
+              title: b.title,
+              timestamp: b.published,
+              content: b.content,
+              link: b.link,
+            }))
+          );
           classifiedContextStr =
-            `\n\n### VERIFIED CLASSIFIED OPERATIONAL BRIEFINGS (/intel/sources/classified_feed/):\n` +
-            `The local VFS classified intelligence archive was scanned. The following tactical briefings thematically match the user's directive:\n\n` +
-            relevantBriefings
-              .map(
-                (b, idx) =>
-                  `[Classified Briefing #${idx + 1}: ${b.title}]\n` +
-                  `• Source: S2 Underground (Channel: UCTq1zHztiV69Ur8t6jco4CQ) | Published: ${b.published}\n` +
-                  `• Path: ${b.path}\n` +
-                  `• Classification: SENSITIVE / TACTICAL OSINT TELEMETRY\n` +
-                  `• Threat Tags: ${b.threatTags.join(', ')}\n` +
-                  `• Executive Summary: ${b.summary.slice(0, 400)}\n` +
-                  `• Transcript / Situation Telemetry:\n${b.content.slice(0, 1200).replace(/\n+/g, ' ')}`
-              )
-              .join('\n\n') +
-            `\n\n### CLASSIFIED INTELLIGENCE SOURCE DIRECTIVE:
-When executing a reconnaissance mission or gathering threat telemetry:
-1. Context Check: Scan the local VFS directory /intel/sources/classified_feed/ for recent operational briefings.
-2. Relevancy Filter: Evaluate the extracted transcripts against the user's current directive. If the video content (e.g., infrastructure warnings, grid updates, EW/comms, supply chain anomalies) matches the target scope, integrate the data points into the final dossier.
-3. Discard Noise: If the source material is entirely irrelevant to the user's specific directive, omit it completely rather than forcing unrelated data into the report.`;
-        } else {
-          classifiedContextStr =
-            `\n\n### CLASSIFIED INTELLIGENCE SOURCE DIRECTIVE:
-When executing a reconnaissance mission or gathering threat telemetry:
-1. Context Check: Scan the local VFS directory /intel/sources/classified_feed/ for recent operational briefings.
-2. Relevancy Filter: Evaluate the extracted transcripts against the user's current directive. If the video content (e.g., infrastructure warnings, grid updates, EW/comms, supply chain anomalies) matches the target scope, integrate the data points into the final dossier.
-3. Discard Noise: If the source material is entirely irrelevant to the user's specific directive, omit it completely rather than forcing unrelated data into the report.`;
+            `\n\n### S2 UNDERGROUND WIRE SITREP STREAM (/intel/sources/classified_feed/):\n` +
+            `You are Agent ${params.activeAgentName || 'Vance'}, an autonomous intelligence operative inside PixelOps.\n` +
+            `Analyze the following text-based situational reports (SITREPs). Extract macro anomalies, infrastructure risks, and actionable intelligence points. Compile a structured dossier for the Director-tier operator when relevant to the directive:\n\n` +
+            `${sitrepContext}\n` +
+            `\n### SITREP RELEVANCY DIRECTIVE:\n` +
+            `- If these SITREP dispatches (e.g., //The Wire//, //BLUF://, //TEARLINE//, infrastructure warnings, grid updates, EW/comms, supply chain anomalies) match the user's target scope, integrate their verified intelligence points and mirror their crisp military analytical structure.\n` +
+            `- If the user's directive is unrelated to these SITREPs, omit unrelated dispatches cleanly.`;
         }
       } catch (classErr) {
-        console.warn('[CLASSIFIED ROUTER] Error evaluating classified feed briefings:', classErr);
+        console.warn('[S2 WIRE ROUTER] Error evaluating S2 Wire SITREP dispatches:', classErr);
       }
 
       if (classifiedContextStr) {
@@ -7429,5 +7422,40 @@ ROUNDTABLE RULES:
     params.topic
   );
 }
+
+/**
+ * Executes an autonomous S2 Underground Wire SITREP reconnaissance mission:
+ * 1. Pulls clean text dispatches from https://feeds.buzzsprout.com/868255.rss (`fetchS2WireFeed`)
+ * 2. Formats them into clean SITREP blocks (`buildAgentSITREPContext`)
+ * 3. Dispatches to the operative's BYOK model provider (`executeAgentDirective`) and archives the prioritized threat matrix dossier.
+ */
+export async function runAgentReconMission(
+  agentName = 'Agent Vance',
+  agentRole = 'Lead Strategist',
+  themeId: ThemeId = 'spy'
+): Promise<AgentExecutionCard> {
+  // 1. Pull clean text dispatches
+  const rawDispatches = await fetchS2WireFeed();
+
+  // 2. Format into clean text blocks
+  const sitrepContext = buildAgentSITREPContext(rawDispatches);
+
+  // 3. Construct the prompt for the BYOK model (Gemini / Claude / etc.)
+  const systemPrompt = `You are Agent ${agentName}, an autonomous intelligence operative inside PixelOps. 
+Analyze the following text-based situational reports (SITREPs). Extract macro anomalies, infrastructure risks, and actionable intelligence points. Compile a structured dossier for the Director-tier operator.`;
+
+  const userPrompt = `Here is the latest intelligence stream:\n\n${sitrepContext}\n\nGenerate a prioritized threat matrix report.`;
+
+  console.log(`[Agent ${agentName}] Initialized sweep with clean text intelligence stream.`);
+
+  return await executeAgentDirective({
+    prompt: userPrompt,
+    agentSystemPrompt: systemPrompt,
+    activeAgentName: agentName,
+    activeAgentRole: agentRole,
+    themeId,
+  });
+}
+
 
 

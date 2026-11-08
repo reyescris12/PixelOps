@@ -111,6 +111,13 @@ export interface AgentExecutionCard {
   themeId: ThemeId;
   timestamp: string;
   hasAttachment?: boolean;
+  retryAction?: {
+    appSlug?: string;
+    appName?: string;
+    actionName?: string;
+    actionArgs?: Record<string, any>;
+    prompt: string;
+  };
 }
 
 export type CorePluginId =
@@ -4156,7 +4163,7 @@ async function executeAndFormatExternalTool(opts: {
       hasAttachment: Boolean(params.attachment),
     };
   } else {
-    const dialogue = `${params.activeAgentName} (${params.activeAgentRole}): External dispatch error occurred while executing ${actionName} on your connected ${appName} account:\n\nError: ${result.error || 'Provider execution failed'}\n\nParameters attempted:\n${JSON.stringify(actionArgs, null, 2)}\n\nPlease verify that your account has necessary permissions in dashboard.composio.dev.`;
+    const dialogue = `${params.activeAgentName} (${params.activeAgentRole}): External dispatch error occurred while executing ${actionName} on your connected ${appName} account:\n\nError: ${result.error || 'Provider execution failed'}\n\nParameters attempted:\n${JSON.stringify(actionArgs, null, 2)}\n\nPlease verify that your account has necessary permissions in dashboard.composio.dev or tap [⚡ RETRY DISPATCH] below.`;
 
     return {
       id: `card-${Date.now()}`,
@@ -4175,6 +4182,13 @@ async function executeAndFormatExternalTool(opts: {
       themeId: params.themeId,
       timestamp: new Date().toISOString(),
       hasAttachment: Boolean(params.attachment),
+      retryAction: {
+        appSlug,
+        appName,
+        actionName,
+        actionArgs,
+        prompt: params.prompt,
+      },
     };
   }
 }
@@ -4549,6 +4563,42 @@ export async function tryParseAndExecuteExternalToolDirective(params: {
       params,
       targetRoom: 'library',
       targetStationId: 'library_archive_terminal',
+    });
+  }
+
+  // 7. TWITTER / X INTENT (POST TWEET / STATUS)
+  const isTwitterPost =
+    /\b(tweet|post\s+to\s+(twitter|x)|broadcast\s+to\s+(twitter|x)|share\s+on\s+(twitter|x)|send\s+a\s+tweet|post\s+a\s+tweet|publish\s+to\s+(twitter|x))\b/i.test(lower);
+  if (isTwitterPost) {
+    const actionName = 'TWITTER_CREATION_OF_A_POST';
+    const appSlug = 'twitter';
+
+    params.onFunctionCallTriggered?.({
+      toolName: actionName.toLowerCase(),
+      args: {},
+      targetRoom: 'comms_tower',
+      targetStationId: 'comms_broadcast_desk',
+      taskTag: 'TWITTER',
+    });
+
+    const tweetText = await draftExternalMessageContent({
+      targetChannel: 'twitter',
+      prompt: rawPrompt,
+      agentName: params.activeAgentName,
+      agentRole: params.activeAgentRole,
+      themeId: params.themeId,
+    });
+
+    const actionArgs = { text: tweetText.length > 280 ? tweetText.slice(0, 277) + '...' : tweetText };
+
+    return await executeAndFormatExternalTool({
+      appSlug,
+      appName: 'Twitter (X)',
+      actionName,
+      actionArgs,
+      params,
+      targetRoom: 'comms_tower',
+      targetStationId: 'comms_broadcast_desk',
     });
   }
 

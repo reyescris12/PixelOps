@@ -287,10 +287,34 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({
               </div>
             </div>
           ) : (
-            <p>
-              <span className="text-[#e59838] font-semibold">{activeCrewName}:</span>{' '}
-              <span>&ldquo;{displayedText}&rdquo;</span>
-            </p>
+            <div>
+              <p>
+                <span className="text-[#e59838] font-semibold">{activeCrewName}:</span>{' '}
+                <span>&ldquo;{displayedText}&rdquo;</span>
+              </p>
+              {/* Show immediate manual retry button if latest card failed an external dispatch */}
+              {executionCards.length > 0 && executionCards[executionCards.length - 1]?.retryAction && (
+                <div className="mt-2.5 pt-2 border-t border-[#382917] flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const retryCard = executionCards[executionCards.length - 1];
+                      if (retryCard?.retryAction?.prompt) {
+                        playBeep('tap');
+                        onExecuteDirective(retryCard.retryAction.prompt);
+                      }
+                    }}
+                    className="px-2.5 py-1 bg-[#b45309] hover:bg-[#d97706] text-[#fef3c7] border border-[#f59e0b] font-mono-tabular text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer shadow-[0_0_10px_rgba(245,158,11,0.3)]"
+                  >
+                    <span aria-hidden="true">⚡</span>
+                    <span>[⚡ RETRY DISPATCH]</span>
+                  </button>
+                  <span className="text-[11px] font-mono-tabular text-[#d97706]">
+                    External gateway latency or rate limit detected. Tap to re-dispatch.
+                  </span>
+                </div>
+              )}
+            </div>
           )}
         </div>
 
@@ -333,6 +357,26 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({
                       </div>
                     ))}
                   </div>
+                  {card.retryAction && (
+                    <div className="mt-1 flex items-center justify-between">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (card.retryAction?.prompt) {
+                            playBeep('tap');
+                            onExecuteDirective(card.retryAction.prompt);
+                          }
+                        }}
+                        className="px-2 py-0.5 bg-[#b45309] hover:bg-[#d97706] text-[#fef3c7] border border-[#f59e0b] font-mono-tabular text-[11px] font-bold flex items-center gap-1 cursor-pointer"
+                      >
+                        <span aria-hidden="true">⚡</span>
+                        <span>[⚡ RETRY DISPATCH]</span>
+                      </button>
+                      <span className="text-[10px] font-mono-tabular text-[#9c8265]">
+                        Action failed · Manual re-trigger ready
+                      </span>
+                    </div>
+                  )}
                 </div>
               ))
             )}

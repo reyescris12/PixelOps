@@ -514,7 +514,8 @@ async function callComposioDirect(
   method: string,
   body: Record<string, any> | null | undefined,
   apiKey: string,
-  entityId: string
+  entityId: string,
+  timeoutMs: number = 60000
 ): Promise<any> {
   // Normalize target URL to v3
   let targetUrl = url.replace('https://backend.composio.dev/api/v2', COMPOSIO_BASE_URL);
@@ -554,15 +555,29 @@ async function callComposioDirect(
     }
   }
 
-  let directRes = await fetch(targetUrl, {
-    method: method.toUpperCase(),
-    headers: {
-      'x-api-key': apiKey,
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-    },
-    body: modifiedBody && method.toUpperCase() !== 'GET' ? JSON.stringify(modifiedBody) : undefined,
-  });
+  const directController = new AbortController();
+  const directTimeoutId = setTimeout(() => directController.abort(), timeoutMs);
+
+  let directRes: Response;
+  try {
+    directRes = await fetch(targetUrl, {
+      method: method.toUpperCase(),
+      headers: {
+        'x-api-key': apiKey,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: modifiedBody && method.toUpperCase() !== 'GET' ? JSON.stringify(modifiedBody) : undefined,
+      signal: directController.signal,
+    });
+  } catch (err: any) {
+    if (directController.signal.aborted) {
+      throw new Error(`Composio direct request timed out (${Math.round(timeoutMs / 1000)}s limit). Gateway latency detected.`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(directTimeoutId);
+  }
 
   // If 404, fall back between camelCase and snake_case endpoint variants
   if (directRes.status === 404 && targetUrl.includes('/connectedAccounts')) {
@@ -637,11 +652,19 @@ export function formatComposioError(err: any): string {
 async function callComposioProxy(
   endpoint: string,
   method: string = 'GET',
-  body?: Record<string, any> | null
+  body?: Record<string, any> | null,
+  options?: { timeoutMs?: number }
 ): Promise<any> {
   const entityId = getOrCreateEntityId();
   const customKey = getComposioApiKey();
   let cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+
+  // Default timeout: 60s for external tool actions (especially Twitter/X posting), 30s otherwise
+  const isActionExecute =
+    cleanEndpoint.includes('/execute') ||
+    cleanEndpoint.includes('/tools/') ||
+    cleanEndpoint.includes('twitter');
+  const timeoutMs = options?.timeoutMs ?? (isActionExecute ? 60000 : 45000);
 
   // 1. Direct browser REST execution if user configured their own COMPOSIO_API_KEY
   // Bypasses any SPA fallback or Vite dev server proxy issues
@@ -652,16 +675,17 @@ async function callComposioProxy(
         method,
         body,
         customKey,
-        entityId
+        entityId,
+        timeoutMs
       );
     } catch (directErr: any) {
       console.warn('[COMPOSIO DIRECT FETCH NOTICE] Trying proxy fallback with custom key:', directErr?.message || directErr);
     }
   }
 
-  // 2. Route via Cloudflare Pages Function proxy (/api/composio) with 25s circuit breaker
+  // 2. Route via Cloudflare Pages Function proxy (/api/composio) with 60s circuit breaker
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 25000);
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const headers: Record<string, string> = {
@@ -689,7 +713,7 @@ async function callComposioProxy(
       });
     } catch (fetchErr: any) {
       if (controller.signal.aborted) {
-        throw new Error('Composio proxy request timed out (25s limit).');
+        throw new Error(`Composio proxy request timed out (${Math.round(timeoutMs / 1000)}s limit). Gateway latency detected.`);
       }
       throw new Error(`Composio proxy unreachable: ${fetchErr?.message || fetchErr}`);
     }
@@ -2695,36 +2719,92 @@ export async function executeComposioAction(
     actionsToTry.push('LINEAR_SEARCH_ISSUES');
   } else if (normalizedAction === 'TRELLO_LIST_CARDS') {
     actionsToTry.push('TRELLO_GET_CARDS_ON_A_BOARD');
+  } else if (
+    normalizedAction === 'TWITTER_CREATION_OF_A_POST' ||
+    normalizedAction === 'TWITTER_POST_TWEET' ||
+    normalizedAction.includes('TWITTER')
+  ) {
+    if (!actionsToTry.includes('TWITTER_CREATION_OF_A_POST')) {
+      actionsToTry.push('TWITTER_CREATION_OF_A_POST');
+    }
+    if (!actionsToTry.includes('TWITTER_POST_TWEET')) {
+      actionsToTry.push('TWITTER_POST_TWEET');
+    }
   }
 
   let lastError: any = null;
 
+  const isTimeoutOrRateLimit = (errStr: string) => {
+    const s = (errStr || '').toLowerCase();
+    return (
+      s.includes('504') ||
+      s.includes('429') ||
+      s.includes('gateway') ||
+      s.includes('timeout') ||
+      s.includes('timed out') ||
+      s.includes('rate limit') ||
+      s.includes('resource_exhausted')
+    );
+  };
+
   for (const act of actionsToTry) {
-    try {
-      let result: any;
+    const isTwitterAction = act.includes('TWITTER');
+    const maxRetries = isTwitterAction ? 3 : 1;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        result = await callComposioProxy(`/tools/execute/${encodeURIComponent(act)}`, 'POST', payload);
-      } catch (toolErr: any) {
+        let result: any;
         try {
-          result = await callComposioProxy(`/actions/${encodeURIComponent(act)}/execute`, 'POST', payload);
-        } catch {
-          result = await callComposioProxy(`/api/v3/tools/execute/${encodeURIComponent(act)}`, 'POST', payload);
+          result = await callComposioProxy(`/tools/execute/${encodeURIComponent(act)}`, 'POST', payload);
+        } catch (toolErr: any) {
+          try {
+            result = await callComposioProxy(`/actions/${encodeURIComponent(act)}/execute`, 'POST', payload);
+          } catch {
+            result = await callComposioProxy(`/api/v3/tools/execute/${encodeURIComponent(act)}`, 'POST', payload);
+          }
+        }
+
+        console.log(
+          `[COMPOSIO EXECUTION RESULT] Action: "${act}" | Success: true | Data Summary:`,
+          Array.isArray(result?.data) ? `${result.data.length} items` : typeof result?.data === 'object' ? Object.keys(result.data || {}) : 'OK'
+        );
+        return {
+          successful: true,
+          data: result?.data || result?.response || result,
+          actionName: act,
+          executedAt: new Date().toISOString(),
+        };
+      } catch (err: any) {
+        lastError = err;
+        const errMessage = formatComposioError(err) || String(err?.message || err);
+        console.warn(`[COMPOSIO EXECUTION ATTEMPT FAILED] Action "${act}" (attempt ${attempt}/${maxRetries}):`, errMessage);
+
+        const canRetry = attempt < maxRetries && isTimeoutOrRateLimit(errMessage);
+        if (canRetry) {
+          // Exponential backoff: starts at 15s delay (15s, 22.5s, 33.7s)
+          const delayMs = Math.round(15000 * Math.pow(1.5, attempt - 1));
+          const delaySec = Math.round(delayMs / 1000);
+
+          const telemetryMsg = `[AGENT VANCE // TELEMETRY] X Gateway Delay / Rate Limit detected (${errMessage.slice(0, 40)}...). Retrying action in ${delaySec}s (Attempt ${attempt}/${maxRetries})...`;
+          console.info(telemetryMsg);
+
+          if (typeof window !== 'undefined') {
+            window.dispatchEvent(
+              new CustomEvent('pixelops:telemetry-log', {
+                detail: {
+                  message: telemetryMsg,
+                  status: 'warning',
+                  timestamp: new Date().toISOString(),
+                },
+              })
+            );
+          }
+
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        } else {
+          break; // Move to next alias if not retryable or retries exhausted
         }
       }
-
-      console.log(
-        `[COMPOSIO EXECUTION RESULT] Action: "${act}" | Success: true | Data Summary:`,
-        Array.isArray(result?.data) ? `${result.data.length} items` : typeof result?.data === 'object' ? Object.keys(result.data || {}) : 'OK'
-      );
-      return {
-        successful: true,
-        data: result?.data || result?.response || result,
-        actionName: act,
-        executedAt: new Date().toISOString(),
-      };
-    } catch (err: any) {
-      console.warn(`[COMPOSIO EXECUTION ATTEMPT FAILED] Action "${act}":`, err?.message || err);
-      lastError = err;
     }
   }
 

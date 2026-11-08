@@ -12,7 +12,7 @@ import { loadLLMProviderConfig, normalizeGeminiModel, getGeminiAuthHeadersAndUrl
  *    so the recipient receives the synthesized output rather than the user's raw prompt.
  */
 export async function draftExternalMessageContent(options: {
-  targetChannel: 'email' | 'slack' | 'github' | 'discord' | 'calendar' | 'notion' | 'linear';
+  targetChannel: 'email' | 'slack' | 'github' | 'discord' | 'calendar' | 'notion' | 'linear' | 'twitter' | 'x';
   prompt: string;
   agentName: string;
   agentRole: string;
@@ -142,6 +142,11 @@ ${cleanDirective || 'Engineering task ticket filed from PixelOps Command Center.
 - Filed by Operative: ${agentName} (${agentRole})
 - Priority: Standard Operational
 - Safehouse Workspace: Verified and active`;
+  }
+
+  if (targetChannel === 'twitter' || targetChannel === 'x') {
+    const tweetCandidate = `[PIXELOPS // ${agentName}] ${cleanDirective || 'Command center operational sweep verified. Subsystems nominal.'} #PixelOps #AgentHQ`;
+    return tweetCandidate.length > 280 ? tweetCandidate.slice(0, 277) + '...' : tweetCandidate;
   }
 
   return cleanDirective || `Operational dispatch from ${agentName} (${agentRole}).`;

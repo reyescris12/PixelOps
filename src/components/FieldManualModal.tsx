@@ -39,6 +39,8 @@ import {
   Calendar,
   Layers,
   AlertTriangle,
+  Radar,
+  FolderTree,
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 
@@ -48,7 +50,7 @@ export interface FieldManualModalProps {
   onSelectPrompt?: (samplePrompt: string) => void;
 }
 
-type ManualSectionId = 'grid' | 'operatives' | 'nightshift' | 'auth' | 'commands' | 'composio' | 'protips';
+type ManualSectionId = 'grid' | 'recon' | 'operatives' | 'vfs' | 'nightshift' | 'auth' | 'commands' | 'composio' | 'protips';
 type CommandCategoryFilter = 'all' | 'terminal' | 'composio' | 'chaining' | 'reports' | 'code' | 'cli' | 'diagnostics';
 
 interface CommandExample {
@@ -149,6 +151,33 @@ const COMMAND_CATALOG: CommandExample[] = [
     description: 'Reads and outputs the exact Markdown content of a workspace report in the console.',
     leadOperative: 'Any Operative',
     targetSector: 'Library Archives',
+  },
+  {
+    title: 'S2 Underground Wire Ingestion & BLUF SITREP Sweep',
+    category: 'Report Generation',
+    channel: 'terminal',
+    prompt: 'Vance, ingest the latest S2 Underground text dispatches, extract the BLUF and key SITREP anomalies, and compile a structured threat matrix report',
+    description: 'Parses clean SITREP text blocks with //The Wire//, //BLUF://, and //END REPORT// formatting directly into agent prompt context with persistent, non-gibberish titles.',
+    leadOperative: 'Vance',
+    targetSector: 'War Room ➔ Library Archives',
+  },
+  {
+    title: 'Tactical Satellite Reconnaissance & Geocoding Lock',
+    category: 'Research & Tools',
+    channel: 'terminal',
+    prompt: 'scan satellite imagery of Suez Canal and Red Sea subsea cable corridor',
+    description: 'Locks the Orbital Recon Monitor modal directly onto target coordinates with 1:1 uncropped square WMTS tiles, CRT shader filters, and real-time live telemetry.',
+    leadOperative: 'Nyx',
+    targetSector: 'Tactical Recon Monitor Modal',
+  },
+  {
+    title: 'Postal Code & Global City Satellite Lock',
+    category: 'Research & Tools',
+    channel: 'terminal',
+    prompt: 'lock satellite recon on postal code SW1A 1AA London',
+    description: 'Zero-key multi-source geocoding instantly resolves postal codes (ZIP, UK, Canadian, EU) and auto-centers the live Esri high-res optical imagery.',
+    leadOperative: 'Nyx',
+    targetSector: 'Tactical Recon Monitor Modal',
   },
 
   // ==========================================
@@ -484,7 +513,7 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
                   SEC-LEVEL: OMEGA
                 </span>
                 <span className="hidden md:inline px-1.5 py-0.2 bg-[#38bdf8]/20 border border-[#38bdf8]/60 text-[#38bdf8] text-[10px] font-bold">
-                  ENGINE: GEMINI 3.1 FLASH LITE
+                  ENGINE: GEMINI 3.8 FLASH
                 </span>
               </div>
               <p className="text-[10px] text-[#9c8265]">
@@ -527,6 +556,22 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
             <button
               type="button"
               onClick={() => {
+                setActiveSection('recon');
+                playBeep('tap');
+              }}
+              className={`px-2.5 py-1 border transition-colors cursor-pointer flex items-center gap-1.5 ${
+                activeSection === 'recon'
+                  ? 'bg-[#e59838] text-[#121110] border-[#fde047] font-bold shadow-[0_0_10px_rgba(229,152,56,0.4)]'
+                  : 'bg-[#181a24] text-[#cbd5e1] border-[#363d54] hover:border-[#e59838]'
+              }`}
+            >
+              <Radar className="w-3.5 h-3.5" />
+              <span>2. Recon Monitor</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
                 setActiveSection('operatives');
                 playBeep('tap');
               }}
@@ -537,7 +582,23 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
               }`}
             >
               <Users className="w-3.5 h-3.5" />
-              <span>2. Operatives & Memory</span>
+              <span>3. Operatives & Memory</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setActiveSection('vfs');
+                playBeep('tap');
+              }}
+              className={`px-2.5 py-1 border transition-colors cursor-pointer flex items-center gap-1.5 ${
+                activeSection === 'vfs'
+                  ? 'bg-[#e59838] text-[#121110] border-[#fde047] font-bold shadow-[0_0_10px_rgba(229,152,56,0.4)]'
+                  : 'bg-[#181a24] text-[#cbd5e1] border-[#363d54] hover:border-[#e59838]'
+              }`}
+            >
+              <FolderTree className="w-3.5 h-3.5" />
+              <span>4. Workspace Files & Multi-Select</span>
             </button>
 
             <button
@@ -553,7 +614,7 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
               }`}
             >
               <Moon className="w-3.5 h-3.5" />
-              <span>3. Night Shift</span>
+              <span>5. Night Shift</span>
             </button>
 
             <button
@@ -569,7 +630,7 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
               }`}
             >
               <KeyRound className="w-3.5 h-3.5" />
-              <span>4. Keys (Gemini 3.1) vs. Pro</span>
+              <span>6. BYOK & Pro Pass</span>
             </button>
 
             <button
@@ -585,7 +646,7 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
               }`}
             >
               <Terminal className="w-3.5 h-3.5" />
-              <span>5. Command Encyclopedia ({COMMAND_CATALOG.length})</span>
+              <span>7. Commands ({COMMAND_CATALOG.length})</span>
             </button>
 
             <button
@@ -601,7 +662,7 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
               }`}
             >
               <Layers className="w-3.5 h-3.5" />
-              <span>6. Composio Guide</span>
+              <span>8. Composio</span>
             </button>
 
             <button
@@ -617,7 +678,7 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
               }`}
             >
               <Zap className="w-3.5 h-3.5" />
-              <span>7. Pro-Tips</span>
+              <span>9. Pro-Tips</span>
             </button>
           </div>
         </div>
@@ -762,17 +823,78 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
           )}
 
           {/* ========================================================= */}
-          {/* SECTION 2: MANAGING OPERATIVES & CLEARANCE */}
+          {/* SECTION 2: TACTICAL RECON MONITOR & SATELLITE OVERWATCH */}
+          {/* ========================================================= */}
+          {activeSection === 'recon' && (
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-base sm:text-lg font-bold text-[#e59838] flex items-center gap-2">
+                  <Radar className="w-5 h-5 text-[#e59838]" />
+                  <span>SECTION 02 // TACTICAL RECON MONITOR & GEOGRAPHIC INTEL</span>
+                </h3>
+                <p className="text-xs text-[#9c8265] mt-1">
+                  Orbital overwatch terminal pairing NASA GIBS daily orbital passes (MODIS/VIIRS) and high-resolution Esri World Imagery with an interactive HTML5 Canvas tactical overlay.
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                <div className="p-4 bg-[#121520] border border-[#38bdf8] space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs sm:text-sm font-bold text-[#38bdf8] uppercase">
+                      🛰️ Responsive Fullscreen Popup Modal
+                    </h4>
+                    <span className="text-[10px] bg-[#38bdf8]/10 text-[#38bdf8] px-2 py-0.5 border border-[#38bdf8]/40 font-bold">
+                      POPUP ENGINE
+                    </span>
+                  </div>
+                  <p className="text-xs text-[#cbd5e1]">
+                    The Recon Monitor opens as a dedicated tactical modal instead of overlaying inside the room diorama, ensuring full mobile responsiveness, clean viewport height, zero clipping, and safe-area margin handling.
+                  </p>
+                </div>
+
+                <div className="p-4 bg-[#121520] border border-[#4ade80] space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs sm:text-sm font-bold text-[#4ade80] uppercase">
+                      🎯 HTML5 Canvas Tactical Overlay & Geographically Locked Pins
+                    </h4>
+                    <span className="text-[10px] bg-[#4ade80]/10 text-[#4ade80] px-2 py-0.5 border border-[#4ade80]/40 font-bold">
+                      60 FPS CANVAS
+                    </span>
+                  </div>
+                  <p className="text-xs text-[#cbd5e1]">
+                    Intelligence pins (S2 Wire dispatches, USGS seismic sensors, ENTSO-E grid telemetry) are mapped via Web Mercator projection to exact geographic coordinates. When you pan (<code className="text-[#4ade80]">N/S/E/W</code>) or zoom (<code className="text-[#4ade80]">Z</code>), pins stay locked to their real-world locations. Off-screen pins display edge indicators on the viewport border with click-to-center support.
+                  </p>
+                </div>
+
+                <div className="p-4 bg-[#121520] border border-[#fde047] space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs sm:text-sm font-bold text-[#fde047] uppercase">
+                      📍 Zero-Key Postal Code & Global City Geocoding
+                    </h4>
+                    <span className="text-[10px] bg-[#fde047]/10 text-[#fde047] px-2 py-0.5 border border-[#fde047]/40 font-bold">
+                      GLOBAL GEOCODER
+                    </span>
+                  </div>
+                  <p className="text-xs text-[#cbd5e1]">
+                    Enter postal codes (e.g. <code className="text-[#fde047]">SW1A 1AA</code>, <code className="text-[#fde047]">90210</code>, <code className="text-[#fde047]">M5V 3L9</code>), city names, or coordinates. The Recon Monitor geocodes the location, centers the camera, automatically switches to high-res optical imagery at street zoom levels, and plants a persistent <code className="text-[#38bdf8]">RECON TARGET</code> pin.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ========================================================= */}
+          {/* SECTION 3: MANAGING OPERATIVES & CLEARANCE */}
           {/* ========================================================= */}
           {activeSection === 'operatives' && (
             <div className="space-y-6">
               <div>
                 <h3 className="text-base sm:text-lg font-bold text-[#e59838] flex items-center gap-2">
                   <Users className="w-5 h-5 text-[#e59838]" />
-                  <span>SECTION 02 // MANAGING OPERATIVES & MEMORY LEDGERS</span>
+                  <span>SECTION 03 // MANAGING OPERATIVES, RECRUITS & S2 WIRE INTEL</span>
                 </h3>
                 <p className="text-xs text-[#9c8265] mt-1">
-                  Safehouse agents operate as autonomous persistent intelligence units with independent memory banks, custom prompt overrides, and clearance progression.
+                  Safehouse agents operate as autonomous persistent intelligence units with independent memory banks, custom prompt overrides, responsive tray navigation, and structured SITREP reporting.
                 </p>
               </div>
 
@@ -804,6 +926,22 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
                     </p>
                   </div>
                 </div>
+              </div>
+
+              {/* S2 Underground Wire & Structured SITREP Reports */}
+              <div className="p-3.5 bg-[#12141f] border border-[#e59838]/60 space-y-2.5">
+                <h4 className="text-xs font-bold text-[#e59838] uppercase tracking-wider flex items-center gap-1.5">
+                  <FileText className="w-4 h-4 text-[#e59838]" />
+                  S2 Underground Wire Dispatches & Structured Report Naming
+                </h4>
+                <p className="text-xs text-[#cbd5e1]">
+                  Agents parse clean military SITREP dispatches (<code className="text-[#e59838]">//The Wire//</code>, <code className="text-[#e59838]">//BLUF://</code>, <code className="text-[#e59838]">//END REPORT//</code>) directly from the text stream instead of processing web link fragments.
+                </p>
+                <ul className="list-disc list-inside text-xs text-[#94a3b8] space-y-1">
+                  <li><strong>Human-Readable Titles:</strong> Reports are intelligently titled after the analyzed intelligence itself rather than prompt fragments or random gibberish IDs.</li>
+                  <li><strong>Persistent Dialogue:</strong> Switching between Briefing Terminal and Town Hall Roundtable tabs preserves existing agent responses and meeting minutes without retyping.</li>
+                  <li><strong>Mobile-Responsive Bottom Tray:</strong> Operative status tags and dispatch navigation buttons feature touch-slide scrolling so third and recruited agents are never cut off on small screens.</li>
+                </ul>
               </div>
 
               {/* Agent Memory Ledgers */}
@@ -853,14 +991,61 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
           )}
 
           {/* ========================================================= */}
-          {/* SECTION 3: CONFIGURING NIGHT SHIFT */}
+          {/* SECTION 4: WORKSPACE FILES, VFS & MULTI-SELECT */}
+          {/* ========================================================= */}
+          {activeSection === 'vfs' && (
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-base sm:text-lg font-bold text-[#e59838] flex items-center gap-2">
+                  <FolderTree className="w-5 h-5 text-[#e59838]" />
+                  <span>SECTION 04 // WORKSPACE FILES (VFS), MULTI-SELECT & FOLDERS</span>
+                </h3>
+                <p className="text-xs text-[#9c8265] mt-1">
+                  Local-first Virtual File System (Dexie IndexedDB + OPFS) storing all classified agent dossiers, logs, configurations, and intelligence archives.
+                </p>
+              </div>
+
+              <div className="space-y-3">
+                <div className="p-4 bg-[#121520] border border-[#a855f7] space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs sm:text-sm font-bold text-[#a855f7] uppercase">
+                      📁 Batch Multi-Select, Organize & Move
+                    </h4>
+                    <span className="text-[10px] bg-[#a855f7]/10 text-[#a855f7] px-2 py-0.5 border border-[#a855f7]/40 font-bold">
+                      VFS BATCH OPS
+                    </span>
+                  </div>
+                  <p className="text-xs text-[#cbd5e1]">
+                    Click <code className="text-[#a855f7]">[☑️ MULTI-SELECT]</code> in the Workspace File Explorer to select multiple files at once. You can move selected files to any target folder (<code className="text-[#a855f7]">intel/</code>, <code className="text-[#a855f7]">reports/</code>, <code className="text-[#a855f7]">archive/</code>, <code className="text-[#a855f7]">logs/</code>) or batch delete them with persistent deletion tombstones.
+                  </p>
+                </div>
+
+                <div className="p-4 bg-[#121520] border border-[#4ade80] space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs sm:text-sm font-bold text-[#4ade80] uppercase">
+                      📂 Independent Folder Architecture & Persistent Tombstones
+                    </h4>
+                    <span className="text-[10px] bg-[#4ade80]/10 text-[#4ade80] px-2 py-0.5 border border-[#4ade80]/40 font-bold">
+                      PERSISTENT SYNC
+                    </span>
+                  </div>
+                  <p className="text-xs text-[#cbd5e1]">
+                    Deleting all files inside a folder leaves the directory intact. Folder deletion is a separate, intentional action. Deleted files are recorded with persistent deletion tombstones so they never resurrect or re-sync back during cloud sync or page reloads.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ========================================================= */}
+          {/* SECTION 5: CONFIGURING NIGHT SHIFT */}
           {/* ========================================================= */}
           {activeSection === 'nightshift' && (
             <div className="space-y-6">
               <div>
                 <h3 className="text-base sm:text-lg font-bold text-[#e59838] flex items-center gap-2">
                   <Moon className="w-5 h-5 text-[#e59838]" />
-                  <span>SECTION 03 // CONFIGURING NIGHT SHIFT (BACKGROUND CRON)</span>
+                  <span>SECTION 05 // CONFIGURING NIGHT SHIFT (BACKGROUND CRON)</span>
                 </h3>
                 <p className="text-xs text-[#9c8265] mt-1">
                   Night Shift allows operatives to execute automated maintenance, security scans, research sweeps, and inbox summaries while the command center is idle or running in the background.
@@ -927,14 +1112,14 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
           )}
 
           {/* ========================================================= */}
-          {/* SECTION 4: API KEYS (GEMINI 3.1 FLASH LITE) VS PRO PASS */}
+          {/* SECTION 6: API KEYS (BYOK) VS PRO PASS */}
           {/* ========================================================= */}
           {activeSection === 'auth' && (
             <div className="space-y-6">
               <div>
                 <h3 className="text-base sm:text-lg font-bold text-[#e59838] flex items-center gap-2">
                   <KeyRound className="w-5 h-5 text-[#e59838]" />
-                  <span>SECTION 04 // API KEYS (BYOK: GEMINI 3.1 FLASH LITE) VS. HOSTED PRO PASS</span>
+                  <span>SECTION 06 // API KEYS (BYOK: GEMINI 3.8 FLASH) VS. HOSTED PRO PASS</span>
                 </h3>
                 <p className="text-xs text-[#9c8265] mt-1">
                   PixelOps is built with a 100% transparent execution model. You can run completely offline for free, connect your own API keys, or use the hosted Pro Pass.
@@ -1039,7 +1224,7 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
           )}
 
           {/* ========================================================= */}
-          {/* SECTION 5: COMMAND ENCYCLOPEDIA */}
+          {/* SECTION 7: COMMAND ENCYCLOPEDIA */}
           {/* ========================================================= */}
           {activeSection === 'commands' && (
             <div className="space-y-5">
@@ -1047,7 +1232,7 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
                 <div>
                   <h3 className="text-base sm:text-lg font-bold text-[#e59838] flex items-center gap-2">
                     <Terminal className="w-5 h-5 text-[#e59838]" />
-                    <span>SECTION 05 // COMMAND ENCYCLOPEDIA & EXAMPLES</span>
+                    <span>SECTION 07 // COMMAND ENCYCLOPEDIA & EXAMPLES</span>
                   </h3>
                   <p className="text-xs text-[#9c8265] mt-0.5">
                     Exhaustive catalog of every briefing terminal directive, task chain, code eval, and CLI command. Click &ldquo;Try Directive ▶&rdquo; to load directly into the prompt box.
@@ -1190,14 +1375,14 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
           )}
 
           {/* ========================================================= */}
-          {/* SECTION 6: COMPOSIO FULL INTEGRATIONS GUIDE */}
+          {/* SECTION 8: COMPOSIO FULL INTEGRATIONS GUIDE */}
           {/* ========================================================= */}
           {activeSection === 'composio' && (
             <div className="space-y-6">
               <div>
                 <h3 className="text-base sm:text-lg font-bold text-[#e59838] flex items-center gap-2">
                   <Layers className="w-5 h-5 text-[#e59838]" />
-                  <span>SECTION 06 // COMPOSIO INTEGRATIONS GUIDE (BRIEFING TERMINAL & CLI)</span>
+                  <span>SECTION 08 // COMPOSIO INTEGRATIONS GUIDE (BRIEFING TERMINAL & CLI)</span>
                 </h3>
                 <p className="text-xs text-[#9c8265] mt-1">
                   Connect third-party developer and operational toolkits (Gmail, GitHub, Slack, Notion, Linear, Calendar) via OAuth and execute actions live from both the Briefing Terminal and CLI.
@@ -1313,14 +1498,14 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
           )}
 
           {/* ========================================================= */}
-          {/* SECTION 7: PRO-TIPS & MAXIMUM PERFORMANCE */}
+          {/* SECTION 9: PRO-TIPS & MAXIMUM PERFORMANCE */}
           {/* ========================================================= */}
           {activeSection === 'protips' && (
             <div className="space-y-6">
               <div>
                 <h3 className="text-base sm:text-lg font-bold text-[#e59838] flex items-center gap-2">
                   <Zap className="w-5 h-5 text-[#e59838]" />
-                  <span>SECTION 07 // PRO-TIPS & MAXIMUM PERFORMANCE SECRETS</span>
+                  <span>SECTION 09 // PRO-TIPS & MAXIMUM PERFORMANCE SECRETS</span>
                 </h3>
                 <p className="text-xs text-[#9c8265] mt-1">
                   How to extract maximum efficiency, battery optimization, and tactical fluency from the PixelOps Command Center.
@@ -1374,7 +1559,7 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
         {/* Footer Bar */}
         <div className="bg-[#14120e] border-t border-[#4a351e] px-4 py-2.5 flex items-center justify-between text-xs shrink-0">
           <span className="text-[11px] text-[#9c8265]">
-            CLASSIFICATION: <strong>OMEGA-RESTRICTED</strong> · ENGINE: <strong>GEMINI-3.1-FLASH-LITE</strong> · PROPERTY OF PIXELOPS COMMAND
+            CLASSIFICATION: <strong>OMEGA-RESTRICTED</strong> · ENGINE: <strong>GEMINI-3.8-FLASH</strong> · PROPERTY OF PIXELOPS COMMAND
           </span>
           <button
             type="button"

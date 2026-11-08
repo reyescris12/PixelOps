@@ -9,6 +9,8 @@ import {
   Eye,
   Maximize2,
 } from 'lucide-react';
+import TacticalMapOverlay, { TacticalIntelPin } from './TacticalMapOverlay';
+import { listWorkspaceFiles } from '../engine/storageManager';
 
 export type SatelliteFeedLayerId =
   | 'esri_world_imagery'
@@ -576,6 +578,104 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
   const [geocodeStatusMsg, setGeocodeStatusMsg] = useState<string | null>(null);
   const [tileErrors, setTileErrors] = useState<Record<string, boolean>>({});
   const [wvsSnapshotError, setWvsSnapshotError] = useState<boolean>(false);
+  const [showTacticalPins, setShowTacticalPins] = useState<boolean>(true);
+  const [intelligencePins, setIntelligencePins] = useState<TacticalIntelPin[]>([
+    {
+      id: 's2-1',
+      x: 64,
+      y: 44,
+      title: 'S2 Wire // Red Sea Subsea Trunk Alert',
+      summary: 'BLUF: Elevated naval & maritime transponder anomalies detected near Bab el-Mandeb & Suez submarine fiber corridors.',
+      priority: 'HIGH',
+      category: 'S2 WIRE',
+      timestamp: '10m ago',
+      lat: 30.5852,
+      lon: 32.2654,
+    },
+    {
+      id: 'usgs-1',
+      x: 34,
+      y: 58,
+      title: 'USGS Seismic // M4.8 Tectonic Event',
+      summary: 'Automated seismic sensor trigger along subsea fault line; zero tsunami warning issued.',
+      priority: 'MEDIUM',
+      category: 'SEISMIC',
+      timestamp: '28m ago',
+      lat: 26.566,
+      lon: 56.25,
+    },
+    {
+      id: 'grid-1',
+      x: 48,
+      y: 30,
+      title: 'ENTSO-E / IXP Backbone Telemetry',
+      summary: 'BGP routing & synchronous grid frequency nominal; high-capacity fiber relay under active overwatch.',
+      priority: 'MEDIUM',
+      category: 'INFRASTRUCTURE',
+      timestamp: '42m ago',
+      lat: 50.1109,
+      lon: 8.6821,
+    },
+  ]);
+
+  // Hydrate live S2 Wire & OSINT intelligence pins from local VFS Vault
+  useEffect(() => {
+    let mounted = true;
+    listWorkspaceFiles('intel')
+      .then((files) => {
+        if (!mounted || !files.length) return;
+        const wireFiles = files
+          .filter((f) => f.name.startsWith('s2_wire_') || f.tags?.includes('s2-wire') || f.tags?.includes('osint'))
+          .slice(0, 4);
+        if (!wireFiles.length) return;
+
+        const pinPositions = [
+          { x: 64, y: 42 },
+          { x: 35, y: 56 },
+          { x: 52, y: 28 },
+          { x: 74, y: 66 },
+        ];
+
+        const dynamicPins: TacticalIntelPin[] = wireFiles.map((file, idx) => {
+          const cleanBody = file.content
+            .replace(/^#+\s+.*/gm, '')
+            .replace(/\*\*.*?\*\*/g, '')
+            .replace(/[-`_>#]/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+          const summarySnippet =
+            cleanBody.slice(0, 180) + (cleanBody.length > 180 ? '...' : '');
+          const isHigh =
+            /critical|high|alert|strike|outage|jamming|kinetic|sev/i.test(file.title + ' ' + file.content) ||
+            idx === 0;
+          const pos = pinPositions[idx % pinPositions.length];
+          return {
+            id: `vfs-pin-${file.id || idx}`,
+            x: pos.x,
+            y: pos.y,
+            title: file.title || 'S2 Wire Intelligence Dispatch',
+            summary: summarySnippet || 'Structured SITREP dispatch archived in local VFS.',
+            priority: isHigh ? 'HIGH' : 'MEDIUM',
+            category: 'S2 WIRE SITREP',
+            timestamp: new Date(file.updatedAt || Date.now()).toLocaleTimeString([], {
+              hour: '2-digit',
+              minute: '2-digit',
+            }),
+            lat,
+            lon,
+          };
+        });
+
+        setIntelligencePins((prev) => {
+          const base = prev.filter((p) => !p.id.startsWith('vfs-pin-')).slice(0, 2);
+          return [...dynamicPins, ...base];
+        });
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, [lat, lon]);
 
   // Sync when parent props change (e.g. Operational Zone dropdown or Agent Tool Call lock)
   useEffect(() => {
@@ -776,28 +876,28 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
       } bg-[#070b11] overflow-hidden font-mono text-slate-100`}
     >
       {/* Top Recon Monitor Control Header */}
-      <div className="px-3 py-1.5 sm:px-3.5 sm:py-2 bg-gradient-to-r from-[#06120e] via-[#0b1f17] to-[#06120e] border-b border-emerald-500/40 flex flex-wrap items-center justify-between gap-2 shrink-0">
-        <div className="flex items-center gap-2">
-          <div className="p-1.5 rounded bg-emerald-500/20 border border-emerald-400/60 text-emerald-300">
+      <div className="px-2.5 py-1.5 sm:px-3.5 sm:py-2 bg-gradient-to-r from-[#06120e] via-[#0b1f17] to-[#06120e] border-b border-emerald-500/40 flex flex-wrap items-center justify-between gap-2 shrink-0">
+        <div className="flex items-center gap-2 min-w-0 flex-1">
+          <div className="p-1.5 rounded bg-emerald-500/20 border border-emerald-400/60 text-emerald-300 shrink-0">
             <Radar className="w-4 h-4 animate-spin" style={{ animationDuration: '6s' }} />
           </div>
-          <div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="text-xs sm:text-sm font-bold tracking-wider uppercase text-emerald-300">
-                🛰️ TACTICAL SATELLITE RECON MONITOR // NASA GIBS &amp; ESRI ORBITAL FEED
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+              <span className="text-[11px] sm:text-sm font-bold tracking-wider uppercase text-emerald-300 truncate">
+                🛰️ TACTICAL SATELLITE RECON MONITOR
               </span>
-              <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-emerald-500/20 text-emerald-300 border border-emerald-400/40">
-                ZERO-KEY LIVE WMTS
+              <span className="px-1.5 py-0.5 text-[9px] sm:text-[10px] font-bold rounded bg-emerald-500/20 text-emerald-300 border border-emerald-400/40 whitespace-nowrap">
+                TACTICAL RECON FEED // ACTIVE NODES: {intelligencePins.length}
               </span>
             </div>
-            <p className="text-[10px] text-emerald-400/80">
+            <p className="text-[9.5px] sm:text-[10px] text-emerald-400/80 truncate">
               {sectorCode} • Target Lock: {targetLabel} ({lat.toFixed(4)}°, {lon.toFixed(4)}°) • Tile [Z:{centerTile.z} Y:{centerTile.y} X:{centerTile.x}]
             </p>
           </div>
         </div>
 
         {/* Feed Layer & Shader Mode Switchers */}
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1 sm:gap-1.5 w-full sm:w-auto justify-end">
           <select
             value={feedLayer}
             onChange={(e) => {
@@ -808,7 +908,7 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
                 setZoom(7);
               }
             }}
-            className="px-2 py-1 text-[11px] bg-[#040a07] border border-emerald-500/50 rounded text-emerald-200 focus:outline-none"
+            className="px-1.5 sm:px-2 py-1 text-[10px] sm:text-[11px] bg-[#040a07] border border-emerald-500/50 rounded text-emerald-200 focus:outline-none max-w-[165px] sm:max-w-none truncate"
             title="Select Zero-Key Satellite Imagery Source"
           >
             <option value="esri_world_imagery">Esri World Imagery (Cloud-Free High-Res Optical)</option>
@@ -820,7 +920,7 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
           <select
             value={shaderMode}
             onChange={(e) => setShaderMode(e.target.value as PhosphorShaderMode)}
-            className="px-2 py-1 text-[11px] bg-[#040a07] border border-emerald-500/50 rounded text-emerald-200 focus:outline-none"
+            className="px-1.5 sm:px-2 py-1 text-[10px] sm:text-[11px] bg-[#040a07] border border-emerald-500/50 rounded text-emerald-200 focus:outline-none max-w-[135px] sm:max-w-none truncate"
             title="Select Tactical CRT / Phosphor Filter"
           >
             <option value="green_nvg">CRT Green Night-Vision (NVG)</option>
@@ -846,6 +946,19 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
             </div>
           )}
 
+          <button
+            type="button"
+            onClick={() => setShowTacticalPins((prev) => !prev)}
+            className={`px-2 py-1 text-[10px] font-bold rounded border cursor-pointer whitespace-nowrap transition-colors ${
+              showTacticalPins
+                ? 'bg-emerald-950/80 text-emerald-200 border-emerald-400/60'
+                : 'bg-slate-900 text-slate-400 border-slate-700'
+            }`}
+            title="Toggle HTML5 Canvas Tactical Crosshair & S2 Wire Pin Overlay"
+          >
+            [🎯 PINS: {showTacticalPins ? 'ON' : 'OFF'}]
+          </button>
+
           {onOpenThreatMatrixModal && (
             <button
               type="button"
@@ -862,9 +975,9 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
               type="button"
               onClick={onCloseOverlay}
               className="px-2.5 py-1 text-[10px] font-bold rounded bg-red-950/80 hover:bg-red-900 text-red-200 border border-red-400/60 cursor-pointer whitespace-nowrap"
-              title="Close Recon Monitor Overlay and return to Room View"
+              title="Close Recon Monitor Popup"
             >
-              [✕ CLOSE RECON]
+              [✕ CLOSE]
             </button>
           )}
         </div>
@@ -930,11 +1043,11 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
         </div>
       )}
 
-      {/* Main 2D Tactical Raster Viewport + Night-Vision CRT Shader + Radar Overlay */}
+      {/* Main 2D Tactical Raster Viewport + Night-Vision CRT Shader + HTML5 Canvas Tactical Overlay + Radar Overlay */}
       <div
         className={`relative w-full ${
           overlayMode
-            ? 'flex-1 min-h-0'
+            ? 'flex-1 min-h-[220px]'
             : compact
             ? 'h-72 sm:h-80'
             : 'h-80 sm:h-[430px]'
@@ -1000,20 +1113,44 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
           )}
         </div>
 
+        {/* High-Performance 60FPS HTML5 Canvas Tactical Crosshair & S2 Wire Pin Overlay */}
+        {showTacticalPins && (
+          <div className="absolute inset-0 z-20">
+            <TacticalMapOverlay
+              intelligencePins={intelligencePins}
+              mapCenter={{ x: lon, y: lat }}
+              onDispatchPinDirective={
+                onDispatchReconDirective
+                  ? (pin) => {
+                      onDispatchReconDirective(
+                        `Execute tactical OSINT & S2 Wire verification on target pin "${pin.title}" — ${pin.summary}`,
+                        {
+                          lat: pin.lat ?? lat,
+                          lon: pin.lon ?? lon,
+                          label: pin.title,
+                        }
+                      );
+                    }
+                  : undefined
+              }
+            />
+          </div>
+        )}
+
         {/* Tactical HUD Overlays (Rendered above the CSS filter so HUD text & vector boxes stay razor-sharp) */}
-        <div className="absolute inset-0 pointer-events-none z-30 flex flex-col justify-between p-3">
+        <div className="absolute inset-0 pointer-events-none z-30 flex flex-col justify-between p-2 sm:p-3">
           {/* Top-Left & Top-Right HUD Telemetry Callouts */}
           <div className="flex items-start justify-between gap-2">
-            <div className="bg-black/80 border border-emerald-500/60 px-2.5 py-1.5 rounded text-[10px] text-emerald-300 space-y-0.5 shadow-[0_0_15px_rgba(0,0,0,0.85)]">
+            <div className="bg-black/80 border border-emerald-500/60 px-2 py-1 sm:px-2.5 sm:py-1.5 rounded text-[9px] sm:text-[10px] text-emerald-300 space-y-0.5 shadow-[0_0_15px_rgba(0,0,0,0.85)]">
               <div className="font-bold text-emerald-200 flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
-                <span>
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
+                <span className="truncate max-w-[180px] sm:max-w-none">
                   ORBITAL FEED:{' '}
                   {feedLayer === 'esri_world_imagery'
-                    ? 'ESRI WORLD IMAGERY (CLOUD-FREE HI-RES)'
+                    ? 'ESRI WORLD IMAGERY (HI-RES)'
                     : feedLayer === 'nasa_gibs_wvs_composite'
-                    ? 'NASA WORLDVIEW WIDESCREEN COMPOSITE'
-                    : 'NASA GIBS WMTS (MODIS / VIIRS DAILY)'}
+                    ? 'NASA WORLDVIEW COMPOSITE'
+                    : 'NASA GIBS WMTS (DAILY)'}
                 </span>
               </div>
               <div>
@@ -1021,34 +1158,34 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
                 <strong className="text-white">{lon.toFixed(4)}°</strong> | ZOOM:{' '}
                 <strong className="text-white">L{effectiveZoom}</strong>
               </div>
-              <div className="text-emerald-400/90">
-                WMTS TILE: X={centerTile.x}, Y={centerTile.y}, Z={centerTile.z} (1:1 Uncropped Projection)
+              <div className="hidden sm:block text-emerald-400/90">
+                WMTS TILE: X={centerTile.x}, Y={centerTile.y}, Z={centerTile.z} (Tap pins for SITREP dossier)
               </div>
             </div>
 
-            <div className="bg-black/80 border border-amber-500/60 px-2.5 py-1.5 rounded text-[10px] text-amber-300 text-right shadow-[0_0_15px_rgba(0,0,0,0.85)]">
-              <div className="font-bold uppercase">{threatBadgeText}</div>
-              <div className="text-emerald-300">OPERATIVE OVERWATCH: {activeOperativeName.toUpperCase()}</div>
-              <div className="text-[9px] text-slate-300">PASS DATE: {gibsDate} UTC</div>
+            <div className="bg-black/80 border border-amber-500/60 px-2 py-1 sm:px-2.5 sm:py-1.5 rounded text-[9px] sm:text-[10px] text-amber-300 text-right shadow-[0_0_15px_rgba(0,0,0,0.85)]">
+              <div className="font-bold uppercase truncate max-w-[150px] sm:max-w-none">{threatBadgeText}</div>
+              <div className="text-emerald-300">OVERWATCH: {activeOperativeName.toUpperCase()}</div>
+              <div className="hidden sm:block text-[9px] text-slate-300">PASS DATE: {gibsDate} UTC</div>
             </div>
           </div>
 
           {/* Center Glowing Green Radar Sweep, Target Reticle & Bounding Box */}
           <div className="relative flex items-center justify-center my-auto">
             {/* Rotating Radar Sweep Circle */}
-            <div className="relative w-44 h-44 sm:w-56 sm:h-56 rounded-full border border-emerald-400/40 flex items-center justify-center">
-              <div className="w-28 h-28 sm:w-36 sm:h-36 rounded-full border border-dashed border-emerald-400/35" />
+            <div className="relative w-32 h-32 sm:w-52 sm:h-52 rounded-full border border-emerald-400/35 flex items-center justify-center">
+              <div className="w-20 h-20 sm:w-32 sm:h-32 rounded-full border border-dashed border-emerald-400/30" />
               {/* Rotating Conic Radar Beam */}
               <div
                 className="tactical-radar-cone absolute inset-0 rounded-full"
                 style={{
                   background:
-                    'conic-gradient(from 0deg, rgba(16, 185, 129, 0.26) 0deg, rgba(16, 185, 129, 0.0) 65deg, transparent 360deg)',
+                    'conic-gradient(from 0deg, rgba(16, 185, 129, 0.22) 0deg, rgba(16, 185, 129, 0.0) 65deg, transparent 360deg)',
                 }}
               />
               {/* Target Lock Bounding Box */}
               <div
-                className={`relative w-16 h-16 border-2 ${
+                className={`relative w-12 h-12 sm:w-16 sm:h-16 border-2 ${
                   isFlyToLocking ? 'border-amber-400 scale-125' : 'border-emerald-400 scale-100'
                 } transition-all duration-300 flex items-center justify-center shadow-[0_0_12px_rgba(16,185,129,0.5)]`}
               >
@@ -1062,18 +1199,18 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
 
           {/* Bottom HUD Controls: Pan / Zoom + Telemetry Note */}
           <div className="flex flex-wrap items-end justify-between gap-2">
-            <div className="bg-black/80 border border-emerald-500/50 px-2.5 py-1.5 rounded text-[10px] text-emerald-200 max-w-md">
+            <div className="hidden sm:block bg-black/80 border border-emerald-500/50 px-2.5 py-1.5 rounded text-[10px] text-emerald-200 max-w-md">
               <span className="font-bold text-emerald-400 uppercase block text-[9px]">
                 {sectorCode} // LIVE AGENT TELEMETRY:
               </span>
               <span>
                 {TACTICAL_SECTOR_PRESETS.find((p) => p.sectorCode === sectorCode)?.telemetryNote ||
-                  `Real-time orbital raster locked on ${targetLabel}. Ready for operative sweep.`}
+                  `Real-time orbital raster locked on ${targetLabel}. Tap any canvas node pin to inspect S2 Wire / sensor telemetry.`}
               </span>
             </div>
 
             {/* Interactive Map Controls (pointer-events-auto) */}
-            <div className="pointer-events-auto flex items-center gap-1 bg-black/85 border border-emerald-500/60 p-1 rounded">
+            <div className="pointer-events-auto flex items-center gap-1 bg-black/85 border border-emerald-500/60 p-1 rounded ml-auto">
               <button
                 type="button"
                 onClick={() => panByDegrees(1, 0)}

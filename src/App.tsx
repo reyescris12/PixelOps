@@ -3205,6 +3205,54 @@ const CommandCenterContent: React.FC = () => {
         onClose={() => setIsTelemetryOpen(false)}
       />
 
+      {/* Tactical Satellite Recon Monitor Responsive Popup Modal */}
+      {isReconOverlayOpen && (
+        <div
+          onClick={() => setIsReconOverlayOpen(false)}
+          className="fixed inset-0 z-[120] bg-black/85 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-y-auto"
+          style={{
+            paddingTop: 'max(8px, env(safe-area-inset-top, 8px))',
+            paddingBottom: 'max(8px, env(safe-area-inset-bottom, 8px))',
+            paddingLeft: 'max(8px, env(safe-area-inset-left, 8px))',
+            paddingRight: 'max(8px, env(safe-area-inset-right, 8px))',
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-5xl h-[92dvh] sm:h-[85dvh] max-h-[820px] bg-[#070b11] border-2 border-emerald-500/70 rounded-lg shadow-[0_0_45px_rgba(16,185,129,0.3)] flex flex-col overflow-hidden"
+          >
+            <TacticalSatelliteMonitor
+              initialLat={reconMonitorTarget?.lat ?? 30.5852}
+              initialLon={reconMonitorTarget?.lon ?? 32.2654}
+              initialLabel={reconMonitorTarget?.label ?? 'Suez Canal & Red Sea Subsea Cable Corridor'}
+              initialSectorCode={reconMonitorTarget?.sectorCode ?? 'SECTOR-54 // SUEZ-CHOKELINE'}
+              activeOperativeName={
+                crewAgents.find((a) => a.id === activeAgent.id)?.customName || activeAgent.name
+              }
+              threatBadgeText="THREAT LEVEL: BRAVO - ORBITAL OVERWATCH ACTIVE"
+              overlayMode={true}
+              onCloseOverlay={() => setIsReconOverlayOpen(false)}
+              onOpenThreatMatrixModal={() => {
+                setIsReconOverlayOpen(false);
+                setIsThreatMonitorOpen(true);
+              }}
+              onDispatchReconDirective={(directive, coords) => {
+                setReconMonitorTarget({
+                  lat: coords.lat,
+                  lon: coords.lon,
+                  label: coords.label,
+                  sectorCode: `SECTOR-LOCK // ${coords.lat.toFixed(2)},${coords.lon.toFixed(2)}`,
+                });
+                setIsReconOverlayOpen(false);
+                handleExecuteDirective(
+                  `${directive} [Orbital Target Lock: ${coords.label} at ${coords.lat.toFixed(4)}, ${coords.lon.toFixed(4)}]`
+                );
+              }}
+            />
+          </div>
+        </div>
+      )}
+
       <ThreatMonitorModal
         isOpen={isThreatMonitorOpen}
         onClose={() => setIsThreatMonitorOpen(false)}

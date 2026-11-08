@@ -3136,36 +3136,6 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
           onSequenceComplete={(boost) => onGameSequenceComplete?.(boost)}
           onAbort={onAbortGame}
         />
-
-        {/* Tactical Satellite Recon Monitor Overlay (Covers the room & agents so the Briefing Terminal below stays open for live prompts) */}
-        <AnimatePresence>
-          {isReconOverlayOpen && (
-            <motion.div
-              key="recon-monitor-room-overlay"
-              initial={{ opacity: 0, scale: 0.98 }}
-              animate={{ opacity: 1, scale: 1 }}
-              exit={{ opacity: 0, scale: 0.98 }}
-              transition={{ duration: 0.2 }}
-              onPointerDown={(e) => e.stopPropagation()}
-              onPointerMove={(e) => e.stopPropagation()}
-              onPointerUp={(e) => e.stopPropagation()}
-              className="absolute inset-0 z-50 bg-[#050b08] flex flex-col overflow-hidden cursor-default"
-            >
-              <TacticalSatelliteMonitor
-                initialLat={reconTarget?.lat ?? 30.5852}
-                initialLon={reconTarget?.lon ?? 32.2654}
-                initialLabel={reconTarget?.label ?? 'Suez Canal & Red Sea Subsea Cable Corridor'}
-                initialSectorCode={reconTarget?.sectorCode ?? 'SECTOR-54 // SUEZ-CHOKELINE'}
-                activeOperativeName={activeCrewMember.customName || activeAgent.name}
-                threatBadgeText="THREAT LEVEL: BRAVO - ORBITAL OVERWATCH ACTIVE"
-                overlayMode={true}
-                onCloseOverlay={onCloseReconOverlay}
-                onOpenThreatMatrixModal={onOpenThreatMatrixModal}
-                onDispatchReconDirective={onDispatchReconDirective}
-              />
-            </motion.div>
-          )}
-        </AnimatePresence>
       </div>
 
       {/* Integrated 16-Bit Tactical Bottom Screen Tray:

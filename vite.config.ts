@@ -52,19 +52,35 @@ export default defineConfig(() => {
           ],
         },
         workbox: {
-          // Precache only core application shell files (keeps initial precache payload tiny)
-          maximumFileSizeToCacheInBytes: 3 * 1024 * 1024,
-          globPatterns: ['**/*.{js,css,html,svg,ico}'],
+          // Precache core application shell files and agent sprites
+          maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+          globPatterns: ['**/*.{js,css,html,svg,ico}', 'assets/agents/*.png'],
           globIgnores: ['**/assets/rooms/**', '**/assets/large-sprites/**', '**/scratch/**'],
           runtimeCaching: [
             {
-              // On-demand caching for 16-bit room backgrounds & sprite assets
-              urlPattern: /\/assets\/(rooms|agents)\/.*\.(?:png|jpg|jpeg|svg|webp)/i,
+              // NetworkFirst with fast fallback for agent sprites so updated textures load immediately
+              urlPattern: /\/assets\/agents\/.*\.(?:png|jpg|jpeg|svg|webp)/i,
+              handler: 'NetworkFirst',
+              options: {
+                cacheName: 'pixelops-agent-sprites-cache-v2',
+                networkTimeoutSeconds: 3,
+                expiration: {
+                  maxEntries: 100,
+                  maxAgeSeconds: 60 * 60 * 24 * 30, // 30 days
+                },
+                cacheableResponse: {
+                  statuses: [0, 200],
+                },
+              },
+            },
+            {
+              // On-demand caching for 16-bit room backgrounds
+              urlPattern: /\/assets\/rooms\/.*\.(?:png|jpg|jpeg|svg|webp)/i,
               handler: 'CacheFirst',
               options: {
                 cacheName: 'pixelops-room-assets-cache',
                 expiration: {
-                  maxEntries: 100,
+                  maxEntries: 20,
                   maxAgeSeconds: 60 * 60 * 24 * 30, // 30 days
                 },
                 cacheableResponse: {

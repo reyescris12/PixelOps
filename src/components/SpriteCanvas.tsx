@@ -3273,18 +3273,19 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
         </div>
 
         {/* Row 2: Unboxed Terminal Sector-Dispatch & Deck-Lift Controls */}
-        <div className="flex items-center justify-between gap-2 pt-1 border-t border-[#141a26] text-[10px] min-h-[24px] overflow-hidden">
-          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar min-w-0 flex-1">
-            <span className="text-[#64748b] flex items-center gap-1 shrink-0">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1.5 sm:gap-2 pt-1 border-t border-[#141a26] text-[10px] min-h-[24px]">
+          {/* Dispatch Navigation & Station Targets with Touch-Slide */}
+          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar touch-pan-x overscroll-x-contain scroll-smooth min-w-0 max-w-full py-0.5">
+            <span className="text-[#64748b] flex items-center gap-1 shrink-0 select-none">
               <ArrowRightLeft className="w-3 h-3 text-[#e59838]" />
-              <span>DISPATCH {activeCrewMember.customName.toUpperCase()}:</span>
+              <span className="font-semibold text-[#cbd5e1]">DISPATCH {activeCrewMember.customName.toUpperCase()}:</span>
             </span>
             {activeRoomMeta.neighbors.map((targetRoom) => (
               <button
                 key={targetRoom}
                 type="button"
                 onClick={() => onMoveAgentToRoom(activeCrewMember.id, targetRoom)}
-                className="text-[#e59838] hover:text-[#fde047] cursor-pointer whitespace-nowrap shrink-0"
+                className="text-[#e59838] hover:text-[#fde047] active:text-[#fde047] cursor-pointer whitespace-nowrap shrink-0 px-1 py-0.5 rounded hover:bg-[#e59838]/10 transition-colors"
               >
                 [&rarr; {getRoomMeta(targetRoom).shortBadge}]
               </button>
@@ -3309,10 +3310,10 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
                     commandAgentWalkTo(activeAgentIdx, currentRoom, st.id);
                     playBeep('tap');
                   }}
-                  className={`cursor-pointer whitespace-nowrap shrink-0 transition-colors ${
+                  className={`cursor-pointer whitespace-nowrap shrink-0 px-1 py-0.5 rounded transition-colors ${
                     isCurrentStation
-                      ? 'text-[#4ade80] font-bold'
-                      : 'text-[#94a3b8] hover:text-[#4ade80]'
+                      ? 'text-[#4ade80] font-bold bg-[#4ade80]/10'
+                      : 'text-[#94a3b8] hover:text-[#4ade80] active:text-[#4ade80]'
                   }`}
                 >
                   [{st.label}]
@@ -3321,9 +3322,10 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
             })}
           </div>
 
-          <div className="flex items-center gap-2.5 shrink-0">
+          {/* Deck Switcher, Roundtable & Status Indicators */}
+          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar touch-pan-x overscroll-x-contain scroll-smooth shrink-0 max-w-full py-0.5 border-t sm:border-t-0 border-[#141a26]/60 pt-0.5 sm:pt-0">
             {agentsInOtherRooms.length > 0 && (
-              <div className="hidden sm:flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 shrink-0">
                 <UserPlus className="w-3 h-3 text-[#4ade80]" />
                 {agentsInOtherRooms.map(({ idx, crew, state }) => (
                   <button
@@ -3333,7 +3335,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
                       commandAgentWalkTo(idx, currentRoom);
                       onMoveAgentToRoom(crew.id, currentRoom);
                     }}
-                    className="text-[#4ade80] hover:text-[#86efac] cursor-pointer whitespace-nowrap"
+                    className="text-[#4ade80] hover:text-[#86efac] active:text-[#86efac] cursor-pointer whitespace-nowrap shrink-0"
                     title={`Summon ${crew.customName} from ${getRoomMeta(state.room).shortBadge}`}
                   >
                     [+SUMMON {crew.customName.toUpperCase()}]
@@ -3347,7 +3349,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
               onClick={() =>
                 handlePanGridDirection(0, activeRoomMeta.gridRow === 0 ? 1 : -1)
               }
-              className="text-[#38bdf8] hover:text-[#7dd3fc] flex items-center gap-0.5 cursor-pointer whitespace-nowrap"
+              className="text-[#38bdf8] hover:text-[#7dd3fc] active:text-[#7dd3fc] flex items-center gap-0.5 cursor-pointer whitespace-nowrap shrink-0"
             >
               {activeRoomMeta.gridRow === 0 ? (
                 <>
@@ -3366,17 +3368,17 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
               <button
                 type="button"
                 onClick={onCallMeeting}
-                className={`cursor-pointer whitespace-nowrap ${
+                className={`cursor-pointer whitespace-nowrap shrink-0 ${
                   isMeetingActive
                     ? 'text-[#38bdf8] font-bold'
-                    : 'text-[#e59838] hover:text-[#fde047]'
+                    : 'text-[#e59838] hover:text-[#fde047] active:text-[#fde047]'
                 }`}
               >
                 [ROUNDTABLE]
               </button>
             )}
 
-            <div className="flex items-center gap-1.5 text-[#94a3b8] whitespace-nowrap text-[10px] font-mono-tabular select-none px-1.5 py-0.5 rounded bg-black/30 border border-[#38bdf8]/20">
+            <div className="flex items-center gap-1.5 text-[#94a3b8] whitespace-nowrap text-[9px] sm:text-[10px] font-mono-tabular select-none px-1.5 py-0.5 rounded bg-black/30 border border-[#38bdf8]/20 shrink-0">
               <span className="w-1.5 h-1.5 rounded-full bg-[#38bdf8] animate-pulse" />
               <span>[STATE-BOUND · IDLE LOCKED]</span>
             </div>

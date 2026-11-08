@@ -204,14 +204,6 @@ const CommandCenterContent: React.FC = () => {
     }
     return 'terminal';
   });
-
-  useEffect(() => {
-    if (activeTab !== 'crew') return;
-    const t = setInterval(() => {
-      setPreviewWalkFrame((f) => (f === 1 ? 2 : 1));
-    }, 220);
-    return () => clearInterval(t);
-  }, [activeTab]);
   const [commandLedger, setCommandLedger] = useState<CommandLedgerEntry[]>([]);
   const [queuedTasksCount, setQueuedTasksCount] = useState<number>(() => {
     try {
@@ -220,6 +212,14 @@ const CommandCenterContent: React.FC = () => {
       return 0;
     }
   });
+
+  useEffect(() => {
+    if (activeTab !== 'crew') return;
+    const t = setInterval(() => {
+      setPreviewWalkFrame((f) => (f === 1 ? 2 : 1));
+    }, 220);
+    return () => clearInterval(t);
+  }, [activeTab]);
 
   useEffect(() => {
     const handleUpdate = () => {

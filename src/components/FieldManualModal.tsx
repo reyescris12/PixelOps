@@ -41,6 +41,7 @@ import {
   AlertTriangle,
   Radar,
   FolderTree,
+  Workflow,
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 
@@ -50,7 +51,7 @@ export interface FieldManualModalProps {
   onSelectPrompt?: (samplePrompt: string) => void;
 }
 
-type ManualSectionId = 'grid' | 'recon' | 'operatives' | 'vfs' | 'nightshift' | 'auth' | 'commands' | 'composio' | 'protips';
+type ManualSectionId = 'grid' | 'recon' | 'operatives' | 'vfs' | 'workflows' | 'nightshift' | 'auth' | 'commands' | 'composio' | 'protips';
 type CommandCategoryFilter = 'all' | 'terminal' | 'composio' | 'chaining' | 'reports' | 'code' | 'cli' | 'diagnostics';
 
 interface CommandExample {
@@ -457,8 +458,6 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose]);
 
-  if (!isOpen) return null;
-
   const handleCopy = (text: string, idx: number) => {
     navigator.clipboard.writeText(text);
     setCopiedIndex(idx);
@@ -490,6 +489,8 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
       );
     });
   }, [categoryFilter, searchQuery]);
+
+  if (!isOpen) return null;
 
   return (
     <div
@@ -598,7 +599,23 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
               }`}
             >
               <FolderTree className="w-3.5 h-3.5" />
-              <span>4. Workspace Files & Multi-Select</span>
+              <span>4. Workspace Files</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setActiveSection('workflows');
+                playBeep('tap');
+              }}
+              className={`px-2.5 py-1 border transition-colors cursor-pointer flex items-center gap-1.5 ${
+                activeSection === 'workflows'
+                  ? 'bg-[#e59838] text-[#121110] border-[#fde047] font-bold shadow-[0_0_10px_rgba(229,152,56,0.4)]'
+                  : 'bg-[#181a24] text-[#cbd5e1] border-[#363d54] hover:border-[#e59838]'
+              }`}
+            >
+              <Workflow className="w-3.5 h-3.5" />
+              <span>5. Workflows & Playbooks</span>
             </button>
 
             <button
@@ -614,7 +631,7 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
               }`}
             >
               <Moon className="w-3.5 h-3.5" />
-              <span>5. Night Shift</span>
+              <span>6. Night Shift</span>
             </button>
 
             <button
@@ -630,7 +647,7 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
               }`}
             >
               <KeyRound className="w-3.5 h-3.5" />
-              <span>6. BYOK & Pro Pass</span>
+              <span>7. BYOK & Pro Pass</span>
             </button>
 
             <button
@@ -646,7 +663,7 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
               }`}
             >
               <Terminal className="w-3.5 h-3.5" />
-              <span>7. Commands ({COMMAND_CATALOG.length})</span>
+              <span>8. Commands ({COMMAND_CATALOG.length})</span>
             </button>
 
             <button
@@ -662,7 +679,7 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
               }`}
             >
               <Layers className="w-3.5 h-3.5" />
-              <span>8. Composio</span>
+              <span>9. Composio</span>
             </button>
 
             <button
@@ -678,7 +695,7 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
               }`}
             >
               <Zap className="w-3.5 h-3.5" />
-              <span>9. Pro-Tips</span>
+              <span>10. Pro-Tips</span>
             </button>
           </div>
         </div>
@@ -1038,14 +1055,99 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
           )}
 
           {/* ========================================================= */}
-          {/* SECTION 5: CONFIGURING NIGHT SHIFT */}
+          {/* SECTION 5: WORKFLOWS & INTELLIGENCE PLAYBOOKS */}
+          {/* ========================================================= */}
+          {activeSection === 'workflows' && (
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-base sm:text-lg font-bold text-[#e59838] flex items-center gap-2">
+                  <Workflow className="w-5 h-5 text-[#e59838]" />
+                  <span>SECTION 05 // WORKFLOWS, TASK CHAINS & INTELLIGENCE PLAYBOOKS</span>
+                </h3>
+                <p className="text-xs text-[#9c8265] mt-1">
+                  Execute complex, autonomous multi-phase tasks across safehouse agents. Workflows can be triggered via natural language directives, playbook buttons, or scheduled cron routines.
+                </p>
+              </div>
+
+              {/* Workflow Orchestration Pillars */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="p-4 bg-[#121524] border border-[#38bdf8] space-y-2.5">
+                  <span className="font-bold text-xs uppercase text-[#38bdf8] flex items-center gap-1.5">
+                    <Sparkles className="w-4 h-4 text-[#38bdf8]" />
+                    Pillar 1: Multi-Agent Task Chaining (Briefing Terminal)
+                  </span>
+                  <p className="text-xs text-[#cbd5e1]">
+                    Direct multiple agents in a single prompt. The engine parses sequential steps, auto-navigates operatives to their specialized sectors, passes intermediate research forward, and writes results to the Virtual File System (VFS).
+                  </p>
+                  <div className="p-2.5 bg-[#0b0e17] border border-[#1e2438] space-y-1.5 text-[11px] font-mono-tabular">
+                    <div className="text-[#38bdf8] font-bold">Natural Language Chaining:</div>
+                    <code className="text-[#4ade80] block text-[10px] break-all">
+                      &quot;1. Vance research zero-trust best practices. 2. Cipher write a hardened report to reports/zero_trust.md. 3. Nyx notify team on Slack.&quot;
+                    </code>
+                    <div className="text-[#e59838] font-bold mt-2">Explicit Workflow Prefix:</div>
+                    <code className="text-[#fde047] block text-[10px] break-all">
+                      &quot;workflow: Vance audit token bucket algorithm, then have Cipher write patch, and then have Nyx broadcast completion on Slack #alerts&quot;
+                    </code>
+                  </div>
+                </div>
+
+                <div className="p-4 bg-[#141512] border border-[#4ade80] space-y-2.5">
+                  <span className="font-bold text-xs uppercase text-[#4ade80] flex items-center gap-1.5">
+                    <Database className="w-4 h-4 text-[#4ade80]" />
+                    Pillar 2: 1-Click Action Playbooks (Room-Scoped)
+                  </span>
+                  <p className="text-xs text-[#cbd5e1]">
+                    Pre-packaged operational playbooks accessible directly from Safehouse room control decks (War Room, Comms Tower, Server Vault, Basement).
+                  </p>
+                  <ul className="text-xs text-[#94a3b8] space-y-1.5 list-disc list-inside">
+                    <li><strong className="text-[#f3ead8]">📡 Wire-Tap Watch:</strong> Scrapes target websites, feeds, and prices (Nyx in Comms Tower).</li>
+                    <li><strong className="text-[#f3ead8]">🔍 Deep Recon Dossier:</strong> Compiles comprehensive entity/threat dossier to Markdown (Nyx).</li>
+                    <li><strong className="text-[#f3ead8]">🌅 Morning Intel Briefing:</strong> Aggregates unread news, repos, and updates (Vance in War Room).</li>
+                    <li><strong className="text-[#f3ead8]">⚡ Triage Gmail to Tasks:</strong> Scans inbox via Composio and populates task queue (Vance).</li>
+                    <li><strong className="text-[#f3ead8]">🐛 GitHub Repo Pulse:</strong> Inspects open PRs, issues, and commits (Cipher in Library).</li>
+                  </ul>
+                </div>
+              </div>
+
+              {/* Execution Lifecyle & Persistence */}
+              <div className="p-4 bg-[#12141e] border border-[#2b354f] space-y-3">
+                <h4 className="text-xs font-bold text-[#fde047] uppercase tracking-wider flex items-center gap-1.5">
+                  <Zap className="w-4 h-4 text-[#fde047]" />
+                  How Workflows Run & Persist
+                </h4>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs text-[#94a3b8]">
+                  <div className="p-2.5 bg-[#0f111a] border border-[#23293d] space-y-1">
+                    <strong className="text-[#38bdf8]">1. Step Execution:</strong>
+                    <p className="text-[11px]">
+                      Operatives walk across sectors to reach their required rigs (War Room for strategic prompts, Server Vault for code eval, Comms Tower for Composio relays).
+                    </p>
+                  </div>
+                  <div className="p-2.5 bg-[#0f111a] border border-[#23293d] space-y-1">
+                    <strong className="text-[#4ade80]">2. Artifact Generation:</strong>
+                    <p className="text-[11px]">
+                      Output documents and dossiers are automatically saved into <code className="text-[#4ade80]">reports/</code> or <code className="text-[#4ade80]">intel/</code> in IndexedDB, complete with download buttons.
+                    </p>
+                  </div>
+                  <div className="p-2.5 bg-[#0f111a] border border-[#23293d] space-y-1">
+                    <strong className="text-[#e59838]">3. State Integrity:</strong>
+                    <p className="text-[11px]">
+                      Briefing responses and meeting call transcriptions remain cached and persistent when switching between tabs or rooms until explicitly replaced.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* ========================================================= */}
+          {/* SECTION 6: CONFIGURING NIGHT SHIFT */}
           {/* ========================================================= */}
           {activeSection === 'nightshift' && (
             <div className="space-y-6">
               <div>
                 <h3 className="text-base sm:text-lg font-bold text-[#e59838] flex items-center gap-2">
                   <Moon className="w-5 h-5 text-[#e59838]" />
-                  <span>SECTION 05 // CONFIGURING NIGHT SHIFT (BACKGROUND CRON)</span>
+                  <span>SECTION 06 // CONFIGURING NIGHT SHIFT (BACKGROUND CRON)</span>
                 </h3>
                 <p className="text-xs text-[#9c8265] mt-1">
                   Night Shift allows operatives to execute automated maintenance, security scans, research sweeps, and inbox summaries while the command center is idle or running in the background.
@@ -1112,14 +1214,14 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
           )}
 
           {/* ========================================================= */}
-          {/* SECTION 6: API KEYS (BYOK) VS PRO PASS */}
+          {/* SECTION 7: API KEYS (BYOK) VS PRO PASS */}
           {/* ========================================================= */}
           {activeSection === 'auth' && (
             <div className="space-y-6">
               <div>
                 <h3 className="text-base sm:text-lg font-bold text-[#e59838] flex items-center gap-2">
                   <KeyRound className="w-5 h-5 text-[#e59838]" />
-                  <span>SECTION 06 // API KEYS (BYOK: GEMINI 3.8 FLASH) VS. HOSTED PRO PASS</span>
+                  <span>SECTION 07 // API KEYS (BYOK: GEMINI 3.8 FLASH) VS. HOSTED PRO PASS</span>
                 </h3>
                 <p className="text-xs text-[#9c8265] mt-1">
                   PixelOps is built with a 100% transparent execution model. You can run completely offline for free, connect your own API keys, or use the hosted Pro Pass.
@@ -1224,7 +1326,7 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
           )}
 
           {/* ========================================================= */}
-          {/* SECTION 7: COMMAND ENCYCLOPEDIA */}
+          {/* SECTION 8: COMMAND ENCYCLOPEDIA */}
           {/* ========================================================= */}
           {activeSection === 'commands' && (
             <div className="space-y-5">
@@ -1232,7 +1334,7 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
                 <div>
                   <h3 className="text-base sm:text-lg font-bold text-[#e59838] flex items-center gap-2">
                     <Terminal className="w-5 h-5 text-[#e59838]" />
-                    <span>SECTION 07 // COMMAND ENCYCLOPEDIA & EXAMPLES</span>
+                    <span>SECTION 08 // COMMAND ENCYCLOPEDIA & EXAMPLES</span>
                   </h3>
                   <p className="text-xs text-[#9c8265] mt-0.5">
                     Exhaustive catalog of every briefing terminal directive, task chain, code eval, and CLI command. Click &ldquo;Try Directive ▶&rdquo; to load directly into the prompt box.
@@ -1375,14 +1477,14 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
           )}
 
           {/* ========================================================= */}
-          {/* SECTION 8: COMPOSIO FULL INTEGRATIONS GUIDE */}
+          {/* SECTION 9: COMPOSIO FULL INTEGRATIONS GUIDE */}
           {/* ========================================================= */}
           {activeSection === 'composio' && (
             <div className="space-y-6">
               <div>
                 <h3 className="text-base sm:text-lg font-bold text-[#e59838] flex items-center gap-2">
                   <Layers className="w-5 h-5 text-[#e59838]" />
-                  <span>SECTION 08 // COMPOSIO INTEGRATIONS GUIDE (BRIEFING TERMINAL & CLI)</span>
+                  <span>SECTION 09 // COMPOSIO INTEGRATIONS GUIDE (BRIEFING TERMINAL & CLI)</span>
                 </h3>
                 <p className="text-xs text-[#9c8265] mt-1">
                   Connect third-party developer and operational toolkits (Gmail, GitHub, Slack, Notion, Linear, Calendar) via OAuth and execute actions live from both the Briefing Terminal and CLI.
@@ -1498,14 +1600,14 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
           )}
 
           {/* ========================================================= */}
-          {/* SECTION 9: PRO-TIPS & MAXIMUM PERFORMANCE */}
+          {/* SECTION 10: PRO-TIPS & MAXIMUM PERFORMANCE */}
           {/* ========================================================= */}
           {activeSection === 'protips' && (
             <div className="space-y-6">
               <div>
                 <h3 className="text-base sm:text-lg font-bold text-[#e59838] flex items-center gap-2">
                   <Zap className="w-5 h-5 text-[#e59838]" />
-                  <span>SECTION 09 // PRO-TIPS & MAXIMUM PERFORMANCE SECRETS</span>
+                  <span>SECTION 10 // PRO-TIPS & MAXIMUM PERFORMANCE SECRETS</span>
                 </h3>
                 <p className="text-xs text-[#9c8265] mt-1">
                   How to extract maximum efficiency, battery optimization, and tactical fluency from the PixelOps Command Center.

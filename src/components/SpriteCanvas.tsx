@@ -3177,9 +3177,9 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
         style={{ borderColor: 'var(--theme-border-color)' }}
       >
         {/* Row 1: All Operatives' Terminal Status Tags + Active Room Object Readout */}
-        <div className="flex items-center justify-between gap-2 min-h-[20px] overflow-hidden">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 sm:gap-2 min-h-[20px] overflow-hidden">
           {/* Sleek Terminal-Style Dynamic RGB / Amber Agent Status Tags */}
-          <div className="flex items-center gap-3 shrink-0 overflow-x-auto no-scrollbar">
+          <div className="flex items-center gap-2.5 sm:gap-3 shrink-0 overflow-x-auto no-scrollbar touch-pan-x overscroll-x-contain scroll-smooth max-w-full py-0.5">
             {crewAgents.map((crew, idx) => {
               const st = liveAgents[idx];
               if (!crew || !st) return null;
@@ -3208,7 +3208,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
                     onChangeRoom(st.room);
                     playBeep('tap');
                   }}
-                  className="flex items-center gap-1 cursor-pointer group text-left"
+                  className="flex items-center gap-1 cursor-pointer group text-left shrink-0 whitespace-nowrap"
                   title={`Focus ${crew.customName} in ${getRoomMeta(st.room).shortBadge}`}
                 >
                   <span
@@ -3240,7 +3240,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
           </div>
 
           {/* Room Object Interaction Readout (Holo-Tables, Terminal Racks, etc.) */}
-          <div className="flex items-center justify-end gap-2 text-[10px] truncate min-w-0 flex-1 text-right">
+          <div className="flex items-center justify-start sm:justify-end gap-2 text-[9.5px] sm:text-[10px] truncate min-w-0 flex-1 text-left sm:text-right border-t sm:border-t-0 border-[#141a26]/60 pt-0.5 sm:pt-0">
             {walkingTransition ? (
               <span className="text-[#e59838] flex items-center gap-1 truncate">
                 <Footprints className="w-3 h-3 inline shrink-0" />

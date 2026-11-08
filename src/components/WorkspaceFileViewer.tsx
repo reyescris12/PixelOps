@@ -613,6 +613,13 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
                               const isMd = file.format === 'markdown';
                               const isJson = file.format === 'json';
 
+                              const headingMatch = isMd
+                                ? (file.content || '').match(/^#\s+(?:CLASSIFIED INTEL BRIEFING:\s*)?([^\n\r]+)/m)
+                                : null;
+                              const displayTitle = headingMatch
+                                ? headingMatch[1].replace(/\*\*|`/g, '').trim()
+                                : '';
+
                               return (
                                 <button
                                   key={file.path}
@@ -629,17 +636,24 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
                                       : '3px solid transparent',
                                   }}
                                 >
-                                  <div className="flex items-center gap-2 overflow-hidden flex-1 min-w-0">
+                                  <div className="flex items-start gap-2 overflow-hidden flex-1 min-w-0">
                                     {isMd ? (
-                                      <FileText className="w-3.5 h-3.5 text-sky-400 shrink-0" />
+                                      <FileText className="w-3.5 h-3.5 text-sky-400 shrink-0 mt-0.5" />
                                     ) : isJson ? (
-                                      <FileCode className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                                      <FileCode className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" />
                                     ) : (
-                                      <File className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                                      <File className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
                                     )}
-                                    <span className="truncate text-xs">
-                                      {basename}
-                                    </span>
+                                    <div className="flex flex-col overflow-hidden min-w-0">
+                                      <span className="truncate text-xs">
+                                        {displayTitle || basename}
+                                      </span>
+                                      {displayTitle && (
+                                        <span className="truncate text-[10px] text-slate-500 font-normal">
+                                          {basename}
+                                        </span>
+                                      )}
+                                    </div>
                                   </div>
                                   <div className="flex items-center gap-1.5 shrink-0">
                                     <span className="text-[10px] text-slate-500 group-hover:text-slate-400">

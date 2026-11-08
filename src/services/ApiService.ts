@@ -50,8 +50,10 @@ import {
 import { draftExternalMessageContent } from './ComposioDraftingService';
 import {
   isReportDirective,
+  shouldAutoGenerateReport,
   extractReportFilePath,
   deriveReportTitle,
+  formatOrganizedReportMarkdown,
   synthesizeComprehensiveReport,
   uploadReportToWorkspaceFiles,
 } from './ReportService';
@@ -2387,30 +2389,60 @@ ${findings || 'No additional telemetry findings attached.'}
       let summary = '';
 
       if (action === 'write') {
-        vfsStore[path] = { content, format, updatedAt: new Date().toISOString() };
+        // Derive an intelligence-driven path if the LLM passed a generic or prompt-literal path
+        const rawPath = path;
+        const isGenericOrPromptLiteral =
+          !rawPath ||
+          /mission_brief\.md$/i.test(rawPath) ||
+          /tactical_report\.md$/i.test(rawPath) ||
+          /^(?:reports\/)?(?:can_you|please|what_is|tell_me|write_a|generate_a|create_a|give_me)/i.test(rawPath);
+
+        const resolvedWritePath = isGenericOrPromptLiteral
+          ? extractReportFilePath(content.slice(0, 300), 'tactical_intel', content)
+          : path;
+
+        // Format markdown cleanly if writing a report
+        const resolvedContent =
+          format === 'markdown' && !content.includes('## 1. Executive') && content.length > 60
+            ? formatOrganizedReportMarkdown({
+                prompt: rawPath,
+                agentName: 'Safehouse Operative',
+                agentRole: 'Intelligence Analyst',
+                existingDialogue: content,
+                explicitFilePath: resolvedWritePath,
+              }).markdown
+            : content;
+
+        let savedRec: any = null;
         try {
-          localStorage.setItem(VFS_KEY, JSON.stringify(vfsStore));
-          if (ledgerDb.workspace_files) {
-            ledgerDb.workspace_files.put({
-              path,
-              category: path.split('/')[0] || 'reports',
-              format,
-              content,
-              sizeBytes: content.length,
-              updatedAt: vfsStore[path].updatedAt,
-            }).catch(() => {});
-          }
+          savedRec = await uploadReportToWorkspaceFiles({
+            path: resolvedWritePath,
+            content: resolvedContent,
+            format,
+          });
         } catch {
-          // Ignore storage quota
+          vfsStore[resolvedWritePath] = {
+            content: resolvedContent,
+            format,
+            updatedAt: new Date().toISOString(),
+          };
+          try {
+            localStorage.setItem(VFS_KEY, JSON.stringify(vfsStore));
+          } catch {}
         }
+
+        const finalPath = savedRec?.path || resolvedWritePath;
+        const finalSize = savedRec?.sizeBytes || resolvedContent.length;
+        const finalSavedAt = savedRec?.updatedAt || new Date().toISOString();
+
         fsResult = {
           status: 'written',
-          path,
-          sizeBytes: content.length,
+          path: finalPath,
+          sizeBytes: finalSize,
           format,
-          savedAt: vfsStore[path].updatedAt,
+          savedAt: finalSavedAt,
         };
-        summary = `VFS Write: Saved "${path}" (${content.length} chars) to IndexedDB`;
+        summary = `VFS Write: Saved "${finalPath}" (${finalSize} chars) to IndexedDB`;
       } else if (action === 'list') {
         let fileList: any[] = [];
         try {
@@ -4554,7 +4586,6 @@ export async function generateLocalHeuristicCard(params: {
   // 1. WORKSPACE REPORT GENERATION & AUTO-UPLOAD (REAL INTEL FIRST)
   // ==========================================
   if (isReportDirective(rawPrompt)) {
-    const targetPath = extractReportFilePath(rawPrompt);
     const searchTarget = tryExtractSearchQuery(rawPrompt) || rawPrompt.slice(0, 60);
 
     let liveTelemetryNote = '';
@@ -4583,6 +4614,13 @@ export async function generateLocalHeuristicCard(params: {
       }
     } catch {}
 
+    const targetPath = extractReportFilePath(
+      rawPrompt,
+      'tactical_intel',
+      liveTelemetryNote,
+      executedTools
+    );
+
     const report = synthesizeComprehensiveReport({
       prompt: rawPrompt,
       agentName: params.activeAgentName,
@@ -4590,6 +4628,7 @@ export async function generateLocalHeuristicCard(params: {
       explicitFilePath: targetPath,
       targetSector: 'library',
       precedingIntelligence: liveTelemetryNote,
+      toolCalls: executedTools,
     });
 
     params.onFunctionCallTriggered?.({
@@ -5437,7 +5476,11 @@ export async function ensureReportPersistedAndAnnotated(
     } catch {}
   }
 
-  const isReport = isReportDirective(prompt);
+  const isReport = shouldAutoGenerateReport({
+    prompt,
+    dialogue,
+    toolCalls: verifiedCard.toolCalls || [],
+  });
   if (!isReport) {
     return verifiedCard;
   }
@@ -5447,46 +5490,60 @@ export async function ensureReportPersistedAndAnnotated(
     return verifiedCard;
   }
 
+  // Do not generate reports for error/fault cards
+  if (
+    verifiedCard.actionCategory === 'AUTH_ERROR' ||
+    verifiedCard.actionCategory === 'NETWORK_ERROR' ||
+    verifiedCard.actionCategory === 'EXECUTION_ERROR' ||
+    dialogue.includes('INFERENCE LINK FAULT') ||
+    dialogue.includes('CONNECTION ERROR:')
+  ) {
+    return verifiedCard;
+  }
+
   try {
-    const targetPath = extractReportFilePath(prompt);
-    let contentToSave = dialogue
+    let rawCleanDialogue = dialogue
       .replace(/\[AGENT_ACTION:[\s\S]*?\[\/AGENT_ACTION\]/gi, '')
       .replace(/\[AGENT_STATUS:\s*(COMPLETE|WORKING)\]/gi, '')
       .replace(/\n*📁 \*\*\[WORKSPACE REPORT UPLOADED\]\*\*[\s\S]*$/, '')
       .trim();
 
-    // If dialogue does not have markdown headings or is very brief, synthesize full tactical report
-    if (!contentToSave.includes('# ') || contentToSave.length < 240) {
-      const synthesized = synthesizeComprehensiveReport({
-        prompt,
-        agentName: params.activeAgentName,
-        agentRole: params.activeAgentRole,
-        existingDialogue: contentToSave,
-        explicitFilePath: targetPath,
-        targetSector: params.targetSector || 'library',
-      });
-      contentToSave = synthesized.markdown;
-    }
+    const targetPath = extractReportFilePath(
+      prompt,
+      'tactical_intel',
+      rawCleanDialogue,
+      verifiedCard.toolCalls || []
+    );
 
-    contentToSave = contentToSave
+    const organized = formatOrganizedReportMarkdown({
+      prompt,
+      agentName: params.activeAgentName,
+      agentRole: params.activeAgentRole,
+      existingDialogue: rawCleanDialogue,
+      explicitFilePath: targetPath,
+      targetSector: params.targetSector || 'library',
+      toolCalls: verifiedCard.toolCalls || [],
+    });
+
+    const contentToSave = organized.markdown
       .replace(/\[AGENT_ACTION:[\s\S]*?\[\/AGENT_ACTION\]/gi, '')
       .replace(/\[AGENT_STATUS:\s*(COMPLETE|WORKING)\]/gi, '')
       .trim();
 
     const fileRec = await uploadReportToWorkspaceFiles({
-      path: targetPath,
+      path: organized.filePath,
       content: contentToSave,
       agentName: params.activeAgentName,
       agentRole: params.activeAgentRole,
     });
 
-    const updatedDialogue = `${dialogue}\n\n📁 **[WORKSPACE REPORT UPLOADED]**\nCommitted report to **\`${fileRec.path}\`** (${fileRec.sizeBytes} bytes) in safehouse IndexedDB. View anytime in the **Files** drawer (📁 Files) or via CLI (\`pixelops cat ${fileRec.path}\`).`;
+    const updatedDialogue = `${dialogue}\n\n📁 **[WORKSPACE REPORT UPLOADED]**\nCommitted **${organized.title}** to **\`${fileRec.path}\`** (${fileRec.sizeBytes} bytes) in safehouse IndexedDB. View anytime in the **Files** drawer (📁 Files) or via CLI (\`pixelops cat ${fileRec.path}\`).`;
 
     const updatedSteps: ExecutionStep[] = [
       ...(verifiedCard.steps || []),
       {
         label: 'Workspace Report Uploaded',
-        detail: `Saved to "${fileRec.path}" (${fileRec.sizeBytes} bytes) in IndexedDB`,
+        detail: `Saved "${organized.title}" to "${fileRec.path}" (${fileRec.sizeBytes} bytes)`,
         status: 'verified',
       },
       {
@@ -5502,8 +5559,13 @@ export async function ensureReportPersistedAndAnnotated(
         pluginId: 'workspace_vfs',
         toolName: 'fs_storage_manager',
         args: { action: 'write', path: fileRec.path },
-        resultSummary: `Auto-uploaded "${fileRec.path}" (${fileRec.sizeBytes} bytes) to IndexedDB`,
-        livePayload: { path: fileRec.path, sizeBytes: fileRec.sizeBytes, status: 'SAVED_INDEXEDDB' },
+        resultSummary: `Auto-uploaded "${organized.title}" (${fileRec.sizeBytes} bytes) to ${fileRec.path}`,
+        livePayload: {
+          title: organized.title,
+          path: fileRec.path,
+          sizeBytes: fileRec.sizeBytes,
+          status: 'SAVED_INDEXEDDB',
+        },
         targetRoom: 'library',
         targetStationId: 'library_archive_terminal',
       },
@@ -5511,7 +5573,7 @@ export async function ensureReportPersistedAndAnnotated(
 
     const finalCard: AgentExecutionCard = {
       ...verifiedCard,
-      cardTitle: `Workspace Report: ${fileRec.path.split('/').pop()}`,
+      cardTitle: `Report: ${organized.title.slice(0, 44)}`,
       actionCategory: 'Workspace Storage',
       dialogue: updatedDialogue,
       steps: updatedSteps,
@@ -6894,7 +6956,7 @@ ${searchResults.map((s: { title: string; snippet: string; url: string }, idx: nu
         }
 
         if (parsedDirect && parsedDirect.dialogue) {
-          return {
+          const parsedCard: AgentExecutionCard = {
             id: `card-${Date.now()}`,
             prompt: params.prompt || `Attached visual intel`,
             dialogue: parsedDirect.dialogue,
@@ -6908,59 +6970,21 @@ ${searchResults.map((s: { title: string; snippet: string; url: string }, idx: nu
             timestamp: new Date().toISOString(),
             hasAttachment: Boolean(params.attachment),
           };
+          return await ensureReportPersistedAndAnnotated(parsedCard, params);
         }
 
         let finalDialogue = textContent;
         if (!finalDialogue) {
           finalDialogue = `${params.activeAgentName} (${params.activeAgentRole}): Directive "${(params.prompt || '').slice(0, 48)}" ingested. Telemetry channels synchronized. Standing by for specific operational tool assignment.`;
         }
-        let finalCardTitle = 'Field Directive Assessment';
-        let finalActionCategory = 'Operations';
-        let finalSteps: ExecutionStep[] = [
+        const finalCardTitle = 'Field Directive Assessment';
+        const finalActionCategory = 'Operations';
+        const finalSteps: ExecutionStep[] = [
           { label: 'Directive Ingested', detail: `Parsed parameters for: "${(params.prompt || '').slice(0, 48)}"`, status: 'completed' },
           { label: 'Intelligence Assessment', detail: `${params.activeAgentName} evaluated directive context`, status: 'verified' },
           { label: 'Ledger Synchronized', detail: 'Saved to local mission ledger', status: 'completed' },
         ];
         const finalTools: ExecutedToolCall[] = [];
-
-        // Auto-Upload to Workspace Files ONLY after all API/tool fetches have resolved
-        if (isReportDirective(params.prompt || '') || (finalDialogue.includes('# ') && finalDialogue.length > 200)) {
-          try {
-            const targetPath = extractReportFilePath(params.prompt || '');
-            const cleanReportMarkdown = finalDialogue
-              .replace(/\[AGENT_ACTION:[\s\S]*?\[\/AGENT_ACTION\]/gi, '')
-              .replace(/\[AGENT_STATUS:\s*(COMPLETE|WORKING)\]/gi, '')
-              .replace(/\n*📁 \*\*\[WORKSPACE REPORT UPLOADED\]\*\*[\s\S]*$/, '')
-              .trim();
-
-            const fileRec = await uploadReportToWorkspaceFiles({
-              path: targetPath,
-              content: cleanReportMarkdown,
-              agentName: params.activeAgentName,
-              agentRole: params.activeAgentRole,
-            });
-            finalCardTitle = `Workspace Report Uploaded: ${fileRec.path}`;
-            finalActionCategory = 'Workspace Storage';
-            finalDialogue = `${finalDialogue}\n\n📁 **[WORKSPACE REPORT UPLOADED]**\nCommitted report to **\`${fileRec.path}\`** (${fileRec.sizeBytes} bytes) in safehouse IndexedDB. View anytime in the **Files** drawer (📁 Files) or via CLI (\`pixelops cat ${fileRec.path}\`).`;
-            finalSteps = [
-              { label: 'Directive Ingested', detail: 'Parsed report specifications', status: 'completed' },
-              { label: 'Report Synthesized', detail: `Authored comprehensive markdown document (${fileRec.sizeBytes} bytes)`, status: 'verified' },
-              { label: 'Workspace File Uploaded', detail: `Saved to "${fileRec.path}" in IndexedDB`, status: 'verified' },
-              { label: 'Ledger Synchronized', detail: 'Persisted to safehouse storage', status: 'completed' },
-            ];
-            finalTools.push({
-              pluginId: 'workspace_vfs',
-              toolName: 'fs_storage_manager',
-              args: { action: 'write', path: fileRec.path },
-              resultSummary: `Auto-uploaded "${fileRec.path}" (${fileRec.sizeBytes} bytes) to IndexedDB`,
-              livePayload: { path: fileRec.path, sizeBytes: fileRec.sizeBytes, status: 'SAVED_INDEXEDDB' },
-              targetRoom: 'library',
-              targetStationId: 'library_archive_terminal',
-            });
-          } catch (uploadErr) {
-            console.warn('[ApiService] Failed to auto-upload report:', uploadErr);
-          }
-        }
 
         const directCard: AgentExecutionCard = {
           id: `card-${Date.now()}`,

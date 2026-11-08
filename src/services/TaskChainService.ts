@@ -13,7 +13,9 @@ import {
 } from './ApiService';
 import {
   isReportDirective,
+  shouldAutoGenerateReport,
   extractReportFilePath,
+  formatOrganizedReportMarkdown,
   synthesizeComprehensiveReport,
   uploadReportToWorkspaceFiles,
 } from './ReportService';
@@ -822,25 +824,42 @@ export async function executeTaskChain(
         currentStep.outputPayload = card.toolCalls[0].livePayload;
       }
 
-      // If this step is a report directive, guarantee that a workspace file is persisted
-      if (isReportDirective(currentStep.directive)) {
-        const targetPath = extractReportFilePath(currentStep.directive);
+      // If this step is a report or intel directive, guarantee that an organized workspace file is persisted
+      if (
+        shouldAutoGenerateReport({
+          prompt: currentStep.directive,
+          dialogue: card.dialogue,
+          toolCalls: card.toolCalls,
+        })
+      ) {
+        const accumulatedNotes = Object.values(chain.accumulatedContext)
+          .map((c: any) => c.summary)
+          .join('\n\n');
+        const targetPath = extractReportFilePath(
+          currentStep.directive,
+          'tactical_intel',
+          `${card.dialogue}\n${accumulatedNotes}`,
+          card.toolCalls
+        );
         // Check if card dialogue already has file or if we need to synthesize one
-        let existingFileArtifact = chain.artifacts.find((a) => a.key === `file_${currentStep.stepIndex}` || a.value === targetPath);
-        if (!existingFileArtifact) {
+        const existingFileArtifact = chain.artifacts.find(
+          (a) => a.key === `file_${currentStep.stepIndex}` || a.value === targetPath
+        );
+        if (!existingFileArtifact && !card.dialogue.includes('[WORKSPACE REPORT UPLOADED]')) {
           try {
-            const synthesized = synthesizeComprehensiveReport({
+            const organized = formatOrganizedReportMarkdown({
               prompt: currentStep.directive,
               agentName: currentStep.assignedAgentName,
               agentRole: currentStep.assignedAgentRole,
               existingDialogue: card.dialogue,
-              precedingIntelligence: Object.values(chain.accumulatedContext).map((c: any) => c.summary).join('\n'),
+              precedingIntelligence: accumulatedNotes,
               explicitFilePath: targetPath,
               targetSector: currentStep.targetSector,
+              toolCalls: card.toolCalls,
             });
             const savedRec = await uploadReportToWorkspaceFiles({
-              path: synthesized.filePath,
-              content: card.dialogue.includes('# ') ? card.dialogue : synthesized.markdown,
+              path: organized.filePath,
+              content: organized.markdown,
               agentName: currentStep.assignedAgentName,
               agentRole: currentStep.assignedAgentRole,
             });

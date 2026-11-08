@@ -12,7 +12,12 @@
  * Discards noise completely if source material is irrelevant to user directive.
  */
 
-import { listWorkspaceFiles, writeWorkspaceFile, readWorkspaceFile } from '../engine/storageManager';
+import {
+  listWorkspaceFiles,
+  writeWorkspaceFile,
+  readWorkspaceFile,
+  deleteWorkspaceFile,
+} from '../engine/storageManager';
 
 export const CLASSIFIED_FEED_CHANNEL_ID = 'UCTq1zHztiV69Ur8t6jco4CQ';
 export const CLASSIFIED_FEED_DIR = '/intel/sources/classified_feed/';
@@ -35,9 +40,238 @@ let isIngestionRunning = false;
 let hasInitialized = false;
 
 /**
+ * Decodes HTML/XML entities in captions and RSS fields
+ */
+function decodeXmlEntities(str: string): string {
+  if (!str) return '';
+  return str
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&apos;/g, "'")
+    .replace(/&#x27;/gi, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(Number(dec)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * Derives a clean, human-readable filename and intelligence title from the briefing title & date
+ * instead of gibberish `s2_<youtube_id>.md`.
+ */
+export function buildClassifiedFeedMetadata(
+  rawTitle: string,
+  published: string
+): { cleanTitle: string; fileName: string; datePart: string } {
+  const datePart = (published || new Date().toISOString()).slice(0, 10);
+  const strippedTitle = (rawTitle || 'Tactical Situation Briefing')
+    .replace(/\s*\|\s*S2\s*Underground.*$/i, '')
+    .replace(/\s*-\s*S2\s*Underground.*$/i, '')
+    .trim();
+
+  const cleanTitle = strippedTitle.toLowerCase().startsWith('s2')
+    ? strippedTitle
+    : `S2 Briefing: ${strippedTitle}`;
+
+  const titleSlug = strippedTitle
+    .toLowerCase()
+    .replace(/[^a-z0-9\s_-]/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter((w) => w.length > 1)
+    .slice(0, 7)
+    .join('_');
+
+  const fileName = `${datePart}_s2_${titleSlug || 'tactical_intel_briefing'}.md`;
+  return { cleanTitle, fileName, datePart };
+}
+
+/**
+ * Sanitizes raw YouTube description so raw link dumps are never placed into the transcript body.
+ * Extracts narrative prose, synthesizes topic intelligence from source article slugs when prose is sparse,
+ * and separates reference links into a clean appendix.
+ */
+function sanitizeClientFeedEntry(
+  rawTitle: string,
+  rawDescription: string,
+  published: string,
+  tags: string[],
+  existingTranscript?: string
+): {
+  cleanTitle: string;
+  fileName: string;
+  summary: string;
+  transcriptBody: string;
+  referenceLinks: string[];
+} {
+  const { cleanTitle, fileName, datePart } = buildClassifiedFeedMetadata(rawTitle, published);
+
+  const referenceLinks: string[] = [];
+  const allUrls = (rawDescription || '').match(/https?:\/\/[^\s"'<>)\]]+/gi) || [];
+  for (const u of allUrls) {
+    const lowerUrl = u.toLowerCase();
+    if (
+      !lowerUrl.includes('patreon.com') &&
+      !lowerUrl.includes('locals.com') &&
+      !lowerUrl.includes('youtube.com/channel') &&
+      !lowerUrl.includes('youtube.com/@') &&
+      !lowerUrl.includes('twitter.com/s2') &&
+      !lowerUrl.includes('x.com/s2') &&
+      !lowerUrl.includes('instagram.com') &&
+      !lowerUrl.includes('merch') &&
+      !lowerUrl.includes('teespring') &&
+      !lowerUrl.includes('substack.com/@s2') &&
+      !lowerUrl.includes('buymeacoffee') &&
+      !lowerUrl.includes('ko-fi')
+    ) {
+      if (!referenceLinks.includes(u)) {
+        referenceLinks.push(u);
+      }
+    }
+  }
+
+  // Strip raw URLs and promotional boilerplate from any description lines
+  const proseLines = (rawDescription || '')
+    .split(/\r?\n/)
+    .map((line) => line.replace(/https?:\/\/[^\s"'<>)\]]+/gi, '').replace(/^[\s\-•*:]+/, '').trim())
+    .filter((line) => {
+      if (!line || line.length < 4) return false;
+      const l = line.toLowerCase();
+      if (
+        l.includes('patreon') ||
+        l.includes('support the channel') ||
+        l.includes('s2 underground') ||
+        l.includes('disclaimer') ||
+        l.includes('for entertainment') ||
+        l.includes('all rights reserved') ||
+        l.includes('follow us on') ||
+        l.includes('join our') ||
+        l.includes('locals.com') ||
+        l.includes('links to sources') ||
+        l.includes('sources cited') ||
+        l.includes('reference links') ||
+        /^sources?:?$/i.test(l) ||
+        /^links?:?$/i.test(l)
+      ) {
+        return false;
+      }
+      return true;
+    });
+
+  // Check if existingTranscript is actual spoken captions (and NOT a raw URL dump)
+  const rawUrlCountInTranscript = ((existingTranscript || '').match(/https?:\/\//gi) || []).length;
+  const nonUrlTranscriptText = (existingTranscript || '')
+    .replace(/https?:\/\/[^\s"'<>)\]]+/gi, '')
+    .trim();
+  const hasCleanTranscript =
+    Boolean(existingTranscript) &&
+    nonUrlTranscriptText.length > 180 &&
+    rawUrlCountInTranscript <= 3;
+
+  // Extract topic headlines from reference URL slugs if captions aren't present
+  const extractedTopicsFromUrls: string[] = [];
+  for (const urlStr of referenceLinks.slice(0, 12)) {
+    try {
+      const parsedUrl = new URL(urlStr);
+      const host = parsedUrl.hostname.replace(/^www\./, '');
+      const pathSegments = parsedUrl.pathname
+        .split('/')
+        .filter(
+          (seg) =>
+            seg &&
+            seg.length > 3 &&
+            !/^\d+$/.test(seg) &&
+            !/^(index|article|news|story|stories|world|us|politics|html)$/i.test(seg)
+        );
+      const lastSeg = pathSegments[pathSegments.length - 1] || '';
+      const readableSlug = lastSeg
+        .replace(/\.(html?|php|aspx?)$/i, '')
+        .replace(/[-_]+/g, ' ')
+        .replace(/\b[a-f0-9]{8,}\b/gi, '')
+        .replace(/\b\d{5,}\b/g, '')
+        .trim();
+      if (readableSlug && readableSlug.split(/\s+/).length >= 3) {
+        const formattedTopic = readableSlug.charAt(0).toUpperCase() + readableSlug.slice(1);
+        extractedTopicsFromUrls.push(`- **${formattedTopic}** *(Source: ${host})*`);
+      }
+    } catch {
+      // Ignore malformed URL
+    }
+  }
+
+  let transcriptBody = '';
+  if (hasCleanTranscript && existingTranscript) {
+    transcriptBody = existingTranscript.replace(/https?:\/\/[^\s"'<>)\]]+/gi, '').trim();
+  } else {
+    const proseBlock =
+      proseLines.length > 0
+        ? `### Briefing Narrative & Analyst Notes\n${proseLines.map((l) => `- ${l}`).join('\n')}`
+        : `### Briefing Narrative & Analyst Assessment\n- **Briefing Designation:** ${cleanTitle}\n- **Publication Date:** ${datePart}\n- **Operational Scope:** Multi-theater open-source intelligence synthesis (${tags.join(', ')}).`;
+
+    const topicsBlock =
+      extractedTopicsFromUrls.length > 0
+        ? `\n\n### Primary Intelligence Signals & Monitored Flashpoints\n${extractedTopicsFromUrls.join('\n')}`
+        : '';
+
+    transcriptBody = `${proseBlock}${topicsBlock}`;
+  }
+
+  const spokenPreview = hasCleanTranscript
+    ? nonUrlTranscriptText
+        .replace(/\*\*\[\d{2}:\d{2}\]\*\*\s*/g, '')
+        .replace(/\s+/g, ' ')
+        .slice(0, 460) + '...'
+    : '';
+
+  const summary =
+    spokenPreview ||
+    (proseLines.length > 0
+      ? proseLines.slice(0, 4).join(' ')
+      : `Tactical situation report and multi-domain OSINT briefing covering ${cleanTitle} (${datePart}). Monitored threat domains: ${tags.join(', ')}.`);
+
+  return {
+    cleanTitle,
+    fileName,
+    summary,
+    transcriptBody,
+    referenceLinks: referenceLinks.slice(0, 15),
+  };
+}
+
+/**
+ * Purges legacy gibberish `s2_<videoId>.md` files or old link-dump classified feed files
+ * from local VFS / IndexedDB so the user's file explorer stays clean and organized.
+ */
+async function purgeLegacyGibberishFeedFiles(): Promise<void> {
+  try {
+    const existingFiles = await listWorkspaceFiles();
+    for (const file of existingFiles) {
+      const normPath = file.path.replace(/^\/+/, '');
+      if (!normPath.startsWith('intel/sources/classified_feed/')) continue;
+      const base = normPath.split('/').pop() || '';
+      const isGibberishIdName = /^s2_[A-Za-z0-9_-]{8,15}\.md$/.test(base);
+      const urlMatches = (file.content || '').match(/https?:\/\/[^\s"'<>)\]]+/gi) || [];
+      const hasRawUrlDumpInTranscript =
+        urlMatches.length > 5 &&
+        !(file.content || '').includes('## 3. Corroborated OSINT Source Citations');
+
+      if (isGibberishIdName || hasRawUrlDumpInTranscript) {
+        await deleteWorkspaceFile(file.path);
+      }
+    }
+  } catch (err) {
+    console.warn('[CLASSIFIED INGEST] Legacy file cleanup warning:', err);
+  }
+}
+
+/**
  * Headless Ingestion Utility:
  * Silently pulls and parses the target S2 Underground XML feed,
- * extracts entries & transcripts, and writes them to local VFS at:
+ * extracts spoken transcripts & structured intelligence, purges legacy gibberish files,
+ * and writes cleanly organized reports to local VFS at:
  * /intel/sources/classified_feed/
  */
 export async function ingestClassifiedFeedHeadless(): Promise<{
@@ -53,9 +287,12 @@ export async function ingestClassifiedFeedHeadless(): Promise<{
   let existingCount = 0;
 
   try {
+    // Clean up any legacy gibberish `s2_<videoId>.md` or link-dump files first
+    await purgeLegacyGibberishFeedFiles();
+
     let entries: any[] = [];
 
-    // 1. Try local/Cloudflare endpoint
+    // 1. Try local/Cloudflare endpoint (which fetches spoken YouTube captions)
     try {
       const res = await fetch('/api/intel/classified-feed');
       if (res.ok) {
@@ -76,7 +313,7 @@ export async function ingestClassifiedFeedHeadless(): Promise<{
           const proxyData = await proxyRes.json();
           const xml = proxyData?.text || proxyData?.data || '';
           if (typeof xml === 'string' && xml.includes('<entry>')) {
-            entries = parseRawXmlFeed(xml);
+            entries = await parseRawXmlFeedWithTranscripts(xml);
           }
         }
       } catch (proxyErr) {
@@ -90,40 +327,69 @@ export async function ingestClassifiedFeedHeadless(): Promise<{
         const videoId = entry.videoId || entry.id;
         if (!videoId) continue;
 
-        const fileName = `s2_${videoId}.md`;
+        const tags = Array.isArray(entry.threatTags) ? entry.threatTags : ['OSINT', 'S2_UNDERGROUND'];
+        const rawTitle = entry.cleanTitle || entry.title || 'Classified Tactical Briefing';
+        const published = entry.published || new Date().toISOString();
+        const link = entry.link || `https://www.youtube.com/watch?v=${videoId}`;
+
+        const sanitized = sanitizeClientFeedEntry(
+          rawTitle,
+          entry.description || '',
+          published,
+          tags,
+          entry.transcript
+        );
+
+        const fileName = entry.fileName || sanitized.fileName;
         const filePath = `${CLASSIFIED_FEED_DIR}${fileName}`;
 
-        // Check if already archived
+        // Check if already archived with clean transcript content
         const existing = await readWorkspaceFile(filePath);
-        if (existing && existing.content && existing.content.length > 200) {
+        if (
+          existing &&
+          existing.content &&
+          existing.content.length > 250 &&
+          existing.content.includes('## 2. Spoken Video Transcript & Tactical Briefing')
+        ) {
           existingCount++;
           continue;
         }
 
-        const tags = Array.isArray(entry.threatTags) ? entry.threatTags : ['OSINT', 'S2_UNDERGROUND'];
-        const title = entry.title || 'Classified Tactical Briefing';
-        const published = entry.published || new Date().toISOString();
-        const link = entry.link || `https://www.youtube.com/watch?v=${videoId}`;
-        const summary = entry.summary || 'Tactical situation report and open-source intelligence analysis.';
-        const transcript = entry.transcript || entry.description || summary;
+        const refLinks: string[] = Array.isArray(entry.referenceLinks)
+          ? entry.referenceLinks
+          : sanitized.referenceLinks;
+
+        const citationsSection =
+          refLinks.length > 0
+            ? [
+                '',
+                '## 3. Corroborated OSINT Source Citations',
+                ...refLinks.slice(0, 12).map((url, idx) => `${idx + 1}. <${url}>`),
+              ].join('\n')
+            : '';
 
         const markdownContent = [
-          `# CLASSIFIED INTEL BRIEFING: ${title}`,
-          `**Source:** S2 Underground [Channel: ${CLASSIFIED_FEED_CHANNEL_ID}]`,
-          `**Video ID:** ${videoId}`,
-          `**Published:** ${published}`,
-          `**Direct Telemetry Link:** ${link}`,
-          `**Classification:** SENSITIVE / TACTICAL OSINT TELEMETRY`,
-          `**Threat Classification Tags:** ${tags.join(', ')}`,
+          `# ${sanitized.cleanTitle}`,
+          `**Document Path:** \`${filePath.replace(/^\/+/, '')}\`  `,
+          `**Source Feed:** S2 Underground Tactical Wire [Channel: \`${CLASSIFIED_FEED_CHANNEL_ID}\`]  `,
+          `**Briefing Date:** ${published.slice(0, 10)}  `,
+          `**Video Reference:** \`${videoId}\` ([Watch Source Briefing](${link}))  `,
+          `**Classification:** SENSITIVE // TACTICAL OSINT TELEMETRY  `,
+          `**Threat Domains:** ${tags.map((t: string) => `\`${t}\``).join(', ')}  `,
           '',
-          `## Executive Intelligence Summary`,
-          summary,
+          '---',
           '',
-          `## Tactical Briefing / Intercepted Telemetry`,
-          transcript,
+          `## 1. Executive Intelligence Summary`,
+          sanitized.summary,
+          '',
+          '---',
+          '',
+          `## 2. Spoken Video Transcript & Tactical Briefing`,
+          sanitized.transcriptBody,
+          citationsSection,
           '',
           `---`,
-          `*Ingested via Headless Pipeline into ${filePath} at ${new Date().toISOString()}*`,
+          `*Ingested via Headless OSINT Pipeline into \`${filePath.replace(/^\/+/, '')}\` at ${new Date().toISOString()}*`,
         ].join('\n');
 
         await writeWorkspaceFile(filePath, markdownContent, 'markdown', 'intel');
@@ -140,9 +406,10 @@ export async function ingestClassifiedFeedHeadless(): Promise<{
 }
 
 /**
- * Parses raw Atom XML feed string into structured entry objects
+ * Parses raw Atom XML feed string into structured entry objects and attempts to fetch
+ * spoken captions via `/api/fetch` proxy when running in client fallback mode.
  */
-function parseRawXmlFeed(xml: string): any[] {
+async function parseRawXmlFeedWithTranscripts(xml: string): Promise<any[]> {
   const rawEntries = xml.split('<entry>');
   const results: any[] = [];
 
@@ -157,28 +424,12 @@ function parseRawXmlFeed(xml: string): any[] {
     const descMatch = block.match(/<media:description>([\s\S]*?)<\/media:description>/);
 
     const videoId = videoIdMatch ? videoIdMatch[1].trim() : '';
-    const title = titleMatch
-      ? titleMatch[1]
-          .replace(/&amp;/g, '&')
-          .replace(/&quot;/g, '"')
-          .replace(/&#39;/g, "'")
-          .replace(/&lt;/g, '<')
-          .replace(/&gt;/g, '>')
-          .trim()
-      : 'Untitled Intelligence Briefing';
+    if (!videoId) continue;
+
+    const title = titleMatch ? decodeXmlEntities(titleMatch[1]) : 'Untitled Intelligence Briefing';
     const link = linkMatch ? linkMatch[1].trim() : `https://www.youtube.com/watch?v=${videoId}`;
     const published = publishedMatch ? publishedMatch[1].trim() : new Date().toISOString();
-    const rawDescription = descMatch
-      ? descMatch[1]
-          .replace(/&amp;/g, '&')
-          .replace(/&quot;/g, '"')
-          .replace(/&#39;/g, "'")
-          .replace(/&lt;/g, '<')
-          .replace(/&gt;/g, '>')
-          .trim()
-      : '';
-
-    if (!videoId) continue;
+    const rawDescription = descMatch ? decodeXmlEntities(descMatch[1]) : '';
 
     const lower = `${title} ${rawDescription}`.toLowerCase();
     const tags: string[] = ['OSINT', 'S2_UNDERGROUND'];
@@ -198,18 +449,45 @@ function parseRawXmlFeed(xml: string): any[] {
       tags.push('DEFENSE_SURVEILLANCE', 'FORCE_MOVEMENTS');
     }
 
+    // Try fetching timedtext spoken captions via proxy
+    let spokenCaptionText = '';
+    try {
+      const ttUrl = `https://www.youtube.com/api/timedtext?lang=en&v=${encodeURIComponent(videoId)}`;
+      const ttRes = await fetch(`/api/fetch?url=${encodeURIComponent(ttUrl)}`);
+      if (ttRes.ok) {
+        const ttData = await ttRes.json();
+        const rawCap = ttData?.text || '';
+        if (rawCap && rawCap.length > 120) {
+          spokenCaptionText = decodeXmlEntities(rawCap.replace(/<[^>]+>/g, ' '));
+        }
+      }
+    } catch {
+      // Ignore caption proxy failure
+    }
+
+    const sanitized = sanitizeClientFeedEntry(
+      title,
+      rawDescription,
+      published,
+      tags,
+      spokenCaptionText || undefined
+    );
+
     results.push({
       videoId,
       title,
+      cleanTitle: sanitized.cleanTitle,
+      fileName: sanitized.fileName,
       link,
       published,
       description: rawDescription,
+      referenceLinks: sanitized.referenceLinks,
       threatTags: tags,
-      summary: rawDescription.slice(0, 500),
-      transcript: rawDescription,
+      summary: sanitized.summary,
+      transcript: sanitized.transcriptBody,
     });
 
-    if (results.length >= 10) break;
+    if (results.length >= 8) break;
   }
 
   return results;
@@ -251,17 +529,39 @@ export async function scanClassifiedFeedBriefings(): Promise<ClassifiedBriefing[
     const briefings: ClassifiedBriefing[] = [];
     for (const f of feedFiles) {
       const content = f.content || '';
-      const titleMatch = content.match(/^# CLASSIFIED INTEL BRIEFING:\s*(.*)$/m);
-      const videoIdMatch = content.match(/\*\*Video ID:\*\*\s*(.*)$/m);
-      const publishedMatch = content.match(/\*\*Published:\*\*\s*(.*)$/m);
-      const linkMatch = content.match(/\*\*Direct Telemetry Link:\*\*\s*(.*)$/m);
-      const tagsMatch = content.match(/\*\*Threat Classification Tags:\*\*\s*(.*)$/m);
+      const base = f.path.split('/').pop() || '';
+      if (/^s2_[A-Za-z0-9_-]{8,15}\.md$/.test(base)) {
+        // Skip legacy gibberish files
+        continue;
+      }
 
-      const title = titleMatch ? titleMatch[1].trim() : f.path.split('/').pop() || 'Classified Briefing';
+      const titleMatch =
+        content.match(/^# CLASSIFIED INTEL BRIEFING:\s*(.*)$/m) ||
+        content.match(/^#\s+(.*)$/m);
+      const videoIdMatch =
+        content.match(/\*\*Video Reference:\*\*\s*`([^`]+)`/m) ||
+        content.match(/\*\*Video ID:\*\*\s*(.*)$/m);
+      const publishedMatch =
+        content.match(/\*\*Briefing Date:\*\*\s*(.*)$/m) ||
+        content.match(/\*\*Published:\*\*\s*(.*)$/m);
+      const linkMatch =
+        content.match(/\[Watch Source Briefing\]\(([^)]+)\)/m) ||
+        content.match(/\*\*Direct Telemetry Link:\*\*\s*(.*)$/m);
+      const tagsMatch =
+        content.match(/\*\*Threat Domains:\*\*\s*(.*)$/m) ||
+        content.match(/\*\*Threat Classification Tags:\*\*\s*(.*)$/m);
+
+      const title = titleMatch ? titleMatch[1].trim() : base || 'Classified Briefing';
       const videoId = videoIdMatch ? videoIdMatch[1].trim() : '';
       const published = publishedMatch ? publishedMatch[1].trim() : f.updatedAt;
       const link = linkMatch ? linkMatch[1].trim() : '';
-      const threatTags = tagsMatch ? tagsMatch[1].split(',').map((t) => t.trim()) : ['OSINT'];
+      const threatTags = tagsMatch
+        ? tagsMatch[1].replace(/`/g, '').split(',').map((t) => t.trim())
+        : ['OSINT'];
+
+      const execSummaryMatch = content.match(
+        /##\s*(?:1\.\s*)?Executive Intelligence Summary\s+([\s\S]*?)(?:\n---|\n##)/
+      );
 
       briefings.push({
         path: f.path,
@@ -270,7 +570,9 @@ export async function scanClassifiedFeedBriefings(): Promise<ClassifiedBriefing[
         published,
         link,
         threatTags,
-        summary: f.previewSnippet || content.slice(0, 300),
+        summary: execSummaryMatch
+          ? execSummaryMatch[1].trim().slice(0, 360)
+          : f.previewSnippet || content.slice(0, 300),
         content,
       });
     }

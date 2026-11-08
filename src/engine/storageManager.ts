@@ -23,10 +23,133 @@ export interface WorkspaceFileRecord {
 
 const VFS_KEY = 'pixelops_vfs_files_v1';
 const DELETED_FILES_KEY = 'pixelops_deleted_workspace_files_v1';
+const FOLDERS_KEY = 'pixelops_workspace_folders_v1';
+export const DEFAULT_WORKSPACE_FOLDERS = ['intel', 'reports', 'logs', 'config', 'archive', 'data'];
 
 // In-memory fallback cache for headless or sandboxed runs
 const memoryFileMap = new Map<string, WorkspaceFileRecord>();
 const memoryDeletedFilesMap = new Map<string, string>();
+let memoryFoldersSet: Set<string> | null = null;
+
+/**
+ * Loads the persisted list of workspace folders.
+ * Deleting all files inside a folder does NOT delete the folder itself;
+ * folders are only removed when explicitly deleted via deleteWorkspaceFolder().
+ */
+export function loadWorkspaceFolders(): string[] {
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const raw = localStorage.getItem(FOLDERS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          const clean = Array.from(
+            new Set(
+              parsed
+                .map((f) =>
+                  String(f || '')
+                    .trim()
+                    .replace(/^[\\/]+|[\\/]+$/g, '')
+                    .toLowerCase()
+                )
+                .filter(Boolean)
+            )
+          );
+          memoryFoldersSet = new Set(clean);
+          return clean;
+        }
+      }
+    } catch {
+      // Ignore parse error
+    }
+  }
+  if (memoryFoldersSet) {
+    return Array.from(memoryFoldersSet);
+  }
+  const initial = [...DEFAULT_WORKSPACE_FOLDERS];
+  saveWorkspaceFolders(initial);
+  return initial;
+}
+
+/**
+ * Saves the persisted list of workspace folders to LocalStorage.
+ */
+export function saveWorkspaceFolders(folders: string[]): void {
+  const clean = Array.from(
+    new Set(
+      (folders || [])
+        .map((f) =>
+          String(f || '')
+            .trim()
+            .replace(/^[\\/]+|[\\/]+$/g, '')
+            .toLowerCase()
+        )
+        .filter(Boolean)
+    )
+  );
+  memoryFoldersSet = new Set(clean);
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(FOLDERS_KEY, JSON.stringify(clean));
+    } catch {
+      // Ignore quota
+    }
+  }
+}
+
+/**
+ * Ensures a folder name is registered in the persisted workspace folder list.
+ */
+export function ensureWorkspaceFolderExists(folderName: string): void {
+  const clean = String(folderName || '')
+    .trim()
+    .replace(/^[\\/]+|[\\/]+$/g, '')
+    .split('/')[0]
+    .toLowerCase();
+  if (!clean || clean === 'root') return;
+  const current = loadWorkspaceFolders();
+  if (!current.includes(clean)) {
+    current.push(clean);
+    saveWorkspaceFolders(current);
+  }
+}
+
+/**
+ * Explicitly deletes a workspace folder and all files inside it.
+ * Separate from deleting files inside a folder (which preserves the folder).
+ */
+export async function deleteWorkspaceFolder(folderName: string): Promise<void> {
+  const clean = String(folderName || '')
+    .trim()
+    .replace(/^[\\/]+|[\\/]+$/g, '')
+    .toLowerCase();
+  if (!clean) return;
+
+  // 1. Delete all files inside this folder (and record tombstones for them)
+  const allFiles = await listWorkspaceFiles();
+  const filesInFolder = allFiles.filter((f) => {
+    const parts = f.path.split('/');
+    const fFolder = (parts.length > 1 ? parts[0] : 'root').toLowerCase();
+    return fFolder === clean;
+  });
+  if (filesInFolder.length > 0) {
+    await deleteMultipleWorkspaceFiles(filesInFolder.map((f) => f.path));
+  }
+
+  // 2. Remove the folder from the persisted workspace folders list
+  const current = loadWorkspaceFolders().filter((f) => f !== clean);
+  saveWorkspaceFolders(current);
+
+  if (typeof window !== 'undefined') {
+    try {
+      window.dispatchEvent(
+        new CustomEvent('pixelops:workspace_files_changed', {
+          detail: { action: 'delete_folder', folder: clean },
+        })
+      );
+    } catch {}
+  }
+}
 
 /**
  * Loads the tombstone map of deleted workspace file paths (`path -> deletedAt ISO timestamp`).
@@ -390,6 +513,9 @@ export async function writeWorkspaceFile(
 
   // Clear any prior deletion tombstone since this file is being explicitly created/updated
   clearDeletedWorkspaceFileTombstone(norm);
+  if (norm.includes('/')) {
+    ensureWorkspaceFolderExists(norm.split('/')[0]);
+  }
 
   const record: WorkspaceFileRecord = {
     path: norm,
@@ -754,11 +880,12 @@ export async function seedInitialWorkspaceFiles(force: boolean = false): Promise
 }
 
 /**
- * Returns available categories dynamically based on stored files.
+ * Returns available categories dynamically based on stored files and persisted folders.
  */
 export async function getWorkspaceCategories(): Promise<string[]> {
   const files = await listWorkspaceFiles();
-  const set = new Set<string>(['reports', 'logs', 'config']);
+  const persistedFolders = loadWorkspaceFolders();
+  const set = new Set<string>(persistedFolders);
   for (const f of files) {
     if (f.category) set.add(f.category);
   }

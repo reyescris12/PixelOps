@@ -26,13 +26,13 @@ import {
   File,
   Edit3,
   Save,
-  Sparkles,
   AlertCircle,
   Database,
   ExternalLink,
   CheckSquare,
   Square,
   FolderInput,
+  FolderPlus,
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import {
@@ -45,8 +45,10 @@ import {
   moveMultipleWorkspaceFiles,
   exportWorkspaceFile,
   copyWorkspaceFileContent,
-  seedInitialWorkspaceFiles,
   getWorkspaceCategories,
+  loadWorkspaceFolders,
+  ensureWorkspaceFolderExists,
+  deleteWorkspaceFolder,
 } from '../engine/storageManager';
 import { pushToCloud } from '../services/SyncService';
 
@@ -64,7 +66,8 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
   const { themeId, playBeep } = useTheme();
 
   const [files, setFiles] = useState<WorkspaceFileRecord[]>([]);
-  const [categories, setCategories] = useState<string[]>(['all', 'intel', 'reports', 'logs', 'config']);
+  const [persistedFolders, setPersistedFolders] = useState<string[]>(() => loadWorkspaceFolders());
+  const [categories, setCategories] = useState<string[]>(['all', 'intel', 'reports', 'logs', 'config', 'archive', 'data']);
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedFile, setSelectedFile] = useState<WorkspaceFileRecord | null>(null);
@@ -75,6 +78,9 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
   const [editContent, setEditContent] = useState<string>('');
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [deleteConfirmPath, setDeleteConfirmPath] = useState<string | null>(null);
+  const [deleteFolderConfirm, setDeleteFolderConfirm] = useState<string | null>(null);
+  const [isCreatingFolder, setIsCreatingFolder] = useState<boolean>(false);
+  const [newFolderName, setNewFolderName] = useState<string>('');
 
   // Multi-select & Batch Organization state
   const [isMultiSelectMode, setIsMultiSelectMode] = useState<boolean>(false);
@@ -129,6 +135,7 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
 
       const cats = await getWorkspaceCategories();
       setCategories(['all', ...cats]);
+      setPersistedFolders(loadWorkspaceFolders());
 
       if (preserveSelected && selectedFile) {
         const stillExists = allFiles.find((f) => f.path === selectedFile.path);
@@ -209,21 +216,30 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
     setTimeout(() => setIsRefreshing(false), 300);
   };
 
-  const handleSeedSamples = async () => {
+  const handleCreateFolder = async () => {
+    const clean = newFolderName.trim().replace(/^[\\/]+|[\\/]+$/g, '').toLowerCase();
+    if (!clean) return;
     playBeep('complete');
-    setIsLoading(true);
-    try {
-      const seeded = await seedInitialWorkspaceFiles(true);
-      setFiles(seeded);
-      const master = seeded.find((f) => f.path.includes('master_execution_schedule'));
-      if (master) {
-        setSelectedFile(master);
-        setEditContent(master.content);
-        setViewMode('rendered');
-      }
-    } finally {
-      setIsLoading(false);
+    ensureWorkspaceFolderExists(clean);
+    setExpandedFolders((prev) => ({
+      ...prev,
+      [clean]: true,
+    }));
+    setNewFolderName('');
+    setIsCreatingFolder(false);
+    await loadFiles(true);
+  };
+
+  const handleDeleteFolder = async (folderName: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    playBeep('error');
+    await deleteWorkspaceFolder(folderName);
+    setDeleteFolderConfirm(null);
+    if (selectedCategory === folderName) {
+      setSelectedCategory('all');
     }
+    await loadFiles(false);
+    pushToCloud().catch(() => {});
   };
 
   const handleSelectFile = (file: WorkspaceFileRecord) => {
@@ -434,6 +450,15 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
 
   const filesByFolder = useMemo(() => {
     const groups: Record<string, WorkspaceFileRecord[]> = {};
+    // Initialize persisted folders first so deleting all files inside a folder never removes the folder itself
+    for (const folder of persistedFolders) {
+      const matchesCat = selectedCategory === 'all' || selectedCategory === folder;
+      const matchesSearch =
+        !searchQuery.trim() || folder.toLowerCase().includes(searchQuery.trim().toLowerCase());
+      if (matchesCat && matchesSearch) {
+        groups[folder] = [];
+      }
+    }
     for (const file of filteredFiles) {
       const parts = file.path.split('/');
       const folder = parts.length > 1 ? parts[0] : 'root';
@@ -441,7 +466,7 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
       groups[folder].push(file);
     }
     return groups;
-  }, [filteredFiles]);
+  }, [filteredFiles, persistedFolders, selectedCategory, searchQuery]);
 
   const totalBytes = useMemo(() => {
     return files.reduce((acc, f) => acc + (f.sizeBytes || 0), 0);
@@ -569,27 +594,22 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
 
               <button
                 type="button"
-                onClick={() => setIsCreatingNew(true)}
-                className="flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded bg-[#1e293b] hover:bg-[#334155] text-white border border-slate-600 transition-colors text-xs font-semibold"
-                title="Create a new report or log file"
+                onClick={() => setIsCreatingFolder((prev) => !prev)}
+                className="flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded bg-[#1e293b] hover:bg-[#334155] text-white border border-slate-600 transition-colors text-xs font-semibold cursor-pointer"
+                title="Create a new workspace folder"
               >
-                <Plus className="w-3 h-3" />
-                <span className="hidden xs:inline">New</span>
+                <FolderPlus className="w-3.5 h-3.5 text-amber-400" />
+                <span className="hidden sm:inline">New Folder</span>
               </button>
 
               <button
                 type="button"
-                onClick={handleSeedSamples}
-                className="hidden sm:flex items-center gap-1 px-2.5 py-1 rounded border transition-colors text-xs font-semibold"
-                style={{
-                  backgroundColor: themeColors.accentBg,
-                  borderColor: themeColors.border,
-                  color: themeColors.accent,
-                }}
-                title="Seed master_execution_schedule.md and tactical configs"
+                onClick={() => setIsCreatingNew(true)}
+                className="flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded bg-[#1e293b] hover:bg-[#334155] text-white border border-slate-600 transition-colors text-xs font-semibold cursor-pointer"
+                title="Create a new report or log file"
               >
-                <Sparkles className="w-3 h-3" />
-                <span>Seed Samples</span>
+                <Plus className="w-3 h-3" />
+                <span className="hidden xs:inline">New File</span>
               </button>
 
               <button
@@ -729,6 +749,39 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
                   </div>
                 </div>
 
+                {/* Inline Create New Folder Input */}
+                {isCreatingFolder && (
+                  <div className="p-2 rounded bg-[#111722] border border-amber-700/60 flex items-center gap-1.5 text-[11px]">
+                    <FolderPlus className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                    <input
+                      type="text"
+                      value={newFolderName}
+                      onChange={(e) => setNewFolderName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleCreateFolder();
+                        if (e.key === 'Escape') setIsCreatingFolder(false);
+                      }}
+                      placeholder="New folder name..."
+                      autoFocus
+                      className="flex-1 bg-[#0a0d14] border border-slate-700 rounded px-2 py-1 text-[11px] text-white font-mono focus:outline-none focus:border-amber-500"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleCreateFolder}
+                      className="px-2 py-1 rounded bg-amber-600 hover:bg-amber-500 text-black font-bold text-[10px] uppercase cursor-pointer"
+                    >
+                      Add
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsCreatingFolder(false)}
+                      className="p-1 text-slate-400 hover:text-white cursor-pointer"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                )}
+
                 {/* Batch Action Panel (Move / Organize & Bulk Delete) */}
                 {selectedPaths.size > 0 && (
                   <div className="p-2 rounded bg-[#111722] border border-slate-700 flex flex-col gap-2 text-[11px]">
@@ -746,12 +799,11 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
                           onChange={(e) => setBulkMoveFolder(e.target.value)}
                           className="flex-1 bg-[#0a0d14] border border-slate-700 rounded px-1.5 py-1 text-[11px] text-white font-mono focus:outline-none focus:border-slate-500"
                         >
-                          <option value="reports">reports/</option>
-                          <option value="intel">intel/</option>
-                          <option value="archive">archive/</option>
-                          <option value="logs">logs/</option>
-                          <option value="config">config/</option>
-                          <option value="data">data/</option>
+                          {persistedFolders.map((f) => (
+                            <option key={f} value={f}>
+                              {f}/
+                            </option>
+                          ))}
                           <option value="custom">Custom folder...</option>
                         </select>
                         <button
@@ -782,7 +834,7 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
                       {bulkDeleteConfirm ? (
                         <div className="w-full flex items-center justify-between bg-red-950/80 border border-red-700 px-2 py-1 rounded">
                           <span className="text-[10px] text-red-200 font-semibold">
-                            Delete {selectedPaths.size} file(s) permanently?
+                            Delete {selectedPaths.size} file(s)? (Folders stay intact)
                           </span>
                           <div className="flex items-center gap-1">
                             <button
@@ -809,7 +861,7 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
                           className="w-full flex items-center justify-center gap-1.5 px-2.5 py-1 rounded bg-red-950/60 hover:bg-red-900/80 text-red-300 hover:text-white border border-red-800/80 font-bold text-[11px] transition-colors cursor-pointer"
                         >
                           <Trash2 className="w-3 h-3" />
-                          <span>Delete Selected ({selectedPaths.size})</span>
+                          <span>Delete Selected Files ({selectedPaths.size})</span>
                         </button>
                       )}
                     </div>
@@ -824,32 +876,19 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
                     <RefreshCw className="w-5 h-5 animate-spin text-slate-400" />
                     <span>Loading IndexedDB files...</span>
                   </div>
-                ) : filteredFiles.length === 0 ? (
+                ) : Object.keys(filesByFolder).length === 0 ? (
                   <div className="p-6 text-center text-slate-500 flex flex-col items-center gap-3">
                     <AlertCircle className="w-8 h-8 text-slate-600" />
                     <div>
                       <p className="font-semibold text-slate-400 mb-1">
-                        No workspace files found
+                        No folders or files found
                       </p>
                       <p className="text-[11px] text-slate-500">
                         {searchQuery
-                          ? 'No files matched your filter query.'
-                          : 'Storage is currently clear. Agents populate reports upon directive execution.'}
+                          ? 'No files or folders matched your filter query.'
+                          : 'Use "New Folder" or "New File" above to organize your workspace.'}
                       </p>
                     </div>
-                    <button
-                      type="button"
-                      onClick={handleSeedSamples}
-                      className="mt-1 px-3 py-1.5 rounded text-xs font-semibold border flex items-center gap-1.5 transition-colors cursor-pointer"
-                      style={{
-                        backgroundColor: themeColors.accentBg,
-                        borderColor: themeColors.border,
-                        color: themeColors.accent,
-                      }}
-                    >
-                      <Sparkles className="w-3.5 h-3.5" />
-                      <span>Seed Sample Reports</span>
-                    </button>
                   </div>
                 ) : (
                   Object.entries(filesByFolder).map(([folderName, folderFiles]) => {
@@ -863,12 +902,21 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
                     return (
                       <div key={folderName} className="space-y-1">
                         {/* Folder Header */}
-                        <div className="w-full flex items-center gap-1.5 px-1.5 py-1 text-slate-400 hover:text-slate-200 hover:bg-white/5 rounded select-none">
+                        <div className="w-full flex items-center gap-1.5 px-1.5 py-1 text-slate-400 hover:text-slate-200 hover:bg-white/5 rounded select-none group/folder">
                           <button
                             type="button"
+                            disabled={folderFiles.length === 0}
                             onClick={(e) => handleToggleFolderSelection(folderFiles, e)}
-                            className="p-0.5 text-slate-400 hover:text-emerald-400 transition-colors cursor-pointer shrink-0"
-                            title={`Select/deselect all ${folderFiles.length} file(s) in ${folderName}/`}
+                            className={`p-0.5 transition-colors shrink-0 ${
+                              folderFiles.length === 0
+                                ? 'opacity-30 cursor-not-allowed text-slate-700'
+                                : 'text-slate-400 hover:text-emerald-400 cursor-pointer'
+                            }`}
+                            title={
+                              folderFiles.length === 0
+                                ? `Folder ${folderName}/ is empty`
+                                : `Select/deselect all ${folderFiles.length} file(s) inside ${folderName}/ (does not delete folder)`
+                            }
                           >
                             {allInFolderSelected ? (
                               <CheckSquare className="w-3.5 h-3.5 text-emerald-400" />
@@ -896,12 +944,59 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
                               ({folderFiles.length})
                             </span>
                           </button>
+
+                          {/* Separate Delete Folder Action */}
+                          {deleteFolderConfirm === folderName ? (
+                            <div
+                              onClick={(e) => e.stopPropagation()}
+                              className="flex items-center gap-1 bg-red-950/90 border border-red-700 px-1.5 py-0.5 rounded shrink-0"
+                            >
+                              <span className="text-[9px] text-red-200 font-bold">
+                                Del Folder?
+                              </span>
+                              <button
+                                type="button"
+                                onClick={(e) => handleDeleteFolder(folderName, e)}
+                                className="px-1.5 py-0.2 bg-red-600 hover:bg-red-500 text-white rounded text-[9px] font-bold cursor-pointer"
+                              >
+                                Yes
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setDeleteFolderConfirm(null);
+                                }}
+                                className="px-1 py-0.2 text-slate-300 hover:text-white text-[9px] cursor-pointer"
+                              >
+                                No
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                playBeep('tap');
+                                setDeleteFolderConfirm(folderName);
+                              }}
+                              className="p-1 rounded opacity-60 sm:opacity-0 group-hover/folder:opacity-100 hover:bg-red-500/20 text-slate-500 hover:text-red-400 transition-all cursor-pointer shrink-0"
+                              title={`Delete folder "${folderName}/" and its contents`}
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          )}
                         </div>
 
                         {/* Files under folder */}
                         {isExpanded && (
                           <div className="pl-3.5 space-y-0.5 border-l border-slate-800 ml-2">
-                            {folderFiles.map((file) => {
+                            {folderFiles.length === 0 ? (
+                              <div className="px-2.5 py-1.5 text-[10px] text-slate-600 italic select-none">
+                                (Empty folder)
+                              </div>
+                            ) : (
+                              folderFiles.map((file) => {
                               const isSelected = selectedFile?.path === file.path;
                               const isChecked = selectedPaths.has(file.path);
                               const basename = file.path.split('/').pop() || file.path;
@@ -997,7 +1092,8 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
                                   </div>
                                 </div>
                               );
-                            })}
+                            })
+                            )}
                           </div>
                         )}
                       </div>
@@ -1152,12 +1248,11 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
                           title="Move current file to another folder"
                         >
                           <option value="">Move to...</option>
-                          <option value="reports">reports/</option>
-                          <option value="intel">intel/</option>
-                          <option value="archive">archive/</option>
-                          <option value="logs">logs/</option>
-                          <option value="config">config/</option>
-                          <option value="data">data/</option>
+                          {persistedFolders.map((f) => (
+                            <option key={f} value={f}>
+                              {f}/
+                            </option>
+                          ))}
                         </select>
                       </div>
 
@@ -1254,19 +1349,6 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
                       className="md:hidden px-3 py-1.5 rounded text-xs font-semibold bg-slate-800 text-white hover:bg-slate-700 border border-slate-600 flex items-center gap-1.5 cursor-pointer"
                     >
                       <span>← Browse Files</span>
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleSeedSamples}
-                      className="px-3 py-1.5 rounded text-xs font-semibold border flex items-center gap-1.5 transition-colors cursor-pointer"
-                      style={{
-                        backgroundColor: themeColors.accentBg,
-                        borderColor: themeColors.border,
-                        color: themeColors.accent,
-                      }}
-                    >
-                      <Sparkles className="w-3.5 h-3.5" />
-                      <span>Seed Sample Reports</span>
                     </button>
                   </div>
                 </div>

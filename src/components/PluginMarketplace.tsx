@@ -11,6 +11,9 @@ import {
   getLocalConnectedAccounts,
   getConnectedAccounts,
   ComposioConnectedAccount,
+  getStoredAuthConfig,
+  setStoredAuthConfig,
+  createCustomAuthConfig,
 } from '../services/ComposioService';
 
 interface PluginMarketplaceProps {
@@ -69,6 +72,18 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
   const [inputApiKey, setInputApiKey] = useState(() => getComposioApiKey());
   const [isTestingKey, setIsTestingKey] = useState(false);
   const [testResult, setTestResult] = useState<string | null>(null);
+
+  // Custom Auth Config modal for Twitter / X and apps requiring custom developer credentials
+  const [customAuthApp, setCustomAuthApp] = useState<ComposioIntegration | null>(null);
+  const [authConfigIdInput, setAuthConfigIdInput] = useState('');
+  const [customClientId, setCustomClientId] = useState('');
+  const [customClientSecret, setCustomClientSecret] = useState('');
+  const [customBearerToken, setCustomBearerToken] = useState('');
+  const [isSavingCustomAuth, setIsSavingCustomAuth] = useState(false);
+  const [customAuthError, setCustomAuthError] = useState<string | null>(null);
+
+  // Direct manual OAuth open URL banner if popup was blocked
+  const [blockedPopupUrl, setBlockedPopupUrl] = useState<{ url: string; appName: string } | null>(null);
 
   const [entityId, setEntityId] = useState(() => getOrCreateEntityId());
 
@@ -166,7 +181,24 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
 
   // Connect App Trigger
   const handleConnect = async (app: ComposioIntegration) => {
+    const slug = normalizeAppSlug(app.appName);
+
+    // Twitter/X requires a custom developer auth config by Composio policy
+    if (slug === 'twitter') {
+      const stored = getStoredAuthConfig('twitter');
+      if (!stored) {
+        setCustomAuthApp(app);
+        setAuthConfigIdInput('');
+        setCustomClientId('');
+        setCustomClientSecret('');
+        setCustomBearerToken('');
+        setCustomAuthError(null);
+        return;
+      }
+    }
+
     setConnectingApp(app.appName);
+    setBlockedPopupUrl(null);
     setFeedbackMessage({
       text: `[OAUTH INITIATED] Connecting ${app.name} for Commander (${entityId.slice(0, 18)}...)... Follow the popup prompt.`,
       type: 'info',
@@ -174,7 +206,15 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
 
     try {
       const res = await ComposioService.initiateAppConnection(app.appName);
-      if (res.redirectUrl || res.connectionUrl) {
+
+      if (res.popupBlocked && (res.redirectUrl || res.connectionUrl)) {
+        const linkUrl = res.redirectUrl || res.connectionUrl || '';
+        setBlockedPopupUrl({ url: linkUrl, appName: app.name });
+        setFeedbackMessage({
+          text: `[POPUP BLOCKED] Your browser blocked the ${app.name} window. Click "Open Link" below.`,
+          type: 'info',
+        });
+      } else if (res.redirectUrl || res.connectionUrl) {
         setFeedbackMessage({
           text: `[OAUTH POPUP OPENED] Authorization window opened for ${app.name}. Complete sign-in in popup to link account.`,
           type: 'info',
@@ -190,6 +230,7 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
       if (typeof res.waitForCompletion === 'function') {
         res.waitForCompletion().then((completed: boolean) => {
           if (completed) {
+            setBlockedPopupUrl(null);
             setIntegrations((prev) =>
               prev.map((item) => {
                 if (normalizeAppSlug(item.appName) === normalizeAppSlug(app.appName)) {
@@ -230,7 +271,10 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
         errStr.includes('unauthorized') ||
         errStr.includes('UNAUTHORIZED');
 
-      if (isMissingKey) {
+      if (errStr.includes('TWITTER_CUSTOM_AUTH_REQUIRED') || (slug === 'twitter' && !getStoredAuthConfig('twitter'))) {
+        setCustomAuthApp(app);
+        setCustomAuthError('Twitter/X requires your own Developer credentials or an Auth Config ID (ac_...).');
+      } else if (isMissingKey) {
         setIsApiKeyModalOpen(true);
         setFeedbackMessage({
           text: `[COMPOSIO API KEY REQUIRED] Provide your Composio API key below to link ${app.name} accounts.`,
@@ -575,6 +619,36 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
           )}
         </div>
 
+        {/* Popup Blocked Direct Action Banner */}
+        {blockedPopupUrl && (
+          <div className="px-4 py-2.5 bg-[#2a1705] border-b border-[#e59838] font-mono-tabular text-xs flex flex-wrap items-center justify-between gap-2 shadow-[0_0_15px_rgba(229,152,56,0.3)]">
+            <div className="flex items-center gap-2 text-[#f3ead8]">
+              <span className="text-base text-[#e59838]">↗</span>
+              <span>
+                <strong>{blockedPopupUrl.appName}</strong> authorization popup was blocked.
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <a
+                href={blockedPopupUrl.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="px-3 py-1 bg-[#e59838] hover:bg-[#d48828] text-[#121110] font-bold text-xs rounded-xs flex items-center gap-1 cursor-pointer transition-colors"
+              >
+                <span>OPEN {blockedPopupUrl.appName.toUpperCase()} LOGIN</span>
+                <span>↗</span>
+              </a>
+              <button
+                type="button"
+                onClick={() => setBlockedPopupUrl(null)}
+                className="text-xs text-[#8c7a65] hover:text-[#f3ead8] px-1.5 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Feedback / Alert Notice Banner */}
         {feedbackMessage && (
           <div
@@ -706,9 +780,31 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
                         <span className="uppercase">
                           {app.authSchemes?.[0] || 'OAUTH2'}
                         </span>
+                        {normalizeAppSlug(app.appName) === 'twitter' && (
+                          <span className="text-[9px] text-[#e59838] bg-[#1f160e] px-1 py-0.2 border border-[#4a351d] rounded-xs font-bold">
+                            BYOC
+                          </span>
+                        )}
                       </div>
 
                       <div className="flex items-center gap-1.5 shrink-0">
+                        {normalizeAppSlug(app.appName) === 'twitter' && !app.connected && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCustomAuthApp(app);
+                              setAuthConfigIdInput(getStoredAuthConfig('twitter') || '');
+                              setCustomClientId('');
+                              setCustomClientSecret('');
+                              setCustomBearerToken('');
+                              setCustomAuthError(null);
+                            }}
+                            className="px-2 py-1 font-mono-tabular text-xs bg-[#1a1410] hover:bg-[#2b2014] text-[#c8b79f] hover:text-[#f3ead8] border border-[#4a351d] cursor-pointer transition-colors"
+                            title="Configure Twitter / X Developer App Credentials or Auth Config ID"
+                          >
+                            ⚙ Config
+                          </button>
+                        )}
                         {app.connected ? (
                           <button
                             type="button"
@@ -1008,6 +1104,184 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
                   className="px-3 py-1 bg-[#2b2116] hover:bg-[#3d2f20] text-[#f3ead8] border border-[#6e5233] cursor-pointer text-xs"
                 >
                   Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Twitter / Custom Auth Config Modal */}
+      {customAuthApp && (
+        <div className="fixed inset-0 z-50 bg-black/90 backdrop-blur-md flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200">
+          <div className="w-full max-w-lg bg-[#141210] border-2 border-[#1d9bf0] shadow-[0_0_40px_rgba(29,155,240,0.35)] rounded-xs overflow-hidden font-mono-tabular">
+            {/* Modal Header */}
+            <div className="bg-[#0b1d2e] border-b border-[#1d4e78] px-4 py-2.5 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-base">𝕏</span>
+                <span className="font-bold text-xs sm:text-sm text-[#38bdf8] tracking-wider uppercase">
+                  {customAuthApp.name.toUpperCase()} AUTHENTICATION CONFIGURATION
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCustomAuthApp(null)}
+                className="text-xs text-[#8c7a65] hover:text-[#f3ead8] px-1 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-4 flex flex-col gap-3 text-xs max-h-[75vh] overflow-y-auto">
+              <div className="bg-[#0c1824] border border-[#1d4e78] p-3 text-[11px] text-[#93c5fd] leading-relaxed flex flex-col gap-1.5">
+                <span className="font-bold text-[#38bdf8] flex items-center gap-1.5">
+                  <span>ℹ</span>
+                  <span>WHY THIS STEP IS REQUIRED FOR TWITTER / X:</span>
+                </span>
+                <p className="text-[#bfdbfe]">
+                  Composio does not provide a shared public OAuth app for Twitter/X due to X API developer policies. You must connect with your own X Developer App credentials, or paste an existing Auth Config ID from your Composio Dashboard.
+                </p>
+                <div className="border-t border-[#1d4e78]/60 pt-1.5 mt-0.5 text-[10px] text-[#7dd3fc]">
+                  <strong>Required Callback URL in X Portal:</strong><br />
+                  <code className="text-[#f3ead8] bg-[#07131e] px-1 py-0.5 select-all">
+                    https://backend.composio.dev/api/v3/toolkits/auth/callback
+                  </code>
+                </div>
+              </div>
+
+              {customAuthError && (
+                <div className="p-2.5 bg-[#291313] border border-[#5c2424] text-[#fca5a5] text-xs">
+                  {customAuthError}
+                </div>
+              )}
+
+              {/* Option 1: Existing Auth Config ID */}
+              <div className="p-3 bg-[#0d0c0b] border border-[#2a1e12] flex flex-col gap-2">
+                <span className="font-bold text-xs text-[#e59838] uppercase">
+                  Option 1: Paste Composio Auth Config ID (Recommended)
+                </span>
+                <p className="text-[11px] text-[#8c7a65]">
+                  If you created an Auth Config in <a href="https://dashboard.composio.dev" target="_blank" rel="noopener noreferrer" className="text-[#38bdf8] underline">dashboard.composio.dev &rarr; Auth Configs</a>, paste its ID (starts with <code className="text-[#e59838]">ac_...</code>) below:
+                </p>
+                <input
+                  type="text"
+                  value={authConfigIdInput}
+                  onChange={(e) => setAuthConfigIdInput(e.target.value)}
+                  placeholder="e.g. ac_1234567890abcdef"
+                  className="w-full bg-[#141210] text-[#f3ead8] placeholder-[#574432] border border-[#4a351d] px-3 py-1.5 text-xs focus:outline-none focus:border-[#38bdf8]"
+                />
+              </div>
+
+              {/* Option 2: Direct Developer App Credentials */}
+              <div className="p-3 bg-[#0d0c0b] border border-[#2a1e12] flex flex-col gap-2">
+                <span className="font-bold text-xs text-[#38bdf8] uppercase">
+                  Option 2: Register X Developer App Credentials
+                </span>
+                <p className="text-[11px] text-[#8c7a65]">
+                  Obtained from <a href="https://console.x.com" target="_blank" rel="noopener noreferrer" className="text-[#38bdf8] underline">console.x.com</a> (Project &rarr; User Authentication Settings).
+                </p>
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] text-[#8c7a65] uppercase font-bold">Client ID:</label>
+                  <input
+                    type="text"
+                    value={customClientId}
+                    onChange={(e) => setCustomClientId(e.target.value)}
+                    placeholder="OAuth 2.0 Client ID"
+                    className="w-full bg-[#141210] text-[#f3ead8] placeholder-[#574432] border border-[#4a351d] px-3 py-1.5 text-xs focus:outline-none focus:border-[#38bdf8]"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] text-[#8c7a65] uppercase font-bold">Client Secret:</label>
+                  <input
+                    type="password"
+                    value={customClientSecret}
+                    onChange={(e) => setCustomClientSecret(e.target.value)}
+                    placeholder="OAuth 2.0 Client Secret"
+                    className="w-full bg-[#141210] text-[#f3ead8] placeholder-[#574432] border border-[#4a351d] px-3 py-1.5 text-xs focus:outline-none focus:border-[#38bdf8]"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1">
+                  <label className="text-[10px] text-[#8c7a65] uppercase font-bold">
+                    Bearer Token (Optional, for search & tweet reads):
+                  </label>
+                  <input
+                    type="password"
+                    value={customBearerToken}
+                    onChange={(e) => setCustomBearerToken(e.target.value)}
+                    placeholder="App Bearer Token (optional)"
+                    className="w-full bg-[#141210] text-[#f3ead8] placeholder-[#574432] border border-[#4a351d] px-3 py-1.5 text-xs focus:outline-none focus:border-[#38bdf8]"
+                  />
+                </div>
+              </div>
+
+              {/* Action Buttons */}
+              <div className="pt-2 border-t border-[#2d2014] flex flex-wrap items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCustomAuthApp(null)}
+                  className="px-3 py-1 bg-[#1a1410] text-[#c8b79f] border border-[#4a351d] cursor-pointer text-xs"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="button"
+                  disabled={isSavingCustomAuth}
+                  onClick={async () => {
+                    const targetApp = customAuthApp;
+                    if (!targetApp) return;
+                    setIsSavingCustomAuth(true);
+                    setCustomAuthError(null);
+
+                    try {
+                      let activeConfigId = authConfigIdInput.trim();
+
+                      // If user provided Client ID and Secret, provision a custom Auth Config
+                      if (!activeConfigId && customClientId.trim() && customClientSecret.trim()) {
+                        activeConfigId = await createCustomAuthConfig({
+                          toolkit: 'twitter',
+                          clientId: customClientId.trim(),
+                          clientSecret: customClientSecret.trim(),
+                          bearerToken: customBearerToken.trim() || undefined,
+                        });
+                      }
+
+                      if (!activeConfigId) {
+                        setCustomAuthError('Please provide either an Auth Config ID (ac_...) or both Client ID & Secret.');
+                        setIsSavingCustomAuth(false);
+                        return;
+                      }
+
+                      setStoredAuthConfig('twitter', activeConfigId);
+                      setCustomAuthApp(null);
+
+                      setFeedbackMessage({
+                        text: `[AUTH CONFIG SAVED] Twitter / X configured with ID: ${activeConfigId.slice(0, 14)}... Launching OAuth authorization.`,
+                        type: 'info',
+                      });
+
+                      // Trigger connection initiation with this authConfigId
+                      handleConnect(targetApp);
+                    } catch (err: any) {
+                      setCustomAuthError(err?.message || 'Failed to configure Twitter authentication.');
+                    } finally {
+                      setIsSavingCustomAuth(false);
+                    }
+                  }}
+                  className="px-4 py-1.5 bg-[#1d9bf0] hover:bg-[#1a8cd8] text-white font-bold text-xs rounded-xs cursor-pointer transition-colors flex items-center gap-1.5"
+                >
+                  {isSavingCustomAuth ? (
+                    <span>Configuring...</span>
+                  ) : (
+                    <>
+                      <span>Save & Authorize Twitter / X</span>
+                      <span>↗</span>
+                    </>
+                  )}
                 </button>
               </div>
             </div>

@@ -463,6 +463,7 @@ export async function pingComposio(): Promise<{ ok: boolean; status: number; lat
 
 export interface InitiateConnectionOptions {
   redirectUri?: string;
+  authConfigId?: string;
   onSuccess?: (account: ComposioConnectedAccount) => void;
   onError?: (err: Error) => void;
   onClose?: () => void;
@@ -473,7 +474,16 @@ export interface InitiateConnectionResult {
   redirectUrl?: string;
   connectionId?: string;
   popup?: Window | null;
+  popupBlocked?: boolean;
   waitForCompletion: () => Promise<boolean>;
+}
+
+export interface CustomAuthConfigParams {
+  toolkit: string;
+  clientId: string;
+  clientSecret: string;
+  bearerToken?: string;
+  redirectUri?: string;
 }
 
 export type ConnectionSyncListener = (accounts: ComposioConnectedAccount[]) => void;
@@ -941,10 +951,78 @@ export async function getConnectedAccounts(): Promise<ComposioConnectedAccount[]
 }
 
 /**
+ * Local storage helpers for custom App Auth Config IDs (e.g. ac_... for Twitter/X)
+ */
+export function getStoredAuthConfig(appName: string): string | null {
+  if (typeof localStorage === 'undefined') return null;
+  const slug = normalizeAppSlug(appName);
+  return localStorage.getItem(`pixelops_auth_config_${slug}`)?.trim() || null;
+}
+
+export function setStoredAuthConfig(appName: string, authConfigId: string): void {
+  if (typeof localStorage === 'undefined') return;
+  const slug = normalizeAppSlug(appName);
+  const clean = authConfigId.trim();
+  if (clean) {
+    localStorage.setItem(`pixelops_auth_config_${slug}`, clean);
+  } else {
+    localStorage.removeItem(`pixelops_auth_config_${slug}`);
+  }
+}
+
+/**
+ * Programmatically create a custom Auth Config in Composio (e.g., for Twitter/X)
+ */
+export async function createCustomAuthConfig(params: CustomAuthConfigParams): Promise<string> {
+  const slug = normalizeAppSlug(params.toolkit);
+  const payload = {
+    toolkit: { slug },
+    toolkit_slug: slug,
+    auth_config: {
+      type: 'use_custom_auth',
+      auth_scheme: 'OAUTH2',
+      name: `PixelOps Custom ${params.toolkit.toUpperCase()} Integration`,
+      credentials: {
+        client_id: params.clientId.trim(),
+        client_secret: params.clientSecret.trim(),
+        oauth_redirect_uri:
+          params.redirectUri || 'https://backend.composio.dev/api/v3/toolkits/auth/callback',
+        ...(params.bearerToken?.trim() ? { bearer_token: params.bearerToken.trim() } : {}),
+      },
+    },
+  };
+
+  const res = await callComposioProxy('/auth_configs', 'POST', payload);
+  const configId =
+    res?.auth_config?.id ||
+    res?.id ||
+    res?.auth_config_id ||
+    res?.data?.id ||
+    res?.data?.auth_config?.id;
+
+  if (!configId) {
+    throw new Error(
+      res?.message ||
+        res?.error ||
+        `Composio failed to return an auth config ID for ${params.toolkit}.`
+    );
+  }
+
+  setStoredAuthConfig(slug, configId);
+  return configId;
+}
+
+/**
  * Resolves or creates a Composio Managed Auth Config ID for a toolkit (e.g. "github", "slack")
  */
 export async function getOrCreateAuthConfig(toolkitSlug: string): Promise<string> {
   const slug = toolkitSlug.toLowerCase().trim();
+
+  // 0. Check if user configured a custom Auth Config ID in local storage
+  const storedConfig = getStoredAuthConfig(slug);
+  if (storedConfig) {
+    return storedConfig;
+  }
 
   // 1. Try listing existing auth configs for this toolkit
   try {
@@ -1006,9 +1084,11 @@ export async function initiateAppConnection(
       : '');
 
   // Resolve or create auth_config_id (e.g. ac_...)
-  let authConfigId = normalizedApp;
+  let authConfigId = opts.authConfigId || normalizedApp;
   try {
-    authConfigId = await getOrCreateAuthConfig(normalizedApp);
+    if (!opts.authConfigId) {
+      authConfigId = await getOrCreateAuthConfig(normalizedApp);
+    }
   } catch {}
 
   let response: any;
@@ -1093,6 +1173,11 @@ export async function initiateAppConnection(
     response?.data?.connectionUrl;
 
   if (!targetUrl) {
+    if (normalizedApp === 'twitter') {
+      throw new Error(
+        'TWITTER_CUSTOM_AUTH_REQUIRED: Twitter/X requires a custom Auth Config (ac_...) or Developer App credentials from console.x.com.'
+      );
+    }
     throw new Error(
       response?.message ||
       response?.error ||
@@ -1102,6 +1187,7 @@ export async function initiateAppConnection(
   }
 
   let popup: Window | null = null;
+  let popupBlocked = false;
   if (typeof window !== 'undefined') {
     // Open OAuth link in a clean centered popup window
     const width = 640;
@@ -1122,10 +1208,13 @@ export async function initiateAppConnection(
 
     try {
       popup = window.open(targetUrl, `composio_oauth_${normalizedApp}`, popupFeatures);
-      if (popup && typeof popup.focus === 'function') {
+      if (!popup || popup.closed || typeof popup.closed === 'undefined') {
+        popupBlocked = true;
+      } else if (typeof popup.focus === 'function') {
         popup.focus();
       }
     } catch (popupErr) {
+      popupBlocked = true;
       console.warn('[COMPOSIO POPUP BLOCKED WARNING]', popupErr);
     }
   }
@@ -1268,6 +1357,7 @@ export async function initiateAppConnection(
       response?.id ||
       response?.link_token,
     popup,
+    popupBlocked,
     waitForCompletion,
   };
 }

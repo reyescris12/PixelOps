@@ -1013,8 +1013,119 @@ export async function createCustomAuthConfig(params: CustomAuthConfigParams): Pr
 }
 
 /**
- * Resolves or creates a Composio Managed Auth Config ID for a toolkit (e.g. "github", "slack")
+ * Client-Side Parameter Sanitizer for Google Calendar Event Actions
+ * Strips conversational filler, normalizes ISO 8601 wall-clock format (removes trailing 'Z'),
+ * maps keys (start_datetime -> start_time, timezone -> time_zone), and enforces clean outbound schema.
  */
+export function sanitizeCalendarEventParams(rawParams: Record<string, any>): {
+  summary: string;
+  start_time: string;
+  end_time: string;
+  time_zone: string;
+  [key: string]: any;
+} {
+  const p = { ...(rawParams || {}) };
+
+  // 1. Sanitize Summary: Strip conversational artifacts, brackets, debugging text
+  let summary = String(
+    p.summary ||
+    p.title ||
+    p.name ||
+    p.event_title ||
+    p.eventTitle ||
+    p.subject ||
+    'Tactical Briefing'
+  ).trim();
+
+  // Strip leading conversational phrases
+  summary = summary
+    .replace(/^(\[AGENT_ACTION:[^\]]+\]|\(Agent [^)]+\)|Agent \w+:?)\s*/i, '')
+    .replace(/^(I have scheduled|Scheduling|Please schedule|Event:|Meeting:|Briefing:)\s*/i, '')
+    .replace(/\[DEBUG:[^\]]*\]/gi, '')
+    .trim();
+
+  if (!summary) {
+    summary = 'Tactical Briefing';
+  }
+
+  // Helper: Format date string to ISO 8601 wall-clock string without trailing 'Z'
+  const toWallClockISO = (val: any, defaultOffsetHours = 0): string => {
+    if (!val) {
+      const d = new Date(Date.now() + defaultOffsetHours * 3600000);
+      return d.toISOString().replace(/Z$/, '').split('.')[0];
+    }
+
+    if (val instanceof Date) {
+      return val.toISOString().replace(/Z$/, '').split('.')[0];
+    }
+
+    if (typeof val === 'string') {
+      let clean = val.trim();
+
+      // If user passed conversational filler in timestamp, try extracting ISO pattern
+      const isoMatch = clean.match(/\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}(?::\d{2})?/);
+      if (isoMatch) {
+        clean = isoMatch[0].replace(' ', 'T');
+        if (clean.length === 16) clean += ':00';
+        return clean.replace(/Z$/, '');
+      }
+
+      // Check if parseable Date
+      const parsed = Date.parse(clean);
+      if (!isNaN(parsed)) {
+        return new Date(parsed).toISOString().replace(/Z$/, '').split('.')[0];
+      }
+    }
+
+    const fallback = new Date(Date.now() + defaultOffsetHours * 3600000);
+    return fallback.toISOString().replace(/Z$/, '').split('.')[0];
+  };
+
+  // 2. Resolve start_time (checking aliases like start_datetime, startDateTime, startTime, start)
+  const rawStart = p.start_time || p.startTime || p.start_datetime || p.startDateTime || p.start;
+  const startTime = toWallClockISO(rawStart, 24); // default 24h from now
+
+  // 3. Resolve end_time (checking aliases like end_datetime, endDateTime, endTime, end)
+  const rawEnd = p.end_time || p.endTime || p.end_datetime || p.endDateTime || p.end;
+  let endTime = toWallClockISO(rawEnd, 25); // default 25h from now
+
+  // Ensure end_time is strictly after start_time
+  try {
+    const sDate = new Date(startTime);
+    const eDate = new Date(endTime);
+    if (eDate.getTime() <= sDate.getTime()) {
+      endTime = new Date(sDate.getTime() + 3600000).toISOString().replace(/Z$/, '').split('.')[0];
+    }
+  } catch {}
+
+  // 4. Resolve time_zone (checking timezone, timeZone, time_zone)
+  let timeZone = String(
+    p.time_zone ||
+    p.timeZone ||
+    p.timezone ||
+    Intl.DateTimeFormat().resolvedOptions().timeZone ||
+    'UTC'
+  ).trim();
+
+  if (!timeZone) {
+    timeZone = 'UTC';
+  }
+
+  // Preserve optional clean fields
+  const cleanDescription = p.description ? String(p.description).replace(/\[DEBUG:[^\]]*\]/gi, '').trim() : undefined;
+
+  return {
+    summary,
+    start_time: startTime,
+    end_time: endTime,
+    time_zone: timeZone,
+    // Composio Google Calendar dual-mapping support for backend aliases
+    start_datetime: startTime,
+    timezone: timeZone,
+    calendar_id: p.calendar_id || p.calendarId || 'primary',
+    ...(cleanDescription ? { description: cleanDescription } : {}),
+  };
+}
 export async function getOrCreateAuthConfig(toolkitSlug: string): Promise<string> {
   const slug = toolkitSlug.toLowerCase().trim();
 
@@ -1791,16 +1902,17 @@ export const COMPOSIO_GEMINI_TOOL_SCHEMAS: Record<string, any> = {
   },
   composio_googlecalendar_create_event: {
     name: 'composio_googlecalendar_create_event',
-    description: 'Schedule a new calendar event, briefing, or meeting on Google Calendar.',
+    description: 'Schedule a new calendar event, briefing, or meeting on Google Calendar. Requires summary, start_time, end_time, and time_zone. All datetime strings must be local wall-clock ISO 8601 strings without the trailing Z offset (e.g. 2026-11-09T16:21:19).',
     parameters: {
       type: 'OBJECT',
       properties: {
-        summary: { type: 'STRING', description: 'Event title or mission name.' },
-        description: { type: 'STRING', description: 'CRITICAL: Complete event agenda or briefing notes drafted by the operative. NEVER pass the raw user prompt.' },
-        start_time: { type: 'STRING', description: 'ISO 8601 start timestamp (e.g., 2026-10-29T10:00:00Z).' },
-        end_time: { type: 'STRING', description: 'ISO 8601 end timestamp (e.g., 2026-10-29T11:00:00Z).' },
+        summary: { type: 'STRING', description: 'Event title or mission briefing headline (clean text, no conversational filler or debugging tags).' },
+        start_time: { type: 'STRING', description: 'Local ISO 8601 start timestamp without trailing Z offset (e.g. "2026-11-09T16:00:00").' },
+        end_time: { type: 'STRING', description: 'Local ISO 8601 end timestamp without trailing Z offset (e.g. "2026-11-09T17:00:00").' },
+        time_zone: { type: 'STRING', description: 'IANA time zone identifier (e.g. "America/New_York", "UTC", or local system time zone).' },
+        description: { type: 'STRING', description: 'Complete event agenda or briefing notes drafted by the operative. NEVER pass the raw user prompt.' },
       },
-      required: ['summary'],
+      required: ['summary', 'start_time', 'end_time', 'time_zone'],
     },
   },
 
@@ -2497,15 +2609,25 @@ export async function executeComposioAction(
   }
 
   if (normalizedAction.includes('CALENDAR') || normalizedAction.includes('GOOGLECALENDAR')) {
-    if (!actionParams.calendarId && !actionParams.calendar_id) {
-      actionParams.calendarId = 'primary';
-      actionParams.calendar_id = 'primary';
-    }
-    if (actionParams.time_min && !actionParams.timeMin) {
-      actionParams.timeMin = actionParams.time_min;
-    }
-    if (actionParams.time_max && !actionParams.timeMax) {
-      actionParams.timeMax = actionParams.time_max;
+    if (
+      normalizedAction.includes('CREATE') ||
+      normalizedAction.includes('ADD') ||
+      normalizedAction.includes('SCHEDULE') ||
+      normalizedAction.includes('INSERT')
+    ) {
+      // Apply strict client-side parameter sanitization wrapper
+      actionParams = sanitizeCalendarEventParams(actionParams);
+    } else {
+      if (!actionParams.calendarId && !actionParams.calendar_id) {
+        actionParams.calendarId = 'primary';
+        actionParams.calendar_id = 'primary';
+      }
+      if (actionParams.time_min && !actionParams.timeMin) {
+        actionParams.timeMin = actionParams.time_min;
+      }
+      if (actionParams.time_max && !actionParams.timeMax) {
+        actionParams.timeMax = actionParams.time_max;
+      }
     }
   }
 
@@ -2565,6 +2687,8 @@ export async function executeComposioAction(
     actionsToTry.push('CALENDAR_LIST_EVENTS', 'GOOGLECALENDAR_EVENTS_LIST', 'GOOGLECALENDAR_FIND_EVENTS');
   } else if (normalizedAction === 'GOOGLECALENDAR_GET_EVENT') {
     actionsToTry.push('GOOGLECALENDAR_EVENTS_GET');
+  } else if (normalizedAction === 'GOOGLECALENDAR_CREATE_EVENT') {
+    actionsToTry.push('CALENDAR_CREATE_EVENT', 'GOOGLECALENDAR_EVENTS_INSERT', 'GOOGLECALENDAR_ADD_EVENT');
   } else if (normalizedAction === 'NOTION_SEARCH') {
     actionsToTry.push('NOTION_SEARCH_NOTION_PAGE_OR_DATABASE');
   } else if (normalizedAction === 'LINEAR_LIST_ISSUES') {

@@ -4447,14 +4447,16 @@ export async function tryParseAndExecuteExternalToolDirective(params: {
       const summary = titleMatch ? titleMatch[1].trim() : `Tactical Briefing: ${params.activeAgentName}`;
 
       const tomorrow = new Date(Date.now() + 86400000);
-      const startTime = tomorrow.toISOString();
-      const endTime = new Date(tomorrow.getTime() + 3600000).toISOString();
+      const startTime = tomorrow.toISOString().replace(/Z$/, '').split('.')[0];
+      const endTime = new Date(tomorrow.getTime() + 3600000).toISOString().replace(/Z$/, '').split('.')[0];
+      const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
       actionArgs = {
         summary,
         description: `PixelOps Mission Briefing initiated by ${params.activeAgentName} (${params.activeAgentRole}). Directive: ${rawPrompt}`,
         start_time: startTime,
         end_time: endTime,
+        time_zone: timeZone,
       };
     }
 
@@ -5920,7 +5922,7 @@ CRITICAL MEMORY RECALL INSTRUCTION:
         : `You are ${params.activeAgentName || 'Agent'}, an AI assistant. Help the user complete their directives and tasks directly, clearly, and effectively using your available tools.`;
 
       if (declaredToolNames) {
-        systemInstruction += `\n\n### Available Tools & Integrations:\n${declaredToolNames}\nWhen executing external or connected tool operations (e.g. GitHub, Slack, Gmail, Google Calendar, Notion, Linear, web search, code sandbox, file storage), you can invoke them directly or emit a structured action tag in your response:\n[AGENT_ACTION: <tool_name>] { "param": "value" } [/AGENT_ACTION]`;
+        systemInstruction += `\n\n### Available Tools & Integrations:\n${declaredToolNames}\nWhen executing external or connected tool operations (e.g. GitHub, Slack, Gmail, Google Calendar, Notion, Linear, web search, code sandbox, file storage), you can invoke them directly or emit a structured action tag in your response:\n[AGENT_ACTION: <tool_name>] { "param": "value" } [/AGENT_ACTION]\n\n### Calendar Tool Parameter Rules:\nWhen invoking composio_googlecalendar_create_event or scheduling calendar events, strictly enforce clean JSON parameters:\n- Required keys: "summary", "start_time", "end_time", "time_zone".\n- Datetime format: ISO 8601 local wall-clock string without trailing Z offset (e.g. "2026-11-09T16:21:19").\n- Summary: Clean title only without conversational filler, prefix narratives, or debug blocks.`;
       }
 
       if (memoryContextStr) {

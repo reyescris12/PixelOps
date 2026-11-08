@@ -175,7 +175,7 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
   if (playbook.id === 'triage_gmail') {
     requiredAppSlug = 'gmail';
     requiredAppName = 'Google Gmail';
-  } else if (playbook.id === 'calendar_brief') {
+  } else if (playbook.id === 'calendar_brief' || playbook.id === 'quick_schedule_briefing') {
     requiredAppSlug = 'googlecalendar';
     requiredAppName = 'Google Calendar';
   } else if (playbook.id === 'sync_github') {
@@ -470,7 +470,7 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
                     <label className="text-[10px] uppercase font-bold text-[#94a3b8]">
                       {playbook.id === 'triage_gmail'
                         ? 'Gmail Search Filter / Query (e.g. is:unread, label:important, from:clients):'
-                        : playbook.id === 'calendar_brief'
+                        : playbook.id === 'calendar_brief' || playbook.id === 'quick_schedule_briefing'
                         ? 'Calendar Schedule Scope / Meeting Window:'
                         : playbook.id === 'sync_github' || playbook.id === 'tech_audit'
                         ? 'GitHub Repository (owner/repo):'
@@ -551,7 +551,7 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
                           ? 'e.g. Daily morning SITREP at 08:00, or breaking industry shifts'
                           : playbook.id === 'triage_gmail'
                           ? 'e.g. Urgent deliverables, client requests, invoice notifications'
-                          : playbook.id === 'calendar_brief'
+                          : playbook.id === 'calendar_brief' || playbook.id === 'quick_schedule_briefing'
                           ? "e.g. Today's upcoming syncs, VIP meeting prep, agenda changes"
                           : 'e.g. Critical P0/P1 issues, new pull requests, or security CVEs'
                       }

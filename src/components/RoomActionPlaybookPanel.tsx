@@ -634,7 +634,7 @@ export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = (
               if (pb.id === 'triage_gmail') {
                 isConnected = gmailOk;
                 appBadge = 'GMAIL';
-              } else if (pb.id === 'calendar_brief') {
+              } else if (pb.id === 'calendar_brief' || pb.id === 'quick_schedule_briefing') {
                 isConnected = calOk;
                 appBadge = 'GCAL';
               } else if (pb.id === 'sync_github') {
@@ -1001,7 +1001,7 @@ export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = (
       if (pb.id === 'triage_gmail') {
         appBadge = 'GMAIL';
         isConnected = gmailConnected;
-      } else if (pb.id === 'calendar_brief') {
+      } else if (pb.id === 'calendar_brief' || pb.id === 'quick_schedule_briefing') {
         appBadge = 'GCAL';
         isConnected = calendarConnected;
       } else if (pb.id === 'sync_github') {

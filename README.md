@@ -12,18 +12,10 @@
   <strong>Retro 16-bit safehouse aesthetics meet real-time multi-domain OSINT telemetry and autonomous AI agent operations.</strong>
 </p>
 
-<!-- Hero Screenshot / Demo Placeholder -->
-```
-+----------------------------------------------------------------------------------------------------+
-|  [🛡️ THREAT MATRIX]     [🛰️ TACTICAL RECON MONITOR]     [⚡ SECTOR PLAYBOOK]     [📁 VFS VAULT]      |
-|----------------------------------------------------------------------------------------------------|
-|                                                                                                    |
-|                       [ 4-VIEW RETRO TACTICAL COMMAND HUD / RECON SCREENSHOT ]                     |
-|                                                                                                    |
-|                  * Replace with demo GIF / screenshot: docs/assets/pixelops_hud.png *               |
-|                                                                                                    |
-+----------------------------------------------------------------------------------------------------+
-```
+<!-- Hero Screenshot -->
+<p align="center">
+  <img src="docs/assets/pixelops_hud.jpg" alt="PixelOps Tactical HUD Command Center" width="100%" style="border-radius: 8px; border: 1px solid #10b981; box-shadow: 0 0 24px rgba(16, 185, 129, 0.2);" />
+</p>
 
 </div>
 

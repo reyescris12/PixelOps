@@ -7432,7 +7432,7 @@ ROUNDTABLE RULES:
 export async function runAgentReconMission(
   agentName = 'Agent Vance',
   agentRole = 'Lead Strategist',
-  themeId: ThemeId = 'spy'
+  themeId: ThemeId = 'green'
 ): Promise<AgentExecutionCard> {
   // 1. Pull clean text dispatches
   const rawDispatches = await fetchS2WireFeed();
@@ -7454,6 +7454,8 @@ Analyze the following text-based situational reports (SITREPs). Extract macro an
     activeAgentName: agentName,
     activeAgentRole: agentRole,
     themeId,
+    enabledPlugins: ['osint_threat_matrix'],
+    temperature: 0.2,
   });
 }
 

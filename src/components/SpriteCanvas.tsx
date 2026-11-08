@@ -38,7 +38,6 @@ import {
 } from '../engine/moduleRegistry';
 import { RoomSpawnerModal } from './RoomSpawnerModal';
 import { RoomActionPlaybookPanel } from './RoomActionPlaybookPanel';
-import { TacticalSatelliteMonitor } from './TacticalSatelliteMonitor';
 import type { IntelligencePlaybookDef } from '../engine/intelligencePlaybooks';
 import { getOperativeReadiness } from '../services/OperativeReadinessService';
 

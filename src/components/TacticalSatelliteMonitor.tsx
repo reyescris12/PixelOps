@@ -649,8 +649,17 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
     listWorkspaceFiles('intel')
       .then((files) => {
         if (!mounted || !files.length) return;
+        const getFileName = (f: { path: string }) => (f.path.split('/').pop() || f.path).toLowerCase();
+        const getFileTitle = (f: { path: string; content: string }) => {
+          const heading = f.content.match(/^#{1,3}\s+(.+)$/m)?.[1]?.trim();
+          if (heading) return heading.replace(/[*_`]/g, '').slice(0, 90);
+          return getFileName(f).replace(/\.(md|txt|json)$/i, '').replace(/[_-]+/g, ' ').trim();
+        };
         const wireFiles = files
-          .filter((f) => f.name.startsWith('s2_wire_') || f.tags?.includes('s2-wire') || f.tags?.includes('osint'))
+          .filter((f) => {
+            const name = getFileName(f);
+            return name.startsWith('s2_wire_') || name.includes('s2-wire') || name.includes('osint');
+          })
           .slice(0, 4);
         if (!wireFiles.length) return;
 
@@ -688,6 +697,7 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
         };
 
         const dynamicPins: TacticalIntelPin[] = wireFiles.map((file, idx) => {
+          const fileTitle = getFileTitle(file);
           const cleanBody = file.content
             .replace(/^#+\s+.*/gm, '')
             .replace(/\*\*.*?\*\*/g, '')
@@ -697,12 +707,12 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
           const summarySnippet =
             cleanBody.slice(0, 180) + (cleanBody.length > 180 ? '...' : '');
           const isHigh =
-            /critical|high|alert|strike|outage|jamming|kinetic|sev/i.test(file.title + ' ' + file.content) ||
+            /critical|high|alert|strike|outage|jamming|kinetic|sev/i.test(fileTitle + ' ' + file.content) ||
             idx === 0;
-          const coords = inferCoordsFromText(`${file.title} ${file.content}`, idx);
+          const coords = inferCoordsFromText(`${fileTitle} ${file.content}`, idx);
           return {
-            id: `vfs-pin-${file.id || idx}`,
-            title: file.title || 'S2 Wire Intelligence Dispatch',
+            id: `vfs-pin-${file.id ?? file.path}`,
+            title: fileTitle || 'S2 Wire Intelligence Dispatch',
             summary: summarySnippet || 'Structured SITREP dispatch archived in local VFS.',
             priority: isHigh ? 'HIGH' : 'MEDIUM',
             category: 'S2 WIRE SITREP',

@@ -3,7 +3,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, lazy, Suspense } from 'react';
+import { DeferredMount } from './components/DeferredMount';
 import { Check, RotateCcw, Smartphone } from 'lucide-react';
 import { ThemeProvider, useTheme, THEMES, ThemeId } from './context/ThemeContext';
 import {
@@ -36,7 +37,7 @@ import {
   subscribeModuleRegistry,
 } from './engine/moduleRegistry';
 import { TerminalWindow } from './components/TerminalWindow';
-import { SettingsModal } from './components/SettingsModal';
+const SettingsModal = lazy(() => import('./components/SettingsModal').then((m) => ({ default: m.SettingsModal })));
 import { loadLLMProviderConfig, getLLMAuthInfo } from './services/LLMProviderService';
 import { ThemeSettings } from './components/ThemeSettings';
 import { RetroErrorModal } from './components/RetroErrorModal';
@@ -89,26 +90,26 @@ import {
   ROOM_SOUNDSCAPE_PROFILES,
 } from './services/AmbientAudioService';
 
-import { AgentEditorModal } from './components/AgentEditorModal';
+const AgentEditorModal = lazy(() => import('./components/AgentEditorModal').then((m) => ({ default: m.AgentEditorModal })));
 import { hasProviderApiKey, SUPPORTED_VAULT_PROVIDERS } from './services/BYOKVault';
 import { saveAgentModelConfig } from './services/agentStore';
-import { NightShiftModal } from './components/NightShiftModal';
+const NightShiftModal = lazy(() => import('./components/NightShiftModal').then((m) => ({ default: m.NightShiftModal })));
 import { loadNightShiftNotifications, runPendingNightShiftTasks } from './services/NightShiftService';
 import { initClassifiedFeedIngestion } from './services/ClassifiedFeedService';
 import { backgroundWorkerEngine } from './services/WorkerService';
 import { InboxProvider } from './context/InboxContext';
 import { CustomPluginConnector, loadCustomPlugins, saveCustomPlugins } from './services/PluginMarketplaceService';
-import { CustomPluginModal } from './components/CustomPluginModal';
-import { TelemetryModal } from './components/TelemetryModal';
-import { ThreatMonitorModal } from './components/ThreatMonitorModal';
+const CustomPluginModal = lazy(() => import('./components/CustomPluginModal').then((m) => ({ default: m.CustomPluginModal })));
+const TelemetryModal = lazy(() => import('./components/TelemetryModal').then((m) => ({ default: m.TelemetryModal })));
+const ThreatMonitorModal = lazy(() => import('./components/ThreatMonitorModal').then((m) => ({ default: m.ThreatMonitorModal })));
 import { TacticalSatelliteMonitor, parseReconTargetToCoords } from './components/TacticalSatelliteMonitor';
-import { AgentFactoryModal } from './components/AgentFactoryModal';
+const AgentFactoryModal = lazy(() => import('./components/AgentFactoryModal').then((m) => ({ default: m.AgentFactoryModal })));
 import { recordTelemetryExecution } from './services/TelemetryStore';
 import { analyzePromptAmbiguity } from './engine/taskBriefEngine';
 import { TaskBriefModal, TaskBrief } from './components/TaskBriefModal';
 import { TerminalConsole } from './components/TerminalConsole';
-import { WorkspaceFileViewer } from './components/WorkspaceFileViewer';
-import { PlaybookModal } from './components/PlaybookModal';
+const WorkspaceFileViewer = lazy(() => import('./components/WorkspaceFileViewer').then((m) => ({ default: m.WorkspaceFileViewer })));
+const PlaybookModal = lazy(() => import('./components/PlaybookModal').then((m) => ({ default: m.PlaybookModal })));
 import { TaskQueuePanel } from './components/TaskQueuePanel';
 import {
   StrategyBoardTask,
@@ -124,15 +125,15 @@ import {
   DEFAULT_TARGET_PRESETS,
   executeIntelligencePlaybook,
 } from './engine/intelligencePlaybooks';
-import { SyncAccountModal } from './components/SyncAccountModal';
-import { FeedbackTerminal } from './components/FeedbackTerminal';
+const SyncAccountModal = lazy(() => import('./components/SyncAccountModal').then((m) => ({ default: m.SyncAccountModal })));
+const FeedbackTerminal = lazy(() => import('./components/FeedbackTerminal').then((m) => ({ default: m.FeedbackTerminal })));
 import {
   startAutoSync,
   getSyncStats,
   subscribeSyncStatus,
   SyncStats,
 } from './services/SyncService';
-import { PluginMarketplace } from './components/PluginMarketplace';
+const PluginMarketplace = lazy(() => import('./components/PluginMarketplace').then((m) => ({ default: m.PluginMarketplace })));
 import { ComposioService } from './services/ComposioService';
 import {
   TaskChain,
@@ -145,8 +146,9 @@ import {
 } from './services/TaskChainService';
 import { writeWorkspaceFile } from './engine/storageManager';
 import { TaskChainHUD } from './components/TaskChainHUD';
-import { PluginAuthModal, PluginAuthTarget } from './components/PluginAuthModal';
-import { FieldManualModal } from './components/FieldManualModal';
+import type { PluginAuthTarget } from './components/PluginAuthModal';
+const PluginAuthModal = lazy(() => import('./components/PluginAuthModal').then((m) => ({ default: m.PluginAuthModal })));
+const FieldManualModal = lazy(() => import('./components/FieldManualModal').then((m) => ({ default: m.FieldManualModal })));
 import { ErrorBoundary } from './components/ErrorBoundary';
 import {
   isPluginAuthenticated,
@@ -2279,13 +2281,21 @@ const CommandCenterContent: React.FC = () => {
       </div>
 
       {pluginsSubTab === 'composio' ? (
-        <PluginMarketplace
-          onPluginStatusChange={() => {
-            setPlugins((prev) => [...prev]);
-            syncComposioAccounts();
-          }}
-          onClose={() => setActiveTab('hq')}
-        />
+        <Suspense
+          fallback={
+            <div className="p-4 font-mono-tabular text-xs text-[#c89d66] animate-pulse">
+              [LOADING PLUGIN MARKETPLACE...]
+            </div>
+          }
+        >
+          <PluginMarketplace
+            onPluginStatusChange={() => {
+              setPlugins((prev) => [...prev]);
+              syncComposioAccounts();
+            }}
+            onClose={() => setActiveTab('hq')}
+          />
+        </Suspense>
       ) : (
         <div className="rounded-sm bg-[#121110] border border-[#b47b38] shadow-[0_0_20px_rgba(0,0,0,0.65)] overflow-hidden">
           <div className="bg-[#231b12] border-b border-[#4a351d] px-3.5 py-2 flex items-center justify-between">
@@ -3122,25 +3132,27 @@ const CommandCenterContent: React.FC = () => {
 
       <OfflineBanner />
 
-      <SettingsModal
-        isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-        preferences={preferences}
-        onUpdatePreferences={handleUpdatePreferences}
-        serverReady={serverReady}
-        vaultReport={vaultReport}
-        onRevalidateVault={runStartupVaultValidation}
-        currentRoom={currentRoom}
-        onSelectRoom={(room) => {
-          setCurrentRoom(room);
-          playBeep('tap');
-        }}
-        onOpenWorkspaceFiles={() => setIsWorkspaceFilesOpen(true)}
-        onOpenSyncModal={() => setIsSyncModalOpen(true)}
-        onOpenFieldManual={() => setIsFieldManualOpen(true)}
-        onOpenPluginAuth={handleOpenPluginAuth}
-        onOpenFeedback={() => setIsFeedbackOpen(true)}
-      />
+      <DeferredMount when={isSettingsOpen}>
+        <SettingsModal
+          isOpen={isSettingsOpen}
+          onClose={() => setIsSettingsOpen(false)}
+          preferences={preferences}
+          onUpdatePreferences={handleUpdatePreferences}
+          serverReady={serverReady}
+          vaultReport={vaultReport}
+          onRevalidateVault={runStartupVaultValidation}
+          currentRoom={currentRoom}
+          onSelectRoom={(room) => {
+            setCurrentRoom(room);
+            playBeep('tap');
+          }}
+          onOpenWorkspaceFiles={() => setIsWorkspaceFilesOpen(true)}
+          onOpenSyncModal={() => setIsSyncModalOpen(true)}
+          onOpenFieldManual={() => setIsFieldManualOpen(true)}
+          onOpenPluginAuth={handleOpenPluginAuth}
+          onOpenFeedback={() => setIsFeedbackOpen(true)}
+        />
+      </DeferredMount>
 
       <RetroErrorModal
         error={isRetroErrorModalOpen ? retroError : null}
@@ -3159,51 +3171,59 @@ const CommandCenterContent: React.FC = () => {
         }}
       />
 
-      <AgentEditorModal
-        isOpen={Boolean(editingAgentId)}
-        agent={editingCrewAgent}
-        onClose={() => setEditingAgentId(null)}
-        onSave={(updates) => {
-          if (editingAgentId) {
-            updateAgentConfig(editingAgentId, updates);
-            if (updates.provider && updates.model) {
-              saveAgentModelConfig(editingAgentId, updates.provider, updates.model);
+      <DeferredMount when={Boolean(editingAgentId)}>
+        <AgentEditorModal
+          isOpen={Boolean(editingAgentId)}
+          agent={editingCrewAgent}
+          onClose={() => setEditingAgentId(null)}
+          onSave={(updates) => {
+            if (editingAgentId) {
+              updateAgentConfig(editingAgentId, updates);
+              if (updates.provider && updates.model) {
+                saveAgentModelConfig(editingAgentId, updates.provider, updates.model);
+              }
             }
-          }
-        }}
-        onClearMemory={() => {
-          if (editingAgentId) {
-            clearAgentMemory(editingAgentId);
-          }
-        }}
-      />
+          }}
+          onClearMemory={() => {
+            if (editingAgentId) {
+              clearAgentMemory(editingAgentId);
+            }
+          }}
+        />
+      </DeferredMount>
 
-      <NightShiftModal
-        isOpen={isNightShiftOpen}
-        onClose={() => setIsNightShiftOpen(false)}
-        enabledPlugins={plugins.filter((p) => p.connected).map((p) => p.id)}
-      />
+      <DeferredMount when={isNightShiftOpen}>
+        <NightShiftModal
+          isOpen={isNightShiftOpen}
+          onClose={() => setIsNightShiftOpen(false)}
+          enabledPlugins={plugins.filter((p) => p.connected).map((p) => p.id)}
+        />
+      </DeferredMount>
 
 
 
-      <CustomPluginModal
-        isOpen={isCustomPluginModalOpen}
-        onClose={() => setIsCustomPluginModalOpen(false)}
-        editingPlugin={editingCustomPlugin}
-        onSave={(plugin) => {
-          const exists = customPlugins.some((p) => p.id === plugin.id);
-          const next = exists
-            ? customPlugins.map((p) => (p.id === plugin.id ? plugin : p))
-            : [plugin, ...customPlugins];
-          setCustomPlugins(next);
-          saveCustomPlugins(next);
-        }}
-      />
+      <DeferredMount when={isCustomPluginModalOpen}>
+        <CustomPluginModal
+          isOpen={isCustomPluginModalOpen}
+          onClose={() => setIsCustomPluginModalOpen(false)}
+          editingPlugin={editingCustomPlugin}
+          onSave={(plugin) => {
+            const exists = customPlugins.some((p) => p.id === plugin.id);
+            const next = exists
+              ? customPlugins.map((p) => (p.id === plugin.id ? plugin : p))
+              : [plugin, ...customPlugins];
+            setCustomPlugins(next);
+            saveCustomPlugins(next);
+          }}
+        />
+      </DeferredMount>
 
-      <TelemetryModal
-        isOpen={isTelemetryOpen}
-        onClose={() => setIsTelemetryOpen(false)}
-      />
+      <DeferredMount when={isTelemetryOpen}>
+        <TelemetryModal
+          isOpen={isTelemetryOpen}
+          onClose={() => setIsTelemetryOpen(false)}
+        />
+      </DeferredMount>
 
       {/* Tactical Satellite Recon Monitor Responsive Popup Modal */}
       {isReconOverlayOpen && (
@@ -3253,76 +3273,80 @@ const CommandCenterContent: React.FC = () => {
         </div>
       )}
 
-      <ThreatMonitorModal
-        isOpen={isThreatMonitorOpen}
-        onClose={() => setIsThreatMonitorOpen(false)}
-        onOpenVaultFile={() => {
-          setIsThreatMonitorOpen(false);
-          setIsWorkspaceFilesOpen(true);
-        }}
-        onOpenLlmSettings={() => {
-          setIsThreatMonitorOpen(false);
-          setIsSettingsOpen(true);
-        }}
-        onInjectTerminalReport={async ({ agentName, title, markdown, savedFilePath }) => {
-          const newCard: AgentExecutionCard = {
-            id: `threat_recon_${Date.now()}`,
-            agentName,
-            cardTitle: title,
-            dialogue: markdown,
-            timestamp: new Date().toISOString(),
-            prompt: `Autonomous Recon Sweep: ${title}`,
-            actionCategory: 'THREAT CORRELATION & RECON MONITOR',
-            themeId: theme.id,
-            tokenEstimate: 620,
-            steps: [
-              { label: 'Macro-to-Micro Threat Correlation', detail: 'Cross-referenced subsea fiber, grid, CISA KEV & logistics feeds', status: 'completed' },
-              { label: 'VFS Vault Archival', detail: savedFilePath ? `Saved dossier to /${savedFilePath}` : 'Archived to local IndexedDB Vault', status: 'verified' },
-            ],
-            toolCalls: [
-              {
-                pluginId: 'osint_threat_matrix',
-                toolName: 'threat_correlation_recon_sweep',
-                args: { savedFilePath: savedFilePath || '/intel/dossiers/' },
-                resultSummary: title,
-              },
-            ],
-          };
-          const nextCards = [newCard, ...executionCards];
-          setExecutionCards(nextCards);
-          saveExecutionCards(nextCards);
-          setDialogueText(`[RECON DOSSIER FILED] ${agentName}: "${title}" archived to VFS Vault (${savedFilePath || '/intel/dossiers/'}) and posted to Terminal Feed.`);
-          playBeep('complete');
-          await appendCommandLedgerEntry({
-            timestamp: newCard.timestamp,
-            command_input: newCard.prompt,
-            involved_agent: agentName,
-            tool_used: 'threat_correlation_recon_sweep',
-            result_summary: title,
-            success_boost_achieved: 15,
-          });
-          await refreshCommandLedger();
-        }}
-      />
+      <DeferredMount when={isThreatMonitorOpen}>
+        <ThreatMonitorModal
+          isOpen={isThreatMonitorOpen}
+          onClose={() => setIsThreatMonitorOpen(false)}
+          onOpenVaultFile={() => {
+            setIsThreatMonitorOpen(false);
+            setIsWorkspaceFilesOpen(true);
+          }}
+          onOpenLlmSettings={() => {
+            setIsThreatMonitorOpen(false);
+            setIsSettingsOpen(true);
+          }}
+          onInjectTerminalReport={async ({ agentName, title, markdown, savedFilePath }) => {
+            const newCard: AgentExecutionCard = {
+              id: `threat_recon_${Date.now()}`,
+              agentName,
+              cardTitle: title,
+              dialogue: markdown,
+              timestamp: new Date().toISOString(),
+              prompt: `Autonomous Recon Sweep: ${title}`,
+              actionCategory: 'THREAT CORRELATION & RECON MONITOR',
+              themeId: theme.id,
+              tokenEstimate: 620,
+              steps: [
+                { label: 'Macro-to-Micro Threat Correlation', detail: 'Cross-referenced subsea fiber, grid, CISA KEV & logistics feeds', status: 'completed' },
+                { label: 'VFS Vault Archival', detail: savedFilePath ? `Saved dossier to /${savedFilePath}` : 'Archived to local IndexedDB Vault', status: 'verified' },
+              ],
+              toolCalls: [
+                {
+                  pluginId: 'osint_threat_matrix',
+                  toolName: 'threat_correlation_recon_sweep',
+                  args: { savedFilePath: savedFilePath || '/intel/dossiers/' },
+                  resultSummary: title,
+                },
+              ],
+            };
+            const nextCards = [newCard, ...executionCards];
+            setExecutionCards(nextCards);
+            saveExecutionCards(nextCards);
+            setDialogueText(`[RECON DOSSIER FILED] ${agentName}: "${title}" archived to VFS Vault (${savedFilePath || '/intel/dossiers/'}) and posted to Terminal Feed.`);
+            playBeep('complete');
+            await appendCommandLedgerEntry({
+              timestamp: newCard.timestamp,
+              command_input: newCard.prompt,
+              involved_agent: agentName,
+              tool_used: 'threat_correlation_recon_sweep',
+              result_summary: title,
+              success_boost_achieved: 15,
+            });
+            await refreshCommandLedger();
+          }}
+        />
+      </DeferredMount>
 
-      <AgentFactoryModal
-        isOpen={isAgentFactoryOpen}
-        onClose={() => setIsAgentFactoryOpen(false)}
-        onRecruit={(payload) => {
-          const newId = recruitAgent(payload);
-          setAgentRooms((prev) => ({
-            ...prev,
-            [newId]: payload.currentRoom,
-          }));
-          setActiveAgentId(newId);
-          setCurrentRoom(payload.currentRoom);
-          setDialogueText(
-            `[NEW OPERATIVE RECRUITED] ${payload.customName} (${payload.role}) deployed to ${
-              getRoomMetadata(payload.currentRoom)?.shortBadge || payload.currentRoom
-            }.`
-          );
-        }}
-      />
+      <DeferredMount when={isAgentFactoryOpen}>
+        <AgentFactoryModal
+          isOpen={isAgentFactoryOpen}
+          onClose={() => setIsAgentFactoryOpen(false)}
+          onRecruit={(payload) => {
+            const newId = recruitAgent(payload);
+            setAgentRooms((prev) => ({
+              ...prev,
+              [newId]: payload.currentRoom,
+            }));
+            setActiveAgentId(newId);
+            setCurrentRoom(payload.currentRoom);
+            setDialogueText(
+              `[NEW OPERATIVE RECRUITED] ${payload.customName} (${payload.role}) deployed to ${
+                getRoomMetadata(payload.currentRoom)?.shortBadge || payload.currentRoom
+              }.`
+            );
+          }}
+        />
+      </DeferredMount>
 
       <TaskBriefModal
         isOpen={taskBriefState.isOpen}
@@ -3378,54 +3402,66 @@ const CommandCenterContent: React.FC = () => {
         }}
       />
 
-      <WorkspaceFileViewer
-        isOpen={isWorkspaceFilesOpen}
-        onClose={() => setIsWorkspaceFilesOpen(false)}
-      />
+      <DeferredMount when={isWorkspaceFilesOpen}>
+        <WorkspaceFileViewer
+          isOpen={isWorkspaceFilesOpen}
+          onClose={() => setIsWorkspaceFilesOpen(false)}
+        />
+      </DeferredMount>
 
-      <PlaybookModal
-        isOpen={isPlaybookModalOpen}
-        onClose={() => setIsPlaybookModalOpen(false)}
-        playbook={activePlaybook}
-        isRunning={isPlaybookRunning}
-        activeStageIndex={playbookStageIndex}
-        stageLogs={playbookLogs}
-        result={playbookResult}
-        onRunPlaybook={(target) => {
-          if (activePlaybook) {
-            handleRunPlaybook(activePlaybook, target);
-          }
-        }}
-        onOpenInVfs={(filePath) => {
-          setIsPlaybookModalOpen(false);
-          setIsWorkspaceFilesOpen(true);
-        }}
-      />
+      <DeferredMount when={isPlaybookModalOpen}>
+        <PlaybookModal
+          isOpen={isPlaybookModalOpen}
+          onClose={() => setIsPlaybookModalOpen(false)}
+          playbook={activePlaybook}
+          isRunning={isPlaybookRunning}
+          activeStageIndex={playbookStageIndex}
+          stageLogs={playbookLogs}
+          result={playbookResult}
+          onRunPlaybook={(target) => {
+            if (activePlaybook) {
+              handleRunPlaybook(activePlaybook, target);
+            }
+          }}
+          onOpenInVfs={(filePath) => {
+            setIsPlaybookModalOpen(false);
+            setIsWorkspaceFilesOpen(true);
+          }}
+        />
+      </DeferredMount>
 
-      <SyncAccountModal
-        isOpen={isSyncModalOpen}
-        onClose={() => setIsSyncModalOpen(false)}
-      />
+      <DeferredMount when={isSyncModalOpen}>
+        <SyncAccountModal
+          isOpen={isSyncModalOpen}
+          onClose={() => setIsSyncModalOpen(false)}
+        />
+      </DeferredMount>
 
-      <FeedbackTerminal
-        isOpen={isFeedbackOpen}
-        onClose={() => setIsFeedbackOpen(false)}
-      />
+      <DeferredMount when={isFeedbackOpen}>
+        <FeedbackTerminal
+          isOpen={isFeedbackOpen}
+          onClose={() => setIsFeedbackOpen(false)}
+        />
+      </DeferredMount>
 
-      <PluginAuthModal
-        isOpen={isPluginAuthModalOpen}
-        onClose={() => setIsPluginAuthModalOpen(false)}
-        plugin={activeAuthPlugin}
-        onAuthorized={handlePluginAuthorized}
-        onRevoked={handlePluginRevoked}
-      />
+      <DeferredMount when={isPluginAuthModalOpen}>
+        <PluginAuthModal
+          isOpen={isPluginAuthModalOpen}
+          onClose={() => setIsPluginAuthModalOpen(false)}
+          plugin={activeAuthPlugin}
+          onAuthorized={handlePluginAuthorized}
+          onRevoked={handlePluginRevoked}
+        />
+      </DeferredMount>
 
       <ErrorBoundary fallbackTitle="FIELD MANUAL VIEWER RECOVERY">
-        <FieldManualModal
-          isOpen={isFieldManualOpen}
-          onClose={() => setIsFieldManualOpen(false)}
-          onSelectPrompt={(samplePrompt) => handleExecuteDirective(samplePrompt)}
-        />
+        <DeferredMount when={isFieldManualOpen}>
+          <FieldManualModal
+            isOpen={isFieldManualOpen}
+            onClose={() => setIsFieldManualOpen(false)}
+            onSelectPrompt={(samplePrompt) => handleExecuteDirective(samplePrompt)}
+          />
+        </DeferredMount>
       </ErrorBoundary>
 
       {/* Mobile Portrait Orientation Lock Prompt */}

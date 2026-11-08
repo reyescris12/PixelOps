@@ -50,6 +50,11 @@ export function getActiveMeetingParticipants(allAgents: any[]): any[] {
   );
 }
 
+// Track which roundtable session IDs have already played their sequential speaker reveal
+// so switching tabs does not reset or re-type previous meeting call responses.
+const animatedRoundtableSessionIds = new Set<string>();
+let initialRoundtableSeeded = false;
+
 export const TownHallRoundtablePanel: React.FC<TownHallRoundtablePanelProps> = ({
   sessions,
   isExecutingMeeting,
@@ -172,10 +177,29 @@ export const TownHallRoundtablePanel: React.FC<TownHallRoundtablePanelProps> = (
     return () => clearInterval(timer);
   }, []);
 
-  // Whenever a new roundtable session arrives at index 0, auto-step through the speakers sequentially
+  // Whenever a brand-new roundtable session arrives at index 0, auto-step through the speakers sequentially.
+  // Existing sessions remain fully revealed when switching tabs so responses do not retype.
   const latestSessionId = sessions[0]?.id;
   useEffect(() => {
+    if (!initialRoundtableSeeded) {
+      initialRoundtableSeeded = true;
+      for (const s of sessions) {
+        if (s?.id) animatedRoundtableSessionIds.add(s.id);
+      }
+      setVisibleTurnCount(99);
+      setIsAutoStepping(false);
+      return;
+    }
+
     if (!sessions[0] || !sessions[0].turns || sessions[0].turns.length === 0) return;
+
+    if (animatedRoundtableSessionIds.has(sessions[0].id)) {
+      setVisibleTurnCount(99);
+      setIsAutoStepping(false);
+      return;
+    }
+
+    animatedRoundtableSessionIds.add(sessions[0].id);
     setSelectedSessionIdx(0);
     setVisibleTurnCount(1);
     setIsAutoStepping(true);

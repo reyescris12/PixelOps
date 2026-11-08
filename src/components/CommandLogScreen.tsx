@@ -70,7 +70,7 @@ export const CommandLogScreen: React.FC<CommandLogScreenProps> = ({
           <div className="flex items-center gap-2 min-w-0">
             <Shield className="w-4 h-4 text-[#e59838] shrink-0" />
             <span className="font-mono-tabular text-xs sm:text-sm font-bold tracking-wider text-[#e59838] uppercase truncate">
-              IMMUTABLE COMMAND LOG · DEXIE LEDGER ({entries.length}/50)
+              IMMUTABLE COMMAND LOG · DEXIE LEDGER
             </span>
           </div>
 

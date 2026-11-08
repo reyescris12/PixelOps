@@ -896,7 +896,7 @@ const CommandCenterContent: React.FC = () => {
 
   const handleRoomChange = (nextRoom: RoomId) => {
     setCurrentRoom(nextRoom);
-    if (!isExecuting) {
+    if (!isExecuting && executionCards.length === 0 && roundtableSessions.length === 0) {
       setDialogueText(getRoomMetadata(nextRoom).defaultBriefing);
     }
   };
@@ -1672,7 +1672,8 @@ const CommandCenterContent: React.FC = () => {
   );
 
   // Trigger Town Hall Meeting: Summons all active agents from their sectors into the central War Room roundtable
-  const handleCallTownHallMeeting = () => {
+  // Preserves existing dialogueText if a previous response or roundtable session already exists.
+  const handleCallTownHallMeeting = (forceSummonBanner: boolean = false) => {
     playBeep('complete');
     setActiveTab('hq');
     setHqSubView('town_hall');
@@ -1689,10 +1690,12 @@ const CommandCenterContent: React.FC = () => {
       return next;
     });
 
-    const namesList = crewAgents.map((a) => a.customName).join(', ');
-    setDialogueText(
-      `[TOWN HALL SUMMON] Calling ${namesList} from all sectors to the central War Room Roundtable...`
-    );
+    if (forceSummonBanner || (roundtableSessions.length === 0 && executionCards.length === 0)) {
+      const namesList = crewAgents.map((a) => a.customName).join(', ');
+      setDialogueText(
+        `[TOWN HALL SUMMON] Calling ${namesList} from all sectors to the central War Room Roundtable...`
+      );
+    }
   };
 
   // Convene Multi-Agent Gemini Roundtable Session
@@ -2806,7 +2809,7 @@ const CommandCenterContent: React.FC = () => {
                     </button>
                     <button
                       type="button"
-                      onClick={handleCallTownHallMeeting}
+                      onClick={() => handleCallTownHallMeeting(false)}
                       className={`px-3 py-1 font-mono-tabular text-xs cursor-pointer transition-colors flex items-center gap-1 ${
                         hqSubView === 'town_hall'
                           ? 'bg-[#38bdf8] text-[#0c1017] font-bold'
@@ -2814,7 +2817,7 @@ const CommandCenterContent: React.FC = () => {
                       }`}
                       title={`Summon all ${crewAgents.length} active agents to the War Room for a Town Hall Roundtable`}
                     >
-                      <span>📣 Call Meeting ({roundtableSessions.length})</span>
+                      <span>📣 Call Meeting</span>
                     </button>
                     <button
                       type="button"
@@ -2830,7 +2833,7 @@ const CommandCenterContent: React.FC = () => {
                           : 'text-[#c89d66] hover:text-[#f3ead8]'
                       }`}
                     >
-                      📜 Command Log ({commandLedger.length})
+                      📜 Command Log
                     </button>
                   </div>
                   <span className="hidden sm:inline font-mono-tabular text-[11px] text-[#9c8265]">

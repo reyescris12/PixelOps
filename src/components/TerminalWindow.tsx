@@ -28,6 +28,10 @@ interface TerminalWindowProps {
   onOpenFieldManual?: () => void;
 }
 
+// Track the last fully rendered briefing text in module scope so switching between tabs
+// (e.g., Briefing Terminal <-> Call Meeting) does not re-type the previous response.
+let lastAnimatedBriefingText: string | null = null;
+
 export const TerminalWindow: React.FC<TerminalWindowProps> = ({
   dialogueText,
   isExecuting,
@@ -40,13 +44,18 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({
   onTriggerErrorDrill,
   onDismissError,
   onOpenCommandLog,
-  ledgerCount = 0,
   onOpenFieldManual,
 }) => {
   const { activeAgent, playBeep } = useTheme();
   const { getCrewAgent } = useCrew();
   const activeCrewName = getCrewAgent(activeAgent.id)?.customName || activeAgent.name;
-  const [displayedText, setDisplayedText] = useState('');
+  const fullBriefingText = isExecuting
+    ? `Processing directive for ${activeCrewName}...`
+    : (dialogueText || 'Command Center online. Select an operative and transmit your directive.');
+
+  const [displayedText, setDisplayedText] = useState(() =>
+    lastAnimatedBriefingText === fullBriefingText ? fullBriefingText : ''
+  );
   const [promptInput, setPromptInput] = useState<string>(() => loadDraftPrompt());
   const [showLogs, setShowLogs] = useState(false);
   const [attachment, setAttachment] = useState<{
@@ -61,15 +70,19 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({
     saveDraftPrompt(promptInput);
   }, [promptInput]);
 
-  const fullBriefingText = isExecuting
-    ? `Processing directive for ${activeCrewName}...`
-    : (dialogueText || 'Command Center online. Select an operative and transmit your directive.');
-
-  // Retro Typewriter Effect
+  // Retro Typewriter Effect — only animates when a new response/directive text arrives
   useEffect(() => {
-    setDisplayedText('');
-    if (!fullBriefingText) return;
+    if (!fullBriefingText) {
+      setDisplayedText('');
+      return;
+    }
 
+    if (lastAnimatedBriefingText === fullBriefingText) {
+      setDisplayedText(fullBriefingText);
+      return;
+    }
+
+    setDisplayedText('');
     let index = 0;
     const timer = setInterval(() => {
       index += 2;
@@ -78,11 +91,15 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({
         playBeep('tick');
       }
       if (index >= fullBriefingText.length) {
+        lastAnimatedBriefingText = fullBriefingText;
         clearInterval(timer);
       }
     }, 18);
 
-    return () => clearInterval(timer);
+    return () => {
+      lastAnimatedBriefingText = fullBriefingText;
+      clearInterval(timer);
+    };
   }, [fullBriefingText, playBeep]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -191,9 +208,9 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({
                   onOpenCommandLog();
                 }}
                 className="px-2 py-0.5 bg-[#1b140d] border border-[#6e5233] text-[11px] font-mono-tabular text-[#e59838] hover:text-[#f3ead8] hover:border-[#e59838] flex items-center gap-1 cursor-pointer"
-                title="Open Immutable Command Log (Last 50 Commands)"
+                title="Open Immutable Command Log"
               >
-                <span>📜 Command Log ({ledgerCount})</span>
+                <span>📜 Command Log</span>
               </button>
             )}
             <button
@@ -204,7 +221,7 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({
               }}
               className="text-[11px] font-mono-tabular text-[#c89d66] hover:text-[#f3ead8] flex items-center gap-1 cursor-pointer"
             >
-              <span>Cards ({executionCards.length})</span>
+              <span>Cards</span>
               {showLogs ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
             </button>
           </div>

@@ -4416,6 +4416,322 @@ async function executeAndFormatExternalTool(opts: {
  * Dynamically parses agent directive intent and extracts parameters for external tools
  * (Gmail, GitHub, Slack, Calendar, Notion, Linear) to execute live on connected accounts.
  */
+
+/**
+ * Direct heuristic executor for workspace file operations:
+ * consolidate, merge, audit, delete, organize, edit, list
+ */
+async function tryParseAndExecuteWorkspaceDirective(params: {
+  prompt: string;
+  themeId: ThemeId;
+  activeAgentName: string;
+  activeAgentRole: string;
+  attachment?: { data: string; mimeType: string; name: string } | null;
+  onFunctionCallTriggered?: (info: {
+    toolName: string;
+    args: Record<string, any>;
+    targetRoom: RoomId;
+    targetStationId: string;
+    taskTag: string;
+  }) => void;
+}): Promise<AgentExecutionCard | null> {
+  const rawPrompt = (params.prompt || '').trim();
+  const lower = rawPrompt.toLowerCase();
+
+  // CONSOLIDATE / MERGE INTENT
+  const isConsolidate =
+    /\b(consolidate|merge|combine|unify)\b/i.test(lower) &&
+    /\b(file|files|report|reports|intel|dossier|dossiers|workspace)\b/i.test(lower);
+
+  // AUDIT INTENT
+  const isAudit =
+    /\b(audit|inspect|scan)\b/i.test(lower) &&
+    /\b(workspace|vfs|files|storage|directory)\b/i.test(lower);
+
+  // DELETE / PURGE INTENT
+  const isDelete =
+    /\b(delete|remove|purge|erase|drop)\b/i.test(lower) &&
+    /\b(file|files|report|reports|intel|dossier|dossiers|archive)\b/i.test(lower);
+
+  // ORGANIZE / MOVE INTENT
+  const isOrganize =
+    /\b(organize|move|sort|categorize)\b/i.test(lower) &&
+    /\b(file|files|folder|into|reports|intel|archive|logs)\b/i.test(lower);
+
+  if (!isConsolidate && !isAudit && !isDelete && !isOrganize) {
+    return null;
+  }
+
+  const dest = resolveToolWorkflowDestination('fs_storage_manager');
+
+  if (isConsolidate) {
+    params.onFunctionCallTriggered?.({
+      toolName: 'fs_storage_manager',
+      args: { action: 'consolidate' },
+      targetRoom: dest.targetRoom,
+      targetStationId: dest.targetStationId,
+      taskTag: 'CONSOLIDATE',
+    });
+
+    const fileMatches = rawPrompt.match(/([\w\-_\/]+\.(?:md|json|txt|log))/gi) || [];
+    let sourcePaths = fileMatches.map((f) => f.trim()).filter(Boolean);
+
+    if (sourcePaths.length === 0) {
+      try {
+        const allFiles = await listWorkspaceFiles();
+        if (/intel/i.test(lower)) {
+          sourcePaths = allFiles.filter((f) => f.category === 'intel' || f.path.startsWith('intel/')).slice(0, 5).map((f) => f.path);
+        } else if (/report/i.test(lower)) {
+          sourcePaths = allFiles.filter((f) => f.category === 'reports' || f.path.startsWith('reports/')).slice(0, 5).map((f) => f.path);
+        }
+        if (sourcePaths.length < 2) {
+          sourcePaths = allFiles.filter((f) => !f.path.startsWith('archive/')).slice(0, 4).map((f) => f.path);
+        }
+      } catch {}
+    }
+
+    if (sourcePaths.length === 0) {
+      return {
+        id: 'card-' + Date.now(),
+        prompt: rawPrompt,
+        dialogue: params.activeAgentName + ' (' + params.activeAgentRole + '): Consolidation aborted - no matching workspace files found to combine.',
+        cardTitle: 'Workspace Consolidation Aborted',
+        actionCategory: 'Storage',
+        steps: [
+          { label: 'Scan Workspace Files', detail: 'No active source files identified', status: 'completed' },
+          { label: 'Consolidation Cancelled', detail: 'Requires at least one workspace file', status: 'verified' },
+        ],
+        toolCalls: [],
+        tokenEstimate: 40,
+        agentName: params.activeAgentName,
+        themeId: params.themeId,
+        timestamp: new Date().toISOString(),
+        hasAttachment: Boolean(params.attachment),
+      };
+    }
+
+    try {
+      const topicMatch = rawPrompt.match(/(?:for|about|on|covering|topic|named|titled)\s+["']?([^"',\.]+)/i);
+      const topic = topicMatch ? topicMatch[1].trim() : undefined;
+
+      const targetPathMatch = rawPrompt.match(/(?:to|into|target|as)\s+([\w\-_\/]+\.md)/i);
+      const targetPath = targetPathMatch ? targetPathMatch[1].trim() : undefined;
+
+      const result = await consolidateWorkspaceFiles({
+        sourcePaths,
+        targetPath,
+        archiveSources: true,
+        leadOperative: params.activeAgentName + ' (' + params.activeAgentRole + ')',
+        topic,
+      });
+
+      const executedMeta = {
+        pluginId: 'fs_storage',
+        toolName: 'fs_storage_manager',
+        args: { action: 'consolidate', sourcePaths, targetPath: result.targetPath },
+        resultSummary: 'Merged ' + result.consolidatedCount + ' files into ' + result.targetPath + ' (' + result.totalBytesCombined + ' bytes)',
+        livePayload: result,
+        targetRoom: dest.targetRoom,
+        targetStationId: dest.targetStationId,
+      };
+
+      const dialogue = params.activeAgentName + ' (' + params.activeAgentRole + '): Successfully consolidated ' + result.consolidatedCount + ' workspace file(s) into single unified dossier `' + result.targetPath + '` (' + result.totalBytesCombined + ' bytes).\n\n• **Unified Dossier:** `' + result.targetPath + '`\n• **Sources Combined:** ' + sourcePaths.map((p) => '`' + p + '`').join(', ') + '\n• **Archived:** ' + (result.archivedPaths.length ? result.archivedPaths.map((p) => '`' + p + '`').join(', ') : 'None') + '\n\nAll redundant intelligence and duplicate headers have been scrubbed. View anytime in the Files drawer (📁 Files) or via CLI (`pixelops cat ' + result.targetPath + '`).';
+
+      return {
+        id: 'card-' + Date.now(),
+        prompt: rawPrompt,
+        dialogue,
+        cardTitle: 'Workspace Consolidation Complete',
+        actionCategory: 'Storage',
+        steps: [
+          { label: 'Source Ingestion', detail: 'Read ' + sourcePaths.length + ' workspace record(s)', status: 'completed' },
+          { label: 'Deduplication & Merge', detail: 'Combined into unified dossier ' + result.targetPath, status: 'verified' },
+          { label: 'Source Archival', detail: 'Moved ' + result.archivedPaths.length + ' source(s) into archive/', status: 'completed' },
+        ],
+        toolCalls: [executedMeta],
+        tokenEstimate: 95,
+        agentName: params.activeAgentName,
+        themeId: params.themeId,
+        timestamp: new Date().toISOString(),
+        hasAttachment: Boolean(params.attachment),
+      };
+    } catch (err: any) {
+      return {
+        id: 'card-' + Date.now(),
+        prompt: rawPrompt,
+        dialogue: params.activeAgentName + ' (' + params.activeAgentRole + '): Consolidation error: ' + (err?.message || 'Storage error'),
+        cardTitle: 'Consolidation Error',
+        actionCategory: 'Storage',
+        steps: [
+          { label: 'Consolidation Failed', detail: err?.message || 'Unknown error', status: 'verified' },
+        ],
+        toolCalls: [],
+        tokenEstimate: 40,
+        agentName: params.activeAgentName,
+        themeId: params.themeId,
+        timestamp: new Date().toISOString(),
+        hasAttachment: Boolean(params.attachment),
+      };
+    }
+  }
+
+  if (isAudit) {
+    params.onFunctionCallTriggered?.({
+      toolName: 'fs_storage_manager',
+      args: { action: 'audit' },
+      targetRoom: dest.targetRoom,
+      targetStationId: dest.targetStationId,
+      taskTag: 'AUDIT',
+    });
+
+    try {
+      const audit = await auditWorkspaceFiles();
+      const executedMeta = {
+        pluginId: 'fs_storage',
+        toolName: 'fs_storage_manager',
+        args: { action: 'audit' },
+        resultSummary: 'Audited ' + audit.totalFiles + ' workspace file(s) (' + Math.round(audit.totalBytes / 1024) + ' KB) | Status: ' + audit.integrityStatus,
+        livePayload: audit,
+        targetRoom: dest.targetRoom,
+        targetStationId: dest.targetStationId,
+      };
+
+      const dialogue = params.activeAgentName + ' (' + params.activeAgentRole + '): Workspace File Audit complete.\n\n• **Total Records:** ' + audit.totalFiles + ' file(s) (' + Math.round(audit.totalBytes / 1024) + ' KB)\n• **Integrity Status:** ' + audit.integrityStatus + '\n• **Duplicates Detected:** ' + audit.duplicateContentGroups.length + ' group(s)\n• **Stale Records (>7d):** ' + audit.staleFiles.length + '\n• **Empty Records:** ' + audit.emptyFiles.length + '\n\nCategories: ' + Object.entries(audit.categories).map(([c, n]) => c + ': ' + n).join(' | ');
+
+      return {
+        id: 'card-' + Date.now(),
+        prompt: rawPrompt,
+        dialogue,
+        cardTitle: 'Workspace File Audit',
+        actionCategory: 'Storage',
+        steps: [
+          { label: 'Scanned IndexedDB VFS', detail: 'Audited ' + audit.totalFiles + ' file(s)', status: 'completed' },
+          { label: 'Duplicate Detection', detail: 'Found ' + audit.duplicateContentGroups.length + ' duplicate group(s)', status: 'verified' },
+          { label: 'Storage Quota Verified', detail: 'Total size: ' + Math.round(audit.totalBytes / 1024) + ' KB', status: 'completed' },
+        ],
+        toolCalls: [executedMeta],
+        tokenEstimate: 85,
+        agentName: params.activeAgentName,
+        themeId: params.themeId,
+        timestamp: new Date().toISOString(),
+        hasAttachment: Boolean(params.attachment),
+      };
+    } catch (err: any) {
+      // Fall through
+    }
+  }
+
+  if (isDelete) {
+    const fileMatches = rawPrompt.match(/([\w\-_\/]+\.(?:md|json|txt|log))/gi) || [];
+    const pathsToDelete = fileMatches.map((f) => f.trim()).filter(Boolean);
+
+    if (pathsToDelete.length > 0) {
+      params.onFunctionCallTriggered?.({
+        toolName: 'fs_storage_manager',
+        args: { action: 'delete', sourcePaths: pathsToDelete },
+        targetRoom: dest.targetRoom,
+        targetStationId: dest.targetStationId,
+        taskTag: 'PURGE',
+      });
+
+      const deletedCount = await deleteMultipleWorkspaceFiles(pathsToDelete);
+      const executedMeta = {
+        pluginId: 'fs_storage',
+        toolName: 'fs_storage_manager',
+        args: { action: 'delete', sourcePaths: pathsToDelete },
+        resultSummary: 'Deleted ' + deletedCount + ' workspace file(s)',
+        livePayload: { deletedCount, paths: pathsToDelete },
+        targetRoom: dest.targetRoom,
+        targetStationId: dest.targetStationId,
+      };
+
+      const dialogue = params.activeAgentName + ' (' + params.activeAgentRole + '): Successfully deleted ' + deletedCount + ' file(s) from workspace:\n' + pathsToDelete.map((p) => '• `' + p + '`').join('\n') + '\n\nTombstones have been recorded to ensure deleted files do not reappear on sync.';
+
+      return {
+        id: 'card-' + Date.now(),
+        prompt: rawPrompt,
+        dialogue,
+        cardTitle: 'Workspace Files Deleted',
+        actionCategory: 'Storage',
+        steps: [
+          { label: 'Target Purge Request', detail: 'Identified ' + pathsToDelete.length + ' target path(s)', status: 'completed' },
+          { label: 'Purged from IndexedDB', detail: 'Deleted ' + deletedCount + ' record(s)', status: 'verified' },
+          { label: 'Tombstones Recorded', detail: 'Prevented resurrection on sync', status: 'completed' },
+        ],
+        toolCalls: [executedMeta],
+        tokenEstimate: 60,
+        agentName: params.activeAgentName,
+        themeId: params.themeId,
+        timestamp: new Date().toISOString(),
+        hasAttachment: Boolean(params.attachment),
+      };
+    }
+  }
+
+  if (isOrganize) {
+    const targetFolderMatch = rawPrompt.match(/(?:to|into|in)\s+["']?(archive|reports|intel|logs|config|data)["']?/i);
+    const targetFolder = targetFolderMatch ? targetFolderMatch[1].toLowerCase() : 'archive';
+
+    const fileMatches = rawPrompt.match(/([\w\-_\/]+\.(?:md|json|txt|log))/gi) || [];
+    let pathsToMove = fileMatches.map((f) => f.trim()).filter(Boolean);
+
+    if (pathsToMove.length === 0) {
+      try {
+        const allFiles = await listWorkspaceFiles();
+        if (/old|stale|outdated/i.test(lower)) {
+          const audit = await auditWorkspaceFiles();
+          pathsToMove = audit.staleFiles.map((s) => s.path).slice(0, 5);
+        }
+      } catch {}
+    }
+
+    if (pathsToMove.length > 0) {
+      params.onFunctionCallTriggered?.({
+        toolName: 'fs_storage_manager',
+        args: { action: 'organize', sourcePaths: pathsToMove, targetFolder },
+        targetRoom: dest.targetRoom,
+        targetStationId: dest.targetStationId,
+        taskTag: 'ORGANIZE',
+      });
+
+      const moved = await moveMultipleWorkspaceFiles(pathsToMove, targetFolder);
+      const executedMeta = {
+        pluginId: 'fs_storage',
+        toolName: 'fs_storage_manager',
+        args: { action: 'organize', sourcePaths: pathsToMove, targetFolder },
+        resultSummary: 'Moved ' + moved.length + ' file(s) into ' + targetFolder + '/',
+        livePayload: { movedCount: moved.length, targetFolder, files: moved.map((m) => m.path) },
+        targetRoom: dest.targetRoom,
+        targetStationId: dest.targetStationId,
+      };
+
+      const dialogue = params.activeAgentName + ' (' + params.activeAgentRole + '): Successfully organized ' + moved.length + ' file(s) into `' + targetFolder + '/`:\n' + moved.map((m) => '• `' + m.path + '`').join('\n');
+
+      return {
+        id: 'card-' + Date.now(),
+        prompt: rawPrompt,
+        dialogue,
+        cardTitle: 'Workspace Files Organized',
+        actionCategory: 'Storage',
+        steps: [
+          { label: 'Target Relocation', detail: 'Selected ' + moved.length + ' file(s)', status: 'completed' },
+          { label: 'Moved to Folder', detail: 'Transferred into ' + targetFolder + '/', status: 'verified' },
+          { label: 'Directory Synced', detail: 'Updated IndexedDB and VFS records', status: 'completed' },
+        ],
+        toolCalls: [executedMeta],
+        tokenEstimate: 60,
+        agentName: params.activeAgentName,
+        themeId: params.themeId,
+        timestamp: new Date().toISOString(),
+        hasAttachment: Boolean(params.attachment),
+      };
+    }
+  }
+
+  return null;
+}
+
+
 export async function tryParseAndExecuteExternalToolDirective(params: {
   prompt: string;
   themeId: ThemeId;
@@ -4845,6 +5161,12 @@ export async function generateLocalHeuristicCard(params: {
 }): Promise<AgentExecutionCard> {
   const promptLower = (params.prompt || '').toLowerCase().trim();
   const rawPrompt = (params.prompt || '').trim();
+
+  // 0. Intercept workspace file operations (consolidate, merge, audit, delete, organize)
+  const workspaceCard = await tryParseAndExecuteWorkspaceDirective(params);
+  if (workspaceCard) {
+    return workspaceCard;
+  }
 
   // 0. Intercept any external tool directive (Gmail, GitHub, Slack, Calendar, Notion, Linear)
   const externalToolCard = await tryParseAndExecuteExternalToolDirective(params);
@@ -5764,6 +6086,15 @@ export async function ensureReportPersistedAndAnnotated(
     } catch {}
   }
 
+  // Prevent generating a redundant report when consolidating, deleting, auditing, or organizing files
+  const lowerPrompt = prompt.toLowerCase();
+  if (
+    /\b(consolidate|merge|combine|delete|remove|purge|erase|audit|organize)\b/i.test(lowerPrompt) &&
+    /\b(file|files|workspace|report|reports|intel|dossiers?)\b/i.test(lowerPrompt)
+  ) {
+    return verifiedCard;
+  }
+
   const isReport = shouldAutoGenerateReport({
     prompt,
     dialogue,
@@ -6082,6 +6413,12 @@ export async function executeAgentDirective(params: {
             (Boolean(targetApiKey) && targetApiKey !== 'MY_GEMINI_API_KEY') ||
             (llmConfig.authMode === 'subscription' && geminiAuthInfo.isSubscription)
           : Boolean(targetApiKey && targetApiKey.length > 5));
+
+      // Intercept workspace file operations (consolidate, merge, audit, delete, organize)
+      const workspaceDirectiveCard = await tryParseAndExecuteWorkspaceDirective(params);
+      if (workspaceDirectiveCard) {
+        return workspaceDirectiveCard;
+      }
 
       // Intercept any explicit external tool directives (Gmail, GitHub, Slack, Calendar, Notion, Linear)
       // to execute live via ComposioService and connected accounts instead of simulating

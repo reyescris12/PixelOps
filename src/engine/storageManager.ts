@@ -812,6 +812,211 @@ export async function exportWorkspaceFile(rawPath: string): Promise<boolean> {
   }
 }
 
+export interface WorkspaceAuditReport {
+  timestamp: string;
+  totalFiles: number;
+  totalBytes: number;
+  categories: Record<string, number>;
+  folders: string[];
+  recentFiles: Array<{ path: string; sizeBytes: number; updatedAt: string; format: string }>;
+  staleFiles: Array<{ path: string; sizeBytes: number; updatedAt: string }>;
+  emptyFiles: string[];
+  duplicateContentGroups: Array<{ paths: string[]; sizeBytes: number }>;
+  integrityStatus: 'NOMINAL' | 'WARNING' | 'ANOMALIES_DETECTED';
+}
+
+/**
+ * Conducts a full structured audit of all files in the virtual workspace / IndexedDB ledger.
+ */
+export async function auditWorkspaceFiles(): Promise<WorkspaceAuditReport> {
+  const files = await listWorkspaceFiles();
+  const folders = loadWorkspaceFolders();
+  const now = Date.now();
+  const oneWeekAgo = now - 7 * 24 * 60 * 60 * 1000;
+
+  let totalBytes = 0;
+  const categories: Record<string, number> = {};
+  const emptyFiles: string[] = [];
+  const staleFiles: Array<{ path: string; sizeBytes: number; updatedAt: string }> = [];
+  const recentFiles: Array<{ path: string; sizeBytes: number; updatedAt: string; format: string }> = [];
+
+  // Content hash / signature map to detect duplicates
+  const contentSignatureMap = new Map<string, string[]>();
+
+  for (const f of files) {
+    totalBytes += f.sizeBytes || 0;
+    const cat = f.category || 'other';
+    categories[cat] = (categories[cat] || 0) + 1;
+
+    const fileTime = new Date(f.updatedAt).getTime();
+    if (isNaN(fileTime) || fileTime < oneWeekAgo) {
+      staleFiles.push({ path: f.path, sizeBytes: f.sizeBytes, updatedAt: f.updatedAt });
+    }
+
+    recentFiles.push({
+      path: f.path,
+      sizeBytes: f.sizeBytes,
+      updatedAt: f.updatedAt,
+      format: f.format,
+    });
+
+    if (!f.content || f.content.trim().length === 0) {
+      emptyFiles.push(f.path);
+    } else {
+      // Create normalized signature
+      const normContent = f.content.replace(/\s+/g, ' ').trim();
+      if (normContent.length > 80) {
+        const sig = normContent.slice(0, 150) + '::' + normContent.slice(-150);
+        const group = contentSignatureMap.get(sig) || [];
+        group.push(f.path);
+        contentSignatureMap.set(sig, group);
+      }
+    }
+  }
+
+  // Sort recent files descending
+  recentFiles.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+
+  const duplicateContentGroups: Array<{ paths: string[]; sizeBytes: number }> = [];
+  for (const paths of contentSignatureMap.values()) {
+    if (paths.length > 1) {
+      const sample = files.find((f) => f.path === paths[0]);
+      duplicateContentGroups.push({
+        paths,
+        sizeBytes: sample?.sizeBytes || 0,
+      });
+    }
+  }
+
+  const integrityStatus: 'NOMINAL' | 'WARNING' | 'ANOMALIES_DETECTED' =
+    emptyFiles.length > 0 || duplicateContentGroups.length > 0
+      ? duplicateContentGroups.length > 2 ? 'ANOMALIES_DETECTED' : 'WARNING'
+      : 'NOMINAL';
+
+  return {
+    timestamp: new Date().toISOString(),
+    totalFiles: files.length,
+    totalBytes,
+    categories,
+    folders,
+    recentFiles: recentFiles.slice(0, 10),
+    staleFiles,
+    emptyFiles,
+    duplicateContentGroups,
+    integrityStatus,
+  };
+}
+
+export interface WorkspaceConsolidationResult {
+  consolidatedCount: number;
+  targetPath: string;
+  archivedPaths: string[];
+  totalBytesCombined: number;
+  summary: string;
+}
+
+/**
+ * Consolidates multiple workspace files into a unified master intelligence document,
+ * moving or archiving source files and deduplicating redundant content blocks.
+ */
+export async function consolidateWorkspaceFiles(params: {
+  sourcePaths: string[];
+  targetPath?: string;
+  archiveSources?: boolean;
+  leadOperative?: string;
+  topic?: string;
+}): Promise<WorkspaceConsolidationResult> {
+  const { sourcePaths, targetPath, archiveSources = true, leadOperative = 'Agent Vance', topic } = params;
+  if (!Array.isArray(sourcePaths) || sourcePaths.length === 0) {
+    throw new Error('Consolidation requires at least one source file path.');
+  }
+
+  const loadedFiles: WorkspaceFileRecord[] = [];
+  for (const raw of sourcePaths) {
+    const file = await readWorkspaceFile(raw);
+    if (file) loadedFiles.push(file);
+  }
+
+  if (loadedFiles.length === 0) {
+    throw new Error('None of the specified source files could be found in the workspace.');
+  }
+
+  const now = new Date();
+  const timestamp = now.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+  const cleanTopic = topic || loadedFiles[0].path.split('/').pop()?.replace(/\.(md|json|txt)$/i, '').replace(/[_-]+/g, ' ') || 'Consolidated Workspace Intelligence';
+
+  // Build clean merged markdown with deduplicated sections
+  const header = [
+    `# Consolidated Operational Dossier: ${cleanTopic.toUpperCase()}`,
+    `**Lead Synthesizer:** ${leadOperative}  `,
+    `**Consolidation Timestamp:** ${timestamp}  `,
+    `**Source Documents Combined:** ${loadedFiles.length} file(s)  `,
+    `**Sources:** ${loadedFiles.map((f) => `\`${f.path}\``).join(', ')}  `,
+    '',
+    '---',
+    '',
+    '## 1. Executive Synthesis & Unified Findings',
+    `This unified intelligence dossier aggregates, cross-references, and synthesizes ${loadedFiles.length} distinct workspace records into a single authoritative reference. Duplicate field signals and redundant preamble disclosures have been scrubbed.`,
+    '',
+    '---',
+  ].join('\n');
+
+  const fileSections: string[] = [];
+  let totalChars = 0;
+
+  for (let idx = 0; idx < loadedFiles.length; idx++) {
+    const f = loadedFiles[idx];
+    totalChars += f.content.length;
+    let cleanContent = f.content
+      .replace(/^---[\s\S]*?---\s*/m, '')
+      .replace(/\[AGENT_ACTION:[\s\S]*?\[\/AGENT_ACTION\]/gi, '')
+      .replace(/\[AGENT_STATUS:\s*(COMPLETE|WORKING)\]/gi, '')
+      .replace(/\n*📁 \*\*\[WORKSPACE REPORT UPLOADED\]\*\*[\s\S]*$/, '')
+      .trim();
+
+    fileSections.push([
+      `## ${idx + 2}. Source Dossier: \`${f.path}\` (${f.sizeBytes} bytes, updated ${f.updatedAt.slice(0, 16)})`,
+      cleanContent,
+    ].join('\n\n'));
+  }
+
+  const finalMarkdown = [header, ...fileSections].join('\n\n');
+
+  // Resolve target path
+  const finalTargetPath = targetPath
+    ? normalizeFilePath(targetPath)
+    : normalizeFilePath(`reports/consolidated_${cleanTopic.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 40)}.md`);
+
+  // Write the consolidated file
+  await writeWorkspaceFile(finalTargetPath, finalMarkdown, 'markdown', 'reports');
+
+  const archivedPaths: string[] = [];
+  if (archiveSources) {
+    for (const f of loadedFiles) {
+      if (f.path !== finalTargetPath) {
+        // Move to archive folder if not already there
+        if (!f.path.startsWith('archive/')) {
+          const baseName = f.path.split('/').pop() || f.path;
+          const archiveTarget = normalizeFilePath(`archive/${baseName}`);
+          await writeWorkspaceFile(archiveTarget, f.content, f.format, 'archive');
+          await deleteWorkspaceFile(f.path);
+          archivedPaths.push(archiveTarget);
+        } else {
+          archivedPaths.push(f.path);
+        }
+      }
+    }
+  }
+
+  return {
+    consolidatedCount: loadedFiles.length,
+    targetPath: finalTargetPath,
+    archivedPaths,
+    totalBytesCombined: finalMarkdown.length,
+    summary: `Successfully consolidated ${loadedFiles.length} files into "${finalTargetPath}" (${finalMarkdown.length} bytes). ${archiveSources ? `Archived ${archivedPaths.length} source file(s).` : ''}`,
+  };
+}
+
 /**
  * Copies file text content to clipboard with fallback.
  */

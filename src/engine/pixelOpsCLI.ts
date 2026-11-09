@@ -10,7 +10,16 @@
 
 import { getAllRooms, getAllRoomIds, ROOM_TEMPLATES, spawnRoom } from './roomManager';
 import { AVAILABLE_SKILLS, loadRoomSkillBindings, mountSkillToRoom } from './moduleRegistry';
-import { listWorkspaceFiles, readWorkspaceFile } from './storageManager';
+import {
+  listWorkspaceFiles,
+  readWorkspaceFile,
+  writeWorkspaceFile,
+  deleteWorkspaceFile,
+  moveMultipleWorkspaceFiles,
+  auditWorkspaceFiles,
+  consolidateWorkspaceFiles,
+  normalizeFilePath,
+} from './storageManager';
 import {
   getPluginCredential,
   savePluginCredential,
@@ -475,6 +484,142 @@ export async function executeCLICommand(
       return {
         command: trimmed,
         output: `Failed to read file: ${e?.message || e}`,
+        status: 'error',
+        timestamp,
+      };
+    }
+  }
+
+  // 11b. RM / DELETE (Remove Workspace File)
+  if (action === 'rm' || action === 'delete') {
+    const filePath = args[0];
+    if (!filePath) {
+      return {
+        command: trimmed,
+        output: 'USAGE: pixelops rm <filePath> (e.g. pixelops rm reports/temp_report.md)',
+        status: 'warning',
+        timestamp,
+      };
+    }
+    try {
+      const ok = await deleteWorkspaceFile(filePath);
+      return {
+        command: trimmed,
+        output: ok ? `Successfully deleted "${filePath}" from workspace.` : `File "${filePath}" was not found or already deleted.`,
+        status: ok ? 'ok' : 'warning',
+        timestamp,
+      };
+    } catch (e: any) {
+      return {
+        command: trimmed,
+        output: `Failed to delete file: ${e?.message || e}`,
+        status: 'error',
+        timestamp,
+      };
+    }
+  }
+
+  // 11c. AUDIT (Audit Workspace Files & Integrity)
+  if (action === 'audit' || action === 'fileaudit') {
+    try {
+      const audit = await auditWorkspaceFiles();
+      const outputLines = [
+        '=== [WORKSPACE VFS AUDIT REPORT] ===',
+        `Timestamp: ${audit.timestamp}`,
+        `Total Files: ${audit.totalFiles} | Total Footprint: ${Math.round(audit.totalBytes / 1024)} KB`,
+        `Integrity Status: ${audit.integrityStatus}`,
+        '',
+        'Categories:',
+        ...Object.entries(audit.categories).map(([cat, count]) => `  • ${cat}: ${count} file(s)`),
+        '',
+        `Folders: ${audit.folders.join(', ')}`,
+        '',
+        `Empty Files: ${audit.emptyFiles.length === 0 ? 'None (nominal)' : audit.emptyFiles.join(', ')}`,
+        `Duplicate Content Groups: ${audit.duplicateContentGroups.length === 0 ? 'None (nominal)' : audit.duplicateContentGroups.map((g) => g.paths.join(' <-> ')).join('\n')}`,
+        `Stale Files (>7 days): ${audit.staleFiles.length} file(s)`,
+      ];
+      return {
+        command: trimmed,
+        output: outputLines.join('\n'),
+        status: audit.integrityStatus === 'NOMINAL' ? 'ok' : 'warning',
+        timestamp,
+      };
+    } catch (e: any) {
+      return {
+        command: trimmed,
+        output: `Workspace audit failed: ${e?.message || e}`,
+        status: 'error',
+        timestamp,
+      };
+    }
+  }
+
+  // 11d. CONSOLIDATE (Consolidate Multiple Files into One)
+  if (action === 'consolidate') {
+    if (args.length < 2) {
+      return {
+        command: trimmed,
+        output: 'USAGE: pixelops consolidate <file1> <file2> [file3...] [targetPath=<target>]',
+        status: 'warning',
+        timestamp,
+      };
+    }
+    try {
+      const sourcePaths: string[] = [];
+      let targetPath: string | undefined = undefined;
+      for (const a of args) {
+        if (a.startsWith('target=')) {
+          targetPath = a.replace(/^target=/, '');
+        } else {
+          sourcePaths.push(a);
+        }
+      }
+      const res = await consolidateWorkspaceFiles({
+        sourcePaths,
+        targetPath,
+        archiveSources: true,
+        leadOperative: 'Agent Vance',
+      });
+      return {
+        command: trimmed,
+        output: `[CONSOLIDATION SUCCESSFUL]\n${res.summary}\nUnified Document: ${res.targetPath} (${res.totalBytesCombined} bytes)`,
+        status: 'ok',
+        timestamp,
+      };
+    } catch (e: any) {
+      return {
+        command: trimmed,
+        output: `Consolidation failed: ${e?.message || e}`,
+        status: 'error',
+        timestamp,
+      };
+    }
+  }
+
+  // 11e. ORGANIZE / MV (Move Files to Target Folder)
+  if (action === 'mv' || action === 'move' || action === 'organize') {
+    if (args.length < 2) {
+      return {
+        command: trimmed,
+        output: 'USAGE: pixelops mv <filePath> <targetFolder> (e.g. pixelops mv reports/brief.md archive)',
+        status: 'warning',
+        timestamp,
+      };
+    }
+    try {
+      const targetFolder = args[args.length - 1];
+      const sourcePaths = args.slice(0, args.length - 1);
+      const moved = await moveMultipleWorkspaceFiles(sourcePaths, targetFolder);
+      return {
+        command: trimmed,
+        output: `Organized ${moved.length} file(s) into "${targetFolder}/":\n${moved.map((m) => `  • ${m.path}`).join('\n')}`,
+        status: 'ok',
+        timestamp,
+      };
+    } catch (e: any) {
+      return {
+        command: trimmed,
+        output: `Organization move failed: ${e?.message || e}`,
         status: 'error',
         timestamp,
       };
@@ -974,6 +1119,10 @@ export async function executeCLICommand(
       '  pixelops account [devices|logout]  Inspect operative callsign, clearance & linked devices',
       '  pixelops files [category]          List IndexedDB workspace files (reports, logs, config)',
       '  pixelops cat <filePath>            Read content of an IndexedDB workspace file',
+      '  pixelops rm <filePath>             Delete a workspace file from IndexedDB/VFS',
+      '  pixelops mv <file> <folder>        Organize and move a file into a target folder',
+      '  pixelops audit                     Audit workspace files, byte sizes, and detect duplicates',
+      '  pixelops consolidate <f1> <f2>...  Consolidate multiple files into a unified master dossier',
       '  pixelops plugins                   List BYOK capability plugins and auth tokens',
       '  pixelops plugin auth <id> <key>    Save BYOK API key/token for plugin locally',
       '  pixelops plugin revoke <id>        Revoke/clear local credentials for plugin',

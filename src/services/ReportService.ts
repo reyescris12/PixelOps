@@ -487,6 +487,48 @@ export interface ReportGenerationParams {
 }
 
 /**
+ * Strips redundant, overlapping, or verbatim repeated intelligence blocks from report sections,
+ * preventing two-part reports or multi-step chains from regurgitating identical findings.
+ */
+export function deduplicateReportIntel(primaryContent: string, secondaryContent?: string): string {
+  if (!secondaryContent || !secondaryContent.trim()) {
+    return primaryContent.trim();
+  }
+
+  const primaryClean = primaryContent.trim();
+  const secondaryClean = secondaryContent.trim();
+
+  // If the secondary content is already largely contained in the primary content, omit it
+  const sample1 = secondaryClean.slice(0, 100).toLowerCase();
+  const sample2 = secondaryClean.slice(Math.max(0, Math.floor(secondaryClean.length / 2) - 50), Math.floor(secondaryClean.length / 2) + 50).toLowerCase();
+  if (primaryClean.toLowerCase().includes(sample1) || (sample2.length > 40 && primaryClean.toLowerCase().includes(sample2))) {
+    return primaryClean;
+  }
+
+  // Break secondary into paragraphs and only keep paragraphs that are genuinely new
+  const primaryLower = primaryClean.toLowerCase();
+  const secondaryParagraphs = secondaryClean.split(/\n{2,}/);
+
+  const uniqueParagraphs: string[] = [];
+  for (const para of secondaryParagraphs) {
+    const trimmed = para.trim();
+    if (!trimmed) continue;
+    // Check if substantial sub-string appears in primary
+    const snippet = trimmed.replace(/^#+\s+/g, '').slice(0, 60).toLowerCase();
+    if (snippet.length > 20 && primaryLower.includes(snippet)) {
+      continue; // Duplicate intel
+    }
+    uniqueParagraphs.push(trimmed);
+  }
+
+  if (uniqueParagraphs.length === 0) {
+    return primaryClean;
+  }
+
+  return `${primaryClean}\n\n### Corroborated Distinct Field Signals\n${uniqueParagraphs.join('\n\n')}`;
+}
+
+/**
  * Organizes raw agent output into a standardized, multi-section intelligence dossier
  * if it isn't already formatted with clear metadata and structured sections.
  */
@@ -556,6 +598,9 @@ export function formatOrganizedReportMarkdown(params: ReportGenerationParams): {
   // Ensure body doesn't duplicate the top `# Title`
   const bodyWithoutDuplicateH1 = cleanedBody.replace(/^#\s+[^\n]+\n+/, '').trim();
 
+  // Deduplicate preceding intelligence against the main body to prevent repetition
+  const nonRedundantIntelSection = deduplicateReportIntel(bodyWithoutDuplicateH1, params.precedingIntelligence);
+
   const markdown = [
     `# ${subjectTitle}`,
     `**Document ID:** \`${filePath}\`  `,
@@ -574,10 +619,7 @@ export function formatOrganizedReportMarkdown(params: ReportGenerationParams): {
     '---',
     '',
     '## 2. Detailed Intelligence & Tactical Findings',
-    bodyWithoutDuplicateH1,
-    params.precedingIntelligence && !bodyWithoutDuplicateH1.includes(params.precedingIntelligence.slice(0, 60))
-      ? `\n\n### Corroborated Field Signals\n${params.precedingIntelligence.trim()}`
-      : '',
+    nonRedundantIntelSection,
     '',
     '---',
     '',
@@ -651,9 +693,12 @@ export function synthesizeComprehensiveReport(params: ReportGenerationParams): {
   let domainSection = '';
 
   if (intelNotes || existingNotes) {
+    const mergedNotes = deduplicateReportIntel(existingNotes, intelNotes);
     domainSection = `## 2. Key Intelligence Findings & Live Telemetry
 
-${existingNotes ? `${existingNotes}\n\n` : ''}${intelNotes ? `${intelNotes}\n\n` : ''}### Analytical Assessment & Signal Verification
+${mergedNotes}
+
+### Analytical Assessment & Signal Verification
 - **Grounding Verification:** Intelligence synthesized from active reconnaissance and verified telemetry feeds.
 - **Operational Relevance:** High-priority domain metrics isolated and structured for rapid War Room review.`;
   } else if (isSecurityOrZeroTrust) {

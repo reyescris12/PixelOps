@@ -1037,6 +1037,28 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
                   </p>
                 </div>
 
+                <div className="p-4 bg-[#121520] border border-[#38bdf8] space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs sm:text-sm font-bold text-[#38bdf8] uppercase">
+                      🛠️ Autonomous Agent File Operations (Edit, Delete, Organize, Audit, Consolidate)
+                    </h4>
+                    <span className="text-[10px] bg-[#38bdf8]/10 text-[#38bdf8] px-2 py-0.5 border border-[#38bdf8]/40 font-bold">
+                      OPERATIVE FILE SYSTEM POWER
+                    </span>
+                  </div>
+                  <p className="text-xs text-[#cbd5e1]">
+                    Operatives have direct authority to manage workspace files via natural language or <code className="text-[#38bdf8]">fs_storage_manager</code>:
+                  </p>
+                  <ul className="text-xs text-[#94a3b8] space-y-1 list-disc pl-4">
+                    <li><strong className="text-[#cbd5e1]">Create & Write:</strong> Save markdown briefs, tactical guides, or configs to any workspace path.</li>
+                    <li><strong className="text-[#cbd5e1]">Edit & Append:</strong> Update existing files or append new telemetry updates without overwriting previous context.</li>
+                    <li><strong className="text-[#cbd5e1]">Delete:</strong> Safely remove stale or unneeded files (with deletion tombstones preventing recreation).</li>
+                    <li><strong className="text-[#cbd5e1]">Organize & Move:</strong> Group files into dedicated folders (<code className="text-[#38bdf8]">archive/</code>, <code className="text-[#38bdf8]">reports/</code>, <code className="text-[#38bdf8]">intel/</code>).</li>
+                    <li><strong className="text-[#cbd5e1]">Audit:</strong> Run integrity scans to detect byte footprints, empty files, and duplicate content groups.</li>
+                    <li><strong className="text-[#cbd5e1]">Consolidate:</strong> Merge multiple separate reports into a single non-redundant operational dossier.</li>
+                  </ul>
+                </div>
+
                 <div className="p-4 bg-[#121520] border border-[#4ade80] space-y-2">
                   <div className="flex items-center justify-between">
                     <h4 className="text-xs sm:text-sm font-bold text-[#4ade80] uppercase">

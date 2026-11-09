@@ -57,7 +57,17 @@ import {
   synthesizeComprehensiveReport,
   uploadReportToWorkspaceFiles,
 } from './ReportService';
-import { writeWorkspaceFile, readWorkspaceFile, listWorkspaceFiles } from '../engine/storageManager';
+import {
+  writeWorkspaceFile,
+  readWorkspaceFile,
+  listWorkspaceFiles,
+  deleteWorkspaceFile,
+  deleteMultipleWorkspaceFiles,
+  moveMultipleWorkspaceFiles,
+  auditWorkspaceFiles,
+  consolidateWorkspaceFiles,
+  normalizeFilePath,
+} from '../engine/storageManager';
 import {
   retrieveRelevantClassifiedBriefings,
   fetchS2WireFeed,
@@ -158,8 +168,9 @@ export interface GeminiFunctionDeclarationSchema {
     properties: Record<
       string,
       {
-        type: 'STRING' | 'NUMBER' | 'INTEGER' | 'BOOLEAN';
+        type: 'STRING' | 'NUMBER' | 'INTEGER' | 'BOOLEAN' | 'ARRAY' | 'OBJECT';
         description: string;
+        items?: { type: string };
       }
     >;
     required: string[];
@@ -222,29 +233,39 @@ export const GEMINI_TOOL_DECLARATIONS: Record<string, GeminiFunctionDeclarationS
   fs_storage_manager: {
     name: 'fs_storage_manager',
     description:
-      'Client-side file system manager: read, write, list markdown briefs, JSON configs, and workspace files in IndexedDB, or trigger browser downloads/exports.',
+      'Client-side workspace file manager: read, write, edit, delete, organize, audit, consolidate, list, or download files and folders in IndexedDB / local VFS.',
     parameters: {
       type: 'OBJECT',
       description: 'File system storage parameters',
       properties: {
         action: {
           type: 'STRING',
-          description: 'File action: "read", "write", "list", or "download_export".',
+          description:
+            'File action: "create", "write", "read", "edit", "delete", "organize" (move to folder), "audit" (integrity, size, duplicate scan), "consolidate" (merge multiple files), "list", or "download_export".',
         },
         path: {
           type: 'STRING',
-          description: 'Relative virtual file path (e.g., "reports/mission_brief.md", "config.json").',
+          description: 'Relative virtual file path (e.g. "reports/mission_brief.md", "intel/threat_matrix.md", "archive/old.md").',
         },
         content: {
           type: 'STRING',
-          description: 'File content to write or export.',
+          description: 'File content to write, edit, append, or export.',
+        },
+        targetFolder: {
+          type: 'STRING',
+          description: 'Target folder name when organizing/moving files (e.g. "archive", "reports", "intel", "logs").',
+        },
+        sourcePaths: {
+          type: 'ARRAY',
+          items: { type: 'STRING' },
+          description: 'Array of source file paths when consolidating or organizing multiple files.',
         },
         format: {
           type: 'STRING',
           description: 'Data format: "text", "markdown", or "json".',
         },
       },
-      required: ['action', 'path'],
+      required: ['action'],
     },
   },
   api_fetch_gateway: {
@@ -2454,6 +2475,116 @@ ${findings || 'No additional telemetry findings attached.'}
           savedAt: finalSavedAt,
         };
         summary = `VFS Write: Saved "${finalPath}" (${finalSize} chars) to IndexedDB`;
+      } else if (action === 'delete' || action === 'remove') {
+        const pathsToDelete = Array.isArray(args.sourcePaths) && args.sourcePaths.length > 0
+          ? args.sourcePaths.map((p: any) => String(p).trim()).filter(Boolean)
+          : [path];
+
+        let deletedCount = 0;
+        try {
+          if (pathsToDelete.length > 1) {
+            deletedCount = await deleteMultipleWorkspaceFiles(pathsToDelete);
+          } else if (pathsToDelete.length === 1) {
+            const ok = await deleteWorkspaceFile(pathsToDelete[0]);
+            deletedCount = ok ? 1 : 0;
+          }
+        } catch (delErr) {
+          console.warn('[ApiService] Failed to delete from IndexedDB:', delErr);
+        }
+
+        // Clean local VFS storage
+        for (const p of pathsToDelete) {
+          delete vfsStore[p];
+        }
+        try {
+          localStorage.setItem(VFS_KEY, JSON.stringify(vfsStore));
+        } catch {}
+
+        fsResult = {
+          status: 'deleted',
+          paths: pathsToDelete,
+          deletedCount,
+        };
+        summary = `VFS Delete: Removed ${pathsToDelete.length} file(s) from workspace`;
+      } else if (action === 'edit' || action === 'update' || action === 'append') {
+        const norm = normalizeFilePath(path);
+        let existingContent = '';
+        try {
+          const dbFile = await readWorkspaceFile(norm);
+          if (dbFile) existingContent = dbFile.content;
+        } catch {}
+        if (!existingContent && vfsStore[norm]) {
+          existingContent = vfsStore[norm].content;
+        }
+
+        let updatedContent = content;
+        if (action === 'append') {
+          updatedContent = existingContent ? `${existingContent}\n\n${content}` : content;
+        }
+
+        const category = norm.startsWith('intel/')
+          ? 'intel'
+          : norm.startsWith('logs/')
+          ? 'logs'
+          : norm.startsWith('config/')
+          ? 'config'
+          : norm.startsWith('archive/')
+          ? 'archive'
+          : 'reports';
+
+        const updatedRec = await writeWorkspaceFile(norm, updatedContent, format, category);
+        vfsStore[norm] = { content: updatedContent, format, updatedAt: updatedRec.updatedAt };
+        try {
+          localStorage.setItem(VFS_KEY, JSON.stringify(vfsStore));
+        } catch {}
+
+        fsResult = {
+          status: 'edited',
+          path: norm,
+          sizeBytes: updatedRec.sizeBytes,
+          updatedAt: updatedRec.updatedAt,
+        };
+        summary = `VFS Edit: Updated "${norm}" (${updatedRec.sizeBytes} bytes)`;
+      } else if (action === 'organize' || action === 'move') {
+        const targetFolder = String(args.targetFolder || (path.includes('/') ? path.split('/')[0] : 'reports')).trim();
+        const pathsToMove = Array.isArray(args.sourcePaths) && args.sourcePaths.length > 0
+          ? args.sourcePaths.map((p: any) => String(p).trim()).filter(Boolean)
+          : [path];
+
+        const moved = await moveMultipleWorkspaceFiles(pathsToMove, targetFolder);
+        fsResult = {
+          status: 'organized',
+          targetFolder,
+          movedCount: moved.length,
+          files: moved.map((m) => m.path),
+        };
+        summary = `VFS Organize: Moved ${moved.length} file(s) into "${targetFolder}/"`;
+      } else if (action === 'audit' || action === 'inspect_workspace') {
+        const audit = await auditWorkspaceFiles();
+        fsResult = {
+          status: 'audited',
+          ...audit,
+        };
+        summary = `VFS Audit: ${audit.totalFiles} files (${Math.round(audit.totalBytes / 1024)} KB) | Status: ${audit.integrityStatus}`;
+      } else if (action === 'consolidate' || action === 'merge') {
+        const sourcePaths = Array.isArray(args.sourcePaths) && args.sourcePaths.length > 0
+          ? args.sourcePaths.map((p: any) => String(p).trim()).filter(Boolean)
+          : [path];
+
+        const targetPath = args.targetPath || (path && !sourcePaths.includes(path) ? path : undefined);
+        const result = await consolidateWorkspaceFiles({
+          sourcePaths,
+          targetPath,
+          archiveSources: args.archiveSources !== false,
+          leadOperative: 'Safehouse Intelligence',
+          topic: args.topic || 'Consolidated Workspace Intelligence',
+        });
+
+        fsResult = {
+          status: 'consolidated',
+          ...result,
+        };
+        summary = `VFS Consolidate: Merged ${result.consolidatedCount} files into "${result.targetPath}" (${result.totalBytesCombined} bytes)`;
       } else if (action === 'list') {
         let fileList: any[] = [];
         try {
@@ -5972,7 +6103,7 @@ CRITICAL MEMORY RECALL INSTRUCTION:
         : `You are ${params.activeAgentName || 'Agent'}, an AI assistant. Help the user complete their directives and tasks directly, clearly, and effectively using your available tools.`;
 
       if (declaredToolNames) {
-        systemInstruction += `\n\n### Available Tools & Integrations:\n${declaredToolNames}\nWhen executing external or connected tool operations (e.g. GitHub, Slack, Gmail, Google Calendar, Notion, Linear, web search, code sandbox, file storage), you can invoke them directly or emit a structured action tag in your response:\n[AGENT_ACTION: <tool_name>] { "param": "value" } [/AGENT_ACTION]\n\n### Calendar Tool Parameter Rules:\nWhen invoking composio_googlecalendar_create_event or scheduling calendar events, strictly enforce clean JSON parameters:\n- Required keys: "summary", "start_time", "end_time", "time_zone".\n- Datetime format: ISO 8601 local wall-clock string without trailing Z offset (e.g. "2026-11-09T16:21:19").\n- Summary: Clean title only without conversational filler, prefix narratives, or debug blocks.`;
+        systemInstruction += `\n\n### Available Tools & Integrations:\n${declaredToolNames}\nWhen executing external or connected tool operations (e.g. GitHub, Slack, Gmail, Google Calendar, Notion, Linear, web search, code sandbox, file storage), you can invoke them directly or emit a structured action tag in your response:\n[AGENT_ACTION: <tool_name>] { "param": "value" } [/AGENT_ACTION]\n\n### Workspace File System Operations (fs_storage_manager):\nYou have full read/write/edit/delete/organize/audit/consolidate power over the local workspace files in IndexedDB:\n- "write" / "create": Save or upload markdown reports, briefs, configs, or dossiers.\n- "read": Inspect existing file content by path.\n- "edit" / "append": Update or add to existing workspace files.\n- "delete": Permanently remove obsolete files or test artifacts.\n- "organize": Move files into folders (e.g. "reports", "intel", "archive", "logs").\n- "audit": Inspect the entire workspace for integrity, size, stale items, and duplicate content.\n- "consolidate": Merge multiple related files into a single unified dossier without duplicating intel.\n- "list": Inspect all workspace files.\n\n### Report Writing & Non-Redundancy Standards:\nWhen compiling multi-part reports or executing investigative workflows:\n- Write crisp, distinct intelligence without repeating identical findings, preambles, or citations in part 1 and part 2.\n- Always synthesize and consolidate field signals into clear, actionable sections (Executive Summary, Findings, Telemetry Matrix, Recommendations).\n\n### Calendar Tool Parameter Rules:\nWhen invoking composio_googlecalendar_create_event or scheduling calendar events, strictly enforce clean JSON parameters:\n- Required keys: "summary", "start_time", "end_time", "time_zone".\n- Datetime format: ISO 8601 local wall-clock string without trailing Z offset (e.g. "2026-11-09T16:21:19").\n- Summary: Clean title only without conversational filler, prefix narratives, or debug blocks.`;
       }
 
       if (memoryContextStr) {

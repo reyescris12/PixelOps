@@ -422,8 +422,12 @@ export async function listWorkspaceFiles(categoryFilter?: string): Promise<Works
     fileList = fileList.filter((f) => f.category === categoryFilter);
   }
 
-  // Sort descending by updatedAt
-  fileList.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
+  // Sort stably: primary descending by updatedAt, secondary ascending by path
+  fileList.sort((a, b) => {
+    const timeDiff = new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+    if (timeDiff !== 0) return timeDiff;
+    return a.path.localeCompare(b.path);
+  });
 
   return fileList;
 }

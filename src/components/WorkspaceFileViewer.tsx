@@ -6,7 +6,7 @@
  * agent-generated reports (e.g., master_execution_schedule.md), logs, and task outputs.
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   FileText,
@@ -33,6 +33,7 @@ import {
   Square,
   FolderInput,
   FolderPlus,
+  ArrowUpDown,
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import {
@@ -71,10 +72,18 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedFile, setSelectedFile] = useState<WorkspaceFileRecord | null>(null);
+  const selectedFileRef = useRef<WorkspaceFileRecord | null>(null);
+  selectedFileRef.current = selectedFile;
+  const viewModeRef = useRef<'rendered' | 'raw' | 'edit'>('rendered');
+
+  // Sorting controls: 'recent' (newest first), 'oldest' (oldest first), 'name' (alphabetical), 'size' (largest first)
+  const [sortBy, setSortBy] = useState<'recent' | 'name' | 'size' | 'oldest'>('recent');
+
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [copyFeedback, setCopyFeedback] = useState<boolean>(false);
   const [viewMode, setViewMode] = useState<'rendered' | 'raw' | 'edit'>('rendered');
+  viewModeRef.current = viewMode;
   const [editContent, setEditContent] = useState<string>('');
   const [isSaving, setIsSaving] = useState<boolean>(false);
   const [deleteConfirmPath, setDeleteConfirmPath] = useState<string | null>(null);
@@ -119,8 +128,10 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
     }
   }, [initialFilePath]);
 
-  const loadFiles = async (preserveSelected: boolean = true) => {
-    setIsLoading(true);
+  const loadFiles = async (preserveSelected: boolean = true, isSilent: boolean = false) => {
+    if (!isSilent) {
+      setIsLoading(true);
+    }
     try {
       const allFiles = await listWorkspaceFiles();
       setFiles(allFiles);
@@ -137,18 +148,25 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
       setCategories(['all', ...cats]);
       setPersistedFolders(loadWorkspaceFolders());
 
-      if (preserveSelected && selectedFile) {
-        const stillExists = allFiles.find((f) => f.path === selectedFile.path);
+      const activeCurrentPath = selectedFileRef.current?.path;
+
+      if (preserveSelected && activeCurrentPath) {
+        const stillExists = allFiles.find((f) => f.path === activeCurrentPath);
         if (stillExists) {
-          setSelectedFile(stillExists);
-          setEditContent(stillExists.content);
+          // If the file is currently being edited, don't overwrite user's edit content!
+          if (viewModeRef.current !== 'edit') {
+            setSelectedFile(stillExists);
+            setEditContent(stillExists.content);
+          } else {
+            setSelectedFile(stillExists);
+          }
         } else if (allFiles.length > 0) {
           setSelectedFile(allFiles[0]);
           setEditContent(allFiles[0].content);
         } else {
           setSelectedFile(null);
         }
-      } else if (initialFilePath) {
+      } else if (initialFilePath && !activeCurrentPath) {
         const target = allFiles.find((f) => f.path === initialFilePath);
         if (target) {
           setSelectedFile(target);
@@ -158,42 +176,60 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
           setSelectedFile(allFiles[0]);
           setEditContent(allFiles[0].content);
         }
-      } else if (allFiles.length > 0 && !selectedFile) {
+      } else if (allFiles.length > 0 && !activeCurrentPath) {
         setSelectedFile(allFiles[0]);
         setEditContent(allFiles[0].content);
       }
     } catch (e) {
       console.error('[WorkspaceFileViewer] Failed to load files:', e);
     } finally {
-      setIsLoading(false);
+      if (!isSilent) {
+        setIsLoading(false);
+      }
     }
   };
 
   useEffect(() => {
     if (isOpen) {
-      loadFiles();
+      loadFiles(true, false);
     }
   }, [isOpen]);
 
   useEffect(() => {
+    let reloadDebounce: NodeJS.Timeout | null = null;
+
     const handleFileSaved = (e: any) => {
-      loadFiles(true);
-      if (e?.detail?.path) {
-        readWorkspaceFile(e.detail.path).then((f) => {
-          if (f) {
-            setSelectedFile(f);
-            setEditContent(f.content);
-          }
-        });
+      const savedPath = e?.detail?.path;
+      // Perform silent background reload of file list without unmounting/flickering
+      if (reloadDebounce) clearTimeout(reloadDebounce);
+      reloadDebounce = setTimeout(() => {
+        loadFiles(true, true);
+      }, 100);
+
+      // ONLY overwrite or refresh the reader preview if the saved file IS the exact file currently being viewed!
+      if (savedPath && selectedFileRef.current?.path === savedPath) {
+        if (viewModeRef.current !== 'edit') {
+          readWorkspaceFile(savedPath).then((f) => {
+            if (f && selectedFileRef.current?.path === savedPath) {
+              setSelectedFile(f);
+              setEditContent(f.content);
+            }
+          });
+        }
       }
     };
+
     const handleFilesChanged = () => {
-      loadFiles(true);
+      if (reloadDebounce) clearTimeout(reloadDebounce);
+      reloadDebounce = setTimeout(() => {
+        loadFiles(true, true);
+      }, 150);
     };
 
     window.addEventListener('pixelops:workspace_file_saved', handleFileSaved);
     window.addEventListener('pixelops:workspace_files_changed', handleFilesChanged);
     return () => {
+      if (reloadDebounce) clearTimeout(reloadDebounce);
       window.removeEventListener('pixelops:workspace_file_saved', handleFileSaved);
       window.removeEventListener('pixelops:workspace_files_changed', handleFilesChanged);
     };
@@ -473,8 +509,29 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
       if (!groups[folder]) groups[folder] = [];
       groups[folder].push(file);
     }
+
+    // Sort files within each folder deterministically according to active sortBy setting
+    for (const folder in groups) {
+      groups[folder].sort((a, b) => {
+        if (sortBy === 'name') {
+          return a.path.localeCompare(b.path);
+        }
+        if (sortBy === 'oldest') {
+          const diff = (a.createdAt || 0) - (b.createdAt || 0);
+          return diff !== 0 ? diff : a.path.localeCompare(b.path);
+        }
+        if (sortBy === 'size') {
+          const diff = (b.sizeBytes || 0) - (a.sizeBytes || 0);
+          return diff !== 0 ? diff : a.path.localeCompare(b.path);
+        }
+        // Default: 'recent'
+        const diff = (b.updatedAt || 0) - (a.updatedAt || 0);
+        return diff !== 0 ? diff : a.path.localeCompare(b.path);
+      });
+    }
+
     return groups;
-  }, [filteredFiles, persistedFolders, selectedCategory, searchQuery]);
+  }, [filteredFiles, persistedFolders, selectedCategory, searchQuery, sortBy]);
 
   const totalBytes = useMemo(() => {
     return files.reduce((acc, f) => acc + (f.sizeBytes || 0), 0);
@@ -734,6 +791,25 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
                   </button>
 
                   <div className="flex items-center gap-1">
+                    {/* Sort Order Selector */}
+                    <div className="flex items-center gap-1 bg-[#131720] border border-slate-750 px-1 py-0.5 rounded text-[10px]">
+                      <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                      <select
+                        value={sortBy}
+                        onChange={(e) => {
+                          setSortBy(e.target.value as any);
+                          playBeep('tap');
+                        }}
+                        className="bg-transparent text-slate-300 font-mono text-[10px] focus:outline-none cursor-pointer"
+                        title="Sort reports"
+                      >
+                        <option value="recent" className="bg-[#0a0d14] text-white">Recent</option>
+                        <option value="name" className="bg-[#0a0d14] text-white">Name A-Z</option>
+                        <option value="oldest" className="bg-[#0a0d14] text-white">Oldest</option>
+                        <option value="size" className="bg-[#0a0d14] text-white">Size</option>
+                      </select>
+                    </div>
+
                     {filteredFiles.length > 0 && (
                       <button
                         type="button"

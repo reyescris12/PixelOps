@@ -187,8 +187,16 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
         });
       }
     };
+    const handleFilesChanged = () => {
+      loadFiles(true);
+    };
+
     window.addEventListener('pixelops:workspace_file_saved', handleFileSaved);
-    return () => window.removeEventListener('pixelops:workspace_file_saved', handleFileSaved);
+    window.addEventListener('pixelops:workspace_files_changed', handleFilesChanged);
+    return () => {
+      window.removeEventListener('pixelops:workspace_file_saved', handleFileSaved);
+      window.removeEventListener('pixelops:workspace_files_changed', handleFilesChanged);
+    };
   }, []);
 
   // Handle escape key to close

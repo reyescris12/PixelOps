@@ -910,23 +910,108 @@ export async function auditWorkspaceFiles(): Promise<WorkspaceAuditReport> {
 export interface WorkspaceConsolidationResult {
   consolidatedCount: number;
   targetPath: string;
+  deletedPaths: string[];
   archivedPaths: string[];
   totalBytesCombined: number;
   summary: string;
 }
 
 /**
+ * Finds groups of similar or related workspace files based on path, category,
+ * keywords, and content overlap (e.g., related intel sweeps, multiple sitreps, or common topics).
+ */
+export async function findSimilarWorkspaceFiles(params?: {
+  topic?: string;
+  category?: string;
+  minGroupSize?: number;
+}): Promise<Array<{ groupName: string; files: WorkspaceFileRecord[] }>> {
+  const allFiles = await listWorkspaceFiles();
+  if (allFiles.length === 0) return [];
+
+  const { topic, category, minGroupSize = 2 } = params || {};
+
+  // Exclude files already consolidated or system files if possible
+  const candidateFiles = allFiles.filter((f) => {
+    if (category && f.category !== category) return false;
+    return true;
+  });
+
+  if (topic && topic.trim()) {
+    const topicWords = topic.toLowerCase().split(/\s+/).filter((w) => w.length > 2);
+    const matched = candidateFiles.filter((f) => {
+      const pLower = f.path.toLowerCase();
+      const cLower = f.content.toLowerCase();
+      return topicWords.some((w) => pLower.includes(w) || cLower.includes(w));
+    });
+    if (matched.length >= minGroupSize) {
+      return [{ groupName: topic, files: matched }];
+    }
+  }
+
+  // Group files by topic signature / stem
+  const groups = new Map<string, WorkspaceFileRecord[]>();
+
+  for (const f of candidateFiles) {
+    const name = f.path.split('/').pop() || f.path;
+    // Derive topic stem (strip dates, timestamps, suffixes)
+    const stem = name
+      .replace(/\.(md|json|txt|log)$/i, '')
+      .replace(/[_-]\d{4}[-_]\d{2}[-_]\d{2}.*/i, '')
+      .replace(/[_-]\d{6,}.*/i, '')
+      .replace(/[_-](part|vol|v)\d+/i, '')
+      .replace(/^(isw|s2_wire|recon|osint|intel|report)[_-]/i, '$1_')
+      .toLowerCase()
+      .trim();
+
+    const existing = groups.get(stem) || [];
+    existing.push(f);
+    groups.set(stem, existing);
+  }
+
+  // Also group by category if specific stems don't cluster
+  const result: Array<{ groupName: string; files: WorkspaceFileRecord[] }> = [];
+  for (const [groupName, files] of groups.entries()) {
+    if (files.length >= minGroupSize) {
+      result.push({ groupName, files });
+    }
+  }
+
+  // Fallback: if no multi-file stems found, group by category
+  if (result.length === 0) {
+    const intelFiles = candidateFiles.filter((f) => f.category === 'intel' || f.path.startsWith('intel/'));
+    if (intelFiles.length >= minGroupSize) {
+      result.push({ groupName: 'intel_sweeps', files: intelFiles });
+    }
+    const reportFiles = candidateFiles.filter((f) => f.category === 'reports' || f.path.startsWith('reports/'));
+    if (reportFiles.length >= minGroupSize) {
+      result.push({ groupName: 'reports', files: reportFiles });
+    }
+  }
+
+  return result;
+}
+
+/**
  * Consolidates multiple workspace files into a unified master intelligence document,
- * moving or archiving source files and deduplicating redundant content blocks.
+ * reading all similar files, synthesizing their full findings into a clean master dossier,
+ * and deleting the obsolete source files so only the fresh consolidated file remains.
  */
 export async function consolidateWorkspaceFiles(params: {
   sourcePaths: string[];
   targetPath?: string;
+  deleteSources?: boolean;
   archiveSources?: boolean;
   leadOperative?: string;
   topic?: string;
 }): Promise<WorkspaceConsolidationResult> {
-  const { sourcePaths, targetPath, archiveSources = true, leadOperative = 'Agent Vance', topic } = params;
+  const {
+    sourcePaths,
+    targetPath,
+    deleteSources = true,
+    archiveSources = false,
+    leadOperative = 'Agent Vance',
+    topic,
+  } = params;
   if (!Array.isArray(sourcePaths) || sourcePaths.length === 0) {
     throw new Error('Consolidation requires at least one source file path.');
   }
@@ -943,7 +1028,14 @@ export async function consolidateWorkspaceFiles(params: {
 
   const now = new Date();
   const timestamp = now.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
-  const cleanTopic = topic || loadedFiles[0].path.split('/').pop()?.replace(/\.(md|json|txt)$/i, '').replace(/[_-]+/g, ' ') || 'Consolidated Workspace Intelligence';
+  const cleanTopic =
+    topic ||
+    loadedFiles[0].path
+      .split('/')
+      .pop()
+      ?.replace(/\.(md|json|txt)$/i, '')
+      .replace(/[_-]+/g, ' ') ||
+    'Consolidated Workspace Intelligence';
 
   // Build clean merged markdown with deduplicated sections
   const header = [
@@ -951,12 +1043,12 @@ export async function consolidateWorkspaceFiles(params: {
     `**Lead Synthesizer:** ${leadOperative}  `,
     `**Consolidation Timestamp:** ${timestamp}  `,
     `**Source Documents Combined:** ${loadedFiles.length} file(s)  `,
-    `**Sources:** ${loadedFiles.map((f) => `\`${f.path}\``).join(', ')}  `,
+    `**Sources Consolidated:** ${loadedFiles.map((f) => `\`${f.path}\``).join(', ')}  `,
     '',
     '---',
     '',
     '## 1. Executive Synthesis & Unified Findings',
-    `This unified intelligence dossier aggregates, cross-references, and synthesizes ${loadedFiles.length} distinct workspace records into a single authoritative reference. Duplicate field signals and redundant preamble disclosures have been scrubbed.`,
+    `This authoritative master intelligence dossier synthesizes, cross-references, and consolidates ${loadedFiles.length} distinct workspace records into a single unified reference. All redundant preamble text, duplicate headers, and obsolete dispatches have been scrubbed.`,
     '',
     '---',
   ].join('\n');
@@ -974,10 +1066,12 @@ export async function consolidateWorkspaceFiles(params: {
       .replace(/\n*📁 \*\*\[WORKSPACE REPORT UPLOADED\]\*\*[\s\S]*$/, '')
       .trim();
 
-    fileSections.push([
-      `## ${idx + 2}. Source Dossier: \`${f.path}\` (${f.sizeBytes} bytes, updated ${f.updatedAt.slice(0, 16)})`,
-      cleanContent,
-    ].join('\n\n'));
+    fileSections.push(
+      [
+        `## ${idx + 2}. Source Dossier: \`${f.path}\` (${f.sizeBytes} bytes, updated ${f.updatedAt.slice(0, 16)})`,
+        cleanContent,
+      ].join('\n\n')
+    );
   }
 
   const finalMarkdown = [header, ...fileSections].join('\n\n');
@@ -985,16 +1079,20 @@ export async function consolidateWorkspaceFiles(params: {
   // Resolve target path
   const finalTargetPath = targetPath
     ? normalizeFilePath(targetPath)
-    : normalizeFilePath(`reports/consolidated_${cleanTopic.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 40)}.md`);
+    : normalizeFilePath(
+        `reports/consolidated_${cleanTopic.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 40)}.md`
+      );
 
-  // Write the consolidated file
+  // 1. Write the new consolidated file to IndexedDB / VFS
   await writeWorkspaceFile(finalTargetPath, finalMarkdown, 'markdown', 'reports');
 
+  // 2. Delete the source files so only the unified dossier remains (or archive if requested)
+  const deletedPaths: string[] = [];
   const archivedPaths: string[] = [];
-  if (archiveSources) {
-    for (const f of loadedFiles) {
-      if (f.path !== finalTargetPath) {
-        // Move to archive folder if not already there
+
+  for (const f of loadedFiles) {
+    if (f.path !== finalTargetPath) {
+      if (archiveSources) {
         if (!f.path.startsWith('archive/')) {
           const baseName = f.path.split('/').pop() || f.path;
           const archiveTarget = normalizeFilePath(`archive/${baseName}`);
@@ -1004,16 +1102,41 @@ export async function consolidateWorkspaceFiles(params: {
         } else {
           archivedPaths.push(f.path);
         }
+      } else if (deleteSources) {
+        await deleteWorkspaceFile(f.path);
+        deletedPaths.push(f.path);
       }
     }
+  }
+
+  // 3. Dispatch global workspace event so UI instantly refreshes
+  if (typeof window !== 'undefined') {
+    try {
+      window.dispatchEvent(
+        new CustomEvent('pixelops:workspace_file_saved', {
+          detail: { path: finalTargetPath },
+        })
+      );
+      window.dispatchEvent(
+        new CustomEvent('pixelops:workspace_files_changed', {
+          detail: {
+            action: 'consolidate',
+            targetPath: finalTargetPath,
+            deletedPaths,
+            archivedPaths,
+          },
+        })
+      );
+    } catch {}
   }
 
   return {
     consolidatedCount: loadedFiles.length,
     targetPath: finalTargetPath,
+    deletedPaths,
     archivedPaths,
     totalBytesCombined: finalMarkdown.length,
-    summary: `Successfully consolidated ${loadedFiles.length} files into "${finalTargetPath}" (${finalMarkdown.length} bytes). ${archiveSources ? `Archived ${archivedPaths.length} source file(s).` : ''}`,
+    summary: `Successfully gathered all intel from ${loadedFiles.length} files into unified dossier "${finalTargetPath}" (${finalMarkdown.length} bytes). Deleted ${deletedPaths.length} source file(s).`,
   };
 }
 

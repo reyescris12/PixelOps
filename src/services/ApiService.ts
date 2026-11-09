@@ -66,6 +66,7 @@ import {
   moveMultipleWorkspaceFiles,
   auditWorkspaceFiles,
   consolidateWorkspaceFiles,
+  findSimilarWorkspaceFiles,
   normalizeFilePath,
 } from '../engine/storageManager';
 import {
@@ -2610,15 +2611,29 @@ ${findings || 'No additional telemetry findings attached.'}
         };
         summary = `VFS Audit: ${audit.totalFiles} files (${Math.round(audit.totalBytes / 1024)} KB) | Status: ${audit.integrityStatus}`;
       } else if (action === 'consolidate' || action === 'merge') {
-        const sourcePaths = Array.isArray(args.sourcePaths) && args.sourcePaths.length > 0
+        let sourcePaths = Array.isArray(args.sourcePaths) && args.sourcePaths.length > 0
           ? args.sourcePaths.map((p: any) => String(p).trim()).filter(Boolean)
-          : [path];
+          : [path].filter(Boolean);
+
+        // If no explicit source paths provided, cluster similar workspace files
+        if (sourcePaths.length === 0) {
+          try {
+            const similar = await findSimilarWorkspaceFiles({ topic: args.topic });
+            if (similar.length > 0 && similar[0].files.length >= 2) {
+              sourcePaths = similar[0].files.map((f) => f.path);
+            }
+          } catch {}
+        }
 
         const targetPath = args.targetPath || (path && !sourcePaths.includes(path) ? path : undefined);
+        const shouldArchive = Boolean(args.archiveSources);
+        const shouldDelete = args.deleteSources !== false && !shouldArchive;
+
         const result = await consolidateWorkspaceFiles({
           sourcePaths,
           targetPath,
-          archiveSources: args.archiveSources !== false,
+          deleteSources: shouldDelete,
+          archiveSources: shouldArchive,
           leadOperative: 'Safehouse Intelligence',
           topic: args.topic || 'Consolidated Workspace Intelligence',
         });
@@ -2627,7 +2642,7 @@ ${findings || 'No additional telemetry findings attached.'}
           status: 'consolidated',
           ...result,
         };
-        summary = `VFS Consolidate: Merged ${result.consolidatedCount} files into "${result.targetPath}" (${result.totalBytesCombined} bytes)`;
+        summary = `VFS Consolidate: Merged ${result.consolidatedCount} files into "${result.targetPath}" (${result.totalBytesCombined} bytes). Deleted ${result.deletedPaths.length} source file(s).`;
       } else if (action === 'list') {
         let fileList: any[] = [];
         try {
@@ -4440,8 +4455,9 @@ async function tryParseAndExecuteWorkspaceDirective(params: {
 
   // CONSOLIDATE / MERGE INTENT
   const isConsolidate =
-    /\b(consolidate|merge|combine|unify)\b/i.test(lower) &&
-    /\b(file|files|report|reports|intel|dossier|dossiers|workspace)\b/i.test(lower);
+    /\b(consolidate|merge|combine|unify)\b/i.test(lower) ||
+    (/\b(gather\s+all\s+intel|read\s+all\s+similar|gather\s+intel)\b/i.test(lower) &&
+      /\b(files?|reports?|workspace|into\s+one|new\s+file)\b/i.test(lower));
 
   // AUDIT INTENT
   const isAudit =
@@ -4478,14 +4494,23 @@ async function tryParseAndExecuteWorkspaceDirective(params: {
 
     if (sourcePaths.length === 0) {
       try {
-        const allFiles = await listWorkspaceFiles();
-        if (/intel/i.test(lower)) {
-          sourcePaths = allFiles.filter((f) => f.category === 'intel' || f.path.startsWith('intel/')).slice(0, 5).map((f) => f.path);
-        } else if (/report/i.test(lower)) {
-          sourcePaths = allFiles.filter((f) => f.category === 'reports' || f.path.startsWith('reports/')).slice(0, 5).map((f) => f.path);
-        }
-        if (sourcePaths.length < 2) {
-          sourcePaths = allFiles.filter((f) => !f.path.startsWith('archive/')).slice(0, 4).map((f) => f.path);
+        const topicMatch = rawPrompt.match(/(?:for|about|on|covering|topic|named|titled)\s+["']?([^"',\.]+)/i);
+        const inferredTopic = topicMatch ? topicMatch[1].trim() : undefined;
+
+        // Try clustering similar workspace files by topic/stem first
+        const similarGroups = await findSimilarWorkspaceFiles({ topic: inferredTopic });
+        if (similarGroups.length > 0 && similarGroups[0].files.length >= 2) {
+          sourcePaths = similarGroups[0].files.map((f) => f.path);
+        } else {
+          const allFiles = await listWorkspaceFiles();
+          if (/intel/i.test(lower)) {
+            sourcePaths = allFiles.filter((f) => f.category === 'intel' || f.path.startsWith('intel/')).slice(0, 6).map((f) => f.path);
+          } else if (/report/i.test(lower)) {
+            sourcePaths = allFiles.filter((f) => f.category === 'reports' || f.path.startsWith('reports/')).slice(0, 6).map((f) => f.path);
+          }
+          if (sourcePaths.length < 2) {
+            sourcePaths = allFiles.filter((f) => !f.path.startsWith('archive/')).slice(0, 5).map((f) => f.path);
+          }
         }
       } catch {}
     }
@@ -4517,10 +4542,12 @@ async function tryParseAndExecuteWorkspaceDirective(params: {
       const targetPathMatch = rawPrompt.match(/(?:to|into|target|as)\s+([\w\-_\/]+\.md)/i);
       const targetPath = targetPathMatch ? targetPathMatch[1].trim() : undefined;
 
+      const shouldArchive = /\barchive\b/i.test(lower) && !/\bdelete\b/i.test(lower);
       const result = await consolidateWorkspaceFiles({
         sourcePaths,
         targetPath,
-        archiveSources: true,
+        deleteSources: !shouldArchive,
+        archiveSources: shouldArchive,
         leadOperative: params.activeAgentName + ' (' + params.activeAgentRole + ')',
         topic,
       });
@@ -4535,7 +4562,11 @@ async function tryParseAndExecuteWorkspaceDirective(params: {
         targetStationId: dest.targetStationId,
       };
 
-      const dialogue = params.activeAgentName + ' (' + params.activeAgentRole + '): Successfully consolidated ' + result.consolidatedCount + ' workspace file(s) into single unified dossier `' + result.targetPath + '` (' + result.totalBytesCombined + ' bytes).\n\n• **Unified Dossier:** `' + result.targetPath + '`\n• **Sources Combined:** ' + sourcePaths.map((p) => '`' + p + '`').join(', ') + '\n• **Archived:** ' + (result.archivedPaths.length ? result.archivedPaths.map((p) => '`' + p + '`').join(', ') : 'None') + '\n\nAll redundant intelligence and duplicate headers have been scrubbed. View anytime in the Files drawer (📁 Files) or via CLI (`pixelops cat ' + result.targetPath + '`).';
+      const dispositionNote = result.deletedPaths.length > 0
+        ? '• **Deleted Source Files:** ' + result.deletedPaths.map((p) => '`' + p + '`').join(', ')
+        : '• **Archived:** ' + (result.archivedPaths.length ? result.archivedPaths.map((p) => '`' + p + '`').join(', ') : 'None');
+
+      const dialogue = params.activeAgentName + ' (' + params.activeAgentRole + '): Successfully gathered all intel from ' + result.consolidatedCount + ' workspace file(s) into single unified dossier `' + result.targetPath + '` (' + result.totalBytesCombined + ' bytes).\n\n• **Unified Dossier:** `' + result.targetPath + '`\n• **Sources Combined:** ' + sourcePaths.map((p) => '`' + p + '`').join(', ') + '\n' + dispositionNote + '\n\nAll redundant intelligence and duplicate headers have been scrubbed, and the superseded files have been deleted from your workspace files. View anytime in the Files drawer (📁 Files) or via CLI (`pixelops cat ' + result.targetPath + '`).';
 
       return {
         id: 'card-' + Date.now(),
@@ -4546,7 +4577,7 @@ async function tryParseAndExecuteWorkspaceDirective(params: {
         steps: [
           { label: 'Source Ingestion', detail: 'Read ' + sourcePaths.length + ' workspace record(s)', status: 'completed' },
           { label: 'Deduplication & Merge', detail: 'Combined into unified dossier ' + result.targetPath, status: 'verified' },
-          { label: 'Source Archival', detail: 'Moved ' + result.archivedPaths.length + ' source(s) into archive/', status: 'completed' },
+          { label: 'Purge Old Files', detail: 'Deleted ' + result.deletedPaths.length + ' superseded file(s)', status: 'completed' },
         ],
         toolCalls: [executedMeta],
         tokenEstimate: 95,
@@ -6541,7 +6572,7 @@ CRITICAL MEMORY RECALL INSTRUCTION:
         : `You are ${params.activeAgentName || 'Agent'}, an AI assistant. Help the user complete their directives and tasks directly, clearly, and effectively using your available tools.`;
 
       if (declaredToolNames) {
-        systemInstruction += `\n\n### Available Tools & Integrations:\n${declaredToolNames}\nWhen executing external or connected tool operations (e.g. GitHub, Slack, Gmail, Google Calendar, Notion, Linear, web search, code sandbox, file storage), you can invoke them directly or emit a structured action tag in your response:\n[AGENT_ACTION: <tool_name>] { "param": "value" } [/AGENT_ACTION]\n\n### Workspace File System Operations (fs_storage_manager):\nYou have full read/write/edit/delete/organize/audit/consolidate power over the local workspace files in IndexedDB:\n- "write" / "create": Save or upload markdown reports, briefs, configs, or dossiers.\n- "read": Inspect existing file content by path.\n- "edit" / "append": Update or add to existing workspace files.\n- "delete": Permanently remove obsolete files or test artifacts.\n- "organize": Move files into folders (e.g. "reports", "intel", "archive", "logs").\n- "audit": Inspect the entire workspace for integrity, size, stale items, and duplicate content.\n- "consolidate": Merge multiple related files into a single unified dossier without duplicating intel.\n- "list": Inspect all workspace files.\n\n### Report Writing & Non-Redundancy Standards:\nWhen compiling multi-part reports or executing investigative workflows:\n- Write crisp, distinct intelligence without repeating identical findings, preambles, or citations in part 1 and part 2.\n- Always synthesize and consolidate field signals into clear, actionable sections (Executive Summary, Findings, Telemetry Matrix, Recommendations).\n\n### Calendar Tool Parameter Rules:\nWhen invoking composio_googlecalendar_create_event or scheduling calendar events, strictly enforce clean JSON parameters:\n- Required keys: "summary", "start_time", "end_time", "time_zone".\n- Datetime format: ISO 8601 local wall-clock string without trailing Z offset (e.g. "2026-11-09T16:21:19").\n- Summary: Clean title only without conversational filler, prefix narratives, or debug blocks.`;
+        systemInstruction += `\n\n### Available Tools & Integrations:\n${declaredToolNames}\nWhen executing external or connected tool operations (e.g. GitHub, Slack, Gmail, Google Calendar, Notion, Linear, web search, code sandbox, file storage), you can invoke them directly or emit a structured action tag in your response:\n[AGENT_ACTION: <tool_name>] { "param": "value" } [/AGENT_ACTION]\n\n### Workspace File System Operations (fs_storage_manager):\nYou have full read/write/edit/delete/organize/audit/consolidate power over the local workspace files in IndexedDB:\n- "write" / "create": Save or upload markdown reports, briefs, configs, or dossiers.\n- "read": Inspect existing file content by path.\n- "edit" / "append": Update or add to existing workspace files.\n- "delete": Permanently remove obsolete files or test artifacts.\n- "organize": Move files into folders (e.g. "reports", "intel", "archive", "logs").\n- "audit": Inspect the entire workspace for integrity, size, stale items, and duplicate content.\n- "consolidate": Merge multiple related files into a single unified dossier without duplicating intel, and delete the superseded source files so only the new unified master dossier remains.\n- "list": Inspect all workspace files.\n\n### Critical Consolidation Rule:\nWhen the user asks to consolidate, combine, or merge files, or says "gather all intel from similar files into one and delete the old ones":\n1. ALWAYS read and combine all content from the source files into a single authoritative master dossier.\n2. ALWAYS delete the superseded individual source files from the workspace.\n3. NEVER simply write a message saying you did it—actually invoke fs_storage_manager action "consolidate" with deleteSources: true!\n\n### Report Writing & Non-Redundancy Standards:\nWhen compiling multi-part reports or executing investigative workflows:\n- Write crisp, distinct intelligence without repeating identical findings, preambles, or citations in part 1 and part 2.\n- Always synthesize and consolidate field signals into clear, actionable sections (Executive Summary, Findings, Telemetry Matrix, Recommendations).\n\n### Calendar Tool Parameter Rules:\nWhen invoking composio_googlecalendar_create_event or scheduling calendar events, strictly enforce clean JSON parameters:\n- Required keys: "summary", "start_time", "end_time", "time_zone".\n- Datetime format: ISO 8601 local wall-clock string without trailing Z offset (e.g. "2026-11-09T16:21:19").\n- Summary: Clean title only without conversational filler, prefix narratives, or debug blocks.`;
       }
 
       if (memoryContextStr) {

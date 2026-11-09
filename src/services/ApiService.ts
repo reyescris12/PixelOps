@@ -66,6 +66,7 @@ import {
   moveMultipleWorkspaceFiles,
   auditWorkspaceFiles,
   consolidateWorkspaceFiles,
+  consolidateAndPrune,
   findSimilarWorkspaceFiles,
   normalizeFilePath,
 } from '../engine/storageManager';
@@ -2629,20 +2630,25 @@ ${findings || 'No additional telemetry findings attached.'}
         const shouldArchive = Boolean(args.archiveSources);
         const shouldDelete = args.deleteSources !== false && !shouldArchive;
 
-        const result = await consolidateWorkspaceFiles({
-          sourcePaths,
-          targetPath,
-          deleteSources: shouldDelete,
-          archiveSources: shouldArchive,
-          leadOperative: 'Safehouse Intelligence',
-          topic: args.topic || 'Consolidated Workspace Intelligence',
-        });
+        const result = shouldDelete
+          ? await consolidateAndPrune(sourcePaths, targetPath, {
+              leadOperative: 'Safehouse Intelligence',
+              topic: args.topic || 'Consolidated Workspace Intelligence',
+            })
+          : await consolidateWorkspaceFiles({
+              sourcePaths,
+              targetPath,
+              deleteSources: false,
+              archiveSources: shouldArchive,
+              leadOperative: 'Safehouse Intelligence',
+              topic: args.topic || 'Consolidated Workspace Intelligence',
+            });
 
         fsResult = {
           status: 'consolidated',
           ...result,
         };
-        summary = `VFS Consolidate: Merged ${result.consolidatedCount} files into "${result.targetPath}" (${result.totalBytesCombined} bytes). Deleted ${result.deletedPaths.length} source file(s).`;
+        summary = `VFS Consolidate: Merged ${result.consolidatedCount} files into "${result.targetPath}" (${result.totalBytesCombined} bytes). Deleted ${result.deletedPaths.length} source file(s) (Verified pruned: ${result.verifiedPruned !== false}).`;
       } else if (action === 'list') {
         let fileList: any[] = [];
         try {
@@ -4543,30 +4549,34 @@ async function tryParseAndExecuteWorkspaceDirective(params: {
       const targetPath = targetPathMatch ? targetPathMatch[1].trim() : undefined;
 
       const shouldArchive = /\barchive\b/i.test(lower) && !/\bdelete\b/i.test(lower);
-      const result = await consolidateWorkspaceFiles({
+      const result = await consolidateAndPrune(
         sourcePaths,
         targetPath,
-        deleteSources: !shouldArchive,
-        archiveSources: shouldArchive,
-        leadOperative: params.activeAgentName + ' (' + params.activeAgentRole + ')',
-        topic,
-      });
+        {
+          leadOperative: params.activeAgentName + ' (' + params.activeAgentRole + ')',
+          topic,
+        }
+      );
 
       const executedMeta = {
         pluginId: 'fs_storage',
         toolName: 'fs_storage_manager',
         args: { action: 'consolidate', sourcePaths, targetPath: result.targetPath },
-        resultSummary: 'Merged ' + result.consolidatedCount + ' files into ' + result.targetPath + ' (' + result.totalBytesCombined + ' bytes)',
+        resultSummary: 'Merged ' + result.consolidatedCount + ' files into ' + result.targetPath + ' (' + result.totalBytesCombined + ' bytes). Pruned ' + result.deletedPaths.length + ' source files.',
         livePayload: result,
         targetRoom: dest.targetRoom,
         targetStationId: dest.targetStationId,
       };
 
+      const verificationNote = result.verifiedPruned
+        ? '• **Workspace Index Verified:** All ' + result.deletedPaths.length + ' source file(s) confirmed purged from IndexedDB.'
+        : '• **Workspace Pruning Status:** ' + result.deletedPaths.length + ' file(s) deleted.';
+
       const dispositionNote = result.deletedPaths.length > 0
         ? '• **Deleted Source Files:** ' + result.deletedPaths.map((p) => '`' + p + '`').join(', ')
         : '• **Archived:** ' + (result.archivedPaths.length ? result.archivedPaths.map((p) => '`' + p + '`').join(', ') : 'None');
 
-      const dialogue = params.activeAgentName + ' (' + params.activeAgentRole + '): Successfully gathered all intel from ' + result.consolidatedCount + ' workspace file(s) into single unified dossier `' + result.targetPath + '` (' + result.totalBytesCombined + ' bytes).\n\n• **Unified Dossier:** `' + result.targetPath + '`\n• **Sources Combined:** ' + sourcePaths.map((p) => '`' + p + '`').join(', ') + '\n' + dispositionNote + '\n\nAll redundant intelligence and duplicate headers have been scrubbed, and the superseded files have been deleted from your workspace files. View anytime in the Files drawer (📁 Files) or via CLI (`pixelops cat ' + result.targetPath + '`).';
+      const dialogue = params.activeAgentName + ' (' + params.activeAgentRole + '): Successfully gathered all intel from ' + result.consolidatedCount + ' workspace file(s) into single unified dossier `' + result.targetPath + '` (' + result.totalBytesCombined + ' bytes).\n\n• **Unified Dossier:** `' + result.targetPath + '`\n• **Sources Combined:** ' + sourcePaths.map((p) => '`' + p + '`').join(', ') + '\n' + dispositionNote + '\n' + verificationNote + '\n\nAll redundant intelligence and duplicate headers have been scrubbed, and the superseded files have been deleted from your workspace files. View anytime in the Files drawer (📁 Files) or via CLI (`pixelops cat ' + result.targetPath + '`).';
 
       return {
         id: 'card-' + Date.now(),
@@ -4576,8 +4586,8 @@ async function tryParseAndExecuteWorkspaceDirective(params: {
         actionCategory: 'Storage',
         steps: [
           { label: 'Source Ingestion', detail: 'Read ' + sourcePaths.length + ' workspace record(s)', status: 'completed' },
-          { label: 'Deduplication & Merge', detail: 'Combined into unified dossier ' + result.targetPath, status: 'verified' },
-          { label: 'Purge Old Files', detail: 'Deleted ' + result.deletedPaths.length + ' superseded file(s)', status: 'completed' },
+          { label: 'Atomic Merge & Write', detail: 'Combined into unified dossier ' + result.targetPath, status: 'verified' },
+          { label: 'Prune & Verify Index', detail: 'Verified ' + (result.verifiedRemovedPaths?.length ?? result.deletedPaths.length) + ' source record(s) removed from IndexedDB', status: 'verified' },
         ],
         toolCalls: [executedMeta],
         tokenEstimate: 95,

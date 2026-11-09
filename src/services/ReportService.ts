@@ -58,6 +58,16 @@ export function isReportDirective(prompt: string): boolean {
   if (!prompt || typeof prompt !== 'string') return false;
   const p = prompt.toLowerCase().trim();
 
+  // EXCLUSION: Consolidation, file pruning, deletion, or organization directives
+  // must NEVER be flagged as report-creation directives.
+  // This enforces Rule 2: "No Orphaned Files - Prohibit agents from writing summary confirmation text files while leaving raw source reports intact".
+  if (
+    /\b(consolidate|consolidating|merge|merging|prune|pruning|purge|purging|delete|deleting|erase|remove)\b/i.test(p) &&
+    /\b(file|files|source|sources|workspace|reports?|intels?|dossiers?|into\s+one|old\s+ones)\b/i.test(p)
+  ) {
+    return false;
+  }
+
   // 1. Explicit report, intelligence, or document nouns anywhere in a substantive directive
   const hasReportNoun =
     /\b(report|brief|briefing|summary|audit|dossier|analysis|overview|guide|checklist|spec|specification|document|documentation|whitepaper|writeup|notes|intel|intelligence|sitrep|situation\s+report|mission\s+log|findings|assessment|takeaways|evaluation|recon|reconnaissance|sweep|threat\s+matrix|wiretap|telemetry|profile|postmortem|roadmap|plan)\b/i.test(
@@ -121,6 +131,15 @@ export function shouldAutoGenerateReport(params: {
   toolCalls?: Array<{ toolName?: string; resultSummary?: string; livePayload?: any }>;
 }): boolean {
   const { prompt, dialogue = '', toolCalls = [] } = params;
+
+  // Enforce Rule 2: Never auto-generate confirmation reports when consolidating or deleting files
+  const p = (prompt || '').toLowerCase();
+  if (
+    /\b(consolidate|consolidating|merge|merging|prune|pruning|purge|purging|delete|deleting|erase|remove)\b/i.test(p) &&
+    /\b(file|files|source|sources|workspace|reports?|intels?|dossiers?|into\s+one|old\s+ones)\b/i.test(p)
+  ) {
+    return false;
+  }
 
   if (isReportDirective(prompt)) return true;
 

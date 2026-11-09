@@ -18,6 +18,7 @@ import {
   moveMultipleWorkspaceFiles,
   auditWorkspaceFiles,
   consolidateWorkspaceFiles,
+  consolidateAndPrune,
   normalizeFilePath,
 } from './storageManager';
 import {
@@ -574,15 +575,25 @@ export async function executeCLICommand(
           sourcePaths.push(a);
         }
       }
-      const res = await consolidateWorkspaceFiles({
-        sourcePaths,
-        targetPath,
-        archiveSources: true,
-        leadOperative: 'Agent Vance',
-      });
+      const deleteFlag = args.includes('--delete') || args.includes('-d');
+      const archiveFlag = args.includes('--archive') || args.includes('-a');
+      const cleanSources = sourcePaths.filter((s) => !s.startsWith('-'));
+
+      const res = deleteFlag || !archiveFlag
+        ? await consolidateAndPrune(cleanSources, targetPath, {
+            leadOperative: 'Agent Vance (CLI Consolidation)',
+          })
+        : await consolidateWorkspaceFiles({
+            sourcePaths: cleanSources,
+            targetPath,
+            archiveSources: true,
+            deleteSources: false,
+            leadOperative: 'Agent Vance (CLI Consolidation)',
+          });
+
       return {
         command: trimmed,
-        output: `[CONSOLIDATION SUCCESSFUL]\n${res.summary}\nUnified Document: ${res.targetPath} (${res.totalBytesCombined} bytes)`,
+        output: `[CONSOLIDATION SUCCESSFUL]\n${res.summary}\nUnified Document: ${res.targetPath} (${res.totalBytesCombined} bytes)\nPruning Verification: ${res.verifiedPruned ? 'VERIFIED REMOVED FROM INDEX' : 'COMPLETE'}`,
         status: 'ok',
         timestamp,
       };

@@ -1026,10 +1026,15 @@ const CommandCenterContent: React.FC = () => {
     explicitAgentId?: string,
     explicitTargetRoom?: RoomId
   ) => {
+    const isFileMaintenanceDirective =
+      /\b(consolidate|merge|prune|audit|organize)\b/i.test(prompt) &&
+      /\b(file|files|workspace|reports?|intels?|old\s+ones|source|all\s+intel)\b/i.test(prompt);
+
     // 0. Autonomous Multi-Step Task Chain & Vance Supervisor Routing
     if (
       !skipAmbiguityCheck &&
       !attachment &&
+      !isFileMaintenanceDirective &&
       (isDirectiveTaskChain(prompt) || isHighLevelSupervisorObjective(prompt, explicitAgentId || activeAgent.id))
     ) {
       handleExecuteTaskChain(prompt, undefined, explicitAgentId || activeAgent.id);
@@ -1037,7 +1042,7 @@ const CommandCenterContent: React.FC = () => {
     }
 
     // 1. Automated Ambiguity Detection & Task Brief Interception (StarNet pattern)
-    if (!skipAmbiguityCheck && !attachment) {
+    if (!skipAmbiguityCheck && !attachment && !isFileMaintenanceDirective) {
       const ambiguityAnalysis = analyzePromptAmbiguity(prompt, { activeAgentRole: activeAgent.role });
       if (ambiguityAnalysis.requiresClarification && ambiguityAnalysis.brief) {
         playBeep('error');

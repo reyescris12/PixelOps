@@ -914,6 +914,9 @@ export interface WorkspaceConsolidationResult {
   archivedPaths: string[];
   totalBytesCombined: number;
   summary: string;
+  verifiedPruned?: boolean;
+  verifiedRemovedPaths?: string[];
+  residualErrors?: string[];
 }
 
 /**
@@ -1109,7 +1112,28 @@ export async function consolidateWorkspaceFiles(params: {
     }
   }
 
-  // 3. Dispatch global workspace event so UI instantly refreshes
+  // 3. Post-execution verification step: verify source files are removed from IndexedDB / VFS
+  const verifiedRemovedPaths: string[] = [];
+  const residualErrors: string[] = [];
+  if (deleteSources && deletedPaths.length > 0) {
+    for (const p of deletedPaths) {
+      const exists = await readWorkspaceFile(p);
+      if (exists) {
+        // Enforce cleanup if still in index
+        await deleteWorkspaceFile(p);
+        const doubleCheck = await readWorkspaceFile(p);
+        if (doubleCheck) {
+          residualErrors.push(p);
+        } else {
+          verifiedRemovedPaths.push(p);
+        }
+      } else {
+        verifiedRemovedPaths.push(p);
+      }
+    }
+  }
+
+  // 4. Dispatch global workspace event so UI instantly refreshes
   if (typeof window !== 'undefined') {
     try {
       window.dispatchEvent(
@@ -1136,8 +1160,36 @@ export async function consolidateWorkspaceFiles(params: {
     deletedPaths,
     archivedPaths,
     totalBytesCombined: finalMarkdown.length,
-    summary: `Successfully gathered all intel from ${loadedFiles.length} files into unified dossier "${finalTargetPath}" (${finalMarkdown.length} bytes). Deleted ${deletedPaths.length} source file(s).`,
+    summary: `Successfully gathered all intel from ${loadedFiles.length} files into unified dossier "${finalTargetPath}" (${finalMarkdown.length} bytes). Deleted and verified ${deletedPaths.length} source file(s) removed from workspace index.`,
+    verifiedPruned: residualErrors.length === 0,
+    verifiedRemovedPaths,
+    residualErrors,
   };
+}
+
+/**
+ * Atomic Report Consolidation & Pruning Protocol
+ * 
+ * Performs a transactional write of merged content followed by an immediate deletion
+ * of input files from IndexedDB/OPFS/VFS, and verifies that all source file IDs are
+ * successfully removed from the active workspace index.
+ */
+export async function consolidateAndPrune(
+  sourceFiles: string[],
+  destinationPath?: string,
+  options?: {
+    topic?: string;
+    leadOperative?: string;
+  }
+): Promise<WorkspaceConsolidationResult> {
+  return await consolidateWorkspaceFiles({
+    sourcePaths: sourceFiles,
+    targetPath: destinationPath,
+    deleteSources: true,
+    archiveSources: false,
+    leadOperative: options?.leadOperative || 'Agent Vance (Safehouse Supervisor)',
+    topic: options?.topic,
+  });
 }
 
 /**

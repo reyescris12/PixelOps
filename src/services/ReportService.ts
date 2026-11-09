@@ -511,7 +511,22 @@ export interface ReportGenerationParams {
  */
 export function deduplicateReportIntel(primaryContent: string, secondaryContent?: string): string {
   if (!secondaryContent || !secondaryContent.trim()) {
-    return primaryContent.trim();
+    // Strip self-duplication: deduplicate adjacent identical paragraphs within primaryContent
+    const paras = primaryContent.trim().split(/\n{2,}/);
+    const unique: string[] = [];
+    for (const p of paras) {
+      const cleanP = p.trim();
+      if (!cleanP) continue;
+      const cleanSnippet = cleanP.slice(0, 80).toLowerCase();
+      const isDupe = unique.some((existing) => {
+        const existSnippet = existing.slice(0, 80).toLowerCase();
+        return existSnippet === cleanSnippet || (cleanSnippet.length > 30 && existing.toLowerCase().includes(cleanSnippet));
+      });
+      if (!isDupe) {
+        unique.push(cleanP);
+      }
+    }
+    return unique.join('\n\n');
   }
 
   const primaryClean = primaryContent.trim();
@@ -599,7 +614,7 @@ export function formatOrganizedReportMarkdown(params: ReportGenerationParams): {
     .map((p) => p.replace(/^#+\s+.*$/gm, '').trim())
     .filter((p) => p.length > 30 && !p.startsWith('|') && !p.startsWith('```'));
 
-  const execSummaryText =
+  let execSummaryText =
     paragraphs[0] ||
     `Autonomous ${domainCategory.toLowerCase()} compiled by ${params.agentName} (${params.agentRole}) covering ${subjectTitle}.`;
 
@@ -615,7 +630,26 @@ export function formatOrganizedReportMarkdown(params: ReportGenerationParams): {
       : `| **1. \`internal_intel_synthesis\`** | Grounded in safehouse OSINT & sector telemetry | **VERIFIED** |`;
 
   // Ensure body doesn't duplicate the top `# Title`
-  const bodyWithoutDuplicateH1 = cleanedBody.replace(/^#\s+[^\n]+\n+/, '').trim();
+  let bodyWithoutDuplicateH1 = cleanedBody.replace(/^#\s+[^\n]+\n+/, '').trim();
+
+  // Strip duplicate executive summary from the body if the body begins with or contains the exact executive summary
+  if (paragraphs.length > 1) {
+    // If the body starts with the executive summary paragraph, advance past it to avoid repeating it in section 2
+    const firstParaClean = paragraphs[0].trim();
+    if (bodyWithoutDuplicateH1.startsWith(firstParaClean)) {
+      bodyWithoutDuplicateH1 = bodyWithoutDuplicateH1.slice(firstParaClean.length).trim();
+    } else {
+      // Remove the first paragraph if it appears verbatim at the beginning
+      const sample = firstParaClean.slice(0, 80);
+      if (bodyWithoutDuplicateH1.toLowerCase().startsWith(sample.toLowerCase())) {
+        bodyWithoutDuplicateH1 = bodyWithoutDuplicateH1.replace(firstParaClean, '').trim();
+      }
+    }
+  } else if (paragraphs.length === 1) {
+    // There is only a single paragraph of content.
+    // Use an executive summary synthesis for Section 1 so Section 2 contains the actual analytical findings
+    execSummaryText = `Autonomous ${domainCategory.toLowerCase()} synthesized by **${params.agentName}** (${params.agentRole}) regarding **${subjectTitle}**. Core findings verified against safehouse telemetry and local-first VFS storage.`;
+  }
 
   // Deduplicate preceding intelligence against the main body to prevent repetition
   const nonRedundantIntelSection = deduplicateReportIntel(bodyWithoutDuplicateH1, params.precedingIntelligence);

@@ -896,6 +896,26 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
                     Enter postal codes (e.g. <code className="text-[#fde047]">SW1A 1AA</code>, <code className="text-[#fde047]">90210</code>, <code className="text-[#fde047]">M5V 3L9</code>), city names, or coordinates. The Recon Monitor geocodes the location, centers the camera, automatically switches to high-res optical imagery at street zoom levels, and plants a persistent <code className="text-[#38bdf8]">RECON TARGET</code> pin.
                   </p>
                 </div>
+
+                <div className="p-4 bg-[#121520] border border-[#fb923c] space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs sm:text-sm font-bold text-[#fb923c] uppercase">
+                      🛡️ ISW Conflict Research Integration & Dynamic Map Pins
+                    </h4>
+                    <span className="text-[10px] bg-[#fb923c]/10 text-[#fb923c] px-2 py-0.5 border border-[#fb923c]/40 font-bold">
+                      UNDERSTANDINGWAR.ORG
+                    </span>
+                  </div>
+                  <p className="text-xs text-[#cbd5e1]">
+                    Conflict research assessments from the <strong>Institute for the Study of War (ISW)</strong> (<code className="text-[#fb923c]">https://understandingwar.org/research/</code>) are ingested into <code className="text-[#fb923c]">/intel/sources/isw_research/</code> and mapped to the Recon Monitor:
+                  </p>
+                  <ul className="text-xs text-[#94a3b8] space-y-1 list-disc pl-4">
+                    <li><strong className="text-[#cbd5e1]">Russian Offensive Campaign Assessments:</strong> Frontline movements, Pokrovsk/Donbas assaults, and fiber-optic EW tether dynamics mapped to Ukrainian theater pins (<code className="text-[#fb923c]">48.28° N, 37.18° E</code>).</li>
+                    <li><strong className="text-[#cbd5e1]">Iran & Middle East Updates:</strong> Bab al-Mandab maritime chokepoints, Houthi anti-ship threats, and regional proxy nets mapped to Red Sea pins (<code className="text-[#fb923c]">12.58° N, 43.33° E</code>).</li>
+                    <li><strong className="text-[#cbd5e1]">Indo-Pacific & Cross-Strait Research:</strong> Joint sea-air encirclement drills and maritime gray-zone pressures anchored to Taiwan Strait coordinates (<code className="text-[#fb923c]">24.81° N, 120.96° E</code>).</li>
+                    <li><strong className="text-[#cbd5e1]">Multi-Source Correlation:</strong> Operatives cross-reference ISW articles with S2 Underground Wire dispatches and live satellite recon to compile comprehensive dossiers.</li>
+                  </ul>
+                </div>
               </div>
             </div>
           )}

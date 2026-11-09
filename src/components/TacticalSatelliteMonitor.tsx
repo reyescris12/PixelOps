@@ -658,30 +658,48 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
         const wireFiles = files
           .filter((f) => {
             const name = getFileName(f);
-            return name.startsWith('s2_wire_') || name.includes('s2-wire') || name.includes('osint');
+            return (
+              name.startsWith('s2_wire_') ||
+              name.includes('s2-wire') ||
+              name.includes('osint') ||
+              name.startsWith('isw_') ||
+              name.includes('_isw_') ||
+              f.path.includes('isw_research')
+            );
           })
-          .slice(0, 4);
+          .slice(0, 8);
         if (!wireFiles.length) return;
 
-        // Fixed geographic anchors for S2 Wire regional theaters so pins never drift when panning
+        // Fixed geographic anchors for S2 Wire and ISW regional theaters so pins never drift when panning
         const fixedAnchors = [
+          { lat: 48.28, lon: 37.18 }, // Eastern Ukraine / Pokrovsk Donbas
+          { lat: 12.58, lon: 43.33 }, // Red Sea / Bab al-Mandab
+          { lat: 24.81, lon: 120.96 }, // Taiwan Strait / Indo-Pacific
           { lat: 30.62, lon: 32.32 }, // Suez / Eastern Med
           { lat: 50.14, lon: 8.72 },  // Central Europe
-          { lat: 39.08, lon: -77.44 }, // US-East
-          { lat: 24.85, lon: 121.02 }, // Indo-Pacific
+          { lat: 39.08, lon: -77.44 }, // US-East / DC
         ];
 
         const inferCoordsFromText = (text: string, index: number): { lat: number; lon: number } => {
           const explicit = parseExplicitLatLon(text);
           if (explicit) return explicit;
           const lower = text.toLowerCase();
+          if (lower.includes('pokrovsk') || lower.includes('donbas') || lower.includes('kurakhove') || lower.includes('ukraine') || lower.includes('donetsk') || lower.includes('kharkiv')) {
+            return { lat: 48.2824, lon: 37.1818 };
+          }
+          if (lower.includes('kursk') || lower.includes('belgorod') || lower.includes('moscow') || lower.includes('russia')) {
+            return { lat: 51.7303, lon: 36.1927 };
+          }
+          if (lower.includes('bab al-mandab') || lower.includes('houthi') || lower.includes('yemen') || lower.includes('gulf of aden')) {
+            return { lat: 12.5833, lon: 43.3333 };
+          }
           if (lower.includes('red sea') || lower.includes('suez') || lower.includes('cairo') || lower.includes('mediterranean')) {
             return { lat: 30.5852, lon: 32.2654 };
           }
-          if (lower.includes('hormuz') || lower.includes('persian gulf') || lower.includes('iran')) {
+          if (lower.includes('hormuz') || lower.includes('persian gulf') || lower.includes('iran') || lower.includes('tehran')) {
             return { lat: 26.5667, lon: 56.25 };
           }
-          if (lower.includes('taiwan') || lower.includes('hsinchu') || lower.includes('pacific') || lower.includes('china')) {
+          if (lower.includes('taiwan') || lower.includes('hsinchu') || lower.includes('taipei') || lower.includes('pla') || lower.includes('pacific') || lower.includes('china')) {
             return { lat: 24.8138, lon: 120.9675 };
           }
           if (lower.includes('malacca') || lower.includes('singapore')) {
@@ -698,6 +716,7 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
 
         const dynamicPins: TacticalIntelPin[] = wireFiles.map((file, idx) => {
           const fileTitle = getFileTitle(file);
+          const isISW = file.path.includes('isw_research') || file.path.includes('isw_') || fileTitle.includes('ISW') || file.content.includes('understandingwar.org');
           const cleanBody = file.content
             .replace(/^#+\s+.*/gm, '')
             .replace(/\*\*.*?\*\*/g, '')
@@ -707,15 +726,15 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
           const summarySnippet =
             cleanBody.slice(0, 180) + (cleanBody.length > 180 ? '...' : '');
           const isHigh =
-            /critical|high|alert|strike|outage|jamming|kinetic|sev/i.test(fileTitle + ' ' + file.content) ||
+            /critical|high|alert|strike|outage|jamming|kinetic|assault|offensive|missile|sev/i.test(fileTitle + ' ' + file.content) ||
             idx === 0;
           const coords = inferCoordsFromText(`${fileTitle} ${file.content}`, idx);
           return {
             id: `vfs-pin-${file.id ?? file.path}`,
-            title: fileTitle || 'S2 Wire Intelligence Dispatch',
-            summary: summarySnippet || 'Structured SITREP dispatch archived in local VFS.',
+            title: fileTitle || (isISW ? 'ISW Research Assessment' : 'S2 Wire Intelligence Dispatch'),
+            summary: summarySnippet || 'Structured conflict dossier archived in local VFS.',
             priority: isHigh ? 'HIGH' : 'MEDIUM',
-            category: 'S2 WIRE SITREP',
+            category: isISW ? 'ISW RESEARCH' : 'S2 WIRE SITREP',
             timestamp: new Date(file.updatedAt || Date.now()).toLocaleTimeString([], {
               hour: '2-digit',
               minute: '2-digit',

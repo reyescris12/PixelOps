@@ -73,6 +73,11 @@ import {
   fetchS2WireFeed,
   buildAgentSITREPContext,
 } from './ClassifiedFeedService';
+import {
+  retrieveRelevantISWBriefings,
+  buildAgentISWContext,
+  initISWFeedIngestion,
+} from './iswFeedService';
 import { addStrategyBoardTasks } from './StrategyBoardService';
 
 export {
@@ -523,6 +528,30 @@ export const GEMINI_TOOL_DECLARATIONS: Record<string, GeminiFunctionDeclarationS
       required: [],
     },
   },
+  isw_research_lookup: {
+    name: 'isw_research_lookup',
+    description:
+      'Query and cross-reference peer conflict research, frontline assessments, and regional security reports from the Institute for the Study of War (understandingwar.org/research/). Covers Russian Offensive Campaign Assessments (Ukraine/Donbas), Middle East & Iran Updates (Houthis/Red Sea/Persian Gulf), and Indo-Pacific cross-strait defense dynamics.',
+    parameters: {
+      type: 'OBJECT',
+      description: 'ISW conflict research parameters',
+      properties: {
+        query: {
+          type: 'STRING',
+          description: 'Search query, conflict zone, or strategic topic (e.g., "Ukraine frontline", "Pokrovsk", "Iran Red Sea", "Taiwan Strait", "drone EW", "Russian offensive").',
+        },
+        theater: {
+          type: 'STRING',
+          description: 'Strategic theater filter: "russia_ukraine", "middle_east", "china_taiwan", "global_security", or "all".',
+        },
+        limit: {
+          type: 'NUMBER',
+          description: 'Maximum number of research dossiers to retrieve (default: 3).',
+        },
+      },
+      required: ['query'],
+    },
+  },
 };
 
 /**
@@ -544,6 +573,7 @@ export function buildDynamicToolDeclarations(
     GEMINI_TOOL_DECLARATIONS.osint_hazard_tracker,
     GEMINI_TOOL_DECLARATIONS.osint_satellite_recon,
     GEMINI_TOOL_DECLARATIONS.osint_spectrum_analyzer,
+    GEMINI_TOOL_DECLARATIONS.isw_research_lookup,
   ];
 
   const pluginMap: Record<string, GeminiFunctionDeclarationSchema[]> = {
@@ -562,13 +592,19 @@ export function buildDynamicToolDeclarations(
       GEMINI_TOOL_DECLARATIONS.osint_hazard_tracker,
       GEMINI_TOOL_DECLARATIONS.osint_satellite_recon,
       GEMINI_TOOL_DECLARATIONS.osint_spectrum_analyzer,
+      GEMINI_TOOL_DECLARATIONS.isw_research_lookup,
     ],
     osint_plugin: [
       GEMINI_TOOL_DECLARATIONS.osint_maritime_tracker,
       GEMINI_TOOL_DECLARATIONS.osint_hazard_tracker,
       GEMINI_TOOL_DECLARATIONS.osint_satellite_recon,
       GEMINI_TOOL_DECLARATIONS.osint_spectrum_analyzer,
+      GEMINI_TOOL_DECLARATIONS.isw_research_lookup,
     ],
+    isw: [GEMINI_TOOL_DECLARATIONS.isw_research_lookup],
+    isw_research: [GEMINI_TOOL_DECLARATIONS.isw_research_lookup],
+    isw_plugin: [GEMINI_TOOL_DECLARATIONS.isw_research_lookup],
+    conflict_research: [GEMINI_TOOL_DECLARATIONS.isw_research_lookup],
     maritime: [GEMINI_TOOL_DECLARATIONS.osint_maritime_tracker],
     osint_maritime: [GEMINI_TOOL_DECLARATIONS.osint_maritime_tracker],
     osint_maritime_plugin: [GEMINI_TOOL_DECLARATIONS.osint_maritime_tracker],
@@ -872,6 +908,13 @@ export function resolveToolWorkflowDestination(toolName: string): {
         targetRoom: 'comms_tower',
         targetStationId: 'comms_dish_console',
         taskTag: 'SPECTRUM EW',
+      };
+    case 'isw_research_lookup':
+      return {
+        pluginId: 'isw_research',
+        targetRoom: 'war_room',
+        targetStationId: 'war_holotable',
+        taskTag: 'ISW CONFLICT INTEL',
       };
     default:
       return {
@@ -3241,6 +3284,51 @@ ${findings || 'No additional telemetry findings attached.'}
         },
       };
     }
+
+    // OSINT Tool 5: Institute for the Study of War (ISW) Conflict Research & Threat Synthesis
+    if (name === 'isw_research_lookup') {
+      const query = String(args.query || args.q || '').trim();
+      const theater = String(args.theater || 'all').toLowerCase();
+      const limit = Number(args.limit) || 3;
+
+      let articles = await retrieveRelevantISWBriefings(query, limit);
+      if (theater !== 'all') {
+        articles = articles.filter((a) => a.theater === theater);
+      }
+
+      const summary = `ISW Research: Found ${articles.length} conflict dossiers covering "${query.slice(0, 40)}" (understandingwar.org/research/)`;
+
+      const responsePayload = {
+        status: 'ok',
+        source: 'Institute for the Study of War (understandingwar.org/research/)',
+        totalArticles: articles.length,
+        articles: articles.map((a) => ({
+          title: a.title,
+          url: a.url,
+          theater: a.theater,
+          published: a.published,
+          coordinates: a.coordinates,
+          summary: a.summary,
+          keyTakeaways: a.keyTakeaways,
+          contentPreview: a.content.slice(0, 1000),
+        })),
+      };
+
+      return {
+        id: fc.id,
+        name,
+        response: responsePayload,
+        executedToolMeta: {
+          pluginId: dest.pluginId,
+          toolName: name,
+          args,
+          resultSummary: summary,
+          livePayload: responsePayload,
+          targetRoom: dest.targetRoom,
+          targetStationId: dest.targetStationId,
+        },
+      };
+    }
   } catch (err: any) {
     const fallbackResponse = {
       status: 'partial',
@@ -4801,10 +4889,23 @@ export async function generateLocalHeuristicCard(params: {
       }
     } catch {}
 
+    // Cross-reference Institute for the Study of War (ISW) research dossiers (understandingwar.org/research/)
+    let iswResearchNote = '';
+    try {
+      const iswHits = await retrieveRelevantISWBriefings(rawPrompt, 2);
+      if (iswHits.length > 0) {
+        iswResearchNote = iswHits
+          .map((h, i) => `### ISW Conflict Research [${i + 1}]: ${h.title}\n- **Source:** ${h.url}\n- **Strategic Theater:** ${h.theater.toUpperCase()} (${h.coordinates.lat.toFixed(4)}, ${h.coordinates.lon.toFixed(4)})\n- **Takeaways:** ${h.summary}`)
+          .join('\n\n');
+      }
+    } catch {}
+
+    const combinedPrecedingIntel = [liveTelemetryNote, iswResearchNote].filter(Boolean).join('\n\n');
+
     const targetPath = extractReportFilePath(
       rawPrompt,
       'tactical_intel',
-      liveTelemetryNote,
+      combinedPrecedingIntel,
       executedTools
     );
 
@@ -4814,7 +4915,7 @@ export async function generateLocalHeuristicCard(params: {
       agentRole: params.activeAgentRole,
       explicitFilePath: targetPath,
       targetSector: 'library',
-      precedingIntelligence: liveTelemetryNote,
+      precedingIntelligence: combinedPrecedingIntel,
       toolCalls: executedTools,
     });
 
@@ -6138,6 +6239,21 @@ CRITICAL MEMORY RECALL INSTRUCTION:
 
       if (classifiedContextStr) {
         systemInstruction += `\n${classifiedContextStr}`;
+      }
+
+      // Autonomous ISW (Institute for the Study of War) Research Ingestion & Correlation (/intel/sources/isw_research/)
+      let iswContextStr = '';
+      try {
+        const relevantISW = await retrieveRelevantISWBriefings(params.prompt, 3);
+        if (relevantISW.length > 0) {
+          iswContextStr = buildAgentISWContext(relevantISW);
+        }
+      } catch (iswErr) {
+        console.warn('[ISW INTEL ROUTER] Error evaluating ISW research dossiers:', iswErr);
+      }
+
+      if (iswContextStr) {
+        systemInstruction += `\n\n${iswContextStr}\n\n### INTEL CORRELATION MANDATE:\nCorrelate and synthesize ISW research findings (frontline positions, peer tactics, proxy maneuvers, electronic warfare) with safehouse telemetry, S2 Wire dispatches, and OSINT sweeps to produce unified, verified intelligence.`;
       }
 
       // Multi-Provider Execution Gateway: Route to Puter, OpenRouter, OpenAI, Groq, or Anthropic

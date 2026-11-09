@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { writeWorkspaceFile } from '../engine/storageManager';
 import { retrieveRelevantClassifiedBriefings } from '../services/ClassifiedFeedService';
+import { retrieveRelevantISWBriefings } from '../services/iswFeedService';
 import {
   TacticalSatelliteMonitor,
   parseReconTargetToCoords,
@@ -455,6 +456,12 @@ export const ThreatMonitorModal: React.FC<ThreatMonitorModalProps> = ({
         2
       );
 
+      // Cross-reference ISW Research dossiers (/intel/sources/isw_research/)
+      const iswMatches = await retrieveRelevantISWBriefings(
+        `${zoneLabel} ${customLocation} conflict assessment front offensive`,
+        2
+      );
+
       const timestampIso = new Date().toISOString();
       const dateSlug = timestampIso.split('T')[0];
       const timeSlug = timestampIso.split('T')[1].slice(0, 5).replace(':', '');
@@ -524,6 +531,18 @@ export const ThreatMonitorModal: React.FC<ThreatMonitorModalProps> = ({
               ...classifiedMatches.map(
                 (cb) =>
                   `- **${cb.title}** (*Published: ${cb.published}*) — Tags: \`${cb.threatTags.join(', ')}\`\n  - ${cb.summary}`
+              ),
+            ]
+          : []),
+        ...(iswMatches.length > 0
+          ? [
+              ``,
+              `---`,
+              ``,
+              `## 6. Corroborated ISW Conflict Research (\`/intel/sources/isw_research/\`)`,
+              ...iswMatches.map(
+                (ib) =>
+                  `- **${ib.title}** (*Theater: ${ib.theater.toUpperCase()}*) — [ISW Source](${ib.url})\n  - ${ib.summary}`
               ),
             ]
           : []),

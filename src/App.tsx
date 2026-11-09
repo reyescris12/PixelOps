@@ -96,6 +96,7 @@ import { saveAgentModelConfig } from './services/agentStore';
 const NightShiftModal = lazy(() => import('./components/NightShiftModal').then((m) => ({ default: m.NightShiftModal })));
 import { loadNightShiftNotifications, runPendingNightShiftTasks } from './services/NightShiftService';
 import { initClassifiedFeedIngestion } from './services/ClassifiedFeedService';
+import { initISWFeedIngestion } from './services/iswFeedService';
 import { backgroundWorkerEngine } from './services/WorkerService';
 import { InboxProvider } from './context/InboxContext';
 import { CustomPluginConnector, loadCustomPlugins, saveCustomPlugins } from './services/PluginMarketplaceService';
@@ -244,6 +245,8 @@ const CommandCenterContent: React.FC = () => {
     });
     // Silently initialize background classified feed ingestion pipeline
     initClassifiedFeedIngestion();
+    // Silently initialize background ISW research ingestion pipeline
+    initISWFeedIngestion();
   }, []);
   const [currentRoom, setCurrentRoom] = useState<RoomId>(
     () => restoredSession?.currentRoom || 'war_room'

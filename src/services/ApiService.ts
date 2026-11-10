@@ -2656,7 +2656,7 @@ ${findings || 'No additional telemetry findings attached.'}
         const resolvedContent =
           format === 'markdown' && !content.includes('## 1. Executive') && content.length > 60
             ? formatOrganizedReportMarkdown({
-                prompt: rawPath,
+                prompt: isGenericOrPromptLiteral ? '' : rawPath,
                 agentName: 'Safehouse Operative',
                 agentRole: 'Intelligence Analyst',
                 existingDialogue: content,

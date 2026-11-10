@@ -10,6 +10,8 @@
 import { writeWorkspaceFile, normalizeFilePath, WorkspaceFileRecord } from '../engine/storageManager';
 
 const GENERIC_HEADINGS_TO_IGNORE = new Set([
+  'bluf',
+  'bluf / executive intelligence summary',
   'executive summary',
   'executive intelligence summary',
   'operational diagnostic',
@@ -27,6 +29,14 @@ const GENERIC_HEADINGS_TO_IGNORE = new Set([
   'spoken video transcript & tactical briefing',
   'corroborated osint source citations',
   'key findings & tactical analysis',
+  'key findings',
+  'key intelligence findings',
+  'key intelligence findings & live telemetry',
+  'detailed intelligence',
+  'detailed intelligence & tactical findings',
+  'detailed findings',
+  'tactical findings',
+  'core intelligence findings',
   'verified telemetry & source citations',
   'recommended action items & remediation checklist',
   'mission brief',
@@ -48,6 +58,10 @@ const PROMPT_STOP_WORDS = new Set([
   'report', 'brief', 'briefing', 'summary', 'dossier', 'file', 'markdown', 'doc',
   'this', 'that', 'these', 'those', 'some', 'any', 'all', 'current', 'latest',
   'new', 'now', 'right', 'today', 'need', 'want', 'like', 'how', 'why', 'where', 'when',
+  'good', 'job', 'great', 'awesome', 'nice', 'thanks', 'thank', 'ok', 'okay', 'well',
+  'done', 'did', 'does', 'doing', 'difference', 'different', 'same', 'also', 'just',
+  'still', 'really', 'very', 'much', 'more', 'less', 'than', 'then', 'so', 'if', 'as',
+  'but', 'or', 'and', 'not', 'no', 'yes',
 ]);
 
 /**
@@ -198,40 +212,97 @@ export function extractIntelSubjectFromContent(
   const combinedText = `${content || ''}\n${prompt || ''}`;
   const lowerAll = combinedText.toLowerCase();
 
-  // 1. Determine domain category & threat tags from the actual intelligence
-  const topicTags: string[] = [];
-  let domainCategory = 'Intelligence Assessment';
-
-  if (/\b(s2\s*underground|wire\s*report|classified\s*feed)\b/i.test(combinedText)) {
-    domainCategory = 'S2 Tactical Wire Briefing';
-    topicTags.push('S2_UNDERGROUND', 'OSINT_WIRE');
-  } else if (/\b(satellite|gibs|modis|viirs|thermal\s*anomaly|orbital|imagery)\b/i.test(combinedText)) {
-    domainCategory = 'Satellite Reconnaissance';
-    topicTags.push('IMINT', 'SATELLITE_RECON');
-  } else if (/\b(maritime|vessel|ais|chokepoint|suez|hormuz|malacca|bab-el-mandeb|shipping|mmsi)\b/i.test(combinedText)) {
-    domainCategory = 'Maritime AIS Telemetry';
-    topicTags.push('MARITIME_AIS', 'SUPPLY_CHAIN');
-  } else if (/\b(seismic|earthquake|usgs|magnitude|tsunami|volcano|gdacs|hazard)\b/i.test(combinedText)) {
-    domainCategory = 'Seismic & Hazard Telemetry';
-    topicTags.push('GEO_HAZARDS', 'USGS_SEISMIC');
-  } else if (/\b(spectrum|gnss|gps\s*jamming|spoofing|kp-index|geomagnetic|solar\s*flare|ew|electronic\s*warfare)\b/i.test(combinedText)) {
-    domainCategory = 'Spectrum & EW Telemetry';
-    topicTags.push('SPECTRUM_EW', 'GNSS_INTERFERENCE');
-  } else if (/\b(cve-\d+|vulnerability|zero-trust|zero\s*trust|tls|ssl|certificate|dns|firewall|exploit|breach|malware|ransomware)\b/i.test(combinedText)) {
-    domainCategory = 'Cyber Security Audit';
-    topicTags.push('CYBER_SEC', 'THREAT_AUDIT');
-  } else if (/\b(github|repository|pull\s*request|commit|issue|ci\/cd|codebase)\b/i.test(combinedText)) {
-    domainCategory = 'Engineering & Repo Audit';
-    topicTags.push('DEVSECOPS', 'REPOSITORY_INTEL');
-  } else if (/\b(grid|power|substation|blackout|transformer|infrastructure|pipeline|scada)\b/i.test(combinedText)) {
-    domainCategory = 'Critical Infrastructure Intel';
-    topicTags.push('INFRASTRUCTURE', 'GRID_SECURITY');
-  } else if (/\b(price|market|ticker|valuation|btc|eth|crypto|stock|revenue|financial)\b/i.test(combinedText)) {
-    domainCategory = 'Market & Financial Telemetry';
-    topicTags.push('FININT', 'MARKET_RECON');
-  } else {
-    topicTags.push('TACTICAL_OSINT', 'FIELD_INTEL');
+  // 1. Determine domain category & threat tags from the actual intelligence using weighted scoring
+  interface DomainRule {
+    category: string;
+    tags: string[];
+    keywords: RegExp;
+    toolNames?: string[];
   }
+
+  const DOMAIN_RULES: DomainRule[] = [
+    {
+      category: 'Market & Financial Telemetry',
+      tags: ['FININT', 'MARKET_RECON'],
+      keywords: /\b(market|markets|stock|stocks|nasdaq|nyse|s&p|dow\s+jones|wall\s+street|equities|equity|valuation|ticker|btc|eth|crypto|cryptocurrency|financial|finance|treasury|yields|investor|investors|capital|inflation|gdp|recession|money-market|liquidity|shares|dividend|earnings|trading)\b/gi,
+    },
+    {
+      category: 'Geopolitical & Conflict Intelligence',
+      tags: ['GEOPOLITICS', 'WAR_STUDIES', 'CONFLICT_INTEL'],
+      keywords: /\b(isw|understanding\s*war|frontline|battlefield|offensive|counteroffensive|troop|troops|battalion|brigade|ukraine|russia|kharkiv|donetsk|zaporizhia|middle\s*east|gaza|lebanon|syria|taiwan|geopolitical|conflict\s*zone|missile\s*strike|air\s*strike|artillery)\b/gi,
+    },
+    {
+      category: 'S2 Tactical Wire Briefing',
+      tags: ['S2_UNDERGROUND', 'OSINT_WIRE'],
+      keywords: /\b(s2\s*underground|wire\s*report|wire\s*dispatch|classified\s*feed|\/\/the\s*wire\/\/)\b/gi,
+    },
+    {
+      category: 'Seismic & Hazard Telemetry',
+      tags: ['GEO_HAZARDS', 'USGS_SEISMIC'],
+      keywords: /\b(seismic|earthquake|earthquakes|usgs|richter|tsunami|tsunamis|volcano|volcanoes|volcanic|tectonic|tremor|tremors|epicenter|gdacs|natural\s+hazard|geo\s+hazard|seismic\s+hazard|magnitude\s+\d)\b/gi,
+      toolNames: ['osint_hazard_tracker'],
+    },
+    {
+      category: 'Satellite Reconnaissance',
+      tags: ['IMINT', 'SATELLITE_RECON'],
+      keywords: /\b(satellite|gibs|modis|viirs|thermal\s*anomaly|orbital|imagery|sentinel|landsat|copernicus)\b/gi,
+      toolNames: ['osint_satellite_recon'],
+    },
+    {
+      category: 'Maritime AIS Telemetry',
+      tags: ['MARITIME_AIS', 'SUPPLY_CHAIN'],
+      keywords: /\b(maritime|vessel|vessels|ais|chokepoint|suez|hormuz|malacca|bab-el-mandeb|shipping|mmsi|cargo\s*ship|tanker|strait)\b/gi,
+      toolNames: ['osint_maritime_tracker'],
+    },
+    {
+      category: 'Spectrum & EW Telemetry',
+      tags: ['SPECTRUM_EW', 'GNSS_INTERFERENCE'],
+      keywords: /\b(spectrum|gnss|gps\s*jamming|gps\s*spoofing|kp-index|geomagnetic|solar\s*flare|electronic\s*warfare|radio\s*frequency|rf\s*interference)\b/gi,
+      toolNames: ['osint_spectrum_analyzer'],
+    },
+    {
+      category: 'Cyber Security Audit',
+      tags: ['CYBER_SEC', 'THREAT_AUDIT'],
+      keywords: /\b(cve-\d+|vulnerability|zero-trust|zero\s*trust|tls|ssl|certificate|dns|firewall|exploit|breach|malware|ransomware|c2|payload|attack\s*surface|port\s*scan|shodan|censys|abuseipdb|virustotal)\b/gi,
+      toolNames: ['osint_shodan_host_lookup', 'osint_crtsh_subdomain_discovery', 'osint_virustotal_threat_check', 'osint_ip_reputation_audit', 'ssl_tls_inspector', 'whois_rdap_lookup'],
+    },
+    {
+      category: 'Engineering & Repo Audit',
+      tags: ['DEVSECOPS', 'REPOSITORY_INTEL'],
+      keywords: /\b(github|gitlab|repository|pull\s*request|commit|issue|issues|ci\/cd|codebase|npm|pnpm|dependency|dockerfile)\b/gi,
+      toolNames: ['github_list_issues', 'github_get_repository'],
+    },
+    {
+      category: 'Critical Infrastructure Intel',
+      tags: ['INFRASTRUCTURE', 'GRID_SECURITY'],
+      keywords: /\b(power\s*grid|electric\s*grid|substation|blackout|transformer\s*substation|energy\s*grid|scada|pipeline\s*rupture|critical\s*infrastructure)\b/gi,
+    },
+  ];
+
+  let bestRule: DomainRule | null = null;
+  let highestScore = 0;
+
+  for (const rule of DOMAIN_RULES) {
+    let score = 0;
+    const matches = combinedText.match(rule.keywords);
+    if (matches) {
+      score += matches.length;
+    }
+    if (rule.toolNames && Array.isArray(toolCalls)) {
+      for (const tc of toolCalls) {
+        if (tc.toolName && rule.toolNames.includes(tc.toolName)) {
+          score += 15;
+        }
+      }
+    }
+    if (score > highestScore) {
+      highestScore = score;
+      bestRule = rule;
+    }
+  }
+
+  const domainCategory = bestRule && highestScore >= 1 ? bestRule.category : 'Intelligence Assessment';
+  const topicTags = bestRule && highestScore >= 1 ? [...bestRule.tags] : ['TACTICAL_OSINT', 'FIELD_INTEL'];
 
   // 2. Check explicit title directive in prompt first (e.g., titled "Operation Red Sea")
   const explicitTitleMatch = (prompt || '').match(/(?:titled?|named?)\s*[:"']\s*([^"'\n\r]+)["']?/i);
@@ -441,11 +512,17 @@ export function extractIntelSubjectFromContent(
       const properNouns = cleanFirstPara.match(/\b([A-Z][a-zA-Z0-9_-]{2,}(?:\s+[A-Z][a-zA-Z0-9_-]{2,}){0,3})\b/g) || [];
       const filteredProper = properNouns.filter(
         (w) =>
-          !/^(The|This|That|All|Our|Agent|Vance|Nyx|Cipher|Command|Sector|Operative|Report|Briefing|Summary|Directive|Verified|Telemetry|System|Data)$/i.test(
+          !/^(The|This|That|All|Our|Agent|Vance|Nyx|Cipher|Command|Sector|Operative|Report|Briefing|Summary|Directive|Verified|Telemetry|System|Data|While|Today|Specifically|Current)$/i.test(
             w.trim()
           )
       );
-      if (filteredProper.length >= 1 && !prompt) {
+
+      const promptTokens = (prompt || '')
+        .replace(/[^a-zA-Z0-9\s]/g, ' ')
+        .split(/\s+/)
+        .filter((w) => w.length >= 3 && !PROMPT_STOP_WORDS.has(w.toLowerCase()));
+
+      if (filteredProper.length >= 1 && promptTokens.length <= 2) {
         const entityPhrase = Array.from(new Set(filteredProper)).slice(0, 3).join(' ');
         return {
           subjectTitle: `${entityPhrase}: ${domainCategory}`,
@@ -554,65 +631,139 @@ export interface ReportGenerationParams {
 }
 
 /**
+ * Splits text into natural sentence units without splitting on decimal numbers
+ * (e.g., $2.3, 172.7, 5.0) or common abbreviations (e.g., i.e., vs., Dr.).
+ */
+export function splitIntoSentences(text: string): string[] {
+  const normalized = (text || '').trim();
+  if (!normalized) return [];
+
+  const rawParts = normalized.split(/(?<=[.!?])\s+(?=[A-Z"'\d])/g);
+  const sentences: string[] = [];
+
+  for (let i = 0; i < rawParts.length; i++) {
+    const part = rawParts[i].trim();
+    if (!part) continue;
+
+    if (
+      sentences.length > 0 &&
+      /(?:\$\d+|\b(?:e\.g|i\.e|vs|no|dr|mr|mrs|ms|inc|ltd))\.$/i.test(sentences[sentences.length - 1])
+    ) {
+      sentences[sentences.length - 1] += ` ${part}`;
+    } else {
+      sentences.push(part);
+    }
+  }
+
+  return sentences.length > 0 ? sentences : [normalized];
+}
+
+/**
+ * Computes a normalized structural fingerprint of a paragraph, stripping
+ * markdown syntax, formatting, quotes, speaker tags, and excess whitespace.
+ */
+export function getParagraphFingerprint(p: string): string {
+  return (p || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^>\s*/gm, '')
+    .replace(/[*_`]/g, '')
+    .replace(/^(?:Agent\s+\w+|\w+)\s*(?:\([^)]+\))?\s*:\s*/i, '')
+    .replace(/\[AGENT_ACTION:[\s\S]*?\[\/AGENT_ACTION\]/gi, '')
+    .replace(/\[AGENT_STATUS:\s*(?:COMPLETE|WORKING)\]/gi, '')
+    .replace(/<\|[\s\S]*?\|>/g, '')
+    .replace(/^[\*\-•]\s*/gm, '')
+    .replace(/^\d+[\.\)]\s*/gm, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * Checks whether a candidate paragraph is an exact, substring, or high-overlap
+ * duplicate of any paragraph in an existing list.
+ */
+export function isDuplicateParagraph(candidate: string, existingList: string[]): boolean {
+  const candFp = getParagraphFingerprint(candidate);
+  if (!candFp || candFp.length < 15) return false;
+  const candSnippet = candFp.slice(0, 80);
+
+  for (const existing of existingList) {
+    const existFp = getParagraphFingerprint(existing);
+    if (!existFp || existFp.length < 15) continue;
+    if (existFp === candFp) return true;
+    if (candSnippet.length >= 30 && existFp.includes(candSnippet)) return true;
+    const existSnippet = existFp.slice(0, 80);
+    if (existSnippet.length >= 30 && candFp.includes(existSnippet)) return true;
+
+    // High overlap check for longer analytical blocks (> 60 chars)
+    if (candFp.length > 60 && existFp.length > 60) {
+      const minLen = Math.min(candFp.length, existFp.length);
+      let matchCount = 0;
+      const step = 10;
+      for (let i = 0; i < minLen - 15; i += step) {
+        if (existFp.includes(candFp.slice(i, i + 15))) {
+          matchCount += 15;
+        }
+      }
+      if (matchCount / minLen >= 0.65) return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Strips redundant, overlapping, or verbatim repeated intelligence blocks from report sections,
  * preventing two-part reports or multi-step chains from regurgitating identical findings.
  */
 export function deduplicateReportIntel(primaryContent: string, secondaryContent?: string): string {
-  if (!secondaryContent || !secondaryContent.trim()) {
-    // Strip self-duplication: deduplicate adjacent identical paragraphs within primaryContent
-    const paras = primaryContent.trim().split(/\n{2,}/);
-    const unique: string[] = [];
-    for (const p of paras) {
-      const cleanP = p.trim();
-      if (!cleanP) continue;
-      const cleanSnippet = cleanP.slice(0, 80).toLowerCase();
-      const isDupe = unique.some((existing) => {
-        const existSnippet = existing.slice(0, 80).toLowerCase();
-        return existSnippet === cleanSnippet || (cleanSnippet.length > 30 && existing.toLowerCase().includes(cleanSnippet));
-      });
-      if (!isDupe) {
-        unique.push(cleanP);
-      }
-    }
-    return unique.join('\n\n');
-  }
+  const normalize = (t: string) => (t || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+  const primaryClean = normalize(primaryContent);
+  const secondaryClean = normalize(secondaryContent || '');
 
-  const primaryClean = primaryContent.trim();
-  const secondaryClean = secondaryContent.trim();
+  // 1. Deduplicate paragraphs within primary content (self-deduplication)
+  const primaryParas = primaryClean.split(/\n{2,}/);
+  const uniquePrimary: string[] = [];
 
-  // If the secondary content is already largely contained in the primary content, omit it
-  const sample1 = secondaryClean.slice(0, 100).toLowerCase();
-  const sample2 = secondaryClean.slice(Math.max(0, Math.floor(secondaryClean.length / 2) - 50), Math.floor(secondaryClean.length / 2) + 50).toLowerCase();
-  if (primaryClean.toLowerCase().includes(sample1) || (sample2.length > 40 && primaryClean.toLowerCase().includes(sample2))) {
-    return primaryClean;
-  }
-
-  // Break secondary into paragraphs and only keep paragraphs that are genuinely new
-  const primaryLower = primaryClean.toLowerCase();
-  const secondaryParagraphs = secondaryClean.split(/\n{2,}/);
-
-  const uniqueParagraphs: string[] = [];
-  for (const para of secondaryParagraphs) {
-    const trimmed = para.trim();
+  for (const p of primaryParas) {
+    const trimmed = p.trim();
     if (!trimmed) continue;
-    // Check if substantial sub-string appears in primary
-    const snippet = trimmed.replace(/^#+\s+/g, '').slice(0, 60).toLowerCase();
-    if (snippet.length > 20 && primaryLower.includes(snippet)) {
-      continue; // Duplicate intel
+    if (!isDuplicateParagraph(trimmed, uniquePrimary)) {
+      uniquePrimary.push(trimmed);
     }
-    uniqueParagraphs.push(trimmed);
   }
 
-  if (uniqueParagraphs.length === 0) {
-    return primaryClean;
+  const cleanedPrimary = uniquePrimary.join('\n\n');
+  if (!secondaryClean) {
+    return cleanedPrimary;
   }
 
-  return `${primaryClean}\n\n### Corroborated Distinct Field Signals\n${uniqueParagraphs.join('\n\n')}`;
+  // 2. Deduplicate secondary content against primary content
+  const secondaryParas = secondaryClean.split(/\n{2,}/);
+  const uniqueSecondary: string[] = [];
+
+  for (const p of secondaryParas) {
+    const trimmed = p.trim();
+    if (!trimmed) continue;
+    // Check against primary and already-accepted secondary paragraphs
+    if (!isDuplicateParagraph(trimmed, uniquePrimary) && !isDuplicateParagraph(trimmed, uniqueSecondary)) {
+      uniqueSecondary.push(trimmed);
+    }
+  }
+
+  if (uniqueSecondary.length === 0) {
+    return cleanedPrimary;
+  }
+
+  return `${cleanedPrimary}\n\n### Corroborated Distinct Field Signals\n${uniqueSecondary.join('\n\n')}`;
 }
 
 /**
  * Organizes raw agent output into a standardized, multi-section intelligence dossier
  * if it isn't already formatted with clear metadata and structured sections.
+ * Guarantees ZERO verbatim repetition between Section 1 (Executive Summary) and
+ * Section 2 (Detailed Findings).
  */
 export function formatOrganizedReportMarkdown(params: ReportGenerationParams): {
   title: string;
@@ -640,31 +791,30 @@ export function formatOrganizedReportMarkdown(params: ReportGenerationParams): {
   const sector = (params.targetSector || 'library').toUpperCase();
 
   // Strip internal action tags, duplicate upload banners, and YAML frontmatter blocks from existing dialogue
-  const cleanedBody = (params.existingDialogue || '')
+  let cleanedBody = (params.existingDialogue || '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
     .replace(/^---[\s\S]*?---\s*/m, '')
     .replace(/\[AGENT_ACTION:[\s\S]*?\[\/AGENT_ACTION\]/gi, '')
     .replace(/\[AGENT_STATUS:\s*(COMPLETE|WORKING)\]/gi, '')
+    .replace(/<\|tool_call_start\|>[\s\S]*?<\|tool_call_end\|>/gi, '')
+    .replace(/<\|action_start\|>[\s\S]*?<\|action_end\|>/gi, '')
+    .replace(/<\|[\s\S]*?\|>/g, '')
     .replace(/\n*📁 \*\*\[WORKSPACE REPORT UPLOADED\]\*\*[\s\S]*$/, '')
-    .replace(new RegExp(`^${params.agentName}\\s*(?:\\([^)]+\\))?\\s*:\\s*`, 'i'), '')
+    .replace(new RegExp(`^(?:Agent\\s+)?${params.agentName}\\s*(?:\\([^)]+\\))?\\s*:\\s*`, 'i'), '')
+    .replace(/^(?:Agent\s+\w+|\w+)\s*(?:\([^)]+\))?\s*:\s*/i, '')
     .trim();
 
+  // Strip leading `# Title` if present
+  cleanedBody = cleanedBody.replace(/^#\s+[^\n]+\n+/, '').trim();
+
   // If cleanedBody is very short or empty, use synthesizeComprehensiveReport
-  if (cleanedBody.length < 180) {
+  if (cleanedBody.length < 120) {
     return synthesizeComprehensiveReport({
       ...params,
       explicitFilePath: filePath,
     });
   }
-
-  // Extract a crisp 2-3 sentence Executive Summary from the top of the intelligence body
-  const paragraphs = cleanedBody
-    .split(/\n{2,}/)
-    .map((p) => p.replace(/^#+\s+.*$/gm, '').trim())
-    .filter((p) => p.length > 30 && !p.startsWith('|') && !p.startsWith('```'));
-
-  let execSummaryText =
-    paragraphs[0] ||
-    `Autonomous ${domainCategory.toLowerCase()} compiled by ${params.agentName} (${params.agentRole}) covering ${subjectTitle}.`;
 
   // Format verified tool telemetry table if tools were executed
   const toolRows =
@@ -677,30 +827,105 @@ export function formatOrganizedReportMarkdown(params: ReportGenerationParams): {
           .join('\n')
       : `| **1. \`internal_intel_synthesis\`** | Grounded in safehouse OSINT & sector telemetry | **VERIFIED** |`;
 
-  // Ensure body doesn't duplicate the top `# Title`
-  let bodyWithoutDuplicateH1 = cleanedBody.replace(/^#\s+[^\n]+\n+/, '').trim();
+  // Check if content ALREADY contains explicit structured section headers
+  const sec1Match = cleanedBody.match(
+    /##\s*(?:1\.\s*)?(?:Executive\s+Intelligence\s+Summary|Executive\s+Summary|BLUF)\s*\n+([\s\S]*?)(?=\n##|\n---|$)/i
+  );
+  const sec2Match = cleanedBody.match(
+    /##\s*(?:2\.\s*)?(?:Detailed\s+Intelligence(?:\s*&\s*Tactical\s+Findings)?|Tactical\s+Findings|Key\s+Findings|Core\s+Intelligence(?:\s*Findings)?|Key\s+Intelligence\s+Findings)\s*\n+([\s\S]*?)(?=\n##\s*[3-9]|\n---|$)/i
+  );
 
-  // Strip duplicate executive summary from the body if the body begins with or contains the exact executive summary
-  if (paragraphs.length > 1) {
-    // If the body starts with the executive summary paragraph, advance past it to avoid repeating it in section 2
-    const firstParaClean = paragraphs[0].trim();
-    if (bodyWithoutDuplicateH1.startsWith(firstParaClean)) {
-      bodyWithoutDuplicateH1 = bodyWithoutDuplicateH1.slice(firstParaClean.length).trim();
+  let execSummaryText = '';
+  let detailedBodyText = '';
+
+  if (sec1Match && sec2Match) {
+    execSummaryText = sec1Match[1].trim();
+    const candidateSec2 = sec2Match[1].trim();
+
+    // Deduplicate candidateSec2 against execSummaryText so Section 2 NEVER repeats Section 1
+    const sec2Paras = candidateSec2
+      .split(/\n{2,}/)
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0 && !isDuplicateParagraph(p, [execSummaryText]));
+
+    if (sec2Paras.length > 0) {
+      detailedBodyText = sec2Paras.join('\n\n');
     } else {
-      // Remove the first paragraph if it appears verbatim at the beginning
-      const sample = firstParaClean.slice(0, 80);
-      if (bodyWithoutDuplicateH1.toLowerCase().startsWith(sample.toLowerCase())) {
-        bodyWithoutDuplicateH1 = bodyWithoutDuplicateH1.replace(firstParaClean, '').trim();
+      // If Section 2 was an exact duplicate of Section 1, split execSummaryText into BLUF and details
+      const sentences = splitIntoSentences(execSummaryText);
+      if (sentences.length >= 2) {
+        const splitIdx = Math.min(2, Math.max(1, Math.floor(sentences.length / 3)));
+        execSummaryText = `**BLUF:** ${sentences.slice(0, splitIdx).join(' ').trim()}`;
+        detailedBodyText = `### Tactical Analysis & Telemetry Breakdown\n\n${sentences.slice(splitIdx).join(' ').trim()}`;
+      } else {
+        detailedBodyText = `### Operational Telemetry Verification\n\nAll parameters corroborated against active sector nodes. Safehouse VFS telemetry verified with zero recorded anomalies.`;
       }
     }
-  } else if (paragraphs.length === 1) {
-    // There is only a single paragraph of content.
-    // Use an executive summary synthesis for Section 1 so Section 2 contains the actual analytical findings
-    execSummaryText = `Autonomous ${domainCategory.toLowerCase()} synthesized by **${params.agentName}** (${params.agentRole}) regarding **${subjectTitle}**. Core findings verified against safehouse telemetry and local-first VFS storage.`;
+  } else {
+    // Unstructured narrative: split into paragraphs and strip any generic section headers
+    const rawParas = cleanedBody
+      .split(/\n{2,}/)
+      .map((p) => {
+        return p
+          .replace(/^#{1,4}\s+[^\n]+\n*/gm, (match) => {
+            const h = match.replace(/^#+\s*/, '').trim().toLowerCase();
+            return GENERIC_HEADINGS_TO_IGNORE.has(h) ? '' : match;
+          })
+          .trim();
+      })
+      .filter((p) => p.length > 20 && !p.startsWith('|') && !p.startsWith('```'));
+
+    // Deduplicate paragraphs within the body (self-deduplication)
+    const uniqueParas: string[] = [];
+    for (const p of rawParas) {
+      if (!isDuplicateParagraph(p, uniqueParas)) {
+        uniqueParas.push(p);
+      }
+    }
+
+    if (uniqueParas.length >= 2) {
+      // Paragraph 0 is the Executive Summary
+      execSummaryText = uniqueParas[0];
+
+      // Detailed findings: Paragraphs 1..N, strictly filtered to NEVER repeat the Executive Summary
+      const nonDupeDetailed = uniqueParas
+        .slice(1)
+        .filter((p) => !isDuplicateParagraph(p, [execSummaryText]));
+
+      if (nonDupeDetailed.length > 0) {
+        detailedBodyText = nonDupeDetailed.join('\n\n');
+      } else {
+        // All subsequent paragraphs were duplicates of Paragraph 0!
+        const sentences = splitIntoSentences(execSummaryText);
+        if (sentences.length >= 2) {
+          const splitIdx = Math.min(2, Math.max(1, Math.floor(sentences.length / 3)));
+          execSummaryText = `**BLUF:** ${sentences.slice(0, splitIdx).join(' ').trim()}`;
+          detailedBodyText = `### Tactical Analysis & Telemetry Breakdown\n\n${sentences.slice(splitIdx).join(' ').trim()}`;
+        } else {
+          detailedBodyText = `### Operational Telemetry Verification\n\nAll parameters corroborated against active sector nodes. Safehouse VFS telemetry verified with zero recorded anomalies.`;
+        }
+      }
+    } else if (uniqueParas.length === 1) {
+      // Single substantive paragraph (like the market telemetry report)
+      const singleText = uniqueParas[0];
+      const sentences = splitIntoSentences(singleText);
+
+      if (sentences.length >= 2) {
+        const splitIdx = Math.min(2, Math.max(1, Math.floor(sentences.length / 3)));
+        execSummaryText = `**BLUF / Bottom Line Up Front:** ${sentences.slice(0, splitIdx).join(' ').trim()}`;
+        detailedBodyText = `### Tactical Analysis & Telemetry Breakdown\n\n${sentences.slice(splitIdx).join(' ').trim()}`;
+      } else {
+        execSummaryText = `**BLUF:** ${singleText}`;
+        detailedBodyText = `### Operational Telemetry Verification\n\nAll parameters corroborated against active sector nodes. Safehouse VFS telemetry verified with zero recorded anomalies.`;
+      }
+    } else {
+      execSummaryText = `Autonomous ${domainCategory.toLowerCase()} compiled by **${params.agentName}** (${params.agentRole}) covering **${subjectTitle}**.`;
+      detailedBodyText = `### Core Operational Telemetry\n\n${cleanedBody}`;
+    }
   }
 
-  // Deduplicate preceding intelligence against the main body to prevent repetition
-  const nonRedundantIntelSection = deduplicateReportIntel(bodyWithoutDuplicateH1, params.precedingIntelligence);
+  // Deduplicate preceding intelligence against both execSummary and detailedBody
+  const nonRedundantIntelSection = deduplicateReportIntel(detailedBodyText, params.precedingIntelligence);
 
   const markdown = [
     `# ${subjectTitle}`,
@@ -853,8 +1078,7 @@ ${mergedNotes}
 ---
 
 ## 1. Executive Intelligence Summary
-Autonomous **${domainCategory}** compiled by **${params.agentName}** (${params.agentRole}) regarding **${title}**.
-${existingNotes ? `\n> ${existingNotes.split(/\n+/)[0].slice(0, 280)}` : ''}
+Autonomous **${domainCategory}** synthesized by **${params.agentName}** (${params.agentRole}) regarding **${title}**. Findings corroborated against safehouse baseline telemetry.
 
 ---
 

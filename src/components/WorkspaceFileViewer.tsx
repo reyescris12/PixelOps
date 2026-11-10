@@ -517,7 +517,9 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
           return a.path.localeCompare(b.path);
         }
         if (sortBy === 'oldest') {
-          const diff = (a.createdAt || 0) - (b.createdAt || 0);
+          const aTime = new Date((a as any).createdAt || a.updatedAt || 0).getTime();
+          const bTime = new Date((b as any).createdAt || b.updatedAt || 0).getTime();
+          const diff = aTime - bTime;
           return diff !== 0 ? diff : a.path.localeCompare(b.path);
         }
         if (sortBy === 'size') {
@@ -525,7 +527,9 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
           return diff !== 0 ? diff : a.path.localeCompare(b.path);
         }
         // Default: 'recent'
-        const diff = (b.updatedAt || 0) - (a.updatedAt || 0);
+        const aTime = new Date(a.updatedAt || 0).getTime();
+        const bTime = new Date(b.updatedAt || 0).getTime();
+        const diff = bTime - aTime;
         return diff !== 0 ? diff : a.path.localeCompare(b.path);
       });
     }

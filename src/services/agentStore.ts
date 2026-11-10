@@ -57,7 +57,7 @@ export function getAvailableAgentProvidersAndModels(): AgentAvailableProviderMet
     {
       id: 'openrouter',
       name: 'OpenRouter (300+)',
-      badge: isOpenRouterConnected ? '12+ FREE MODELS' : 'FREE MODELS',
+      badge: isOpenRouterConnected ? '14 FREE MODELS' : 'FREE MODELS',
       connectionType: 'sso_openrouter',
       isConnected: isOpenRouterConnected,
       statusLabel: isOpenRouterConnected ? 'Connected (PKCE SSO)' : 'Key / Connect Required',

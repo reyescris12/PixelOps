@@ -773,7 +773,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                             OpenRouter Models
                           </label>
                           <div className="flex items-center gap-1.5 text-[10px] font-mono-tabular">
-                            <span className="text-emerald-400 font-bold">12+ Free Models</span>
+                            <span className="text-emerald-400 font-bold">14 Free Models</span>
                             <span className="text-slate-600">·</span>
                             <span className="text-indigo-400 truncate max-w-[200px]" title={openRouterModel}>
                               Active: {openRouterModel}

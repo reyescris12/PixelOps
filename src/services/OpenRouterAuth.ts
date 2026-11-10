@@ -28,10 +28,22 @@ export const OPENROUTER_FREE_MODELS: OpenRouterModelOption[] = [
     context: '200K tokens · Smart auto-router across all live free models',
   },
   {
+    id: 'thinkingmachines/inkling-2-small:free',
+    name: 'Thinking Machines Inkling 2 Small',
+    tag: 'FREE',
+    context: '1M tokens · 17B active / 594B total multimodal MoE reasoning',
+  },
+  {
+    id: 'liquid/lfm-3-1.7b:free',
+    name: 'LiquidAI LFM3 1.7B',
+    tag: 'FREE',
+    context: '256K tokens · Post-trained for agent tool calling & structured JSON',
+  },
+  {
     id: 'google/gemma-4-31b-it:free',
     name: 'Google Gemma 4 31B',
     tag: 'FREE',
-    context: '256K tokens · Multimodal text/vision · Thinking reasoning',
+    context: '256K tokens · Multimodal text/vision · DeepMind thinking model',
   },
   {
     id: 'google/gemma-4-26b-a4b-it:free',
@@ -76,18 +88,6 @@ export const OPENROUTER_FREE_MODELS: OpenRouterModelOption[] = [
     context: '262K tokens · Autoresearch 40B MoE for coding agents',
   },
   {
-    id: 'liquid/lfm-2.5-2.6b:free',
-    name: 'LiquidAI LFM 2.5 2.6B',
-    tag: 'FREE',
-    context: '65K tokens · Fast compact RAG & data extraction',
-  },
-  {
-    id: 'stealth/crouton-alpha',
-    name: 'Crouton Alpha',
-    tag: 'FREE',
-    context: '1M tokens · Scalable coding, agentic sub-tasks & tool use',
-  },
-  {
     id: 'dots-studio/dots-3-note-preview:free',
     name: 'Dots Studio Dots3-Note Preview',
     tag: 'FREE',
@@ -100,10 +100,10 @@ export const OPENROUTER_FREE_MODELS: OpenRouterModelOption[] = [
     context: '262K tokens · 29B MoE with 4B active per token',
   },
   {
-    id: 'nvidia/nemotron-3.5-content-safety:free',
-    name: 'NVIDIA Nemotron 3.5 Content Safety',
+    id: 'liquid/lfm-2.5-2.6b:free',
+    name: 'LiquidAI LFM 2.5 2.6B',
     tag: 'FREE',
-    context: '128K tokens · Multimodal input/output guardrail model',
+    context: '65K tokens · Fast compact RAG & data extraction',
   },
 ];
 

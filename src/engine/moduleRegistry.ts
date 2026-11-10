@@ -207,6 +207,26 @@ export const AVAILABLE_SKILLS: SkillModuleDef[] = [
     recommendedRoom: 'comms_tower',
     iconName: 'Radar',
   },
+  {
+    id: 'osint_adversarial_recon',
+    name: 'Adversarial Threat Recon & OSINT Suite',
+    shortCode: 'ADVERSARY_OSINT',
+    category: 'security',
+    description:
+      'Professional-grade offensive OSINT: Shodan/Censys open port mapping, crt.sh Certificate Transparency discovery, BGP routing topology, AbuseIPDB/IPinfo reputation audits, VirusTotal/OTX malware consensus, and GitHub code leak audits.',
+    systemPromptModifier:
+      'You are equipped with the Adversarial OSINT Suite. Query Shodan (osint_shodan_host_lookup), crt.sh (osint_crtsh_subdomain_discovery), BGP routing (osint_bgp_route_lookup), AbuseIPDB reputation (osint_ip_reputation_audit), VirusTotal/OTX (osint_virustotal_threat_check), and GitHub code leak searches (osint_code_leak_audit) to substantiate your dossiers with verified telemetry.',
+    providedTools: [
+      'osint_shodan_host_lookup',
+      'osint_crtsh_subdomain_discovery',
+      'osint_bgp_route_lookup',
+      'osint_ip_reputation_audit',
+      'osint_virustotal_threat_check',
+      'osint_code_leak_audit',
+    ],
+    recommendedRoom: 'cyber_lab',
+    iconName: 'Shield',
+  },
 ];
 
 const ROOM_BINDINGS_STORAGE_KEY = 'pixelops_room_skill_bindings_v1';
@@ -221,7 +241,7 @@ const DEFAULT_ROOM_BINDINGS: Record<string, string[]> = {
   briefing_lounge: ['memory_lookup_plugin'],
   library: ['web_search_plugin', 'deep_research'],
   archive_basement: ['fs_storage_plugin', 'memory_lookup_plugin'],
-  cyber_lab: ['code_sandbox_plugin', 'github_scraper'],
+  cyber_lab: ['code_sandbox_plugin', 'github_scraper', 'osint_adversarial_recon'],
   quantum_vault: ['memory_lookup_plugin', 'crypto_vault'],
   stealth_hangar: ['api_gateway_plugin'],
 };

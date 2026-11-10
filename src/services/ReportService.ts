@@ -292,6 +292,54 @@ export function extractIntelSubjectFromContent(
           topicTags,
         };
       }
+      if (tc.toolName === 'osint_shodan_host_lookup') {
+        const ip = payload.ip || tc.args?.ip || 'Target Host';
+        return {
+          subjectTitle: `${ip} Shodan Attack Surface & Port Telemetry`,
+          domainCategory: 'Infrastructure & Port Reconnaissance',
+          topicTags: ['SHODAN', 'PORTS', 'VULNERABILITIES', ...topicTags],
+        };
+      }
+      if (tc.toolName === 'osint_crtsh_subdomain_discovery') {
+        const dom = payload.domain || tc.args?.domain || 'Target Domain';
+        return {
+          subjectTitle: `${dom} Certificate Transparency & Subdomain Map`,
+          domainCategory: 'Digital Footprinting & Certificate Transparency',
+          topicTags: ['CRTSH', 'SUBDOMAINS', 'SSL_CT', ...topicTags],
+        };
+      }
+      if (tc.toolName === 'osint_bgp_route_lookup') {
+        const tgt = payload.asn || tc.args?.target || 'Autonomous System';
+        return {
+          subjectTitle: `${tgt} BGP Routing Topology & Transit Dossier`,
+          domainCategory: 'Network & Routing Topology',
+          topicTags: ['BGP', 'ROUTING', 'ASN', ...topicTags],
+        };
+      }
+      if (tc.toolName === 'osint_ip_reputation_audit') {
+        const ip = payload.ip || tc.args?.ip || 'Target IP';
+        return {
+          subjectTitle: `${ip} AbuseIPDB Threat Score & Geolocation Audit`,
+          domainCategory: 'Threat Intelligence & Attribution',
+          topicTags: ['ABUSEIPDB', 'REPUTATION', 'GEOLOCATION', ...topicTags],
+        };
+      }
+      if (tc.toolName === 'osint_virustotal_threat_check') {
+        const ind = payload.indicator || tc.args?.indicator || 'Target Threat Indicator';
+        return {
+          subjectTitle: `${ind} VirusTotal & OTX Malware Consensus Report`,
+          domainCategory: 'Malware & Threat Intelligence',
+          topicTags: ['VIRUSTOTAL', 'ALIENVAULT_OTX', 'MALWARE_C2', ...topicTags],
+        };
+      }
+      if (tc.toolName === 'osint_code_leak_audit') {
+        const q = tc.args?.query || 'Repository';
+        return {
+          subjectTitle: `Public Code Leak & Exposed Secret Audit: ${q}`,
+          domainCategory: 'Code & Repository Intelligence',
+          topicTags: ['SECRET_LEAKS', 'GITHUB_CODE', 'CREDENTIALS', ...topicTags],
+        };
+      }
       if (tc.args?.repository) {
         return {
           subjectTitle: `GitHub Repository Audit: ${tc.args.repository}`,

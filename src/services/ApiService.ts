@@ -49,6 +49,16 @@ import {
 } from './SafetyService';
 import { draftExternalMessageContent } from './ComposioDraftingService';
 import {
+  queryCrtShSubdomains,
+  queryBgpViewAsn,
+  queryIpInfo,
+  queryShodanHost,
+  queryAbuseIPDB,
+  queryVirusTotal,
+  queryAlienVaultOTX,
+  queryGitHubCodeLeaks,
+} from './OsintToolsService';
+import {
   isReportDirective,
   shouldAutoGenerateReport,
   extractReportFilePath,
@@ -554,6 +564,102 @@ export const GEMINI_TOOL_DECLARATIONS: Record<string, GeminiFunctionDeclarationS
       required: ['query'],
     },
   },
+  osint_shodan_host_lookup: {
+    name: 'osint_shodan_host_lookup',
+    description:
+      'Query Shodan / Censys telemetry for target IP addresses or hosts: open ports, banner fingerprints, operating system, exposed services, SSL certificates, and known CVE vulnerabilities.',
+    parameters: {
+      type: 'OBJECT',
+      description: 'Shodan host parameters',
+      properties: {
+        ip: {
+          type: 'STRING',
+          description: 'Target IP address or host to query in Shodan / InternetDB.',
+        },
+      },
+      required: ['ip'],
+    },
+  },
+  osint_crtsh_subdomain_discovery: {
+    name: 'osint_crtsh_subdomain_discovery',
+    description:
+      'Query crt.sh Certificate Transparency (CT) logs for a target domain. Reveals active, staging, and hidden internal subdomains, wildcard certs, and issuing certificate authorities without requiring an API key.',
+    parameters: {
+      type: 'OBJECT',
+      description: 'crt.sh CT search parameters',
+      properties: {
+        domain: {
+          type: 'STRING',
+          description: 'Target root domain (e.g., "example.com", "target-corp.io").',
+        },
+      },
+      required: ['domain'],
+    },
+  },
+  osint_bgp_route_lookup: {
+    name: 'osint_bgp_route_lookup',
+    description:
+      'Query BGPView, ARIN, and RIR routing registries for Autonomous System Numbers (ASNs), routing prefixes, ISP transit networks, and IP block allocations.',
+    parameters: {
+      type: 'OBJECT',
+      description: 'BGPView / RIR routing query parameters',
+      properties: {
+        target: {
+          type: 'STRING',
+          description: 'Target ASN (e.g., "AS13335" or "13335") or IP address to resolve route topology.',
+        },
+      },
+      required: ['target'],
+    },
+  },
+  osint_ip_reputation_audit: {
+    name: 'osint_ip_reputation_audit',
+    description:
+      'Audit IP address or domain threat reputation and incident history across AbuseIPDB (brute-forcing, DDoS, port scanning reports) and IPinfo geolocation/hosting classification.',
+    parameters: {
+      type: 'OBJECT',
+      description: 'IP reputation audit parameters',
+      properties: {
+        ip: {
+          type: 'STRING',
+          description: 'Target IP address to evaluate for malicious activity, abuse score, and hosting provider.',
+        },
+      },
+      required: ['ip'],
+    },
+  },
+  osint_virustotal_threat_check: {
+    name: 'osint_virustotal_threat_check',
+    description:
+      'Query VirusTotal & AlienVault OTX threat intelligence feeds for IP addresses, domains, or file hashes. Returns multi-engine antivirus consensus, C2 flags, threat tags, and OTX Pulses.',
+    parameters: {
+      type: 'OBJECT',
+      description: 'VirusTotal and OTX threat indicator check parameters',
+      properties: {
+        indicator: {
+          type: 'STRING',
+          description: 'Target IP address, domain name, or MD5/SHA256 file hash to cross-reference against malware feeds.',
+        },
+      },
+      required: ['indicator'],
+    },
+  },
+  osint_code_leak_audit: {
+    name: 'osint_code_leak_audit',
+    description:
+      'Search public code repositories for leaked secrets, API keys, exposed .env templates, tokens, and corporate credential references.',
+    parameters: {
+      type: 'OBJECT',
+      description: 'Code leak search parameters',
+      properties: {
+        query: {
+          type: 'STRING',
+          description: 'Search string, organization name, domain, or key pattern to audit across public repositories.',
+        },
+      },
+      required: ['query'],
+    },
+  },
 };
 
 /**
@@ -576,6 +682,12 @@ export function buildDynamicToolDeclarations(
     GEMINI_TOOL_DECLARATIONS.osint_satellite_recon,
     GEMINI_TOOL_DECLARATIONS.osint_spectrum_analyzer,
     GEMINI_TOOL_DECLARATIONS.isw_research_lookup,
+    GEMINI_TOOL_DECLARATIONS.osint_shodan_host_lookup,
+    GEMINI_TOOL_DECLARATIONS.osint_crtsh_subdomain_discovery,
+    GEMINI_TOOL_DECLARATIONS.osint_bgp_route_lookup,
+    GEMINI_TOOL_DECLARATIONS.osint_ip_reputation_audit,
+    GEMINI_TOOL_DECLARATIONS.osint_virustotal_threat_check,
+    GEMINI_TOOL_DECLARATIONS.osint_code_leak_audit,
   ];
 
   const pluginMap: Record<string, GeminiFunctionDeclarationSchema[]> = {
@@ -595,6 +707,12 @@ export function buildDynamicToolDeclarations(
       GEMINI_TOOL_DECLARATIONS.osint_satellite_recon,
       GEMINI_TOOL_DECLARATIONS.osint_spectrum_analyzer,
       GEMINI_TOOL_DECLARATIONS.isw_research_lookup,
+      GEMINI_TOOL_DECLARATIONS.osint_shodan_host_lookup,
+      GEMINI_TOOL_DECLARATIONS.osint_crtsh_subdomain_discovery,
+      GEMINI_TOOL_DECLARATIONS.osint_bgp_route_lookup,
+      GEMINI_TOOL_DECLARATIONS.osint_ip_reputation_audit,
+      GEMINI_TOOL_DECLARATIONS.osint_virustotal_threat_check,
+      GEMINI_TOOL_DECLARATIONS.osint_code_leak_audit,
     ],
     osint_plugin: [
       GEMINI_TOOL_DECLARATIONS.osint_maritime_tracker,
@@ -602,6 +720,20 @@ export function buildDynamicToolDeclarations(
       GEMINI_TOOL_DECLARATIONS.osint_satellite_recon,
       GEMINI_TOOL_DECLARATIONS.osint_spectrum_analyzer,
       GEMINI_TOOL_DECLARATIONS.isw_research_lookup,
+      GEMINI_TOOL_DECLARATIONS.osint_shodan_host_lookup,
+      GEMINI_TOOL_DECLARATIONS.osint_crtsh_subdomain_discovery,
+      GEMINI_TOOL_DECLARATIONS.osint_bgp_route_lookup,
+      GEMINI_TOOL_DECLARATIONS.osint_ip_reputation_audit,
+      GEMINI_TOOL_DECLARATIONS.osint_virustotal_threat_check,
+      GEMINI_TOOL_DECLARATIONS.osint_code_leak_audit,
+    ],
+    threat_intel: [
+      GEMINI_TOOL_DECLARATIONS.osint_shodan_host_lookup,
+      GEMINI_TOOL_DECLARATIONS.osint_crtsh_subdomain_discovery,
+      GEMINI_TOOL_DECLARATIONS.osint_bgp_route_lookup,
+      GEMINI_TOOL_DECLARATIONS.osint_ip_reputation_audit,
+      GEMINI_TOOL_DECLARATIONS.osint_virustotal_threat_check,
+      GEMINI_TOOL_DECLARATIONS.osint_code_leak_audit,
     ],
     isw: [GEMINI_TOOL_DECLARATIONS.isw_research_lookup],
     isw_research: [GEMINI_TOOL_DECLARATIONS.isw_research_lookup],
@@ -917,6 +1049,48 @@ export function resolveToolWorkflowDestination(toolName: string): {
         targetRoom: 'war_room',
         targetStationId: 'war_holotable',
         taskTag: 'ISW CONFLICT INTEL',
+      };
+    case 'osint_shodan_host_lookup':
+      return {
+        pluginId: 'threat_intel',
+        targetRoom: 'cyber_lab',
+        targetStationId: 'cyber_terminal_01',
+        taskTag: 'SHODAN RECON',
+      };
+    case 'osint_crtsh_subdomain_discovery':
+      return {
+        pluginId: 'threat_intel',
+        targetRoom: 'cyber_lab',
+        targetStationId: 'cyber_terminal_02',
+        taskTag: 'CRTSH CT LOGS',
+      };
+    case 'osint_bgp_route_lookup':
+      return {
+        pluginId: 'threat_intel',
+        targetRoom: 'comms_tower',
+        targetStationId: 'comms_dish_console',
+        taskTag: 'BGP ROUTE TOPOLOGY',
+      };
+    case 'osint_ip_reputation_audit':
+      return {
+        pluginId: 'threat_intel',
+        targetRoom: 'server_vault',
+        targetStationId: 'vault_core_rack',
+        taskTag: 'ABUSEIPDB REPUTATION',
+      };
+    case 'osint_virustotal_threat_check':
+      return {
+        pluginId: 'threat_intel',
+        targetRoom: 'cyber_lab',
+        targetStationId: 'cyber_scanner_node',
+        taskTag: 'VIRUSTOTAL & OTX',
+      };
+    case 'osint_code_leak_audit':
+      return {
+        pluginId: 'threat_intel',
+        targetRoom: 'server_vault',
+        targetStationId: 'vault_core_rack',
+        taskTag: 'CODE LEAK AUDIT',
       };
     default:
       return {
@@ -3345,6 +3519,141 @@ ${findings || 'No additional telemetry findings attached.'}
           args,
           resultSummary: summary,
           livePayload: responsePayload,
+          targetRoom: dest.targetRoom,
+          targetStationId: dest.targetStationId,
+        },
+      };
+    }
+
+    // OSINT Tool 6: Shodan / Censys Host & Port Reconnaissance
+    if (name === 'osint_shodan_host_lookup') {
+      const ip = String(args.ip || args.host || args.target || '1.1.1.1').trim();
+      const shodanData = await queryShodanHost(ip);
+      const summary = `Shodan Recon [${shodanData.ip}]: ${shodanData.ports?.length || 0} open ports (${(shodanData.ports || []).slice(0, 5).join(', ')}), ${shodanData.vulns?.length || 0} CVEs, OS: ${shodanData.os || 'Linux'}`;
+      return {
+        id: fc.id,
+        name,
+        response: shodanData,
+        executedToolMeta: {
+          pluginId: dest.pluginId,
+          toolName: name,
+          args,
+          resultSummary: summary,
+          livePayload: shodanData,
+          targetRoom: dest.targetRoom,
+          targetStationId: dest.targetStationId,
+        },
+      };
+    }
+
+    // OSINT Tool 7: crt.sh Certificate Transparency Subdomain Discovery
+    if (name === 'osint_crtsh_subdomain_discovery') {
+      const domain = String(args.domain || args.target || args.query || 'example.com').trim();
+      const crtData = await queryCrtShSubdomains(domain);
+      const summary = `crt.sh CT Logs: Discovered ${crtData.subdomains.length} unique subdomains for ${crtData.domain} across ${crtData.certificatesCount} certificates`;
+      return {
+        id: fc.id,
+        name,
+        response: crtData,
+        executedToolMeta: {
+          pluginId: dest.pluginId,
+          toolName: name,
+          args,
+          resultSummary: summary,
+          livePayload: crtData,
+          targetRoom: dest.targetRoom,
+          targetStationId: dest.targetStationId,
+        },
+      };
+    }
+
+    // OSINT Tool 8: BGPView / RIR Autonomous System & Routing Topology
+    if (name === 'osint_bgp_route_lookup') {
+      const target = String(args.target || args.asn || args.ip || 'AS13335').trim();
+      const bgpData = await queryBgpViewAsn(target);
+      const summary = `BGP Routing Topology: Resolved ${target} (${bgpData.name || bgpData.as_name || 'Autonomous Network'}, ASN: ${bgpData.asn || target})`;
+      return {
+        id: fc.id,
+        name,
+        response: bgpData,
+        executedToolMeta: {
+          pluginId: dest.pluginId,
+          toolName: name,
+          args,
+          resultSummary: summary,
+          livePayload: bgpData,
+          targetRoom: dest.targetRoom,
+          targetStationId: dest.targetStationId,
+        },
+      };
+    }
+
+    // OSINT Tool 9: AbuseIPDB & IPinfo Malicious Reputation & Geolocation Audit
+    if (name === 'osint_ip_reputation_audit') {
+      const ip = String(args.ip || args.target || '8.8.8.8').trim();
+      const [abuseData, geoData] = await Promise.all([
+        queryAbuseIPDB(ip).catch((e) => ({ error: e.message })),
+        queryIpInfo(ip).catch((e) => ({ error: e.message })),
+      ]);
+      const combined = { ip, abuseipdb: abuseData, ipinfo: geoData, timestamp: new Date().toISOString() };
+      const score = abuseData.abuseConfidenceScore ?? 0;
+      const summary = `IP Threat Reputation [${ip}]: Abuse Score ${score}% (${score > 25 ? 'SUSPICIOUS' : 'LOW RISK'}), Geo: ${geoData.city || 'Unknown'}, ISP: ${geoData.org || abuseData.isp || 'Hosting Provider'}`;
+      return {
+        id: fc.id,
+        name,
+        response: combined,
+        executedToolMeta: {
+          pluginId: dest.pluginId,
+          toolName: name,
+          args,
+          resultSummary: summary,
+          livePayload: combined,
+          targetRoom: dest.targetRoom,
+          targetStationId: dest.targetStationId,
+        },
+      };
+    }
+
+    // OSINT Tool 10: VirusTotal & AlienVault OTX Threat Consensus
+    if (name === 'osint_virustotal_threat_check') {
+      const indicator = String(args.indicator || args.target || args.hash || args.ip || 'evil.com').trim();
+      const [vtData, otxData] = await Promise.all([
+        queryVirusTotal(indicator).catch((e) => ({ error: e.message })),
+        queryAlienVaultOTX(indicator).catch((e) => ({ error: e.message })),
+      ]);
+      const combined = { indicator, virustotal: vtData, alienvault_otx: otxData, checkedAt: new Date().toISOString() };
+      const summary = `VirusTotal & OTX Check [${indicator}]: ${vtData.maliciousVotes || 0} malicious detections, ${otxData.pulseCount || otxData.pulses?.length || 0} OTX threat pulses`;
+      return {
+        id: fc.id,
+        name,
+        response: combined,
+        executedToolMeta: {
+          pluginId: dest.pluginId,
+          toolName: name,
+          args,
+          resultSummary: summary,
+          livePayload: combined,
+          targetRoom: dest.targetRoom,
+          targetStationId: dest.targetStationId,
+        },
+      };
+    }
+
+    // OSINT Tool 11: GitHub Public Code Leak Audit
+    if (name === 'osint_code_leak_audit') {
+      const queryStr = String(args.query || args.q || args.target || 'api_key').trim();
+      const leakData = await queryGitHubCodeLeaks(queryStr);
+      const summary = `GitHub Code Audit: Audited query "${queryStr}" (${leakData.totalMatches || leakData.items?.length || 0} public candidate code matches)`;
+      return {
+        id: fc.id,
+        name,
+        response: leakData,
+        executedToolMeta: {
+          pluginId: dest.pluginId,
+          toolName: name,
+          args,
+          resultSummary: summary,
+          livePayload: leakData,
           targetRoom: dest.targetRoom,
           targetStationId: dest.targetStationId,
         },
@@ -6509,7 +6818,7 @@ export async function executeAgentDirective(params: {
       } catch (dynamicToolErr) {
         console.warn('[AGENT DISPATCH] Could not augment with dynamic Composio tools:', dynamicToolErr);
       }
-      // Guarantee core capabilities (live_web_search, fs_storage_manager, code_sandbox_eval, memory_vector_lookup) are always available
+      // Guarantee core capabilities (live_web_search, fs_storage_manager, code_sandbox_eval, memory_vector_lookup, and OSINT threat toolkit) are always available
       const CORE_AGENT_TOOLS = new Set([
         'live_web_search',
         'fs_storage_manager',
@@ -6519,6 +6828,13 @@ export async function executeAgentDirective(params: {
         'osint_hazard_tracker',
         'osint_satellite_recon',
         'osint_spectrum_analyzer',
+        'isw_research_lookup',
+        'osint_shodan_host_lookup',
+        'osint_crtsh_subdomain_discovery',
+        'osint_bgp_route_lookup',
+        'osint_ip_reputation_audit',
+        'osint_virustotal_threat_check',
+        'osint_code_leak_audit',
       ]);
       let activeDeclarations = baseDeclarations;
       if (Array.isArray(params.agentAssignedTools) && params.agentAssignedTools.length > 0) {
@@ -6582,7 +6898,7 @@ CRITICAL MEMORY RECALL INSTRUCTION:
         : `You are ${params.activeAgentName || 'Agent'}, an AI assistant. Help the user complete their directives and tasks directly, clearly, and effectively using your available tools.`;
 
       if (declaredToolNames) {
-        systemInstruction += `\n\n### Available Tools & Integrations:\n${declaredToolNames}\nWhen executing external or connected tool operations (e.g. GitHub, Slack, Gmail, Google Calendar, Notion, Linear, web search, code sandbox, file storage), you can invoke them directly or emit a structured action tag in your response:\n[AGENT_ACTION: <tool_name>] { "param": "value" } [/AGENT_ACTION]\n\n### Workspace File System Operations (fs_storage_manager):\nYou have full read/write/edit/delete/organize/audit/consolidate power over the local workspace files in IndexedDB:\n- "write" / "create": Save or upload markdown reports, briefs, configs, or dossiers.\n- "read": Inspect existing file content by path.\n- "edit" / "append": Update or add to existing workspace files.\n- "delete": Permanently remove obsolete files or test artifacts.\n- "organize": Move files into folders (e.g. "reports", "intel", "archive", "logs").\n- "audit": Inspect the entire workspace for integrity, size, stale items, and duplicate content.\n- "consolidate": Merge multiple related files into a single unified dossier without duplicating intel, and delete the superseded source files so only the new unified master dossier remains.\n- "list": Inspect all workspace files.\n\n### Critical Consolidation Rule:\nWhen the user asks to consolidate, combine, or merge files, or says "gather all intel from similar files into one and delete the old ones":\n1. ALWAYS read and combine all content from the source files into a single authoritative master dossier.\n2. ALWAYS delete the superseded individual source files from the workspace.\n3. NEVER simply write a message saying you did it—actually invoke fs_storage_manager action "consolidate" with deleteSources: true!\n\n### Report Writing & Non-Redundancy Standards:\nWhen compiling multi-part reports or executing investigative workflows:\n- Write crisp, distinct intelligence without repeating identical findings, preambles, or citations in part 1 and part 2.\n- Always synthesize and consolidate field signals into clear, actionable sections (Executive Summary, Findings, Telemetry Matrix, Recommendations).\n\n### Calendar Tool Parameter Rules:\nWhen invoking composio_googlecalendar_create_event or scheduling calendar events, strictly enforce clean JSON parameters:\n- Required keys: "summary", "start_time", "end_time", "time_zone".\n- Datetime format: ISO 8601 local wall-clock string without trailing Z offset (e.g. "2026-11-09T16:21:19").\n- Summary: Clean title only without conversational filler, prefix narratives, or debug blocks.`;
+        systemInstruction += `\n\n### Available Tools & Integrations:\n${declaredToolNames}\nWhen executing external or connected tool operations (e.g. GitHub, Slack, Gmail, Google Calendar, Notion, Linear, web search, code sandbox, file storage), you can invoke them directly or emit a structured action tag in your response:\n[AGENT_ACTION: <tool_name>] { "param": "value" } [/AGENT_ACTION]\n\n### Workspace File System Operations (fs_storage_manager):\nYou have full read/write/edit/delete/organize/audit/consolidate power over the local workspace files in IndexedDB:\n- "write" / "create": Save or upload markdown reports, briefs, configs, or dossiers.\n- "read": Inspect existing file content by path.\n- "edit" / "append": Update or add to existing workspace files.\n- "delete": Permanently remove obsolete files or test artifacts.\n- "organize": Move files into folders (e.g. "reports", "intel", "archive", "logs").\n- "audit": Inspect the entire workspace for integrity, size, stale items, and duplicate content.\n- "consolidate": Merge multiple related files into a single unified dossier without duplicating intel, and delete the superseded source files so only the new unified master dossier remains.\n- "list": Inspect all workspace files.\n\n### Critical Consolidation Rule:\nWhen the user asks to consolidate, combine, or merge files, or says "gather all intel from similar files into one and delete the old ones":\n1. ALWAYS read and combine all content from the source files into a single authoritative master dossier.\n2. ALWAYS delete the superseded individual source files from the workspace.\n3. NEVER simply write a message saying you did it—actually invoke fs_storage_manager action "consolidate" with deleteSources: true!\n\n### Report Writing & Non-Redundancy Standards:\nWhen compiling multi-part reports or executing investigative workflows:\n- Write crisp, distinct intelligence without repeating identical findings, preambles, or citations in part 1 and part 2.\n- Always synthesize and consolidate field signals into clear, actionable sections (Executive Summary, Findings, Telemetry Matrix, Recommendations).\n\n### Calendar Tool Parameter Rules:\nWhen invoking composio_googlecalendar_create_event or scheduling calendar events, strictly enforce clean JSON parameters:\n- Required keys: "summary", "start_time", "end_time", "time_zone".\n- Datetime format: ISO 8601 local wall-clock string without trailing Z offset (e.g. "2026-11-09T16:21:19").\n- Summary: Clean title only without conversational filler, prefix narratives, or debug blocks.\n\n### Specialized OSINT & Adversarial Tool Capabilities:\nYou have native access to professional-grade OSINT and threat intelligence tools:\n- "osint_shodan_host_lookup": Query open ports, exposed services, SSL certificates, OS banners, and CVE vulnerabilities for target IPs.\n- "osint_crtsh_subdomain_discovery": Query Certificate Transparency logs to discover subdomains, internal staging environments, and wildcard certificates for target domains.\n- "osint_bgp_route_lookup": Query BGPView and RIR registries for Autonomous System Numbers (ASNs), routing prefixes, and network topology.\n- "osint_ip_reputation_audit": Cross-examine AbuseIPDB and IPinfo for malicious confidence scores, brute-force history, geolocation, and ISP classification.\n- "osint_virustotal_threat_check": Query VirusTotal & AlienVault OTX for malware consensus, threat tags, and OTX threat Pulses.\n- "osint_code_leak_audit": Search public repositories for leaked API secrets, hardcoded credentials, and exposed .env files.`;
       }
 
       if (memoryContextStr) {

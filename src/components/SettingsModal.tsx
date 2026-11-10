@@ -18,9 +18,16 @@ import {
   EyeOff,
   Zap,
   Sparkles,
+  Globe,
+  Crosshair,
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { CommandPreferences } from '../services/ApiService';
+import {
+  getOsintKey,
+  setOsintKey,
+  OSINT_KEYS_STORAGE,
+} from '../services/OsintToolsService';
 import {
   VaultStartupReport,
   ServiceProviderName,
@@ -167,6 +174,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       return null;
     }
   });
+
+  // OSINT & Adversarial Toolkit BYOK Keys
+  const [osintKeys, setOsintKeys] = useState(() => ({
+    shodan: getOsintKey('SHODAN'),
+    abuseipdb: getOsintKey('ABUSEIPDB'),
+    virustotal: getOsintKey('VIRUSTOTAL'),
+    otx: getOsintKey('OTX'),
+    ipinfo: getOsintKey('IPINFO'),
+    github: getOsintKey('GITHUB'),
+  }));
+  const [showOsintSection, setShowOsintSection] = useState(false);
   const [ssoTestStatus, setSsoTestStatus] = useState<
     Record<string, { loading?: boolean; ok?: boolean; message?: string } | undefined>
   >({});
@@ -498,6 +516,15 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
       }
     }
     saveLLMProviderConfig(llmConfig);
+
+    // Persist OSINT keys
+    setOsintKey('SHODAN', osintKeys.shodan);
+    setOsintKey('ABUSEIPDB', osintKeys.abuseipdb);
+    setOsintKey('VIRUSTOTAL', osintKeys.virustotal);
+    setOsintKey('OTX', osintKeys.otx);
+    setOsintKey('IPINFO', osintKeys.ipinfo);
+    setOsintKey('GITHUB', osintKeys.github);
+
     onClose();
   };
 
@@ -1134,6 +1161,125 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 ? ssoTestStatus.openrouter?.message
                 : llmTestStatus.message}
             </p>
+          )}
+        </div>
+
+        {/* Specialized OSINT & Adversarial Tool Credentials (BYOK) */}
+        <div className="rounded-xl border border-slate-800 bg-[#0d0f17] p-3 flex flex-col gap-2.5">
+          <button
+            type="button"
+            onClick={() => {
+              playBeep('tap');
+              setShowOsintSection(!showOsintSection);
+            }}
+            className="flex items-center justify-between text-left cursor-pointer group"
+          >
+            <div className="flex items-center gap-2">
+              <Crosshair className="w-4 h-4 text-emerald-400" />
+              <div>
+                <span className="text-xs font-bold text-slate-100 group-hover:text-emerald-300 transition-colors">
+                  OSINT & Adversarial Threat Keys (BYOK)
+                </span>
+                <p className="text-[10px] text-slate-400">
+                  Optional keys for Shodan, AbuseIPDB, VirusTotal, AlienVault OTX, IPinfo & GitHub leak search.
+                </p>
+              </div>
+            </div>
+            <span className="text-[10px] font-mono-tabular text-emerald-400 bg-emerald-950/60 border border-emerald-700/50 px-2 py-0.5 rounded">
+              {showOsintSection ? '▼ HIDE' : '► CONFIGURE'}
+            </span>
+          </button>
+
+          {showOsintSection && (
+            <div className="pt-2 flex flex-col gap-3 border-t border-slate-800 text-xs">
+              <p className="text-[11px] text-slate-400">
+                All OSINT modules have built-in zero-friction public endpoints (e.g. crt.sh, BGPView, Shodan InternetDB). Adding personal API keys below unlocks higher rate limits and full telemetry payloads.
+              </p>
+
+              {/* Shodan */}
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-mono-tabular uppercase font-semibold text-slate-300">
+                  Shodan API Key
+                </label>
+                <input
+                  type="password"
+                  value={osintKeys.shodan}
+                  onChange={(e) => setOsintKeys((prev) => ({ ...prev, shodan: e.target.value }))}
+                  placeholder="Shodan developer key..."
+                  className="w-full bg-[#12151f] border border-slate-800 rounded px-2.5 py-1 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              {/* AbuseIPDB */}
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-mono-tabular uppercase font-semibold text-slate-300">
+                  AbuseIPDB API Key
+                </label>
+                <input
+                  type="password"
+                  value={osintKeys.abuseipdb}
+                  onChange={(e) => setOsintKeys((prev) => ({ ...prev, abuseipdb: e.target.value }))}
+                  placeholder="AbuseIPDB API v2 key..."
+                  className="w-full bg-[#12151f] border border-slate-800 rounded px-2.5 py-1 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              {/* VirusTotal */}
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-mono-tabular uppercase font-semibold text-slate-300">
+                  VirusTotal API Key
+                </label>
+                <input
+                  type="password"
+                  value={osintKeys.virustotal}
+                  onChange={(e) => setOsintKeys((prev) => ({ ...prev, virustotal: e.target.value }))}
+                  placeholder="VirusTotal v3 API key..."
+                  className="w-full bg-[#12151f] border border-slate-800 rounded px-2.5 py-1 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              {/* AlienVault OTX */}
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-mono-tabular uppercase font-semibold text-slate-300">
+                  AlienVault OTX API Key
+                </label>
+                <input
+                  type="password"
+                  value={osintKeys.otx}
+                  onChange={(e) => setOsintKeys((prev) => ({ ...prev, otx: e.target.value }))}
+                  placeholder="OTX threat pulse key..."
+                  className="w-full bg-[#12151f] border border-slate-800 rounded px-2.5 py-1 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              {/* IPinfo */}
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-mono-tabular uppercase font-semibold text-slate-300">
+                  IPinfo Token
+                </label>
+                <input
+                  type="password"
+                  value={osintKeys.ipinfo}
+                  onChange={(e) => setOsintKeys((prev) => ({ ...prev, ipinfo: e.target.value }))}
+                  placeholder="IPinfo geolocation token..."
+                  className="w-full bg-[#12151f] border border-slate-800 rounded px-2.5 py-1 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+
+              {/* GitHub Token */}
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-mono-tabular uppercase font-semibold text-slate-300">
+                  GitHub Personal Access Token (Code Search)
+                </label>
+                <input
+                  type="password"
+                  value={osintKeys.github}
+                  onChange={(e) => setOsintKeys((prev) => ({ ...prev, github: e.target.value }))}
+                  placeholder="ghp_..."
+                  className="w-full bg-[#12151f] border border-slate-800 rounded px-2.5 py-1 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-emerald-500"
+                />
+              </div>
+            </div>
           )}
         </div>
 

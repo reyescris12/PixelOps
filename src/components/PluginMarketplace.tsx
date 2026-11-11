@@ -6,6 +6,9 @@ import {
   getOrCreateEntityId,
   getComposioApiKey,
   setComposioApiKey,
+  saveComposioApiKey,
+  isComposioCircuitBreakerTripped,
+  resetComposioCircuitBreaker,
   pingComposio,
   normalizeAppSlug,
   getLocalConnectedAccounts,
@@ -72,6 +75,7 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
   const [inputApiKey, setInputApiKey] = useState(() => getComposioApiKey());
   const [isTestingKey, setIsTestingKey] = useState(false);
   const [testResult, setTestResult] = useState<string | null>(null);
+  const [circuitBreakerTripped, setCircuitBreakerTripped] = useState(() => isComposioCircuitBreakerTripped());
 
   // Custom Auth Config modal for Twitter / X and apps requiring custom developer credentials
   const [customAuthApp, setCustomAuthApp] = useState<ComposioIntegration | null>(null);
@@ -141,11 +145,21 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
       refreshIntegrations(false);
     };
 
+    const handleUnauthorized = () => {
+      setCircuitBreakerTripped(true);
+    };
+
+    const handleCircuitBreakerReset = () => {
+      setCircuitBreakerTripped(false);
+    };
+
     window.addEventListener('focus', handleSync);
     window.addEventListener('composio:connection-updated', handleSync);
     window.addEventListener('composio:session-synced', handleSync);
     window.addEventListener('composio:entity-changed', handleEntityChanged);
     window.addEventListener('composio:api-key-changed', handleApiKeyChanged);
+    window.addEventListener('composio:unauthorized', handleUnauthorized);
+    window.addEventListener('composio:circuit-breaker-reset', handleCircuitBreakerReset);
 
     // In-memory sync without network refetch to eliminate infinite re-render loops
     const unsubscribe = ComposioService.subscribeToConnectionChanges?.((accounts) => {
@@ -175,6 +189,8 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
       window.removeEventListener('composio:session-synced', handleSync);
       window.removeEventListener('composio:entity-changed', handleEntityChanged);
       window.removeEventListener('composio:api-key-changed', handleApiKeyChanged);
+      window.removeEventListener('composio:unauthorized', handleUnauthorized);
+      window.removeEventListener('composio:circuit-breaker-reset', handleCircuitBreakerReset);
       unsubscribe?.();
     };
   }, [refreshIntegrations]);
@@ -619,6 +635,25 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
           )}
         </div>
 
+        {/* Composio 401 Circuit Breaker Alert Banner */}
+        {circuitBreakerTripped && (
+          <div className="px-4 py-2.5 bg-[#331111] border-b border-[#ef4444] text-[#fca5a5] font-mono-tabular text-xs flex flex-wrap items-center justify-between gap-2 shadow-[0_0_15px_rgba(239,68,68,0.3)]">
+            <div className="flex items-center gap-2">
+              <span className="text-base text-[#ef4444]">⚠</span>
+              <span>
+                <strong>[COMPOSIO 401 UNAUTHORIZED]</strong> Circuit breaker active: automated retries halted to prevent hammering the endpoint. Please update your API key or re-authenticate.
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsApiKeyModalOpen(true)}
+              className="px-2.5 py-1 bg-[#ef4444] hover:bg-[#dc2626] text-black font-bold uppercase tracking-wider text-[11px] cursor-pointer transition-colors"
+            >
+              Update API Key
+            </button>
+          </div>
+        )}
+
         {/* Popup Blocked Direct Action Banner */}
         {blockedPopupUrl && (
           <div className="px-4 py-2.5 bg-[#2a1705] border-b border-[#e59838] font-mono-tabular text-xs flex flex-wrap items-center justify-between gap-2 shadow-[0_0_15px_rgba(229,152,56,0.3)]">
@@ -977,12 +1012,12 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
                     type="button"
                     onClick={async () => {
                       const trimmed = inputApiKey.trim();
-                      setComposioApiKey(trimmed);
+                      await saveComposioApiKey(trimmed);
                       setApiKey(trimmed);
                       setIsApiKeyModalOpen(false);
                       setFeedbackMessage({
                         text: trimmed
-                          ? '[API KEY SAVED] Custom Composio BYOK key configured for your session.'
+                          ? '[API KEY SAVED] Custom Composio BYOK key configured and stored securely.'
                           : '[API KEY CLEARED] Reverted to default server proxy.',
                         type: 'success',
                       });

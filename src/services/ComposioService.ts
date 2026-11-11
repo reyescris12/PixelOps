@@ -377,6 +377,9 @@ export function setComposioApiKey(key: string, skipSync = false): void {
   const changed = (cachedApiKey || '') !== clean;
   cachedApiKey = clean || null;
 
+  // Re-authenticating with a new or cleared key resets the 401 circuit breaker
+  resetComposioCircuitBreaker();
+
   try {
     if (typeof localStorage !== 'undefined') {
       if (!clean) {
@@ -414,6 +417,161 @@ export function setComposioApiKey(key: string, skipSync = false): void {
 }
 
 /**
+ * Persists custom Composio API key safely into IndexedDB WebCrypto vault and resets circuit breaker
+ */
+export async function saveComposioApiKey(apiKey: string): Promise<void> {
+  const clean = (apiKey || '').trim();
+  setComposioApiKey(clean);
+  try {
+    const { storeSecureCredential } = await import('./SecureVaultService');
+    if (clean) {
+      await storeSecureCredential(STORAGE_CUSTOM_KEY_KEY, clean);
+    }
+  } catch {}
+}
+
+// --- Composio 401 Error Circuit Breaker ---
+export interface ComposioCircuitBreakerState {
+  isTripped: boolean;
+  trippedAt: number | null;
+  reason: string | null;
+  failureCount: number;
+}
+
+const circuitBreakerState: ComposioCircuitBreakerState = {
+  isTripped: false,
+  trippedAt: null,
+  reason: null,
+  failureCount: 0,
+};
+
+/**
+ * Checks whether the Composio 401 circuit breaker is currently open (tripped).
+ * If tripped for more than 5 minutes, automatically enters a half-open cooldown state.
+ */
+export function isComposioCircuitBreakerTripped(): boolean {
+  if (!circuitBreakerState.isTripped) return false;
+  // 5-minute cooldown before allowing half-open probe
+  if (circuitBreakerState.trippedAt && Date.now() - circuitBreakerState.trippedAt > 5 * 60 * 1000) {
+    console.info('[Composio] Circuit breaker cooldown expired. Permitting trial request.');
+    circuitBreakerState.isTripped = false;
+    return false;
+  }
+  return true;
+}
+
+/**
+ * Trips the circuit breaker upon receiving a 401 Unauthorized response,
+ * halting automated retries and dispatching re-authentication events to the UI.
+ */
+export function tripComposioCircuitBreaker(reason = '401 Unauthorized'): void {
+  circuitBreakerState.isTripped = true;
+  circuitBreakerState.trippedAt = Date.now();
+  circuitBreakerState.reason = reason;
+  circuitBreakerState.failureCount += 1;
+
+  console.error('[Composio] 401 Unauthorized: Halting automated retries. Please update your API key.');
+
+  if (typeof window !== 'undefined') {
+    // Dispatch unauthorized event to prompt the user to re-authenticate
+    window.dispatchEvent(
+      new CustomEvent('composio:unauthorized', {
+        detail: {
+          reason,
+          message: 'Composio API key is unauthorized (401). Retries halted. Please update your key.',
+          timestamp: new Date().toISOString(),
+        },
+      })
+    );
+
+    // Dispatch to telemetry stream
+    window.dispatchEvent(
+      new CustomEvent('pixelops:telemetry-log', {
+        detail: {
+          message: '[COMPOSIO // SECURITY ALERT] 401 Unauthorized detected. Circuit breaker active. Retries suspended until re-authentication.',
+          status: 'error',
+          timestamp: new Date().toISOString(),
+        },
+      })
+    );
+  }
+}
+
+/**
+ * Resets the circuit breaker when an operative updates their key or re-authenticates.
+ */
+export function resetComposioCircuitBreaker(): void {
+  if (circuitBreakerState.isTripped) {
+    console.info('[Composio] Circuit breaker reset. Resuming API operations.');
+  }
+  circuitBreakerState.isTripped = false;
+  circuitBreakerState.trippedAt = null;
+  circuitBreakerState.reason = null;
+  circuitBreakerState.failureCount = 0;
+
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('composio:circuit-breaker-reset'));
+  }
+}
+
+/**
+ * Retrieves the current state of the Composio circuit breaker.
+ */
+export function getComposioCircuitBreakerState(): Readonly<ComposioCircuitBreakerState> {
+  return { ...circuitBreakerState };
+}
+
+/**
+ * Direct Composio API Caller with Error Circuit Breaker for 401 Unauthorized responses.
+ * Prevents hammering the endpoint when credentials are invalid or expired.
+ */
+export async function callComposioApi(endpoint: string, payload?: any): Promise<any> {
+  if (isComposioCircuitBreakerTripped()) {
+    console.warn('[Composio] Action aborted: Circuit breaker open due to 401 Unauthorized.');
+    throw new Error('Unauthorized Composio API Key');
+  }
+
+  let apiKey = getComposioApiKey();
+  if (!apiKey) {
+    try {
+      const { getSecureCredential } = await import('./SecureVaultService');
+      const vaultKey = await getSecureCredential(STORAGE_CUSTOM_KEY_KEY);
+      if (vaultKey && vaultKey.trim().length > 0) {
+        apiKey = vaultKey.trim();
+        cachedApiKey = apiKey;
+      }
+    } catch {}
+  }
+
+  if (!apiKey) {
+    console.warn('[Composio] Action aborted: No API key configured in secure vault.');
+    return null; // Stop the retry loop
+  }
+
+  const cleanEndpoint = endpoint.startsWith('http')
+    ? endpoint
+    : `${COMPOSIO_BASE_URL}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+
+  const response = await fetch(cleanEndpoint, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'x-api-key': apiKey,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+
+  if (response.status === 401) {
+    tripComposioCircuitBreaker('401 Unauthorized response from Composio API');
+    console.error('[Composio] 401 Unauthorized: Halting automated retries. Please update your API key.');
+    throw new Error('Unauthorized Composio API Key');
+  }
+
+  return response.json();
+}
+
+/**
  * Live connection ping to backend.composio.dev or Cloudflare proxy
  */
 export async function pingComposio(): Promise<{ ok: boolean; status: number; latencyMs: number; error?: string }> {
@@ -438,6 +596,9 @@ export async function pingComposio(): Promise<{ ok: boolean; status: number; lat
           }
         );
         const latencyMs = Math.round(performance.now() - start);
+        if (res.status === 401) {
+          tripComposioCircuitBreaker('Ping returned 401 Unauthorized');
+        }
         return {
           ok: res.ok,
           status: res.status,
@@ -523,6 +684,11 @@ async function callComposioDirect(
   entityId: string,
   timeoutMs: number = 60000
 ): Promise<any> {
+  if (isComposioCircuitBreakerTripped()) {
+    console.warn('[Composio] Direct call aborted: Circuit breaker open due to 401 Unauthorized.');
+    throw new Error('Unauthorized Composio API Key');
+  }
+
   // Normalize target URL to v3
   let targetUrl = url.replace('https://backend.composio.dev/api/v2', COMPOSIO_BASE_URL);
 
@@ -620,6 +786,11 @@ async function callComposioDirect(
     } catch {}
   }
 
+  if (directRes.status === 401) {
+    tripComposioCircuitBreaker('Direct Composio API returned 401');
+    throw new Error('Unauthorized Composio API Key');
+  }
+
   if (!directRes.ok) {
     const txt = await directRes.text();
     throw new Error(`Composio API (${directRes.status}): ${txt.slice(0, 150)}`);
@@ -661,6 +832,11 @@ async function callComposioProxy(
   body?: Record<string, any> | null,
   options?: { timeoutMs?: number }
 ): Promise<any> {
+  if (isComposioCircuitBreakerTripped()) {
+    console.warn('[Composio] Proxy call aborted: Circuit breaker open due to 401 Unauthorized.');
+    throw new Error('Unauthorized Composio API Key');
+  }
+
   const entityId = getOrCreateEntityId();
   const customKey = getComposioApiKey();
   let cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
@@ -685,6 +861,9 @@ async function callComposioProxy(
         timeoutMs
       );
     } catch (directErr: any) {
+      if (isComposioCircuitBreakerTripped() || directErr?.message?.includes('Unauthorized')) {
+        throw directErr;
+      }
       console.warn('[COMPOSIO DIRECT FETCH NOTICE] Trying proxy fallback with custom key:', directErr?.message || directErr);
     }
   }
@@ -722,6 +901,11 @@ async function callComposioProxy(
         throw new Error(`Composio proxy request timed out (${Math.round(timeoutMs / 1000)}s limit). Gateway latency detected.`);
       }
       throw new Error(`Composio proxy unreachable: ${fetchErr?.message || fetchErr}`);
+    }
+
+    if (res.status === 401) {
+      tripComposioCircuitBreaker('Composio proxy returned 401');
+      throw new Error('Unauthorized Composio API Key');
     }
 
     const contentType = res.headers.get('content-type') || '';
@@ -2753,6 +2937,16 @@ export async function executeComposioAction(
     );
   };
 
+  if (isComposioCircuitBreakerTripped()) {
+    console.warn('[Composio] Action execution aborted: 401 circuit breaker tripped. Prompting user to re-authenticate.');
+    return {
+      successful: false,
+      error: 'Unauthorized Composio API Key: Circuit breaker open. Please update your API key in Settings.',
+      actionName,
+      executedAt: new Date().toISOString(),
+    };
+  }
+
   for (const act of actionsToTry) {
     const isTwitterAction = act.includes('TWITTER');
     const maxRetries = isTwitterAction ? 3 : 1;
@@ -2763,9 +2957,15 @@ export async function executeComposioAction(
         try {
           result = await callComposioProxy(`/tools/execute/${encodeURIComponent(act)}`, 'POST', payload);
         } catch (toolErr: any) {
+          if (isComposioCircuitBreakerTripped() || String(toolErr?.message || '').includes('Unauthorized')) {
+            throw toolErr;
+          }
           try {
             result = await callComposioProxy(`/actions/${encodeURIComponent(act)}/execute`, 'POST', payload);
-          } catch {
+          } catch (actErr: any) {
+            if (isComposioCircuitBreakerTripped() || String(actErr?.message || '').includes('Unauthorized')) {
+              throw actErr;
+            }
             result = await callComposioProxy(`/api/v3/tools/execute/${encodeURIComponent(act)}`, 'POST', payload);
           }
         }
@@ -2784,6 +2984,16 @@ export async function executeComposioAction(
         lastError = err;
         const errMessage = formatComposioError(err) || String(err?.message || err);
         console.warn(`[COMPOSIO EXECUTION ATTEMPT FAILED] Action "${act}" (attempt ${attempt}/${maxRetries}):`, errMessage);
+
+        const isUnauthorized =
+          isComposioCircuitBreakerTripped() ||
+          errMessage.includes('Unauthorized') ||
+          errMessage.includes('401');
+
+        if (isUnauthorized) {
+          console.error('[Composio] 401 Unauthorized: Halting automated retries across all actions. Please update your API key.');
+          break;
+        }
 
         const canRetry = attempt < maxRetries && isTimeoutOrRateLimit(errMessage);
         if (canRetry) {
@@ -2811,6 +3021,15 @@ export async function executeComposioAction(
           break; // Move to next alias if not retryable or retries exhausted
         }
       }
+    }
+
+    if (
+      isComposioCircuitBreakerTripped() ||
+      String(lastError?.message || '').includes('Unauthorized') ||
+      String(lastError?.message || '').includes('401')
+    ) {
+      console.warn('[Composio] Action alias loop halted due to 401 Unauthorized circuit breaker.');
+      break;
     }
   }
 
@@ -2912,6 +3131,12 @@ export const ComposioService = {
   setComposioEntityId,
   getComposioApiKey,
   setComposioApiKey,
+  saveComposioApiKey,
+  callComposioApi,
+  isComposioCircuitBreakerTripped,
+  tripComposioCircuitBreaker,
+  resetComposioCircuitBreaker,
+  getComposioCircuitBreakerState,
   pingComposio,
   getConnectedAccounts,
   initiateAppConnection,

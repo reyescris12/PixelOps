@@ -314,13 +314,18 @@ export async function getRawEncryptedCredentialForVerification(keyName: string) 
  * Lists all encrypted credentials stored in IndexedDB.
  */
 export async function listSecureCredentials(): Promise<{ key: string; updatedAt: string }[]> {
-  try {
-    if (ledgerDb && ledgerDb.encrypted_credentials) {
-      const records = await ledgerDb.encrypted_credentials.toArray();
-      return records.map((r) => ({ key: r.key, updatedAt: r.updatedAt }));
-    }
-  } catch {}
-  return [];
+  if (typeof indexedDB !== 'undefined') {
+    try {
+      if (ledgerDb && ledgerDb.encrypted_credentials) {
+        const records = await ledgerDb.encrypted_credentials.toArray();
+        return records.map((r) => ({ key: r.key, updatedAt: r.updatedAt }));
+      }
+    } catch {}
+  }
+  return Array.from(inMemoryEncryptedCredentialsStore.values()).map((r) => ({
+    key: r.key,
+    updatedAt: r.updatedAt,
+  }));
 }
 
 /**
@@ -382,6 +387,31 @@ export async function purgeLegacyStorage(): Promise<string[]> {
         console.warn(`[SECURITY] Purged plaintext apiKey from pixelops_llm_provider_config_v2 in localStorage`);
         purged.push('pixelops_llm_provider_config_v2.apiKey');
       }
+    }
+  } catch {}
+
+  // Also purge and migrate any legacy unencrypted plugin_auth_* keys
+  try {
+    const pluginKeysToPurge: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && (k.startsWith('plugin_auth_') || k.startsWith('pixelops_plugin_auth_'))) {
+        pluginKeysToPurge.push(k);
+      }
+    }
+    for (const pKey of pluginKeysToPurge) {
+      const rawVal = localStorage.getItem(pKey);
+      if (rawVal && rawVal.trim()) {
+        const cleanNormId = pKey.replace(/^(?:pixelops_)?plugin_auth_/, '');
+        const targetStorageKey = `pixelops_plugin_auth_${cleanNormId}`;
+        const existing = await getSecureCredential(targetStorageKey);
+        if (!existing) {
+          await storeSecureCredential(targetStorageKey, rawVal.trim());
+        }
+      }
+      localStorage.removeItem(pKey);
+      console.warn(`[SECURITY] Purged plaintext plugin auth key from localStorage: ${pKey}`);
+      purged.push(pKey);
     }
   } catch {}
 

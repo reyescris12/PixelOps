@@ -156,6 +156,7 @@ import {
   isPluginAuthenticated,
   clearPluginCredential,
   PluginAuthCredential,
+  purgeLegacyPluginAuthStorage,
 } from './engine/pluginAuthManager';
 import { handleOpenRouterCallback } from './services/OpenRouterAuth';
 
@@ -571,6 +572,7 @@ const CommandCenterContent: React.FC = () => {
 
   useEffect(() => {
     purgeLegacyStorage().catch((e) => console.warn('[Security] Legacy storage purge warning:', e));
+    purgeLegacyPluginAuthStorage();
     runStartupVaultValidation();
     refreshCommandLedger();
     auditStorageHealth().catch((e) => console.warn('Storage health audit warning:', e));

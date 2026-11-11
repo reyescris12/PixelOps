@@ -130,6 +130,7 @@ class PixelOpsLedgerDatabase extends Dexie {
 }
 
 export const ledgerDb = new PixelOpsLedgerDatabase();
+export const db = ledgerDb;
 if (typeof globalThis !== 'undefined') (globalThis as any).__ledgerDb = ledgerDb;
 
 const INITIAL_SEED_COMMANDS: Array<

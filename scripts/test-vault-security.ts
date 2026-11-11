@@ -10,8 +10,14 @@ import {
   purgeLegacyStorage,
   getRawEncryptedCredentialForVerification,
 } from '../src/services/SecureVaultService';
-import { ledgerDb } from '../src/services/CommandLedgerDb';
+import { ledgerDb, db } from '../src/services/CommandLedgerDb';
 import { ALLOWED_DOMAINS, isAllowedDomain, handleFetchProxy } from '../functions/api/fetch';
+import {
+  savePluginAuth,
+  getPluginAuth,
+  discoverInstalledPluginAuths,
+  purgeLegacyPluginAuthStorage,
+} from '../src/engine/pluginAuthManager';
 
 // Mock localStorage for Node.js environment if needed
 if (typeof globalThis.localStorage === 'undefined') {
@@ -160,6 +166,87 @@ async function runTests() {
   }
 
   console.log('PASS: Legacy plaintext keys successfully migrated into encrypted vault and purged from localStorage!');
+
+  console.log('\n=== TEST 5: Encrypted Plugin Credentials at Rest (savePluginAuth & getPluginAuth) ===');
+  const pluginId = 'shodan';
+  const testPluginCreds = {
+    apiKey: 'shodan_super_secret_key_888',
+    endpointUrl: 'https://api.shodan.io',
+    accountHandle: 'operative_shodan',
+  };
+
+  await savePluginAuth(pluginId, testPluginCreds);
+
+  // Verify that raw plaintext was NOT written to localStorage
+  if (localStorage.getItem(`pixelops_plugin_auth_${pluginId}`) !== null) {
+    console.error('FAIL: Plaintext key found in localStorage under pixelops_plugin_auth_shodan!');
+    process.exit(1);
+  }
+  if (localStorage.getItem(`plugin_auth_${pluginId}`) !== null) {
+    console.error('FAIL: Plaintext key found in localStorage under plugin_auth_shodan!');
+    process.exit(1);
+  }
+
+  // Inspect raw record in encrypted_credentials table
+  const rawPluginDbRecord = await getRawEncryptedCredentialForVerification(`pixelops_plugin_auth_${pluginId}`);
+  console.log('Raw Plugin DB Record:', {
+    key: rawPluginDbRecord?.key,
+    ciphertextSnippet: rawPluginDbRecord?.ciphertextB4?.slice(0, 24) + '...',
+  });
+
+  if (!rawPluginDbRecord) {
+    console.error('FAIL: Plugin credentials were not persisted to encrypted_credentials table!');
+    process.exit(1);
+  }
+  if (rawPluginDbRecord.ciphertextB4.includes('shodan_super_secret_key_888') || JSON.stringify(rawPluginDbRecord).includes('shodan_super_secret_key_888')) {
+    console.error('FAIL: Plaintext key leaked inside encrypted_credentials table!');
+    process.exit(1);
+  } else {
+    console.log('PASS: Plugin credentials stored as AES-GCM ciphertext with zero plaintext in storage!');
+  }
+
+  // Decrypt and verify round-trip
+  const decryptedPlugin = await getPluginAuth(pluginId);
+  if (!decryptedPlugin || decryptedPlugin.apiKey !== 'shodan_super_secret_key_888') {
+    console.error('FAIL: getPluginAuth failed to decrypt plugin credentials:', decryptedPlugin);
+    process.exit(1);
+  } else {
+    console.log('PASS: getPluginAuth decrypted plugin credentials accurately:', {
+      apiKey: decryptedPlugin.apiKey.slice(0, 6) + '••••••••',
+      accountHandle: decryptedPlugin.accountHandle,
+    });
+  }
+
+  console.log('\n=== TEST 6: Secure Discovery & Enumeration (discoverInstalledPluginAuths) ===');
+  await savePluginAuth('slack', { apiKey: 'xoxb-secret-slack-token-111' });
+  await savePluginAuth('github', { apiKey: 'ghp_secret_github_token_222' });
+
+  const installedPlugins = await discoverInstalledPluginAuths();
+  console.log('Installed Plugins Discovered from Encrypted Store:', installedPlugins);
+
+  if (!installedPlugins.includes('shodan') || !installedPlugins.includes('slack') || !installedPlugins.includes('github')) {
+    console.error('FAIL: discoverInstalledPluginAuths did not return all installed plugins!', installedPlugins);
+    process.exit(1);
+  } else {
+    console.log('PASS: discoverInstalledPluginAuths successfully discovered all plugins from encrypted_credentials store!');
+  }
+
+  console.log('\n=== TEST 7: Purge Legacy Plugin Auth Keys on Startup (purgeLegacyPluginAuthStorage) ===');
+  // Seed legacy unencrypted plugin keys in localStorage
+  localStorage.setItem('plugin_auth_legacy_tool', '{"apiKey":"legacy_leaked_key_999"}');
+  localStorage.setItem('pixelops_plugin_auth_legacy_tool_2', '{"token":"leaked_token_555"}');
+
+  purgeLegacyPluginAuthStorage();
+
+  if (localStorage.getItem('plugin_auth_legacy_tool') !== null) {
+    console.error('FAIL: plugin_auth_legacy_tool was not purged from localStorage!');
+    process.exit(1);
+  }
+  if (localStorage.getItem('pixelops_plugin_auth_legacy_tool_2') !== null) {
+    console.error('FAIL: pixelops_plugin_auth_legacy_tool_2 was not purged from localStorage!');
+    process.exit(1);
+  }
+  console.log('PASS: All unencrypted plugin_auth_* keys purged from localStorage successfully!');
 
   console.log('\n=== ALL SECURITY VERIFICATION TESTS PASSED! ===');
 }

@@ -2,13 +2,22 @@
  * Local BYOK Plugin Authentication & Credential Storage Manager
  * (src/engine/pluginAuthManager.ts)
  * 
- * Provides client-side persistent credential storage for PixelOps plugins,
+ * Provides client-side encrypted credential storage for PixelOps plugins,
  * tools, and API connectors:
- * - Stores credentials in localStorage under `plugin_auth_<pluginId>` keys
- * - Provides synchronous and asynchronous retrieval, storage, and revocation
- * - Supports BYOK API keys, OAuth tokens, Webhook secrets, and custom endpoints
- * - Broadcasts reactive update events across components
+ * - Encrypts credentials at rest with Web Crypto AES-GCM inside IndexedDB (encrypted_credentials)
+ * - Queries secure IndexedDB for installed plugin auth discovery instead of plaintext localStorage
+ * - Provides synchronous in-memory caching and reactive update events across components
+ * - Automatically purges unencrypted legacy plaintext keys from localStorage on startup
  */
+
+import {
+  storeSecureCredential,
+  getSecureCredential,
+  deleteSecureCredential,
+  getCachedDecryptedCredential,
+  listSecureCredentials,
+} from '../services/SecureVaultService';
+import { db } from '../services/CommandLedgerDb';
 
 export interface PluginAuthCredential {
   pluginId: string;
@@ -77,7 +86,168 @@ export function maskCredential(secret?: string): string {
 }
 
 /**
+ * Encrypts plugin credentials at rest using Web Crypto AES-GCM inside IndexedDB
+ * and ensures legacy plaintext keys are purged from localStorage.
+ */
+export async function savePluginAuth(pluginId: string, credentials: any): Promise<void> {
+  if (!credentials) return;
+  const normId = normalizePluginId(pluginId);
+  const storageKey = `pixelops_plugin_auth_${normId}`;
+
+  // Encrypt the entire credential object as a JSON string inside IndexedDB
+  await storeSecureCredential(storageKey, JSON.stringify(credentials));
+
+  // Update in-memory cache for fast synchronous access
+  const cred: PluginAuthCredential = {
+    pluginId: normId,
+    apiKey: String(credentials.apiKey || credentials.token || credentials.accessToken || '').trim(),
+    accessToken: credentials.accessToken ? String(credentials.accessToken).trim() : undefined,
+    secret: credentials.secret ? String(credentials.secret).trim() : undefined,
+    endpointUrl: credentials.endpointUrl ? String(credentials.endpointUrl).trim() : undefined,
+    accountHandle: credentials.accountHandle || 'BYOK Local Token',
+    updatedAt: credentials.updatedAt || new Date().toISOString(),
+    metadata: credentials.metadata || {},
+  };
+  memoryAuthStore.set(normId, cred);
+
+  // Ensure legacy plaintext version is purged from localStorage
+  if (typeof localStorage !== 'undefined') {
+    localStorage.removeItem(storageKey);
+    localStorage.removeItem(`plugin_auth_${pluginId}`);
+    localStorage.removeItem(`plugin_auth_${normId}`);
+    localStorage.removeItem(`pixelops_plugin_auth_${pluginId}`);
+  }
+
+  notifyChange(normId, cred);
+}
+
+/**
+ * Retrieves and decrypts stored plugin credentials from the secure IndexedDB vault.
+ */
+export async function getPluginAuth(pluginId: string): Promise<any> {
+  const normId = normalizePluginId(pluginId);
+  const storageKey = `pixelops_plugin_auth_${normId}`;
+  const rawDecrypted = await getSecureCredential(storageKey);
+  if (!rawDecrypted) return null;
+
+  try {
+    const parsed = JSON.parse(rawDecrypted);
+    if (parsed && typeof parsed === 'object') {
+      const cred: PluginAuthCredential = {
+        pluginId: normId,
+        apiKey: String(parsed.apiKey || parsed.token || parsed.accessToken || '').trim(),
+        accessToken: parsed.accessToken ? String(parsed.accessToken).trim() : undefined,
+        secret: parsed.secret ? String(parsed.secret).trim() : undefined,
+        endpointUrl: parsed.endpointUrl ? String(parsed.endpointUrl).trim() : undefined,
+        accountHandle: parsed.accountHandle || 'BYOK Local Token',
+        updatedAt: parsed.updatedAt || new Date().toISOString(),
+        metadata: parsed.metadata || {},
+      };
+      memoryAuthStore.set(normId, cred);
+      return parsed;
+    }
+    return parsed;
+  } catch {
+    const cred: PluginAuthCredential = {
+      pluginId: normId,
+      apiKey: rawDecrypted,
+      accessToken: rawDecrypted,
+      accountHandle: 'BYOK Local Token',
+      updatedAt: new Date().toISOString(),
+    };
+    memoryAuthStore.set(normId, cred);
+    return { accessToken: rawDecrypted }; // Fallback for legacy string tokens
+  }
+}
+
+/**
+ * Discovers installed plugin auth credentials by querying the secure
+ * IndexedDB encrypted_credentials store instead of scanning localStorage for plaintext keys.
+ */
+export async function discoverInstalledPluginAuths(): Promise<string[]> {
+  if (typeof indexedDB !== 'undefined' && db && db.encrypted_credentials) {
+    try {
+      const encryptedRecords = await db.encrypted_credentials
+        .where('key')
+        .startsWith('pixelops_plugin_auth_')
+        .toArray();
+
+      return encryptedRecords.map((record) => record.key.replace('pixelops_plugin_auth_', ''));
+    } catch (err) {
+      console.warn('[PluginAuthManager] Error querying encrypted_credentials store:', err);
+    }
+  }
+
+  // Fallback for headless, sandbox, or test environments without native IndexedDB
+  try {
+    const allSecKeys = await listSecureCredentials();
+    return allSecKeys
+      .filter((r) => r.key.startsWith('pixelops_plugin_auth_'))
+      .map((r) => r.key.replace('pixelops_plugin_auth_', ''));
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Purges legacy unencrypted plaintext plugin_auth_* keys from localStorage.
+ */
+export function purgeLegacyPluginAuthStorage(): void {
+  if (typeof localStorage === 'undefined') return;
+  const keysToRemove: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && (key.startsWith('plugin_auth_') || key.startsWith('pixelops_plugin_auth_'))) {
+      keysToRemove.push(key);
+    }
+  }
+  keysToRemove.forEach((key) => {
+    localStorage.removeItem(key);
+    console.warn(`[SECURITY] Purged plaintext plugin auth key from localStorage: ${key}`);
+  });
+}
+
+/**
+ * Migrates any legacy unencrypted plugin credentials from localStorage into the secure vault
+ * and then purges the plaintext keys from localStorage.
+ */
+export async function migrateAndPurgeLegacyPluginAuthStorage(): Promise<string[]> {
+  if (typeof localStorage === 'undefined') return [];
+  const keysToMigrate: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key && (key.startsWith('plugin_auth_') || key.startsWith('pixelops_plugin_auth_'))) {
+      keysToMigrate.push(key);
+    }
+  }
+
+  const migrated: string[] = [];
+  for (const key of keysToMigrate) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw && raw.trim()) {
+        const normId = normalizePluginId(key);
+        const existing = await getPluginAuth(normId);
+        if (!existing) {
+          try {
+            const parsed = JSON.parse(raw);
+            await savePluginAuth(normId, parsed);
+          } catch {
+            await savePluginAuth(normId, { accessToken: raw });
+          }
+        }
+        migrated.push(key);
+      }
+    } catch {}
+    localStorage.removeItem(key);
+    console.warn(`[SECURITY] Purged plaintext plugin auth key from localStorage: ${key}`);
+  }
+  return migrated;
+}
+
+/**
  * Retrieves stored authentication credentials for a specific plugin ID.
+ * Returns synchronously from in-memory store or transient memory cache.
  */
 export function getPluginCredential(pluginId: string): PluginAuthCredential | null {
   const normId = normalizePluginId(pluginId);
@@ -88,42 +258,30 @@ export function getPluginCredential(pluginId: string): PluginAuthCredential | nu
     return memoryAuthStore.get(normId) || null;
   }
 
-  // 2. Check localStorage with exact or alternative prefixes
-  const storage = getStorage();
-  if (storage) {
-    const candidates = [
-      `${STORAGE_PREFIX}${pluginId}`,
-      `${STORAGE_PREFIX}${normId}`,
-      `${ALT_STORAGE_PREFIX}${pluginId}`,
-      `${ALT_STORAGE_PREFIX}${normId}`,
-      pluginId,
-    ];
-
-    for (const key of candidates) {
-      try {
-        const raw = storage.getItem(key);
-        if (raw) {
-          const parsed = JSON.parse(raw);
-          if (parsed && typeof parsed === 'object') {
-            const cred: PluginAuthCredential = {
-              pluginId: parsed.pluginId || normId,
-              apiKey: String(parsed.apiKey || parsed.token || parsed.accessToken || ''),
-              accessToken: parsed.accessToken ? String(parsed.accessToken) : undefined,
-              secret: parsed.secret ? String(parsed.secret) : undefined,
-              endpointUrl: parsed.endpointUrl ? String(parsed.endpointUrl) : undefined,
-              accountHandle: parsed.accountHandle || 'BYOK Local Token',
-              updatedAt: parsed.updatedAt || new Date().toISOString(),
-              metadata: parsed.metadata || {},
-            };
-            memoryAuthStore.set(normId, cred);
-            return cred;
-          }
-        }
-      } catch {
-        // Skip unparseable entry
+  // 2. Check transient decrypted cache in memory from SecureVaultService
+  const cachedDecrypted = getCachedDecryptedCredential(`pixelops_plugin_auth_${normId}`);
+  if (cachedDecrypted) {
+    try {
+      const parsed = JSON.parse(cachedDecrypted);
+      if (parsed && typeof parsed === 'object') {
+        const cred: PluginAuthCredential = {
+          pluginId: parsed.pluginId || normId,
+          apiKey: String(parsed.apiKey || parsed.token || parsed.accessToken || ''),
+          accessToken: parsed.accessToken ? String(parsed.accessToken) : undefined,
+          secret: parsed.secret ? String(parsed.secret) : undefined,
+          endpointUrl: parsed.endpointUrl ? String(parsed.endpointUrl) : undefined,
+          accountHandle: parsed.accountHandle || 'BYOK Local Token',
+          updatedAt: parsed.updatedAt || new Date().toISOString(),
+          metadata: parsed.metadata || {},
+        };
+        memoryAuthStore.set(normId, cred);
+        return cred;
       }
-    }
+    } catch {}
   }
+
+  // 3. Trigger async fetch into memory in background for subsequent calls
+  getPluginAuth(normId).catch(() => {});
 
   return null;
 }
@@ -139,6 +297,7 @@ export function isPluginAuthenticated(pluginId: string): boolean {
 
 /**
  * Saves or updates authentication credentials for a plugin.
+ * Encrypts into IndexedDB encrypted_credentials and avoids writing plaintext to localStorage.
  */
 export function savePluginCredential(
   pluginId: string,
@@ -178,22 +337,24 @@ export function savePluginCredential(
     metadata,
   };
 
-  // Update in-memory store
+  // Update in-memory store immediately
   memoryAuthStore.set(normId, credential);
 
-  // Write to localStorage
+  // Asynchronously encrypt into IndexedDB AES-GCM vault
+  savePluginAuth(normId, credential).catch((err) => {
+    console.warn('[PluginAuthManager] Error saving plugin auth to secure vault:', err);
+  });
+
+  // Purge any legacy plaintext keys from localStorage
   const storage = getStorage();
   if (storage) {
     try {
-      const serialized = JSON.stringify(credential);
-      storage.setItem(`${STORAGE_PREFIX}${normId}`, serialized);
-      storage.setItem(`${ALT_STORAGE_PREFIX}${normId}`, serialized);
-
-      // Update registry index
+      storage.removeItem(`${STORAGE_PREFIX}${pluginId}`);
+      storage.removeItem(`${STORAGE_PREFIX}${normId}`);
+      storage.removeItem(`${ALT_STORAGE_PREFIX}${pluginId}`);
+      storage.removeItem(`${ALT_STORAGE_PREFIX}${normId}`);
       updateRegistryIndex(normId, true);
-    } catch (err) {
-      console.warn('[PluginAuthManager] Failed to persist to localStorage:', err);
-    }
+    } catch {}
   }
 
   // Notify listeners and window custom event
@@ -203,13 +364,18 @@ export function savePluginCredential(
 }
 
 /**
- * Clears/revokes authentication credentials for a plugin.
+ * Clears/revokes authentication credentials for a plugin from memory,
+ * the encrypted vault, and legacy storage.
  */
 export function clearPluginCredential(pluginId: string): boolean {
   const normId = normalizePluginId(pluginId);
   if (!normId) return false;
 
   memoryAuthStore.delete(normId);
+
+  // Delete from secure vault
+  deleteSecureCredential(`pixelops_plugin_auth_${normId}`).catch(() => {});
+  deleteSecureCredential(`pixelops_plugin_auth_${pluginId}`).catch(() => {});
 
   const storage = getStorage();
   if (storage) {
@@ -229,54 +395,27 @@ export function clearPluginCredential(pluginId: string): boolean {
 }
 
 /**
- * Returns all configured plugin credentials stored locally.
+ * Returns all configured plugin credentials currently stored in memory.
  */
 export function getAllPluginCredentials(): Record<string, PluginAuthCredential> {
   const result: Record<string, PluginAuthCredential> = {};
-
-  // Gather from in-memory store
   for (const [id, cred] of memoryAuthStore.entries()) {
     result[id] = cred;
   }
+  return result;
+}
 
-  const storage = getStorage();
-  if (storage) {
-    try {
-      for (let i = 0; i < storage.length; i++) {
-        const key = storage.key(i);
-        if (!key) continue;
-
-        if (key.startsWith(STORAGE_PREFIX) || key.startsWith(ALT_STORAGE_PREFIX)) {
-          const raw = storage.getItem(key);
-          if (!raw) continue;
-          try {
-            const parsed = JSON.parse(raw);
-            if (parsed && typeof parsed === 'object') {
-              const pid = normalizePluginId(parsed.pluginId || key);
-              if (pid && !result[pid]) {
-                result[pid] = {
-                  pluginId: pid,
-                  apiKey: String(parsed.apiKey || parsed.token || ''),
-                  accessToken: parsed.accessToken,
-                  secret: parsed.secret,
-                  endpointUrl: parsed.endpointUrl,
-                  accountHandle: parsed.accountHandle || 'BYOK Local Token',
-                  updatedAt: parsed.updatedAt || new Date().toISOString(),
-                  metadata: parsed.metadata || {},
-                };
-              }
-            }
-          } catch {
-            // ignore bad JSON
-          }
-        }
-      }
-    } catch {
-      // ignore storage access errors
+/**
+ * Asynchronously discovers and decrypts all installed plugin credentials from the secure vault.
+ */
+export async function getAllPluginCredentialsAsync(): Promise<Record<string, PluginAuthCredential>> {
+  const pluginIds = await discoverInstalledPluginAuths();
+  for (const pid of pluginIds) {
+    if (!memoryAuthStore.has(pid)) {
+      await getPluginAuth(pid);
     }
   }
-
-  return result;
+  return getAllPluginCredentials();
 }
 
 /**

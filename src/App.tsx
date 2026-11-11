@@ -79,8 +79,8 @@ import {
   appendCommandLedgerEntry,
   getLast50Commands,
 } from './services/CommandLedgerDb';
-import { CommandLogScreen } from './components/CommandLogScreen';
-import { TownHallRoundtablePanel } from './components/TownHallRoundtablePanel';
+const CommandLogScreen = lazy(() => import('./components/CommandLogScreen').then((m) => ({ default: m.CommandLogScreen })));
+const TownHallRoundtablePanel = lazy(() => import('./components/TownHallRoundtablePanel').then((m) => ({ default: m.TownHallRoundtablePanel })));
 import {
   PendingTaskSnapshot,
   loadAppSessionSnapshot,
@@ -112,7 +112,7 @@ import { TaskBriefModal, TaskBrief } from './components/TaskBriefModal';
 import { TerminalConsole } from './components/TerminalConsole';
 const WorkspaceFileViewer = lazy(() => import('./components/WorkspaceFileViewer').then((m) => ({ default: m.WorkspaceFileViewer })));
 const PlaybookModal = lazy(() => import('./components/PlaybookModal').then((m) => ({ default: m.PlaybookModal })));
-import { TaskQueuePanel } from './components/TaskQueuePanel';
+const TaskQueuePanel = lazy(() => import('./components/TaskQueuePanel').then((m) => ({ default: m.TaskQueuePanel })));
 import {
   StrategyBoardTask,
   loadStrategyBoardTasks,
@@ -2883,6 +2883,7 @@ const CommandCenterContent: React.FC = () => {
                   />
                 )}
 
+                <Suspense fallback={null}>
                 {hqSubView === 'terminal' ? (
                   <>
                     {isExecuting && pendingTask && (
@@ -2984,6 +2985,7 @@ const CommandCenterContent: React.FC = () => {
                     onRefreshLedger={refreshCommandLedger}
                   />
                 )}
+                </Suspense>
               </div>
             )}
             {activeTab === 'crew' && renderCrewConsolePanel()}

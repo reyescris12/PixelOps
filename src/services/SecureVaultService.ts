@@ -125,9 +125,21 @@ export function clearCachedDecryptedCredentials(): void {
  * Retrieves or generates a non-extractable 256-bit AES-GCM CryptoKey bound to this browser environment.
  * Device-bound: Non-extractable (extractable: false) prevents scripts or extensions from exporting raw keys.
  */
-export async function getLocalMasterKey(): Promise<CryptoKey> {
-  if (cachedMasterKey && cachedMasterKey.type === 'secret') return cachedMasterKey;
+let masterKeyInFlight: Promise<CryptoKey> | null = null;
 
+export function getLocalMasterKey(): Promise<CryptoKey> {
+  if (cachedMasterKey && cachedMasterKey.type === 'secret') return Promise.resolve(cachedMasterKey);
+  // Single-flight: concurrent first-run callers must share one key, otherwise data encrypted
+  // under a losing key would become undecryptable.
+  if (!masterKeyInFlight) {
+    masterKeyInFlight = loadOrCreateMasterKey().finally(() => {
+      masterKeyInFlight = null;
+    });
+  }
+  return masterKeyInFlight;
+}
+
+async function loadOrCreateMasterKey(): Promise<CryptoKey> {
   const cryptoEngine = typeof window !== 'undefined' ? window.crypto : globalThis.crypto;
   const kWrappedKey = 'pixelops_master_crypto_key_v1';
 
@@ -137,18 +149,19 @@ export async function getLocalMasterKey(): Promise<CryptoKey> {
       const existing: any = await db.encrypted_credentials.get(kWrappedKey);
       if (existing) {
         if (existing.cryptoKey && existing.cryptoKey.type === 'secret') {
-          cachedMasterKey = existing.cryptoKey;
+          cachedMasterKey = existing.cryptoKey as CryptoKey;
           return cachedMasterKey;
         }
         if (existing.rawKeyData) {
-          cachedMasterKey = await cryptoEngine.subtle.importKey(
+          const imported = await cryptoEngine.subtle.importKey(
             'jwk',
             existing.rawKeyData,
             { name: 'AES-GCM', length: 256 },
             false, // non-extractable for security
             ['encrypt', 'decrypt']
           );
-          return cachedMasterKey;
+          cachedMasterKey = imported;
+          return imported;
         }
       }
     } catch {}
@@ -160,16 +173,16 @@ export async function getLocalMasterKey(): Promise<CryptoKey> {
       const existingKey = await get<CryptoKey>(MASTER_KEY_IDB_KEY, vaultStore);
       if (existingKey && existingKey.type === 'secret') {
         cachedMasterKey = existingKey;
-        return cachedMasterKey;
+        return existingKey;
       }
     } catch {}
   } else if (inMemoryMasterKey && inMemoryMasterKey.type === 'secret') {
     cachedMasterKey = inMemoryMasterKey;
-    return cachedMasterKey;
+    return inMemoryMasterKey;
   }
 
   // 3. Generate a fresh non-extractable 256-bit AES-GCM master key
-  cachedMasterKey = await cryptoEngine.subtle.generateKey(
+  const newKey = await cryptoEngine.subtle.generateKey(
     {
       name: 'AES-GCM',
       length: 256,
@@ -177,6 +190,7 @@ export async function getLocalMasterKey(): Promise<CryptoKey> {
     false, // extractable = false prevents raw key leaking via XSS/extensions
     ['encrypt', 'decrypt']
   );
+  cachedMasterKey = newKey;
 
   // Store directly into IndexedDB via structured clone (preserves extractable: false without exporting)
   if (typeof indexedDB !== 'undefined') {
@@ -184,7 +198,9 @@ export async function getLocalMasterKey(): Promise<CryptoKey> {
       if (db && db.encrypted_credentials) {
         await db.encrypted_credentials.put({
           key: kWrappedKey,
-          cryptoKey: cachedMasterKey,
+          cryptoKey: newKey,
+          ciphertextB4: '',
+          iv: [],
           algorithm: 'AES-256-GCM',
           updatedAt: new Date().toISOString(),
         });
@@ -192,13 +208,13 @@ export async function getLocalMasterKey(): Promise<CryptoKey> {
     } catch {}
 
     try {
-      await set(MASTER_KEY_IDB_KEY, cachedMasterKey, vaultStore);
+      await set(MASTER_KEY_IDB_KEY, newKey, vaultStore);
     } catch {}
   } else {
-    inMemoryMasterKey = cachedMasterKey;
+    inMemoryMasterKey = newKey;
   }
 
-  return cachedMasterKey;
+  return newKey;
 }
 
 export const getOrCreateMasterKey = getLocalMasterKey;

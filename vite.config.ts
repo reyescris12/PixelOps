@@ -153,6 +153,12 @@ export default defineConfig(() => {
               if (id.includes('dexie')) {
                 return 'vendor-dexie';
               }
+              if (id.includes('@google/genai') || id.includes('google-auth-library')) {
+                return 'vendor-genai';
+              }
+              if (id.includes('/motion/') || id.includes('\\motion\\') || id.includes('framer-motion') || id.includes('motion-dom') || id.includes('motion-utils')) {
+                return 'vendor-motion';
+              }
               return 'vendor';
             }
           },

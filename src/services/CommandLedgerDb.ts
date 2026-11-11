@@ -76,6 +76,10 @@ export interface EncryptedCredentialDbEntry {
   ivB64?: string;
   algorithm?: string;
   updatedAt: string;
+  /** Non-extractable master CryptoKey persisted via structured clone (master-key record only). */
+  cryptoKey?: CryptoKey;
+  /** Legacy exported JWK master key material (migration only). */
+  rawKeyData?: JsonWebKey;
 }
 
 class PixelOpsLedgerDatabase extends Dexie {

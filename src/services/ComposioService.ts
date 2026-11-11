@@ -10,7 +10,7 @@
  */
 
 import { get, set, del } from 'idb-keyval';
-import { GoogleGenAI } from '@google/genai';
+// @google/genai is loaded lazily inside runAgentWithTools to keep it off the critical startup path
 
 export interface ComposioConnectedAccount {
   id: string;
@@ -3215,6 +3215,7 @@ export async function runAgentWithTools(
     } catch {}
   }
 
+  const { GoogleGenAI } = await import('@google/genai');
   const ai = new GoogleGenAI({ apiKey: effectiveKey });
 
   // 1. Fetch active tool declarations from Composio for this user

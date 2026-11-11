@@ -730,6 +730,12 @@ export async function initializeAndValidateVaultOnStartup(): Promise<VaultStartu
     masterKeyReady = false;
   }
 
+  // Purge legacy insecure storage and migrate any existing Composio plaintext secrets into WebCrypto vault
+  try {
+    const { purgeAndMigrateInsecureComposioStorage } = await import('./ComposioService');
+    await purgeAndMigrateInsecureComposioStorage();
+  } catch {}
+
   // Ensure initial encrypted OAuth token bundles exist for default service providers on first boot
   const initFlag = await getGenericPassword({ service: 'vault_init_v1' });
   if (!initFlag && masterKeyReady) {

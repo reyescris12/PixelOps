@@ -39,6 +39,7 @@ import {
   pingComposio,
   runAgentWithTools,
   getAvailableIntegrations,
+  COMPOSIO_BASE_URL,
 } from '../services/ComposioService';
 import {
   getActiveSession,
@@ -724,9 +725,9 @@ export async function executeCLICommand(
         '| COMPOSIO MULTI-USER PLUGIN ENGINE STATUS                                     |',
         '+------------------------------------------------------------------------------+',
         `  ISOLATED ENTITY ID : ${entityId}`,
-        `  API KEY SOURCE     : ${customKey ? 'Custom BYOK Key (Direct Browser REST active)' : 'Cloudflare Server Proxy (/api/composio)'}`,
+        `  API KEY SOURCE     : ${customKey ? 'Custom BYOK Key (WebCrypto Vault)' : 'Cloudflare Server Proxy (/api/composio)'}`,
         `  LIVE CONNECTION    : ${pingStatus}`,
-        `  PROXY ENDPOINT     : ${customKey ? 'https://backend.composio.dev/api/v3 (Direct)' : '/api/composio (Cloudflare Function)'}`,
+        `  PROXY ENDPOINT     : ${customKey && COMPOSIO_BASE_URL.startsWith('http') ? `${COMPOSIO_BASE_URL} (Direct)` : '/api/composio (Backend Proxy)'}`,
         '--------------------------------------------------------------------------------',
         `  CONNECTED ACCOUNTS (${accounts.length}):`,
         accounts.length === 0
@@ -806,7 +807,7 @@ export async function executeCLICommand(
       if (ping.ok) {
         return {
           command: trimmed,
-          output: `[KEY STORED & VERIFIED] Live connection to backend.composio.dev successful (HTTP ${ping.status} in ${ping.latencyMs}ms).\nDirect browser REST execution active.`,
+          output: `[KEY STORED & VERIFIED] Live connection to Composio service verified (HTTP ${ping.status} in ${ping.latencyMs}ms).\nSecure credential vault active.`,
           status: 'ok',
           timestamp,
         };

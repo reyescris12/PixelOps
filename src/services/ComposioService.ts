@@ -233,35 +233,52 @@ export interface ComposioActionExecutionResult {
   self_correction_directive?: string;
 }
 
-export const COMPOSIO_BASE_URL = 'https://backend.composio.dev/api/v3';
+/**
+ * Composio Base URL: Configured via environment variable VITE_COMPOSIO_BASE_URL
+ * or routed exclusively through the backend proxy (/api/composio).
+ * This eliminates hardcoding external infrastructure details in client bundles.
+ */
+export const COMPOSIO_BASE_URL: string =
+  (typeof import.meta !== 'undefined' && import.meta.env?.VITE_COMPOSIO_BASE_URL) ||
+  '/api/composio';
 
 const STORAGE_ENTITY_ID_KEY = 'pixelops_composio_entity_id';
 const STORAGE_CUSTOM_KEY_KEY = 'pixelops_composio_custom_api_key';
+const SESSION_ENTITY_ID_KEY = 'pixelops_composio_session_entity_id';
+const SESSION_API_KEY_KEY = 'pixelops_composio_session_api_key';
 
 let cachedEntityId: string | null = null;
 let cachedApiKey: string | null = null;
 
 /**
- * 1. Multi-User Isolation: Get or generate a persistent local entityId
- * Persisted in IndexedDB (idb-keyval) and localStorage.
+ * 1. Multi-User Isolation: Get or generate a persistent entityId for the active session.
+ * High-entropy random UUID generated in-memory and transient sessionStorage only.
+ * Plaintext localStorage persistence is explicitly purged to protect against XSS exfiltration.
  */
 export function getOrCreateEntityId(): string {
   if (cachedEntityId && cachedEntityId.trim().length > 0) {
+    try {
+      if (typeof sessionStorage !== 'undefined' && !sessionStorage.getItem(SESSION_ENTITY_ID_KEY)) {
+        sessionStorage.setItem(SESSION_ENTITY_ID_KEY, cachedEntityId);
+      }
+    } catch {}
     return cachedEntityId;
   }
 
+  // Check transient session storage (tab-scoped)
   try {
-    const existing = typeof localStorage !== 'undefined' ? localStorage.getItem(STORAGE_ENTITY_ID_KEY) : null;
-    if (existing && existing.trim().length > 0) {
-      cachedEntityId = existing.trim();
-      set(STORAGE_ENTITY_ID_KEY, cachedEntityId).catch(() => {});
-      return cachedEntityId;
+    if (typeof sessionStorage !== 'undefined') {
+      const sessionEntity = sessionStorage.getItem(SESSION_ENTITY_ID_KEY);
+      if (sessionEntity && sessionEntity.trim().length > 0) {
+        cachedEntityId = sessionEntity.trim();
+        return cachedEntityId;
+      }
     }
   } catch {
     // Fallback if storage access is restricted
   }
 
-  const randBytes = new Uint8Array(8);
+  const randBytes = new Uint8Array(16);
   if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
     crypto.getRandomValues(randBytes);
   }
@@ -270,30 +287,36 @@ export function getOrCreateEntityId(): string {
   const generated =
     typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
       ? `commander_${crypto.randomUUID()}`
-      : `commander_${Date.now()}_${randHex}`;
+      : `commander_${randHex}`;
 
   cachedEntityId = generated;
 
   try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(STORAGE_ENTITY_ID_KEY, generated);
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem(SESSION_ENTITY_ID_KEY, generated);
     }
   } catch {
     // Ignore quota errors
   }
 
+  // Ensure legacy plaintext entityId is purged from localStorage and unencrypted idb-keyval
   try {
-    set(STORAGE_ENTITY_ID_KEY, generated).catch(() => {});
-  } catch {
-    // Ignore
-  }
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(STORAGE_ENTITY_ID_KEY);
+    }
+  } catch {}
+  try {
+    if (typeof indexedDB !== 'undefined') {
+      del(STORAGE_ENTITY_ID_KEY).catch(() => {});
+    }
+  } catch {}
 
   return generated;
 }
 
 /**
  * Synchronizes the active Composio entityId (e.g. pulled down from Cloudflare D1 user_data on a new device).
- * Persists to localStorage, IndexedDB, and alerts active marketplace and agent interfaces to refresh tools.
+ * Stored in-memory and transient sessionStorage; purges legacy localStorage.
  */
 export function setComposioEntityId(newEntityId: string): void {
   if (!newEntityId || typeof newEntityId !== 'string') return;
@@ -304,13 +327,21 @@ export function setComposioEntityId(newEntityId: string): void {
   cachedEntityId = clean;
 
   try {
-    if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(STORAGE_ENTITY_ID_KEY, clean);
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem(SESSION_ENTITY_ID_KEY, clean);
     }
   } catch {}
 
+  // Purge legacy plaintext from localStorage and unencrypted idb-keyval
   try {
-    set(STORAGE_ENTITY_ID_KEY, clean).catch(() => {});
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(STORAGE_ENTITY_ID_KEY);
+    }
+  } catch {}
+  try {
+    if (typeof indexedDB !== 'undefined') {
+      del(STORAGE_ENTITY_ID_KEY).catch(() => {});
+    }
   } catch {}
 
   if (changed && typeof window !== 'undefined') {
@@ -320,55 +351,82 @@ export function setComposioEntityId(newEntityId: string): void {
   }
 }
 
-// Background async hydration from idb-keyval in case localStorage was cleared
-if (typeof window !== 'undefined') {
-  get<string>(STORAGE_ENTITY_ID_KEY)
-    .then((val) => {
-      if (val && val.trim().length > 0) {
-        cachedEntityId = val.trim();
+/**
+ * Purges legacy insecure storage (plaintext localStorage and unencrypted idb-keyval)
+ * and migrates any existing plaintext Composio keys into the WebCrypto vault.
+ */
+export async function purgeAndMigrateInsecureComposioStorage(): Promise<void> {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const legacyKey = localStorage.getItem(STORAGE_CUSTOM_KEY_KEY)?.trim();
+      if (legacyKey) {
+        cachedApiKey = legacyKey;
         try {
-          localStorage.setItem(STORAGE_ENTITY_ID_KEY, cachedEntityId);
+          const { storeSecureCredential } = await import('./SecureVaultService');
+          await storeSecureCredential(STORAGE_CUSTOM_KEY_KEY, legacyKey);
         } catch {}
+        localStorage.removeItem(STORAGE_CUSTOM_KEY_KEY);
       }
-    })
-    .catch(() => {});
+
+      const legacyEntity = localStorage.getItem(STORAGE_ENTITY_ID_KEY)?.trim();
+      if (legacyEntity) {
+        cachedEntityId = legacyEntity;
+        try {
+          if (typeof sessionStorage !== 'undefined') {
+            sessionStorage.setItem(SESSION_ENTITY_ID_KEY, legacyEntity);
+          }
+        } catch {}
+        localStorage.removeItem(STORAGE_ENTITY_ID_KEY);
+      }
+
+      localStorage.removeItem('pixelops_composio_local_connected_accounts');
+    }
+
+    if (typeof indexedDB !== 'undefined') {
+      await del(STORAGE_CUSTOM_KEY_KEY).catch(() => {});
+      await del(STORAGE_ENTITY_ID_KEY).catch(() => {});
+    }
+  } catch (err) {
+    console.warn('[Composio] Insecure storage purge notice:', err);
+  }
 }
 
-// Background async hydration from idb-keyval for custom BYOK Composio API Key
+// Background async startup purge and hydration from WebCrypto vault
 if (typeof window !== 'undefined') {
-  get<string>(STORAGE_CUSTOM_KEY_KEY)
-    .then((val) => {
-      if (val && val.trim().length > 0) {
-        cachedApiKey = val.trim();
-        try {
-          localStorage.setItem(STORAGE_CUSTOM_KEY_KEY, cachedApiKey);
-        } catch {}
-      }
+  purgeAndMigrateInsecureComposioStorage()
+    .then(async () => {
+      try {
+        const { getSecureCredential } = await import('./SecureVaultService');
+        const vaultKey = await getSecureCredential(STORAGE_CUSTOM_KEY_KEY);
+        if (vaultKey && vaultKey.trim().length > 0) {
+          cachedApiKey = vaultKey.trim();
+          if (typeof sessionStorage !== 'undefined') {
+            sessionStorage.setItem(SESSION_API_KEY_KEY, cachedApiKey);
+          }
+        }
+      } catch {}
     })
     .catch(() => {});
 }
 
 /**
- * Custom BYOK Composio API Key management
- * Persisted across in-memory cache, localStorage, and IndexedDB,
- * and synchronized across devices via Cloudflare D1 user_data.
+ * Custom BYOK Composio API Key management.
+ * Stored securely in-memory and tab-scoped sessionStorage, and encrypted at rest
+ * in IndexedDB via WebCrypto AES-GCM (SecureVaultService). Never written to plaintext localStorage.
  */
 export function getComposioApiKey(): string {
   if (cachedApiKey && cachedApiKey.trim().length > 0) {
     return cachedApiKey;
   }
   try {
-    const existing = typeof localStorage !== 'undefined'
-      ? localStorage.getItem(STORAGE_CUSTOM_KEY_KEY)?.trim() || ''
-      : '';
-    if (existing) {
-      cachedApiKey = existing;
-      set(STORAGE_CUSTOM_KEY_KEY, existing).catch(() => {});
-      return existing;
+    if (typeof sessionStorage !== 'undefined') {
+      const sessionKey = sessionStorage.getItem(SESSION_API_KEY_KEY)?.trim();
+      if (sessionKey) {
+        cachedApiKey = sessionKey;
+        return sessionKey;
+      }
     }
-  } catch {
-    // Ignore quota or privacy sandbox errors
-  }
+  } catch {}
   return '';
 }
 
@@ -381,26 +439,27 @@ export function setComposioApiKey(key: string, skipSync = false): void {
   resetComposioCircuitBreaker();
 
   try {
-    if (typeof localStorage !== 'undefined') {
+    if (typeof sessionStorage !== 'undefined') {
       if (!clean) {
-        localStorage.removeItem(STORAGE_CUSTOM_KEY_KEY);
+        sessionStorage.removeItem(SESSION_API_KEY_KEY);
       } else {
-        localStorage.setItem(STORAGE_CUSTOM_KEY_KEY, clean);
+        sessionStorage.setItem(SESSION_API_KEY_KEY, clean);
       }
     }
-  } catch {
-    // Ignore
-  }
+  } catch {}
+
+  // Explicitly ensure legacy plaintext is ALWAYS purged from localStorage & unencrypted idb-keyval
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(STORAGE_CUSTOM_KEY_KEY);
+    }
+  } catch {}
 
   try {
-    if (!clean) {
+    if (typeof indexedDB !== 'undefined') {
       del(STORAGE_CUSTOM_KEY_KEY).catch(() => {});
-    } else {
-      set(STORAGE_CUSTOM_KEY_KEY, clean).catch(() => {});
     }
-  } catch {
-    // Ignore
-  }
+  } catch {}
 
   if (changed && typeof window !== 'undefined') {
     window.dispatchEvent(new CustomEvent('composio:api-key-changed', { detail: { apiKey: clean } }));
@@ -417,7 +476,8 @@ export function setComposioApiKey(key: string, skipSync = false): void {
 }
 
 /**
- * Persists custom Composio API key safely into IndexedDB WebCrypto vault and resets circuit breaker
+ * Persists custom Composio API key safely into IndexedDB WebCrypto vault and resets circuit breaker.
+ * Ensures plaintext version is purged from localStorage.
  */
 export async function saveComposioApiKey(apiKey: string): Promise<void> {
   const clean = (apiKey || '').trim();
@@ -426,6 +486,13 @@ export async function saveComposioApiKey(apiKey: string): Promise<void> {
     const { storeSecureCredential } = await import('./SecureVaultService');
     if (clean) {
       await storeSecureCredential(STORAGE_CUSTOM_KEY_KEY, clean);
+    }
+  } catch {}
+
+  // Ensure legacy plaintext version is purged from localStorage
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(STORAGE_CUSTOM_KEY_KEY);
     }
   } catch {}
 }
@@ -552,6 +619,11 @@ export async function callComposioApi(endpoint: string, payload?: any): Promise<
     ? endpoint
     : `${COMPOSIO_BASE_URL}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
 
+  // If using backend proxy route (/api/composio), delegate to callComposioProxy
+  if (!cleanEndpoint.startsWith('http')) {
+    return await callComposioProxy(endpoint, 'POST', payload);
+  }
+
   const response = await fetch(cleanEndpoint, {
     method: 'POST',
     headers: {
@@ -572,7 +644,7 @@ export async function callComposioApi(endpoint: string, payload?: any): Promise<
 }
 
 /**
- * Live connection ping to backend.composio.dev or Cloudflare proxy
+ * Live connection ping to Composio backend or proxy
  */
 export async function pingComposio(): Promise<{ ok: boolean; status: number; latencyMs: number; error?: string }> {
   const start = performance.now();
@@ -580,7 +652,7 @@ export async function pingComposio(): Promise<{ ok: boolean; status: number; lat
     const entityId = getOrCreateEntityId();
     const customKey = getComposioApiKey();
 
-    if (customKey) {
+    if (customKey && COMPOSIO_BASE_URL.startsWith('http')) {
       const controller = new AbortController();
       const tid = setTimeout(() => controller.abort(), 12000);
       try {
@@ -674,7 +746,7 @@ export function notifyConnectionSync(accounts: ComposioConnectedAccount[]): void
 }
 
 /**
- * Direct call fallback to backend.composio.dev/api/v3 when on local dev or when proxy is unreachable
+ * Direct call fallback when an explicit external base URL is configured and proxy is unreachable
  */
 async function callComposioDirect(
   url: string,
@@ -689,8 +761,11 @@ async function callComposioDirect(
     throw new Error('Unauthorized Composio API Key');
   }
 
-  // Normalize target URL to v3
-  let targetUrl = url.replace('https://backend.composio.dev/api/v2', COMPOSIO_BASE_URL);
+  // Normalize target URL if external endpoint configured
+  let targetUrl = url;
+  if (COMPOSIO_BASE_URL.startsWith('http')) {
+    targetUrl = url.replace(/^https?:\/\/[^/]+\/api\/v2/, COMPOSIO_BASE_URL);
+  }
 
   let modifiedBody = body ? { ...body } : undefined;
 
@@ -838,7 +913,17 @@ async function callComposioProxy(
   }
 
   const entityId = getOrCreateEntityId();
-  const customKey = getComposioApiKey();
+  let customKey = getComposioApiKey();
+  if (!customKey) {
+    try {
+      const { getSecureCredential } = await import('./SecureVaultService');
+      const vaultKey = await getSecureCredential(STORAGE_CUSTOM_KEY_KEY);
+      if (vaultKey && vaultKey.trim().length > 0) {
+        customKey = vaultKey.trim();
+        cachedApiKey = customKey;
+      }
+    } catch {}
+  }
   let cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
 
   // Default timeout: 60s for external tool actions (especially Twitter/X posting), 30s otherwise
@@ -848,9 +933,9 @@ async function callComposioProxy(
     cleanEndpoint.includes('twitter');
   const timeoutMs = options?.timeoutMs ?? (isActionExecute ? 60000 : 45000);
 
-  // 1. Direct browser REST execution if user configured their own COMPOSIO_API_KEY
-  // Bypasses any SPA fallback or Vite dev server proxy issues
-  if (customKey) {
+  // 1. Direct browser REST execution ONLY if user configured their own COMPOSIO_API_KEY
+  // AND an explicit external endpoint URL starting with http is configured
+  if (customKey && COMPOSIO_BASE_URL.startsWith('http')) {
     try {
       return await callComposioDirect(
         `${COMPOSIO_BASE_URL}${cleanEndpoint}`,
@@ -868,7 +953,7 @@ async function callComposioProxy(
     }
   }
 
-  // 2. Route via Cloudflare Pages Function proxy (/api/composio) with 60s circuit breaker
+  // 2. Route via backend proxy (/api/composio) with circuit breaker
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -881,7 +966,9 @@ async function callComposioProxy(
       headers['x-composio-api-key'] = customKey;
     }
 
-    const proxyUrl = '/api/composio';
+    const proxyUrl = COMPOSIO_BASE_URL.startsWith('http') && !COMPOSIO_BASE_URL.includes('/api/composio')
+      ? COMPOSIO_BASE_URL
+      : '/api/composio';
     let res: Response;
 
     try {
@@ -1019,16 +1106,21 @@ export function extractAppNameFromAccount(item: any): string {
 }
 
 const STORAGE_LOCAL_CONNECTED_ACCOUNTS = 'pixelops_composio_local_connected_accounts';
+let inMemoryConnectedAccounts: ComposioConnectedAccount[] | null = null;
 
 export function getLocalConnectedAccounts(): ComposioConnectedAccount[] {
+  if (inMemoryConnectedAccounts) return inMemoryConnectedAccounts;
   try {
-    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem(STORAGE_LOCAL_CONNECTED_ACCOUNTS) : null;
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
+    const raw = typeof sessionStorage !== 'undefined' ? sessionStorage.getItem(STORAGE_LOCAL_CONNECTED_ACCOUNTS) : null;
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        inMemoryConnectedAccounts = parsed;
+        return parsed;
+      }
+    }
+  } catch {}
+  return [];
 }
 
 export function saveLocalConnectedAccount(acc: ComposioConnectedAccount): void {
@@ -1037,8 +1129,12 @@ export function saveLocalConnectedAccount(acc: ComposioConnectedAccount): void {
     const norm = normalizeAppSlug(acc.appName);
     const filtered = existing.filter((item) => normalizeAppSlug(item.appName) !== norm && item.id !== acc.id);
     filtered.push(acc);
+    inMemoryConnectedAccounts = filtered;
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem(STORAGE_LOCAL_CONNECTED_ACCOUNTS, JSON.stringify(filtered));
+    }
     if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(STORAGE_LOCAL_CONNECTED_ACCOUNTS, JSON.stringify(filtered));
+      localStorage.removeItem(STORAGE_LOCAL_CONNECTED_ACCOUNTS);
     }
     // Auto-sync with cloud vault so D1 user_data reflects the updated credentials immediately
     import('./SyncService').then((s) => s.pushToCloud().catch(() => {})).catch(() => {});
@@ -1052,8 +1148,12 @@ export function removeLocalConnectedAccount(connectionIdOrAppName: string): void
     const filtered = existing.filter(
       (item) => item.id !== connectionIdOrAppName && normalizeAppSlug(item.appName) !== target
     );
+    inMemoryConnectedAccounts = filtered;
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem(STORAGE_LOCAL_CONNECTED_ACCOUNTS, JSON.stringify(filtered));
+    }
     if (typeof localStorage !== 'undefined') {
-      localStorage.setItem(STORAGE_LOCAL_CONNECTED_ACCOUNTS, JSON.stringify(filtered));
+      localStorage.removeItem(STORAGE_LOCAL_CONNECTED_ACCOUNTS);
     }
     // Auto-sync deletion to cloud vault
     import('./SyncService').then((s) => s.pushToCloud().catch(() => {})).catch(() => {});
@@ -1164,24 +1264,50 @@ export async function getConnectedAccounts(): Promise<ComposioConnectedAccount[]
   }
 }
 
+const inMemoryAuthConfigs = new Map<string, string>();
+
 /**
- * Local storage helpers for custom App Auth Config IDs (e.g. ac_... for Twitter/X)
+ * Storage helpers for custom App Auth Config IDs (e.g. ac_... for Twitter/X)
+ * Stored in-memory and transient sessionStorage; purges legacy localStorage.
  */
 export function getStoredAuthConfig(appName: string): string | null {
-  if (typeof localStorage === 'undefined') return null;
   const slug = normalizeAppSlug(appName);
-  return localStorage.getItem(`pixelops_auth_config_${slug}`)?.trim() || null;
+  if (inMemoryAuthConfigs.has(slug)) {
+    return inMemoryAuthConfigs.get(slug)!;
+  }
+  if (typeof sessionStorage !== 'undefined') {
+    const val = sessionStorage.getItem(`pixelops_auth_config_${slug}`)?.trim();
+    if (val) {
+      inMemoryAuthConfigs.set(slug, val);
+      return val;
+    }
+  }
+  return null;
 }
 
 export function setStoredAuthConfig(appName: string, authConfigId: string): void {
-  if (typeof localStorage === 'undefined') return;
   const slug = normalizeAppSlug(appName);
   const clean = authConfigId.trim();
   if (clean) {
-    localStorage.setItem(`pixelops_auth_config_${slug}`, clean);
+    inMemoryAuthConfigs.set(slug, clean);
+    try {
+      if (typeof sessionStorage !== 'undefined') {
+        sessionStorage.setItem(`pixelops_auth_config_${slug}`, clean);
+      }
+    } catch {}
   } else {
-    localStorage.removeItem(`pixelops_auth_config_${slug}`);
+    inMemoryAuthConfigs.delete(slug);
+    try {
+      if (typeof sessionStorage !== 'undefined') {
+        sessionStorage.removeItem(`pixelops_auth_config_${slug}`);
+      }
+    } catch {}
   }
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(`pixelops_auth_config_${slug}`);
+    }
+  } catch {}
 }
 
 /**
@@ -1200,7 +1326,11 @@ export async function createCustomAuthConfig(params: CustomAuthConfigParams): Pr
         client_id: params.clientId.trim(),
         client_secret: params.clientSecret.trim(),
         oauth_redirect_uri:
-          params.redirectUri || 'https://backend.composio.dev/api/v3/toolkits/auth/callback',
+          params.redirectUri ||
+          (typeof import.meta !== 'undefined' && import.meta.env?.VITE_COMPOSIO_OAUTH_CALLBACK) ||
+          (COMPOSIO_BASE_URL.startsWith('http')
+            ? `${COMPOSIO_BASE_URL}/toolkits/auth/callback`
+            : '/api/composio/callback'),
         ...(params.bearerToken?.trim() ? { bearer_token: params.bearerToken.trim() } : {}),
       },
     },
@@ -3132,6 +3262,7 @@ export const ComposioService = {
   getComposioApiKey,
   setComposioApiKey,
   saveComposioApiKey,
+  purgeAndMigrateInsecureComposioStorage,
   callComposioApi,
   isComposioCircuitBreakerTripped,
   tripComposioCircuitBreaker,

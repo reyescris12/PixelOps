@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   ComposioService,
+  COMPOSIO_BASE_URL,
   ComposioIntegration,
   CURATED_COMPOSIO_INTEGRATIONS,
   getOrCreateEntityId,
@@ -1193,7 +1194,9 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
                 <div className="border-t border-[#1d4e78]/60 pt-1.5 mt-0.5 text-[10px] text-[#7dd3fc]">
                   <strong>Required Callback URL in X Portal:</strong><br />
                   <code className="text-[#f3ead8] bg-[#07131e] px-1 py-0.5 select-all">
-                    https://backend.composio.dev/api/v3/toolkits/auth/callback
+                    {COMPOSIO_BASE_URL.startsWith('http')
+                      ? `${COMPOSIO_BASE_URL}/toolkits/auth/callback`
+                      : `${typeof window !== 'undefined' ? window.location.origin : ''}/api/composio/callback`}
                   </code>
                 </div>
               </div>

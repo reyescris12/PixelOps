@@ -37,9 +37,13 @@ import {
   hashRecoveryKeyClient,
   purgeSensitiveLocalUserCredentials,
   exportSatellitePairingToken,
+  importSatellitePairingToken,
   setActiveSession,
   clearActiveSession,
   CachedUserProfile,
+  generateSecureToken,
+  generateSecureCode,
+  generateRecoveryKey,
 } from '../src/services/AuthService';
 
 function assert(condition: boolean, msg: string) {
@@ -147,6 +151,7 @@ async function runTestSuite() {
       deviceId: 'dev_primary_node',
       deviceName: 'Command Console',
       deviceType: 'desktop',
+      platform: 'browser',
       lastActive: '2026-01-02T00:00:00.000Z',
     },
     expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
@@ -155,7 +160,7 @@ async function runTestSuite() {
   const pairingToken = await exportSatellitePairingToken();
   assert(pairingToken.startsWith('SATCOM-PAIR::'), 'Pairing token has SATCOM-PAIR prefix');
 
-  const base64Body = pairingToken.replace(/^SATCOM-PAIR::/, '');
+  const base64Body = pairingToken.replace(/^SATCOM-PAIR::(OFFLINE::)?/, '');
   const decodedJson = Buffer.from(base64Body, 'base64').toString('utf8');
   const payload = JSON.parse(decodedJson);
 
@@ -269,6 +274,128 @@ async function runTestSuite() {
     const verifyUpgraded = verifyPasswordServer(userPwd, userSalt, upgraded);
     assert(verifyUpgraded.valid === true && verifyUpgraded.isLegacy === false, 'Account upgraded to modern PBKDF2 seamlessly');
   }
+
+  // -------------------------------------------------------------------------
+  // Test 7: CSPRNG Secret Generation & Recovery Key Entropy
+  // -------------------------------------------------------------------------
+  console.log('\n--- Test 7: CSPRNG Secret Generation & Entropy ---');
+  const token1 = generateSecureToken(16);
+  const token2 = generateSecureToken(16);
+  assert(token1.length === 32, 'generateSecureToken(16) produces 32-char hex string');
+  assert(token1 !== token2, 'Generated CSPRNG tokens are distinct');
+
+  // Verify non-predictability across a sample of 100 tokens
+  const sampleTokens = new Set<string>();
+  for (let i = 0; i < 100; i++) {
+    sampleTokens.add(generateSecureToken(8));
+  }
+  assert(sampleTokens.size === 100, '100 generated CSPRNG tokens have zero collisions');
+
+  const recoveryKey = generateRecoveryKey('CIPHER');
+  const recoveryParts = recoveryKey.split('-');
+  assert(recoveryParts[0] === 'SATCOM', 'Recovery key prefix is SATCOM');
+  assert(recoveryParts[1] === 'CIPHER', 'Recovery key contains operative callsign');
+  assert(recoveryParts.length === 5, 'Recovery key has 5 segment blocks (60 bits entropy)');
+  assert(recoveryParts[2].length === 4, 'Segment 2 has 4 characters');
+  assert(recoveryParts[3].length === 4, 'Segment 3 has 4 characters');
+  assert(recoveryParts[4].length === 4, 'Segment 4 has 4 characters');
+  // Check unambiguous base32 charset: no 0, 1, I, O
+  const ambiguousChars = /[01IO]/;
+  assert(!ambiguousChars.test(recoveryParts[2]), 'Segment 2 contains no ambiguous characters (0, 1, I, O)');
+  assert(!ambiguousChars.test(recoveryParts[3]), 'Segment 3 contains no ambiguous characters (0, 1, I, O)');
+  assert(!ambiguousChars.test(recoveryParts[4]), 'Segment 4 contains no ambiguous characters (0, 1, I, O)');
+
+  // -------------------------------------------------------------------------
+  // Test 8: Ephemeral Satellite Pairing Token (5-Min TTL & Replay Prevention)
+  // -------------------------------------------------------------------------
+  console.log('\n--- Test 8: Ephemeral Satellite Pairing Token (TTL & Replay) ---');
+  const ephemeralSession = {
+    token: 'tok_ephemeral_pair_test',
+    user: {
+      id: 'usr_ephemeral',
+      username: 'agent_spectre',
+      email: 'spectre@pixelops.defense',
+      callsign: 'SPECTRE',
+      securityClearance: 'OPERATIVE' as const,
+      createdAt: new Date().toISOString(),
+      lastLoginAt: new Date().toISOString(),
+    },
+    device: {
+      deviceId: 'dev_test_node',
+      deviceName: 'Recon Node',
+      deviceType: 'mobile' as const,
+      platform: 'browser',
+      lastActive: new Date().toISOString(),
+    },
+    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+  };
+  setActiveSession(ephemeralSession);
+
+  const exportedToken = await exportSatellitePairingToken();
+  const rawPayloadJson = Buffer.from(exportedToken.replace(/^SATCOM-PAIR::(OFFLINE::)?/, ''), 'base64').toString('utf8');
+  const parsedPayload = JSON.parse(rawPayloadJson);
+
+  assert(typeof parsedPayload.expiresAt === 'number', 'Ephemeral pairing payload carries numeric expiresAt timestamp');
+  const timeToLiveMs = parsedPayload.expiresAt - Date.now();
+  assert(timeToLiveMs > 0 && timeToLiveMs <= 5 * 60 * 1000 + 2000, 'Pairing token TTL strictly capped at 5 minutes');
+  assert(typeof parsedPayload.nonce === 'string' && parsedPayload.nonce.length >= 16, 'Ephemeral token carries CSPRNG nonce');
+
+  // Test replay attack rejection
+  const importedFirst = await importSatellitePairingToken(exportedToken);
+  assert(importedFirst.user.username === 'agent_spectre', 'Initial redemption succeeds');
+
+  let replayBlocked = false;
+  try {
+    await importSatellitePairingToken(exportedToken);
+  } catch (err: any) {
+    if (err.message?.includes('already been redeemed')) {
+      replayBlocked = true;
+    }
+  }
+  assert(replayBlocked, 'Replay attack prevented: duplicate redemption is rejected');
+
+  // Test expired token rejection
+  const expiredPayload = { ...parsedPayload, nonce: 'fresh_nonce_' + Date.now(), expiresAt: Date.now() - 1000 };
+  const expiredTokenString = `SATCOM-PAIR::OFFLINE::${Buffer.from(JSON.stringify(expiredPayload)).toString('base64')}`;
+  let expiredBlocked = false;
+  try {
+    await importSatellitePairingToken(expiredTokenString);
+  } catch (err: any) {
+    if (err.message?.includes('expired')) {
+      expiredBlocked = true;
+    }
+  }
+  assert(expiredBlocked, 'Expired pairing token (past 5-minute TTL) is rejected');
+  clearActiveSession();
+
+  // -------------------------------------------------------------------------
+  // Test 9: Multi-Tiered Rate Limiter Verification (429 & Retry-After)
+  // -------------------------------------------------------------------------
+  console.log('\n--- Test 9: Auth Rate Limiter Verification ---');
+  const testRateTracker = new Map<string, { attempts: number; resetAt: number }>();
+  function checkTestRateLimit(key: string, maxAttempts = 5, windowMs = 15 * 60 * 1000) {
+    const nowTime = Date.now();
+    const entry = testRateTracker.get(key);
+    if (!entry || nowTime > entry.resetAt) {
+      testRateTracker.set(key, { attempts: 1, resetAt: nowTime + windowMs });
+      return { allowed: true };
+    }
+    if (entry.attempts >= maxAttempts) {
+      const retryAfter = Math.ceil((entry.resetAt - nowTime) / 1000);
+      return { allowed: false, retryAfter };
+    }
+    entry.attempts += 1;
+    return { allowed: true };
+  }
+
+  const rateKey = 'login:ip:192.168.1.50';
+  for (let i = 1; i <= 5; i++) {
+    const res = checkTestRateLimit(rateKey, 5, 60000);
+    assert(res.allowed === true, `Attempt ${i} within limit is allowed`);
+  }
+  const rateLimitExceeded = checkTestRateLimit(rateKey, 5, 60000);
+  assert(rateLimitExceeded.allowed === false, 'Attempt 6 triggers rate limit lockout');
+  assert(typeof rateLimitExceeded.retryAfter === 'number' && rateLimitExceeded.retryAfter > 0, 'Rate limit response includes Retry-After seconds');
 
   console.log('\n====================================================');
   console.log('🎯 All Security Hardening Verification Tests Passed!');

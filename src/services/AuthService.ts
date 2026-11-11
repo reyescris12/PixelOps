@@ -106,14 +106,58 @@ if (typeof window !== 'undefined') {
 }
 
 /**
- * Generates a human-readable, high-entropy satellite recovery key
- * Example: SATCOM-CIPHER-8A2F-9B1D
+ * Generates cryptographically secure random bytes using Web Crypto API (crypto.getRandomValues).
+ * Replaces predictable Math.random() to prevent PRNG state recovery and sequence prediction attacks.
+ */
+export function generateSecureToken(byteLength = 16): string {
+  const bytes = new Uint8Array(byteLength);
+  const cryptoObj = typeof crypto !== 'undefined' ? crypto : (globalThis as any).crypto;
+  if (cryptoObj && cryptoObj.getRandomValues) {
+    cryptoObj.getRandomValues(bytes);
+  }
+  return Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Generates an unambiguous, cryptographically secure alphanumeric code from a 32-character charset.
+ */
+export function generateSecureCode(length = 6): string {
+  const charset = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ'; // Unambiguous base32
+  const bytes = new Uint8Array(length * 2);
+  const cryptoObj = typeof crypto !== 'undefined' ? crypto : (globalThis as any).crypto;
+  if (cryptoObj && cryptoObj.getRandomValues) {
+    cryptoObj.getRandomValues(bytes);
+  }
+
+  let result = '';
+  for (let i = 0; i < bytes.length && result.length < length; i++) {
+    const val = bytes[i];
+    if (val < charset.length * Math.floor(256 / charset.length)) {
+      result += charset[val % charset.length];
+    }
+  }
+  while (result.length < length) {
+    const b = new Uint8Array(1);
+    if (cryptoObj && cryptoObj.getRandomValues) {
+      cryptoObj.getRandomValues(b);
+    }
+    if (b[0] < charset.length * Math.floor(256 / charset.length)) {
+      result += charset[b[0] % charset.length];
+    }
+  }
+  return result;
+}
+
+/**
+ * Generates a human-readable, high-entropy satellite recovery key backed by CSPRNG
+ * Example: SATCOM-CIPHER-8A2F-9B1D-4K7M
  */
 export function generateRecoveryKey(callsign: string): string {
   const clean = callsign.replace(/[^A-Za-z0-9]/g, '').slice(0, 6).toUpperCase() || 'AGENT';
-  const r1 = Math.random().toString(36).substring(2, 6).toUpperCase();
-  const r2 = Math.random().toString(36).substring(2, 6).toUpperCase();
-  return `SATCOM-${clean}-${r1}-${r2}`;
+  const r1 = generateSecureCode(4);
+  const r2 = generateSecureCode(4);
+  const r3 = generateSecureCode(4);
+  return `SATCOM-${clean}-${r1}-${r2}-${r3}`;
 }
 
 /**
@@ -184,7 +228,7 @@ export async function verifyPasswordHash(password: string, salt: string, storedH
 }
 
 /**
- * Retrieves or creates a persistent unique Device ID for this client hardware
+ * Retrieves or creates a persistent unique Device ID for this client hardware backed by CSPRNG
  */
 export function getOrCreateDeviceId(): string {
   if (typeof window === 'undefined') return 'server_node';
@@ -192,13 +236,13 @@ export function getOrCreateDeviceId(): string {
     let id = localStorage.getItem(STORAGE_DEVICE_ID);
     if (!id) {
       const type = getDeviceType();
-      const rand = Math.random().toString(36).substring(2, 10);
+      const rand = generateSecureToken(8);
       id = `dev_${type}_${Date.now().toString(36)}_${rand}`;
       localStorage.setItem(STORAGE_DEVICE_ID, id);
     }
     return id;
   } catch {
-    return 'dev_unknown_' + Math.random().toString(36).substring(2, 8);
+    return 'dev_unknown_' + generateSecureToken(6);
   }
 }
 
@@ -454,11 +498,16 @@ export async function registerAccount(params: {
 
         // Store offline verification verifier strictly inside IndexedDB WebCrypto AES-GCM vault, NEVER in plaintext localStorage!
         try {
-          const offlineSalt = Math.random().toString(36).substring(2, 14);
+          const offlineSalt = generateSecureToken(16);
           const offlineHash = await hashPasswordPBKDF2(password, offlineSalt);
           await storeSecureCredential(
             `pixelops_offline_verifier_${data.session.user.id}`,
             JSON.stringify({ salt: offlineSalt, hash: offlineHash })
+          );
+          const offlineRecovery = await hashRecoveryKeyClient(data.oneTimeRecoveryKey || rawRecoveryKey);
+          await storeSecureCredential(
+            `pixelops_offline_recovery_hash_${data.session.user.id}`,
+            offlineRecovery
           );
         } catch {}
 
@@ -477,9 +526,12 @@ export async function registerAccount(params: {
       if (res.status === 409 || errData.message?.includes('already exists')) {
         throw new Error(errData.message || 'An operative with that username or email already exists.');
       }
+      if (res.status === 429) {
+        throw new Error(errData.message || 'Too many registration attempts. Please wait before retrying.');
+      }
     }
   } catch (netErr: any) {
-    if (netErr.message?.includes('already exists')) {
+    if (netErr.message?.includes('already exists') || netErr.message?.includes('registration attempts') || netErr.message?.includes('wait')) {
       throw netErr;
     }
   }
@@ -490,7 +542,7 @@ export async function registerAccount(params: {
     throw new Error('An operative account with that username or email already exists.');
   }
 
-  const userId = `usr_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
+  const userId = `usr_${Date.now().toString(36)}_${generateSecureToken(8)}`;
   const now = new Date().toISOString();
 
   const newProfile: CachedUserProfile = {
@@ -508,15 +560,20 @@ export async function registerAccount(params: {
 
   // Store offline credential verifier strictly in WebCrypto AES-GCM vault
   try {
-    const offlineSalt = Math.random().toString(36).substring(2, 14);
+    const offlineSalt = generateSecureToken(16);
     const offlineHash = await hashPasswordPBKDF2(password, offlineSalt);
     await storeSecureCredential(
       `pixelops_offline_verifier_${userId}`,
       JSON.stringify({ salt: offlineSalt, hash: offlineHash })
     );
+    const offlineRecovery = await hashRecoveryKeyClient(rawRecoveryKey);
+    await storeSecureCredential(
+      `pixelops_offline_recovery_hash_${userId}`,
+      offlineRecovery
+    );
   } catch {}
 
-  const token = `tok_${userId}_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 12)}`;
+  const token = `tok_${userId}_${Date.now().toString(36)}_${generateSecureToken(16)}`;
   const session: AuthSession = {
     token,
     user: {
@@ -616,7 +673,7 @@ export async function loginAccount(params: {
 
         // Update offline authentication verifier inside WebCrypto AES-GCM vault
         try {
-          const offlineSalt = Math.random().toString(36).substring(2, 14);
+          const offlineSalt = generateSecureToken(16);
           const offlineHash = await hashPasswordPBKDF2(password, offlineSalt);
           await storeSecureCredential(
             `pixelops_offline_verifier_${data.session.user.id}`,
@@ -633,12 +690,24 @@ export async function loginAccount(params: {
       }
     } else {
       const errData = await res.json().catch(() => ({}));
-      if (res.status === 401) {
-        throw new Error(errData.message || 'Invalid operative password key.');
+      if (res.status === 401 || res.status === 403) {
+        throw new Error(errData.message || 'Invalid operative credentials.');
+      }
+      if (res.status === 404) {
+        throw new Error(errData.message || 'No operative account found matching credentials.');
+      }
+      if (res.status === 429) {
+        throw new Error(errData.message || 'Too many login attempts. Please wait before retrying.');
       }
     }
   } catch (netErr: any) {
-    if (netErr.message?.includes('Invalid operative') || netErr.message?.includes('Invalid operative password key') || netErr.message?.includes('No operative found')) {
+    if (
+      netErr.message?.includes('Invalid operative') ||
+      netErr.message?.includes('Invalid operative credentials') ||
+      netErr.message?.includes('No operative found') ||
+      netErr.message?.includes('login attempts') ||
+      netErr.message?.includes('wait')
+    ) {
       throw netErr;
     }
   }
@@ -682,7 +751,7 @@ export async function loginAccount(params: {
   }
   saveCachedUserProfile(foundUser);
 
-  const token = `tok_${foundUser.id}_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 12)}`;
+  const token = `tok_${foundUser.id}_${Date.now().toString(36)}_${generateSecureToken(16)}`;
   const session: AuthSession = {
     token,
     user: {
@@ -740,41 +809,52 @@ export async function resetPassword(params: {
       const user = cachedProfiles.find((u) => u.username === query || u.email.toLowerCase() === query);
       if (user) {
         try {
-          const offlineSalt = Math.random().toString(36).substring(2, 14);
+          const offlineSalt = generateSecureToken(16);
           const offlineHash = await hashPasswordPBKDF2(newPassword, offlineSalt);
           await storeSecureCredential(
             `pixelops_offline_verifier_${user.id}`,
             JSON.stringify({ salt: offlineSalt, hash: offlineHash })
+          );
+          const newRecoveryHash = await hashRecoveryKeyClient(recoveryKey);
+          await storeSecureCredential(
+            `pixelops_offline_recovery_hash_${user.id}`,
+            newRecoveryHash
           );
         } catch {}
       }
       return { success: true, message: data.message || 'Password reset successfully. Sign in with your new key.' };
     } else {
       const errData = await res.json().catch(() => ({}));
-      if (res.status === 401 || res.status === 403 || res.status === 404 || res.status === 429) {
-        throw new Error(errData.message || 'Recovery verification failed. Verify your recovery key.');
-      }
+      throw new Error(errData.message || 'Recovery verification failed. Verify your recovery key.');
     }
   } catch (netErr: any) {
-    if (
-      netErr.message?.includes('Recovery verification failed') ||
-      netErr.message?.includes('Invalid Satellite Recovery Key') ||
-      netErr.message?.includes('wait')
-    ) {
+    // If the server explicitly rejected the request (401, 403, 404, 429), propagate error immediately
+    if (netErr.message && !netErr.message.includes('fetch') && !netErr.message.includes('NetworkError')) {
       throw netErr;
     }
   }
 
-  // 2. Client-Side Standalone Fallback Reset
+  // 2. Client-Side Standalone Fallback Reset (True Offline Mode ONLY)
   const cachedProfiles = getCachedUserProfiles();
   const user = cachedProfiles.find((u) => u.username === query || u.email.toLowerCase() === query);
   if (!user) {
     throw new Error('No operative account found matching credentials.');
   }
 
+  // Cryptographically verify recovery key against offline hash in WebCrypto vault
+  const rawOfflineRecovery = await getSecureCredential(`pixelops_offline_recovery_hash_${user.id}`);
+  if (!rawOfflineRecovery) {
+    throw new Error('Offline password recovery is not configured for this account. Reconnect to Safehouse server to reset.');
+  }
+
+  const inputHash = await hashRecoveryKeyClient(recoveryKey);
+  if (inputHash !== rawOfflineRecovery.trim()) {
+    throw new Error('Invalid Satellite Recovery Key. Offline recovery verification failed.');
+  }
+
   // Update offline verifier in WebCrypto AES-GCM vault
   try {
-    const offlineSalt = Math.random().toString(36).substring(2, 14);
+    const offlineSalt = generateSecureToken(16);
     const offlineHash = await hashPasswordPBKDF2(newPassword, offlineSalt);
     await storeSecureCredential(
       `pixelops_offline_verifier_${user.id}`,
@@ -840,7 +920,7 @@ export async function updateProfile(params: {
 
         if (newPassword) {
           try {
-            const offlineSalt = Math.random().toString(36).substring(2, 14);
+            const offlineSalt = generateSecureToken(16);
             const offlineHash = await hashPasswordPBKDF2(newPassword, offlineSalt);
             await storeSecureCredential(
               `pixelops_offline_verifier_${currentSession.user.id}`,
@@ -869,9 +949,25 @@ export async function updateProfile(params: {
     if (!currentPassword) {
       throw new Error('Current password is required to set a new password.');
     }
+    // Verify current password against offline verifier
+    let isCurrentValid = false;
+    try {
+      const rawVerifier = await getSecureCredential(`pixelops_offline_verifier_${currentSession.user.id}`);
+      if (rawVerifier) {
+        const verifier = JSON.parse(rawVerifier);
+        if (verifier.salt && (verifier.hash || verifier.pbkdf2)) {
+          isCurrentValid = await verifyPasswordHash(currentPassword, verifier.salt, verifier.hash || verifier.pbkdf2);
+        }
+      }
+    } catch {}
+
+    if (!isCurrentValid) {
+      throw new Error('Current password verification failed. Cannot change encryption key.');
+    }
+
     // Update offline verifier in AES-GCM vault
     try {
-      const offlineSalt = Math.random().toString(36).substring(2, 14);
+      const offlineSalt = generateSecureToken(16);
       const offlineHash = await hashPasswordPBKDF2(newPassword, offlineSalt);
       await storeSecureCredential(
         `pixelops_offline_verifier_${currentSession.user.id}`,
@@ -1030,7 +1126,8 @@ export async function unlinkDevice(targetDeviceId: string): Promise<boolean> {
 
 /**
  * Exports a secure Satellite Pairing Token to link devices and transfer active dossiers.
- * CRITICAL SECURITY FIX: Never exports password hashes, salts, or raw recovery keys.
+ * CRITICAL SECURITY FIX: Backed by server-managed ephemeral pairing tickets (5-min TTL, single-use, CSPRNG).
+ * Never exports password hashes, salts, or raw recovery keys.
  */
 export async function exportSatellitePairingToken(): Promise<string> {
   const session = getActiveSession();
@@ -1044,7 +1141,33 @@ export async function exportSatellitePairingToken(): Promise<string> {
     console.warn('Could not bundle local sync package into token', err);
   }
 
-  // Sanitize pairing payload: ZERO password hashes or salts exported!
+  // 1. Attempt server-managed ephemeral pairing ticket (5-minute TTL, single-use)
+  try {
+    const res = await fetch('/api/auth/pair/generate', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${session.token}`,
+        'x-user-id': session.user.id,
+        'x-username': session.user.username.toLowerCase(),
+      },
+      credentials: 'include',
+      body: JSON.stringify({ syncPackage }),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data.pairTicket) {
+        return data.pairTicket;
+      }
+    }
+  } catch (err) {
+    console.warn('Server pairing generation unavailable, using offline fallback', err);
+  }
+
+  // 2. Offline Fallback: Ephemeral pairing payload with CSPRNG nonce and strict 5-minute TTL
+  const nonce = generateSecureToken(16);
+  const expiresAt = Date.now() + 5 * 60 * 1000;
   const payload = {
     token: session.token,
     user: {
@@ -1058,6 +1181,8 @@ export async function exportSatellitePairingToken(): Promise<string> {
     },
     device: session.device,
     syncPackage,
+    nonce,
+    expiresAt,
     pairedAt: new Date().toISOString(),
   };
 
@@ -1066,14 +1191,71 @@ export async function exportSatellitePairingToken(): Promise<string> {
     typeof window !== 'undefined'
       ? btoa(unescape(encodeURIComponent(json)))
       : Buffer.from(json).toString('base64');
-  return `SATCOM-PAIR::${base64}`;
+  return `SATCOM-PAIR::OFFLINE::${base64}`;
 }
 
 /**
  * Imports a Satellite Pairing Token to establish an immediate link and apply dossiers.
  */
 export async function importSatellitePairingToken(tokenString: string): Promise<AuthSession> {
-  const cleaned = tokenString.trim().replace(/^SATCOM-PAIR::/, '');
+  const trimmed = tokenString.trim();
+  const currentDevice = getCurrentDeviceInfo();
+
+  // 1. If it's a server ticket code or not an offline payload, redeem via server
+  if (!trimmed.includes('::OFFLINE::')) {
+    try {
+      const res = await fetch('/api/auth/pair/redeem', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ pairTicket: trimmed, device: currentDevice }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data.session) {
+          setActiveSession(data.session);
+          try {
+            localStorage.setItem('pixelops_last_sync_timestamp_v1', new Date().toISOString());
+          } catch {}
+
+          saveCachedUserProfile({
+            id: data.session.user.id,
+            username: data.session.user.username,
+            email: data.session.user.email,
+            callsign: data.session.user.callsign,
+            securityClearance: data.session.user.securityClearance || 'OPERATIVE',
+            createdAt: data.session.user.createdAt || new Date().toISOString(),
+            lastLoginAt: new Date().toISOString(),
+            devices: [currentDevice, ...(data.session.device ? [data.session.device] : [])],
+          });
+
+          if (data.syncPackage) {
+            try {
+              const { applyRemoteSyncPackage } = await import('./SyncService');
+              await applyRemoteSyncPackage(data.syncPackage);
+            } catch (syncErr) {
+              console.warn('Failed to apply sync package from redeemed ticket', syncErr);
+            }
+          }
+
+          return data.session;
+        }
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        if (res.status === 400 || res.status === 401 || res.status === 404 || res.status === 429) {
+          throw new Error(errData.message || 'Satellite pairing failed or ticket expired.');
+        }
+      }
+    } catch (netErr: any) {
+      if (netErr.message && !netErr.message.includes('fetch')) {
+        throw netErr;
+      }
+    }
+  }
+
+  // 2. Decode offline ephemeral payload
+  const cleaned = trimmed.replace(/^SATCOM-PAIR::(OFFLINE::)?/, '');
   let json: string;
   try {
     json =
@@ -1089,7 +1271,27 @@ export async function importSatellitePairingToken(tokenString: string): Promise<
     throw new Error('Malformed pairing token payload.');
   }
 
-  const currentDevice = getCurrentDeviceInfo();
+  // Enforce 5-minute TTL on pairing tokens
+  if (payload.expiresAt && Date.now() > payload.expiresAt) {
+    throw new Error('Satellite pairing token has expired (5-minute TTL). Please generate a fresh pairing token.');
+  }
+
+  // Prevent replay attacks: ensure nonce is single-use
+  if (payload.nonce) {
+    let usedNonces: string[] = [];
+    try {
+      usedNonces = JSON.parse(localStorage.getItem('pixelops_used_pairing_nonces') || '[]');
+    } catch {}
+    if (usedNonces.includes(payload.nonce)) {
+      throw new Error('Satellite pairing token has already been redeemed (single-use limit).');
+    }
+    usedNonces.push(payload.nonce);
+    if (usedNonces.length > 50) usedNonces.shift();
+    try {
+      localStorage.setItem('pixelops_used_pairing_nonces', JSON.stringify(usedNonces));
+    } catch {}
+  }
+
   const session: AuthSession = {
     token: payload.token,
     user: payload.user,

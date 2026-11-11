@@ -618,11 +618,25 @@ const STRUCTURED_CARD_SCHEMA = {
 const SYNC_DATA_DIR = path.join(process.cwd(), 'data');
 const SYNC_FILE_PATH = path.join(SYNC_DATA_DIR, 'sync_store.json');
 
+interface PairingTicket {
+  code: string;
+  userId: string;
+  username: string;
+  email: string;
+  callsign: string;
+  securityClearance: string;
+  syncPackage?: any;
+  createdAt: string;
+  expiresAt: number;
+  used: boolean;
+}
+
 interface SyncDataStore {
   users: Record<string, any>;
   tokens: Record<string, any>;
   vaults: Record<string, any>;
   devices: Record<string, any[]>;
+  pairingCodes?: Record<string, PairingTicket>;
 }
 
 function loadSyncStore(): SyncDataStore {
@@ -632,12 +646,14 @@ function loadSyncStore(): SyncDataStore {
     }
     if (fs.existsSync(SYNC_FILE_PATH)) {
       const raw = fs.readFileSync(SYNC_FILE_PATH, 'utf8');
-      return JSON.parse(raw);
+      const parsed = JSON.parse(raw);
+      parsed.pairingCodes = parsed.pairingCodes || {};
+      return parsed;
     }
   } catch (err) {
     console.error('[SatCom] Failed to read sync_store.json, creating fallback', err);
   }
-  return { users: {}, tokens: {}, vaults: {}, devices: {} };
+  return { users: {}, tokens: {}, vaults: {}, devices: {}, pairingCodes: {} };
 }
 
 function saveSyncStore(store: SyncDataStore): void {
@@ -649,6 +665,68 @@ function saveSyncStore(store: SyncDataStore): void {
   } catch (err) {
     console.error('[SatCom] Failed to write sync_store.json', err);
   }
+}
+
+/**
+ * Generates cryptographically secure random tokens using Node.js crypto.randomBytes
+ * Replaces predictable Math.random() in authentication, salt, and token generation.
+ */
+function generateSecureTokenServer(byteLength = 16): string {
+  return crypto.randomBytes(byteLength).toString('hex');
+}
+
+/**
+ * Generates an unambiguous, cryptographically secure alphanumeric code from a 32-character charset.
+ */
+function generateSecureCodeServer(length = 6): string {
+  const charset = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const bytes = crypto.randomBytes(length * 2);
+  let result = '';
+  for (let i = 0; i < bytes.length && result.length < length; i++) {
+    const val = bytes[i];
+    if (val < charset.length * Math.floor(256 / charset.length)) {
+      result += charset[val % charset.length];
+    }
+  }
+  while (result.length < length) {
+    const b = crypto.randomBytes(1)[0];
+    if (b < charset.length * Math.floor(256 / charset.length)) {
+      result += charset[b % charset.length];
+    }
+  }
+  return result;
+}
+
+const authRateLimitTracker = new Map<string, { attempts: number; resetAt: number }>();
+
+/**
+ * Universal auth rate limiter for registration, login, recovery, and pairing endpoints.
+ */
+function checkAuthRateLimit(
+  key: string,
+  maxAttempts = 5,
+  windowMs = 15 * 60 * 1000
+): { allowed: boolean; retryAfter?: number } {
+  const now = Date.now();
+  const entry = authRateLimitTracker.get(key);
+  if (!entry || now > entry.resetAt) {
+    authRateLimitTracker.set(key, { attempts: 1, resetAt: now + windowMs });
+    return { allowed: true };
+  }
+  if (entry.attempts >= maxAttempts) {
+    const retryAfter = Math.ceil((entry.resetAt - now) / 1000);
+    return { allowed: false, retryAfter };
+  }
+  entry.attempts += 1;
+  return { allowed: true };
+}
+
+function getClientIp(req: express.Request): string {
+  const forwarded = req.headers['x-forwarded-for'];
+  if (typeof forwarded === 'string') {
+    return forwarded.split(',')[0].trim();
+  }
+  return req.socket.remoteAddress || 'local';
 }
 
 function timingSafeEqualStr(a: string, b: string): boolean {
@@ -804,6 +882,16 @@ async function startServer() {
   // --- SatCom Multi-Device Cloud Sync API Endpoints ---
   const handleRegister = (req: express.Request, res: express.Response) => {
     try {
+      const ip = getClientIp(req);
+      const rateCheck = checkAuthRateLimit(`register:${ip}`, 5, 15 * 60 * 1000);
+      if (!rateCheck.allowed) {
+        res.setHeader('Retry-After', String(rateCheck.retryAfter || 900));
+        return res.status(429).json({
+          error: 'RATE_LIMITED',
+          message: `Too many registration attempts. Please wait ${rateCheck.retryAfter} seconds.`,
+        });
+      }
+
       const { username, email, password, callsign, device } = req.body || {};
       if (!username || !password) {
         return res.status(400).json({ error: 'USERNAME_AND_PASSWORD_REQUIRED', message: 'Username and password required.' });
@@ -817,17 +905,17 @@ async function startServer() {
         return res.status(409).json({ error: 'USER_EXISTS', message: 'An operative with that username already exists.' });
       }
 
-      const salt = Math.random().toString(36).substring(2, 12);
+      const salt = generateSecureTokenServer(16);
       // Cryptographically secure PBKDF2 (100,000 iterations)
       const passwordHash = hashPasswordPBKDF2Server(password, salt);
-      const userId = `usr_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
+      const userId = `usr_${Date.now().toString(36)}_${generateSecureTokenServer(8)}`;
       const now = new Date().toISOString();
       const expiresAt = new Date(Date.now() + SESSION_LIFETIME_MS).toISOString();
       const incomingEntityId = req.body?.composioEntityId || req.body?.entityId || (req.headers['x-entity-id'] as string) || null;
       const incomingApiKey = req.body?.composioApiKey || req.body?.apiKey || (req.headers['x-composio-api-key'] as string) || null;
 
       const operativeCallsign = (callsign || cleanUser).toUpperCase();
-      const rawRecoveryKey = `SATCOM-${operativeCallsign.slice(0, 6).replace(/[^A-Z0-9]/g, '') || 'AGENT'}-${Math.random().toString(36).substring(2, 6).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+      const rawRecoveryKey = `SATCOM-${operativeCallsign.slice(0, 6).replace(/[^A-Z0-9]/g, '') || 'AGENT'}-${generateSecureCodeServer(4)}-${generateSecureCodeServer(4)}-${generateSecureCodeServer(4)}`;
       const recoveryHash = hashRecoveryKeyServer(rawRecoveryKey);
 
       const userRecord = {
@@ -846,7 +934,7 @@ async function startServer() {
         devices: device ? [device] : [],
       };
 
-      const token = `tok_${userId}_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 12)}`;
+      const token = `tok_${userId}_${Date.now().toString(36)}_${generateSecureTokenServer(16)}`;
       store.users[cleanUser] = userRecord;
       store.tokens[token] = { userId, username: cleanUser, expiresAt, createdAt: now };
       if (incomingEntityId || incomingApiKey) {
@@ -890,6 +978,19 @@ async function startServer() {
     try {
       const { usernameOrEmail, password, device } = req.body || {};
       const cleanQuery = String(usernameOrEmail || '').toLowerCase().trim();
+
+      const ip = getClientIp(req);
+      const userRate = cleanQuery ? checkAuthRateLimit(`login:user:${cleanQuery}`, 5, 5 * 60 * 1000) : { allowed: true };
+      const ipRate = checkAuthRateLimit(`login:ip:${ip}`, 15, 5 * 60 * 1000);
+      if (!userRate.allowed || !ipRate.allowed) {
+        const retryAfter = Math.max(userRate.retryAfter || 0, ipRate.retryAfter || 0);
+        res.setHeader('Retry-After', String(retryAfter || 300));
+        return res.status(429).json({
+          error: 'RATE_LIMITED',
+          message: `Too many login attempts. Please wait ${retryAfter} seconds.`,
+        });
+      }
+
       const store = loadSyncStore();
 
       let userRecord: any = null;
@@ -939,7 +1040,7 @@ async function startServer() {
         store.devices[userRecord.username] = userRecord.devices;
       }
 
-      const token = `tok_${userRecord.id}_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 12)}`;
+      const token = `tok_${userRecord.id}_${Date.now().toString(36)}_${generateSecureTokenServer(16)}`;
       store.tokens[token] = { userId: userRecord.id, username: userRecord.username, expiresAt, createdAt: now };
       saveSyncStore(store);
 
@@ -1035,10 +1136,11 @@ async function startServer() {
       const cleanQuery = String(usernameOrEmail || '').toLowerCase().trim();
       const cleanKey = String(recoveryKey || '').trim().toUpperCase();
 
-      const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0].trim() || req.socket.remoteAddress || 'local';
-      const rateKey = `${ip}:${cleanQuery}`;
-      const rateCheck = checkResetRateLimit(rateKey, 5, 15 * 60 * 1000);
+      const ip = getClientIp(req);
+      const rateKey = `reset:${ip}:${cleanQuery}`;
+      const rateCheck = checkAuthRateLimit(rateKey, 5, 15 * 60 * 1000);
       if (!rateCheck.allowed) {
+        res.setHeader('Retry-After', String(rateCheck.retryAfter || 900));
         return res.status(429).json({
           error: 'RATE_LIMITED',
           message: `Too many password reset attempts. Please wait ${rateCheck.retryAfter} seconds.`,
@@ -1089,7 +1191,7 @@ async function startServer() {
         }
       }
 
-      const newSalt = Math.random().toString(36).substring(2, 12);
+      const newSalt = generateSecureTokenServer(16);
       userRecord.salt = newSalt;
       userRecord.passwordHash = hashPasswordPBKDF2Server(newPassword, newSalt);
       userRecord.recoveryKeyHash = hashRecoveryKeyServer(cleanKey || 'RECONFIGURED');
@@ -1100,6 +1202,173 @@ async function startServer() {
       res.json({ ok: true, message: 'Password encryption key reset successfully. You may now sign in with your new key.' });
     } catch (err: any) {
       res.status(500).json({ error: 'RESET_FAULT', message: err?.message || 'Server error during password reset' });
+    }
+  });
+
+  // --- Ephemeral Server-Managed Satellite Pairing Protocol (5-Minute TTL, Single-Use, CSPRNG) ---
+  app.post('/api/auth/pair/generate', (req, res) => {
+    try {
+      const token = extractSessionToken(req);
+      const store = loadSyncStore();
+      const tokenCheck = validateAndGetToken(store, token);
+
+      if (!tokenCheck.valid || !tokenCheck.tokenData) {
+        return res.status(401).json({
+          error: 'UNAUTHORIZED',
+          message: tokenCheck.expired ? 'Session expired.' : 'Authenticated session required to generate pairing tickets.',
+        });
+      }
+
+      const ip = getClientIp(req);
+      const rateCheck = checkAuthRateLimit(`pair-gen:${ip}:${tokenCheck.tokenData.userId}`, 5, 10 * 60 * 1000);
+      if (!rateCheck.allowed) {
+        res.setHeader('Retry-After', String(rateCheck.retryAfter || 600));
+        return res.status(429).json({
+          error: 'RATE_LIMITED',
+          message: `Too many pairing ticket requests. Please wait ${rateCheck.retryAfter} seconds.`,
+        });
+      }
+
+      const user = Object.values(store.users).find((u: any) => u.id === tokenCheck.tokenData.userId) || store.users[tokenCheck.tokenData.username];
+      if (!user) {
+        return res.status(404).json({ error: 'USER_NOT_FOUND', message: 'Operative profile not found.' });
+      }
+
+      const codePart1 = generateSecureCodeServer(4);
+      const codePart2 = generateSecureCodeServer(4);
+      const pairTicket = `SATCOM-PAIR::CODE-${codePart1}-${codePart2}`;
+      const now = new Date().toISOString();
+      const expiresAt = Date.now() + 5 * 60 * 1000; // Strictly 5 minutes TTL
+
+      store.pairingCodes = store.pairingCodes || {};
+      store.pairingCodes[pairTicket] = {
+        code: pairTicket,
+        userId: user.id,
+        username: user.username,
+        email: user.email,
+        callsign: user.callsign,
+        securityClearance: user.securityClearance,
+        syncPackage: req.body?.syncPackage || null,
+        createdAt: now,
+        expiresAt,
+        used: false,
+      };
+
+      // Clean up expired tickets
+      for (const [key, t] of Object.entries(store.pairingCodes)) {
+        if (Date.now() > t.expiresAt || t.used) {
+          delete store.pairingCodes[key];
+        }
+      }
+
+      saveSyncStore(store);
+
+      res.json({
+        ok: true,
+        pairTicket,
+        expiresAt: new Date(expiresAt).toISOString(),
+        expiresInSeconds: 300,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: 'PAIRING_FAULT', message: err?.message || 'Server error generating pairing ticket' });
+    }
+  });
+
+  app.post('/api/auth/pair/redeem', (req, res) => {
+    try {
+      const ip = getClientIp(req);
+      const rateCheck = checkAuthRateLimit(`pair-redeem:${ip}`, 5, 10 * 60 * 1000);
+      if (!rateCheck.allowed) {
+        res.setHeader('Retry-After', String(rateCheck.retryAfter || 600));
+        return res.status(429).json({
+          error: 'RATE_LIMITED',
+          message: `Too many pairing redemption attempts. Please wait ${rateCheck.retryAfter} seconds.`,
+        });
+      }
+
+      const { pairTicket, device } = req.body || {};
+      const cleanTicket = String(pairTicket || '').trim();
+
+      if (!cleanTicket) {
+        return res.status(400).json({ error: 'TICKET_REQUIRED', message: 'Pairing ticket is required.' });
+      }
+
+      const store = loadSyncStore();
+      store.pairingCodes = store.pairingCodes || {};
+
+      const ticket = store.pairingCodes[cleanTicket];
+      if (!ticket || ticket.used) {
+        return res.status(401).json({
+          error: 'INVALID_PAIRING_TICKET',
+          message: 'Invalid or already redeemed Satellite pairing ticket.',
+        });
+      }
+
+      if (Date.now() > ticket.expiresAt) {
+        delete store.pairingCodes[cleanTicket];
+        saveSyncStore(store);
+        return res.status(401).json({
+          error: 'EXPIRED_PAIRING_TICKET',
+          message: 'Satellite pairing ticket has expired (5-minute TTL). Please request a fresh pairing ticket.',
+        });
+      }
+
+      // Burn ticket immediately (single-use guarantee)
+      ticket.used = true;
+      delete store.pairingCodes[cleanTicket];
+
+      const now = new Date().toISOString();
+      const expiresAt = new Date(Date.now() + SESSION_LIFETIME_MS).toISOString();
+      const user = Object.values(store.users).find((u: any) => u.id === ticket.userId) || store.users[ticket.username];
+
+      // Mint a fresh, cryptographically secure session token for the paired device
+      const newToken = `tok_${ticket.userId}_${Date.now().toString(36)}_${generateSecureTokenServer(16)}`;
+      store.tokens[newToken] = {
+        userId: ticket.userId,
+        username: ticket.username,
+        expiresAt,
+        createdAt: now,
+      };
+
+      if (device && user) {
+        user.devices = user.devices || [];
+        const existingIdx = user.devices.findIndex((d: any) => d.deviceId === device.deviceId);
+        if (existingIdx >= 0) {
+          user.devices[existingIdx] = device;
+        } else {
+          user.devices.push(device);
+        }
+        store.devices[ticket.userId] = user.devices;
+        store.devices[ticket.username] = user.devices;
+      }
+
+      saveSyncStore(store);
+
+      // Issue HttpOnly, Secure cookie for the newly paired device session
+      setSessionCookie(res, newToken);
+
+      const session = {
+        token: newToken,
+        user: {
+          id: ticket.userId,
+          username: ticket.username,
+          email: ticket.email,
+          callsign: ticket.callsign,
+          securityClearance: ticket.securityClearance,
+          createdAt: user?.createdAt || now,
+          lastLoginAt: now,
+        },
+        device: device || { deviceId: 'paired_node', deviceName: 'Paired Device', deviceType: 'mobile', lastActive: now },
+        expiresAt,
+      };
+
+      res.json({
+        ok: true,
+        session,
+        syncPackage: ticket.syncPackage || null,
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: 'REDEEM_FAULT', message: err?.message || 'Server error redeeming pairing ticket' });
     }
   });
 
@@ -1178,7 +1447,7 @@ async function startServer() {
         if (newPassword.length < 6) {
           return res.status(400).json({ error: 'NEW_PASSWORD_TOO_SHORT', message: 'New password must be at least 6 characters.' });
         }
-        const newSalt = Math.random().toString(36).substring(2, 12);
+        const newSalt = generateSecureTokenServer(16);
         userRecord.salt = newSalt;
         userRecord.passwordHash = hashPasswordPBKDF2Server(newPassword, newSalt);
       }
@@ -1452,7 +1721,7 @@ async function startServer() {
         return res.status(400).json({ error: 'MESSAGE_REQUIRED', message: 'Feedback message cannot be empty.' });
       }
 
-      const id = req.body.id || `fb_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      const id = req.body.id || `fb_${Date.now()}_${generateSecureTokenServer(8)}`;
       const createdAt = typeof req.body.created_at === 'number' ? req.body.created_at : Date.now();
       const formattedMessage = (category || callsign || email)
         ? `[CATEGORY: ${(category || 'GENERAL').toUpperCase()}]${callsign ? ` [OPERATIVE: ${callsign}]` : ''}${email ? ` [CONTACT: ${email}]` : ''}\n\n${rawMessage}`

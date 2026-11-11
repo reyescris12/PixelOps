@@ -82,6 +82,52 @@ const memoryUsers = new Map<string, any>();
 const memoryTokens = new Map<string, any>();
 const memoryVaults = new Map<string, any>();
 const memoryRateLimits = new Map<string, { attempts: number; firstAttempt: number; blockedUntil: number }>();
+const memoryPairingTickets = new Map<string, {
+  code: string;
+  userId: string;
+  username: string;
+  email: string;
+  callsign: string;
+  securityClearance: string;
+  syncPackage?: any;
+  createdAt: string;
+  expiresAt: number;
+  used: boolean;
+}>();
+
+/**
+ * Generates cryptographically secure random hexadecimal tokens using Web Crypto API.
+ * Replaces predictable Math.random() to prevent PRNG state recovery and sequence prediction attacks.
+ */
+function generateSecureTokenEdge(byteLength = 16): string {
+  const bytes = new Uint8Array(byteLength);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes).map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+/**
+ * Generates an unambiguous, cryptographically secure alphanumeric code from a 32-character charset.
+ */
+function generateSecureCodeEdge(length = 6): string {
+  const charset = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const bytes = new Uint8Array(length * 2);
+  crypto.getRandomValues(bytes);
+  let result = '';
+  for (let i = 0; i < bytes.length && result.length < length; i++) {
+    const val = bytes[i];
+    if (val < charset.length * Math.floor(256 / charset.length)) {
+      result += charset[val % charset.length];
+    }
+  }
+  while (result.length < length) {
+    const b = new Uint8Array(1);
+    crypto.getRandomValues(b);
+    if (b[0] < charset.length * Math.floor(256 / charset.length)) {
+      result += charset[b[0] % charset.length];
+    }
+  }
+  return result;
+}
 
 /**
  * Constant-time string comparison to prevent timing attacks
@@ -164,40 +210,47 @@ async function verifyPassword(password: string, salt: string, storedHash: string
 }
 
 /**
- * Rate Limiter to protect /login, /register, and /reset-password from brute-force attacks
+ * Rate Limiter to protect /login, /register, /reset-password, and pairing from brute-force attacks
  */
-async function checkRateLimit(request: Request, db: any, maxAttempts = 10, windowSec = 300): Promise<{ allowed: boolean; retryAfter?: number }> {
+async function checkRateLimit(
+  request: Request,
+  db: any,
+  maxAttempts = 10,
+  windowSec = 300,
+  actionKey = 'auth'
+): Promise<{ allowed: boolean; retryAfter?: number }> {
   const ip = request.headers.get('CF-Connecting-IP') || request.headers.get('x-forwarded-for') || 'default_ip';
+  const rateKey = `${actionKey}:${ip}`;
   const now = Math.floor(Date.now() / 1000);
 
   if (db) {
     try {
-      const rec = await db.prepare('SELECT attempts, first_attempt_at, blocked_until FROM rate_limits WHERE ip = ?').bind(ip).first();
+      const rec = await db.prepare('SELECT attempts, first_attempt_at, blocked_until FROM rate_limits WHERE ip = ?').bind(rateKey).first();
       if (rec) {
         if (rec.blocked_until && rec.blocked_until > now) {
           return { allowed: false, retryAfter: rec.blocked_until - now };
         }
         if (now - rec.first_attempt_at > windowSec) {
-          await db.prepare('UPDATE rate_limits SET attempts = 1, first_attempt_at = ?, blocked_until = 0 WHERE ip = ?').bind(now, ip).run();
+          await db.prepare('UPDATE rate_limits SET attempts = 1, first_attempt_at = ?, blocked_until = 0 WHERE ip = ?').bind(now, rateKey).run();
         } else if (rec.attempts >= maxAttempts) {
           const blockedUntil = now + 900; // block for 15 minutes
-          await db.prepare('UPDATE rate_limits SET blocked_until = ? WHERE ip = ?').bind(blockedUntil, ip).run();
+          await db.prepare('UPDATE rate_limits SET blocked_until = ? WHERE ip = ?').bind(blockedUntil, rateKey).run();
           return { allowed: false, retryAfter: 900 };
         } else {
-          await db.prepare('UPDATE rate_limits SET attempts = attempts + 1 WHERE ip = ?').bind(ip).run();
+          await db.prepare('UPDATE rate_limits SET attempts = attempts + 1 WHERE ip = ?').bind(rateKey).run();
         }
       } else {
-        await db.prepare('INSERT INTO rate_limits (ip, attempts, first_attempt_at, blocked_until) VALUES (?, 1, ?, 0)').bind(ip, now).run();
+        await db.prepare('INSERT INTO rate_limits (ip, attempts, first_attempt_at, blocked_until) VALUES (?, 1, ?, 0)').bind(rateKey, now).run();
       }
     } catch {}
   } else {
-    const mem = memoryRateLimits.get(ip);
+    const mem = memoryRateLimits.get(rateKey);
     if (mem) {
       if (mem.blockedUntil && mem.blockedUntil > now) {
         return { allowed: false, retryAfter: mem.blockedUntil - now };
       }
       if (now - mem.firstAttempt > windowSec) {
-        memoryRateLimits.set(ip, { attempts: 1, firstAttempt: now, blockedUntil: 0 });
+        memoryRateLimits.set(rateKey, { attempts: 1, firstAttempt: now, blockedUntil: 0 });
       } else if (mem.attempts >= maxAttempts) {
         mem.blockedUntil = now + 900;
         return { allowed: false, retryAfter: 900 };
@@ -205,7 +258,7 @@ async function checkRateLimit(request: Request, db: any, maxAttempts = 10, windo
         mem.attempts += 1;
       }
     } else {
-      memoryRateLimits.set(ip, { attempts: 1, firstAttempt: now, blockedUntil: 0 });
+      memoryRateLimits.set(rateKey, { attempts: 1, firstAttempt: now, blockedUntil: 0 });
     }
   }
 
@@ -236,10 +289,10 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
       (path.endsWith('/register') || actionParam === 'register');
 
     if (isRegister) {
-      const rateCheck = await checkRateLimit(request, d1, 10, 300);
+      const rateCheck = await checkRateLimit(request, d1, 5, 900, 'register');
       if (!rateCheck.allowed) {
         return new Response(
-          JSON.stringify({ error: 'RATE_LIMITED', message: `Too many attempts. Locked out for ${rateCheck.retryAfter || 900}s.` }),
+          JSON.stringify({ error: 'RATE_LIMITED', message: `Too many registration attempts. Locked out for ${rateCheck.retryAfter || 900}s.` }),
           { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': String(rateCheck.retryAfter || 900), ...CORS_HEADERS } }
         );
       }
@@ -276,15 +329,15 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
         );
       }
 
-      const salt = Math.random().toString(36).substring(2, 14);
+      const salt = generateSecureTokenEdge(16);
       const passwordHash = await hashPasswordPBKDF2(password, salt);
-      const userId = `usr_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
+      const userId = `usr_${Date.now().toString(36)}_${generateSecureTokenEdge(8)}`;
       const now = new Date().toISOString();
       const incomingEntityId = body.composioEntityId || body.entityId || request.headers.get('x-entity-id') || null;
       const incomingApiKey = body.composioApiKey || body.apiKey || request.headers.get('x-composio-api-key') || null;
 
       // Generate recovery key and store only its cryptographic hash
-      const rawRecoveryKey = `SATCOM-${operativeCallsign.slice(0, 6).replace(/[^A-Z0-9]/g, '') || 'AGENT'}-${Math.random().toString(36).substring(2, 6).toUpperCase()}-${Math.random().toString(36).substring(2, 6).toUpperCase()}`;
+      const rawRecoveryKey = `SATCOM-${operativeCallsign.slice(0, 6).replace(/[^A-Z0-9]/g, '') || 'AGENT'}-${generateSecureCodeEdge(4)}-${generateSecureCodeEdge(4)}-${generateSecureCodeEdge(4)}`;
       const recoveryHash = await hashRecoveryKey(rawRecoveryKey);
 
       const userRecord = {
@@ -303,7 +356,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
         devices: device ? [device] : [],
       };
 
-      const token = `tok_${userId}_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 12)}`;
+      const token = `tok_${userId}_${Date.now().toString(36)}_${generateSecureTokenEdge(16)}`;
       const expiresAt = new Date(Date.now() + SESSION_LIFETIME_MS).toISOString();
 
       if (d1) {
@@ -421,11 +474,11 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
       (path.endsWith('/login') || actionParam === 'login');
 
     if (isLogin) {
-      const rateCheck = await checkRateLimit(request, d1, 10, 300);
+      const rateCheck = await checkRateLimit(request, d1, 5, 300, 'login');
       if (!rateCheck.allowed) {
         return new Response(
-          JSON.stringify({ error: 'RATE_LIMITED', message: `Too many attempts. Locked out for ${rateCheck.retryAfter || 900}s.` }),
-          { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': String(rateCheck.retryAfter || 900), ...CORS_HEADERS } }
+          JSON.stringify({ error: 'RATE_LIMITED', message: `Too many login attempts. Locked out for ${rateCheck.retryAfter || 300}s.` }),
+          { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': String(rateCheck.retryAfter || 300), ...CORS_HEADERS } }
         );
       }
 
@@ -534,7 +587,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
 
       const now = new Date().toISOString();
       const expiresAt = new Date(Date.now() + SESSION_LIFETIME_MS).toISOString();
-      const token = `tok_${userRecord.id}_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 12)}`;
+      const token = `tok_${userRecord.id}_${Date.now().toString(36)}_${generateSecureTokenEdge(16)}`;
 
       userRecord.devices = userRecord.devices || [];
       if (device) {
@@ -836,7 +889,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
     // 5. SECURE PASSWORD RESET: POST /api/auth/reset-password or action=reset-password
     if (request.method === 'POST' && (path.endsWith('/reset-password') || actionParam === 'reset-password')) {
       // Strict rate limiting: Max 5 attempts per 15 minutes to prevent brute-force attacks
-      const rateCheck = await checkRateLimit(request, d1, 5, 900);
+      const rateCheck = await checkRateLimit(request, d1, 5, 900, 'reset');
       if (!rateCheck.allowed) {
         return new Response(
           JSON.stringify({ error: 'RATE_LIMITED', message: `Too many password reset attempts. Please wait ${rateCheck.retryAfter || 900} seconds.` }),
@@ -908,7 +961,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
         }
       }
 
-      const newSalt = Math.random().toString(36).substring(2, 14);
+      const newSalt = generateSecureTokenEdge(16);
       const newHash = await hashPasswordPBKDF2(newPassword, newSalt);
       const updatedRecoveryHash = await hashRecoveryKey(cleanKey || 'RECONFIGURED');
 
@@ -932,6 +985,174 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
       return new Response(
         JSON.stringify({ ok: true, message: 'Password encryption key reset successfully. Please sign in.' }),
         { status: 200, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+      );
+    }
+
+    // 6. EPHEMERAL SATELLITE PAIRING GENERATE: POST /api/auth/pair/generate or action=pair-generate
+    const isPairGenerate =
+      request.method === 'POST' &&
+      (path.endsWith('/pair/generate') || actionParam === 'pair-generate');
+
+    if (isPairGenerate) {
+      const rateCheck = await checkRateLimit(request, d1, 5, 600, 'pair-gen');
+      if (!rateCheck.allowed) {
+        return new Response(
+          JSON.stringify({ error: 'RATE_LIMITED', message: `Too many pairing ticket requests. Please wait ${rateCheck.retryAfter || 600} seconds.` }),
+          { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': String(rateCheck.retryAfter || 600), ...CORS_HEADERS } }
+        );
+      }
+
+      const token = extractSessionToken(request);
+      if (!token) {
+        return new Response(
+          JSON.stringify({ error: 'UNAUTHORIZED', message: 'Authenticated session required.' }),
+          { status: 401, headers: { 'Content-Type': 'application/json', ...getCorsHeaders(request) } }
+        );
+      }
+
+      let user: any = null;
+      if (d1) {
+        user = await d1.prepare(`
+          SELECT u.id, u.username, u.email, u.callsign, u.security_clearance as securityClearance
+          FROM sessions s
+          JOIN users u ON s.user_id = u.id
+          WHERE s.token = ? AND datetime(s.expires_at) > datetime('now')
+        `).bind(token).first();
+      }
+
+      if (!user) {
+        const memTok = memoryTokens.get(token);
+        if (memTok && (!memTok.expiresAt || new Date(memTok.expiresAt).getTime() > Date.now())) {
+          user = memoryUsers.get(memTok.username) || Array.from(memoryUsers.values()).find((u) => u.id === memTok.userId);
+        }
+      }
+
+      if (!user) {
+        return new Response(
+          JSON.stringify({ error: 'UNAUTHORIZED', message: 'Session expired or invalid.' }),
+          { status: 401, headers: { 'Content-Type': 'application/json', ...getCorsHeaders(request) } }
+        );
+      }
+
+      const body = await request.json().catch(() => ({})) as any;
+      const pairTicket = `SATCOM-PAIR::CODE-${generateSecureCodeEdge(4)}-${generateSecureCodeEdge(4)}`;
+      const now = new Date().toISOString();
+      const expiresAt = Date.now() + 5 * 60 * 1000; // 5-minute TTL
+
+      memoryPairingTickets.set(pairTicket, {
+        code: pairTicket,
+        userId: user.id,
+        username: user.username,
+        email: user.email,
+        callsign: user.callsign,
+        securityClearance: user.securityClearance || user.security_clearance || 'COMMANDER',
+        syncPackage: body?.syncPackage || null,
+        createdAt: now,
+        expiresAt,
+        used: false,
+      });
+
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          pairTicket,
+          expiresAt: new Date(expiresAt).toISOString(),
+          expiresInSeconds: 300,
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json', ...getCorsHeaders(request) } }
+      );
+    }
+
+    // 7. EPHEMERAL SATELLITE PAIRING REDEEM: POST /api/auth/pair/redeem or action=pair-redeem
+    const isPairRedeem =
+      request.method === 'POST' &&
+      (path.endsWith('/pair/redeem') || actionParam === 'pair-redeem');
+
+    if (isPairRedeem) {
+      const rateCheck = await checkRateLimit(request, d1, 5, 600, 'pair-redeem');
+      if (!rateCheck.allowed) {
+        return new Response(
+          JSON.stringify({ error: 'RATE_LIMITED', message: `Too many redemption attempts. Please wait ${rateCheck.retryAfter || 600} seconds.` }),
+          { status: 429, headers: { 'Content-Type': 'application/json', 'Retry-After': String(rateCheck.retryAfter || 600), ...CORS_HEADERS } }
+        );
+      }
+
+      const body = await request.json().catch(() => ({})) as any;
+      const { pairTicket, device } = body;
+      const cleanTicket = String(pairTicket || '').trim();
+
+      const ticket = memoryPairingTickets.get(cleanTicket);
+      if (!ticket || ticket.used) {
+        return new Response(
+          JSON.stringify({ error: 'INVALID_PAIRING_TICKET', message: 'Invalid or already redeemed Satellite pairing ticket.' }),
+          { status: 401, headers: { 'Content-Type': 'application/json', ...getCorsHeaders(request) } }
+        );
+      }
+
+      if (Date.now() > ticket.expiresAt) {
+        memoryPairingTickets.delete(cleanTicket);
+        return new Response(
+          JSON.stringify({ error: 'EXPIRED_PAIRING_TICKET', message: 'Satellite pairing ticket has expired (5-minute TTL). Please request a fresh pairing ticket.' }),
+          { status: 401, headers: { 'Content-Type': 'application/json', ...getCorsHeaders(request) } }
+        );
+      }
+
+      // Burn ticket immediately
+      ticket.used = true;
+      memoryPairingTickets.delete(cleanTicket);
+
+      const now = new Date().toISOString();
+      const expiresAt = new Date(Date.now() + SESSION_LIFETIME_MS).toISOString();
+      const newToken = `tok_${ticket.userId}_${Date.now().toString(36)}_${generateSecureTokenEdge(16)}`;
+
+      if (d1) {
+        await d1.prepare('INSERT INTO sessions (token, user_id, device_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?)').bind(
+          newToken,
+          ticket.userId,
+          device?.deviceId || 'paired_edge_node',
+          now,
+          expiresAt
+        ).run();
+      }
+
+      memoryTokens.set(newToken, {
+        userId: ticket.userId,
+        username: ticket.username,
+        expiresAt,
+        createdAt: now,
+      });
+
+      const session = {
+        token: newToken,
+        user: {
+          id: ticket.userId,
+          username: ticket.username,
+          email: ticket.email,
+          callsign: ticket.callsign,
+          securityClearance: ticket.securityClearance,
+          createdAt: now,
+          lastLoginAt: now,
+        },
+        device: device || { deviceId: 'paired_edge_node', deviceName: 'Paired Device', deviceType: 'mobile', lastActive: now },
+        expiresAt,
+      };
+
+      const sessionCookie = `pixelops_session=${encodeURIComponent(newToken)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${7 * 24 * 60 * 60}`;
+
+      return new Response(
+        JSON.stringify({
+          ok: true,
+          session,
+          syncPackage: ticket.syncPackage || null,
+        }),
+        {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+            'Set-Cookie': sessionCookie,
+            ...getCorsHeaders(request),
+          },
+        }
       );
     }
 

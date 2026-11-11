@@ -261,10 +261,16 @@ export function getOrCreateEntityId(): string {
     // Fallback if storage access is restricted
   }
 
+  const randBytes = new Uint8Array(8);
+  if (typeof crypto !== 'undefined' && crypto.getRandomValues) {
+    crypto.getRandomValues(randBytes);
+  }
+  const randHex = Array.from(randBytes).map((b) => b.toString(16).padStart(2, '0')).join('');
+
   const generated =
     typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
       ? `commander_${crypto.randomUUID()}`
-      : `commander_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
+      : `commander_${Date.now()}_${randHex}`;
 
   cachedEntityId = generated;
 

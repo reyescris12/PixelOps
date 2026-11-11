@@ -1,6 +1,6 @@
 import { createStore, get, set, del, keys } from 'idb-keyval';
 import { checkServerStatus } from './ApiService';
-import { ledgerDb } from './CommandLedgerDb';
+import { db, ledgerDb } from './CommandLedgerDb';
 
 /**
  * Cross-platform PWA Keychain & Encrypted Credential Vault Service
@@ -102,67 +102,109 @@ function maskToken(token: string): string {
   return `${token.slice(0, 6)}••••${token.slice(-4)}`;
 }
 
-// In-memory cache of decrypted credentials for transient session access
-const transientDecryptedCredentials = new Map<string, string>();
+// 1. In-memory transient cache for 0ms read latency after initial load
+export const transientCache = new Map<string, string>();
+const transientDecryptedCredentials = transientCache;
+let cachedMasterKey: CryptoKey | null = null;
 let inMemoryMasterKey: CryptoKey | null = null;
 const inMemoryEncryptedCredentialsStore = new Map<string, any>();
 
 export function getCachedDecryptedCredential(key: string): string | null {
-  return transientDecryptedCredentials.get(key) || null;
+  return transientCache.get(key) || null;
 }
 
 export function setCachedDecryptedCredential(key: string, value: string): void {
-  transientDecryptedCredentials.set(key, value);
+  transientCache.set(key, value);
 }
 
 export function clearCachedDecryptedCredentials(): void {
-  transientDecryptedCredentials.clear();
+  transientCache.clear();
 }
 
 /**
- * Retrieves or generates a non-extractable 256-bit AES-GCM CryptoKey stored inside IndexedDB.
+ * Retrieves or generates a non-extractable 256-bit AES-GCM CryptoKey bound to this browser environment.
  * Device-bound: Non-extractable (extractable: false) prevents scripts or extensions from exporting raw keys.
  */
 export async function getLocalMasterKey(): Promise<CryptoKey> {
-  const cryptoEngine = typeof window !== 'undefined' ? window.crypto : globalThis.crypto;
+  if (cachedMasterKey && cachedMasterKey.type === 'secret') return cachedMasterKey;
 
+  const cryptoEngine = typeof window !== 'undefined' ? window.crypto : globalThis.crypto;
+  const kWrappedKey = 'pixelops_master_crypto_key_v1';
+
+  // 1. Check Dexie db.encrypted_credentials for existing master key
+  if (typeof indexedDB !== 'undefined' && db && db.encrypted_credentials) {
+    try {
+      const existing: any = await db.encrypted_credentials.get(kWrappedKey);
+      if (existing) {
+        if (existing.cryptoKey && existing.cryptoKey.type === 'secret') {
+          cachedMasterKey = existing.cryptoKey;
+          return cachedMasterKey;
+        }
+        if (existing.rawKeyData) {
+          cachedMasterKey = await cryptoEngine.subtle.importKey(
+            'jwk',
+            existing.rawKeyData,
+            { name: 'AES-GCM', length: 256 },
+            false, // non-extractable for security
+            ['encrypt', 'decrypt']
+          );
+          return cachedMasterKey;
+        }
+      }
+    } catch {}
+  }
+
+  // 2. Check idb-keyval vaultStore
   if (typeof indexedDB !== 'undefined') {
     try {
       const existingKey = await get<CryptoKey>(MASTER_KEY_IDB_KEY, vaultStore);
       if (existingKey && existingKey.type === 'secret') {
-        return existingKey;
+        cachedMasterKey = existingKey;
+        return cachedMasterKey;
       }
     } catch {}
   } else if (inMemoryMasterKey && inMemoryMasterKey.type === 'secret') {
-    return inMemoryMasterKey;
+    cachedMasterKey = inMemoryMasterKey;
+    return cachedMasterKey;
   }
 
-  // Generate a non-extractable AES-256-GCM key so raw key material cannot be exported from the browser
-  const newKey = await cryptoEngine.subtle.generateKey(
+  // 3. Generate a fresh non-extractable 256-bit AES-GCM master key
+  cachedMasterKey = await cryptoEngine.subtle.generateKey(
     {
       name: 'AES-GCM',
       length: 256,
     },
-    false, // extractable = false
+    false, // extractable = false prevents raw key leaking via XSS/extensions
     ['encrypt', 'decrypt']
   );
 
+  // Store directly into IndexedDB via structured clone (preserves extractable: false without exporting)
   if (typeof indexedDB !== 'undefined') {
     try {
-      await set(MASTER_KEY_IDB_KEY, newKey, vaultStore);
+      if (db && db.encrypted_credentials) {
+        await db.encrypted_credentials.put({
+          key: kWrappedKey,
+          cryptoKey: cachedMasterKey,
+          algorithm: 'AES-256-GCM',
+          updatedAt: new Date().toISOString(),
+        });
+      }
+    } catch {}
+
+    try {
+      await set(MASTER_KEY_IDB_KEY, cachedMasterKey, vaultStore);
     } catch {}
   } else {
-    inMemoryMasterKey = newKey;
+    inMemoryMasterKey = cachedMasterKey;
   }
 
-  return newKey;
+  return cachedMasterKey;
 }
 
 export const getOrCreateMasterKey = getLocalMasterKey;
 
 /**
- * Encrypts sensitive credentials at rest using the non-extractable master crypto key
- * before writing to IndexedDB (encrypted_credentials), replacing insecure plaintext localStorage.
+ * Stores a credential securely in IndexedDB with AES-GCM encryption and updates the memory cache.
  */
 export async function storeSecureCredential(keyName: string, plaintextValue: string): Promise<void> {
   if (!plaintextValue) return;
@@ -198,11 +240,11 @@ export async function storeSecureCredential(keyName: string, plaintextValue: str
   // Store encrypted payload safely inside IndexedDB
   if (typeof indexedDB !== 'undefined') {
     try {
-      if (ledgerDb && ledgerDb.encrypted_credentials) {
-        await ledgerDb.encrypted_credentials.put(recordPayload);
+      if (db && db.encrypted_credentials) {
+        await db.encrypted_credentials.put(recordPayload);
       }
     } catch (err) {
-      console.warn('[SecureVault] Error writing to Dexie encrypted_credentials:', err);
+      console.warn('[Security Vault] Error writing to Dexie encrypted_credentials:', err);
     }
 
     // Dual-persist to idb-keyval vault store for keychain compatibility
@@ -213,71 +255,73 @@ export async function storeSecureCredential(keyName: string, plaintextValue: str
     inMemoryEncryptedCredentialsStore.set(keyName, recordPayload);
   }
 
-  // Keep in transient in-memory cache for active session
-  setCachedDecryptedCredential(keyName, plaintextValue);
+  // Update fast in-memory cache instantly for subsequent 0ms reads
+  transientCache.set(keyName, plaintextValue);
 }
 
 /**
- * Retrieves and decrypts a sensitive credential from IndexedDB using the non-extractable master crypto key.
+ * Retrieves a credential with lightning-fast 0ms transient cache lookup, falling back to IndexedDB.
  */
-export async function getSecureCredential(keyName: string): Promise<string | null> {
-  // Check transient active session cache first
-  const cached = getCachedDecryptedCredential(keyName);
-  if (cached) return cached;
+export async function getSecureCredential(keyName: string): Promise<string> {
+  // 1. Check in-memory cache first for instant speed
+  if (transientCache.has(keyName)) {
+    return transientCache.get(keyName)!;
+  }
 
   const cryptoEngine = typeof window !== 'undefined' ? window.crypto : globalThis.crypto;
 
-  // 1. Check Dexie encrypted_credentials table
-  if (typeof indexedDB !== 'undefined') {
-    try {
-      if (ledgerDb && ledgerDb.encrypted_credentials) {
-        const rec = await ledgerDb.encrypted_credentials.get(keyName);
-        if (rec && (rec.ciphertextB4 || rec.ciphertextB64)) {
-          const cryptoKey = await getLocalMasterKey();
-          const ivBytes = rec.ivB64 ? base64ToBytes(rec.ivB64) : new Uint8Array(rec.iv);
-          const cipherBytes = base64ToBytes(rec.ciphertextB4 || rec.ciphertextB64 || '');
-
-          const decryptedBuffer = await cryptoEngine.subtle.decrypt(
-            { name: 'AES-GCM', iv: ivBytes as BufferSource },
-            cryptoKey,
-            cipherBytes as BufferSource
-          );
-          const decrypted = new TextDecoder().decode(decryptedBuffer);
-          setCachedDecryptedCredential(keyName, decrypted);
-          return decrypted;
-        }
+  // 2. Fall back to secure IndexedDB vault decryption
+  try {
+    let record: any = null;
+    if (typeof indexedDB !== 'undefined') {
+      if (db && db.encrypted_credentials) {
+        record = await db.encrypted_credentials.get(keyName);
       }
-    } catch (err) {
-      console.warn('[SecureVault] Error reading from Dexie encrypted_credentials:', err);
+    } else {
+      record = inMemoryEncryptedCredentialsStore.get(keyName);
     }
 
-    // 2. Fallback to idb-keyval keychain
-    try {
-      const cred = await getGenericPassword({ service: keyName });
-      if (cred && cred.password) {
-        setCachedDecryptedCredential(keyName, cred.password);
-        return cred.password;
-      }
-    } catch {}
-  } else if (inMemoryEncryptedCredentialsStore.has(keyName)) {
-    const rec = inMemoryEncryptedCredentialsStore.get(keyName);
-    if (rec && (rec.ciphertextB4 || rec.ciphertextB64)) {
+    if (record && (record.ciphertextB4 || record.ciphertextB64) && record.iv) {
       const cryptoKey = await getLocalMasterKey();
-      const ivBytes = rec.ivB64 ? base64ToBytes(rec.ivB64) : new Uint8Array(rec.iv);
-      const cipherBytes = base64ToBytes(rec.ciphertextB4 || rec.ciphertextB64 || '');
+      const iv = record.ivB64 ? base64ToBytes(record.ivB64) : new Uint8Array(record.iv);
+      const rawCipher = record.ciphertextB4 || record.ciphertextB64;
+
+      // Decode Base64 ciphertext back to ArrayBuffer
+      const binaryString = atob(rawCipher);
+      const len = binaryString.length;
+      const bytes = new Uint8Array(len);
+      for (let i = 0; i < len; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
 
       const decryptedBuffer = await cryptoEngine.subtle.decrypt(
-        { name: 'AES-GCM', iv: ivBytes as BufferSource },
+        { name: 'AES-GCM', iv: iv as BufferSource },
         cryptoKey,
-        cipherBytes as BufferSource
+        bytes as BufferSource
       );
-      const decrypted = new TextDecoder().decode(decryptedBuffer);
-      setCachedDecryptedCredential(keyName, decrypted);
-      return decrypted;
+
+      const decoder = new TextDecoder();
+      const plaintext = decoder.decode(decryptedBuffer);
+
+      // Populate transient cache for subsequent instant reads
+      transientCache.set(keyName, plaintext);
+      return plaintext;
     }
+
+    // 3. Fallback to idb-keyval keychain
+    if (typeof indexedDB !== 'undefined') {
+      const cred = await getGenericPassword({ service: keyName });
+      if (cred && cred.password) {
+        transientCache.set(keyName, cred.password);
+        return cred.password;
+      }
+    }
+  } catch (err) {
+    console.error(`[Security Vault] Decryption failed for key "${keyName}":`, err);
+    return '';
   }
 
-  return null;
+  return '';
 }
 
 /**

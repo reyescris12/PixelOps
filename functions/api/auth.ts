@@ -21,8 +21,53 @@ interface Env {
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-user-id, x-username, x-device-id, x-device-name, x-device-type, x-reset-key, x-admin-reset-key, x-entity-id, x-composio-api-key',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-user-id, x-username, x-device-id, x-device-name, x-device-type, x-reset-key, x-admin-reset-key, x-entity-id, x-composio-api-key, Cookie',
 };
+
+function getCorsHeaders(request: Request): Record<string, string> {
+  const origin = request.headers.get('Origin');
+  if (origin) {
+    return {
+      'Access-Control-Allow-Origin': origin,
+      'Access-Control-Allow-Credentials': 'true',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-user-id, x-username, x-device-id, x-device-name, x-device-type, x-reset-key, x-admin-reset-key, x-entity-id, x-composio-api-key, Cookie',
+    };
+  }
+  return CORS_HEADERS;
+}
+
+function parseCookies(cookieHeader: string | null): Record<string, string> {
+  const list: Record<string, string> = {};
+  if (!cookieHeader) return list;
+  cookieHeader.split(';').forEach((cookie) => {
+    const parts = cookie.split('=');
+    if (parts.length >= 2) {
+      list[parts[0].trim()] = decodeURIComponent(parts.slice(1).join('=').trim());
+    }
+  });
+  return list;
+}
+
+function extractSessionToken(request: Request): string {
+  const authHeader = request.headers.get('Authorization') || '';
+  const bearer = authHeader.replace(/^Bearer\s+/i, '').trim();
+  if (bearer) return bearer;
+  const cookies = parseCookies(request.headers.get('Cookie'));
+  return cookies['pixelops_session'] || '';
+}
+
+const SESSION_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000; // 7 days (reduced from unbounded 30 days)
+
+function getSessionCookieHeader(token: string, request: Request, maxAgeSec = 7 * 24 * 60 * 60): string {
+  const isHttps = request.url.startsWith('https://');
+  const secureFlag = isHttps ? '; Secure' : '';
+  return `pixelops_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${maxAgeSec}${secureFlag}`;
+}
+
+function getClearSessionCookieHeader(): string {
+  return 'pixelops_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT';
+}
 
 function getKv(env: Env) {
   return env.SYNC_KV || env.PIXELOPS_KV || env.KV || env.STORAGE || env.DATA;
@@ -106,13 +151,16 @@ async function hashPasswordLegacy(password: string, salt: string, env?: Env): Pr
 }
 
 /**
- * Verifies a password against stored hash, checking PBKDF2 first, then legacy SHA-256
+ * Verifies a password against stored hash, checking PBKDF2 first, then legacy SHA-256.
+ * Returns both verification status and whether a legacy hash was used so caller can upgrade it.
  */
-async function verifyPassword(password: string, salt: string, storedHash: string, env?: Env): Promise<boolean> {
+async function verifyPassword(password: string, salt: string, storedHash: string, env?: Env): Promise<{ valid: boolean; isLegacy: boolean }> {
+  if (!storedHash) return { valid: false, isLegacy: false };
   const pbkdf2 = await hashPasswordPBKDF2(password, salt);
-  if (timingSafeEqualStr(pbkdf2, storedHash)) return true;
+  if (timingSafeEqualStr(pbkdf2, storedHash)) return { valid: true, isLegacy: false };
   const legacy = await hashPasswordLegacy(password, salt, env);
-  return timingSafeEqualStr(legacy, storedHash);
+  if (timingSafeEqualStr(legacy, storedHash)) return { valid: true, isLegacy: true };
+  return { valid: false, isLegacy: false };
 }
 
 /**
@@ -256,7 +304,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
       };
 
       const token = `tok_${userId}_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 12)}`;
-      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      const expiresAt = new Date(Date.now() + SESSION_LIFETIME_MS).toISOString();
 
       if (d1) {
         await d1.prepare(`
@@ -316,7 +364,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
         await kv.put(`user:${cleanUser}`, JSON.stringify(userRecord));
         if (cleanEmail) await kv.put(`user:${cleanEmail}`, JSON.stringify(userRecord));
         if (operativeCallsign) await kv.put(`user:${operativeCallsign.toLowerCase()}`, JSON.stringify(userRecord));
-        await kv.put(`token:${token}`, JSON.stringify({ userId, cleanUser }));
+        await kv.put(`token:${token}`, JSON.stringify({ userId, cleanUser, expiresAt }));
         await kv.put(`devices:${cleanUser}`, JSON.stringify(userRecord.devices));
         await kv.put(`devices:${userId}`, JSON.stringify(userRecord.devices));
         if (incomingEntityId || incomingApiKey) {
@@ -326,7 +374,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
         memoryUsers.set(cleanUser, userRecord);
         if (cleanEmail) memoryUsers.set(cleanEmail, userRecord);
         if (operativeCallsign) memoryUsers.set(operativeCallsign.toLowerCase(), userRecord);
-        memoryTokens.set(token, { userId, cleanUser });
+        memoryTokens.set(token, { userId, cleanUser, expiresAt });
         if (incomingEntityId || incomingApiKey) {
           memoryVaults.set(`vault:${userId}`, { composioEntityId: incomingEntityId, composioApiKey: incomingApiKey });
         }
@@ -359,7 +407,11 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
         oneTimeRecoveryKey: rawRecoveryKey, // Displayed once for safe offline storage
       }), {
         status: 200,
-        headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+        headers: {
+          'Content-Type': 'application/json',
+          ...getCorsHeaders(request),
+          'Set-Cookie': getSessionCookieHeader(token, request),
+        },
       });
     }
 
@@ -461,16 +513,27 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
         );
       }
 
-      const isPasswordValid = await verifyPassword(password, userRecord.salt, userRecord.passwordHash, env);
-      if (!isPasswordValid) {
+      const verifyResult = await verifyPassword(password, userRecord.salt, userRecord.passwordHash, env);
+      if (!verifyResult.valid) {
         return new Response(
           JSON.stringify({ error: 'INVALID_PASSWORD', message: 'Invalid operative password key.' }),
-          { status: 401, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+          { status: 401, headers: { 'Content-Type': 'application/json', ...getCorsHeaders(request) } }
         );
       }
 
+      // Upgrade legacy SHA-256 hash to PBKDF2 immediately upon successful authentication
+      if (verifyResult.isLegacy) {
+        const upgradedHash = await hashPasswordPBKDF2(password, userRecord.salt);
+        userRecord.passwordHash = upgradedHash;
+        if (d1) {
+          try {
+            await d1.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(upgradedHash, userRecord.id).run();
+          } catch {}
+        }
+      }
+
       const now = new Date().toISOString();
-      const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+      const expiresAt = new Date(Date.now() + SESSION_LIFETIME_MS).toISOString();
       const token = `tok_${userRecord.id}_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 12)}`;
 
       userRecord.devices = userRecord.devices || [];
@@ -496,13 +559,13 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
       if (kv) {
         await kv.put(`user:${cleanQuery}`, JSON.stringify(userRecord));
         await kv.put(`user:${userRecord.username}`, JSON.stringify(userRecord));
-        await kv.put(`token:${token}`, JSON.stringify({ userId: userRecord.id, cleanUser: cleanQuery }));
+        await kv.put(`token:${token}`, JSON.stringify({ userId: userRecord.id, cleanUser: cleanQuery, expiresAt }));
         await kv.put(`devices:${userRecord.username}`, JSON.stringify(userRecord.devices));
         await kv.put(`devices:${userRecord.id}`, JSON.stringify(userRecord.devices));
       } else {
         memoryUsers.set(cleanQuery, userRecord);
         memoryUsers.set(userRecord.username, userRecord);
-        memoryTokens.set(token, { userId: userRecord.id, cleanUser: cleanQuery });
+        memoryTokens.set(token, { userId: userRecord.id, cleanUser: cleanQuery, expiresAt });
       }
 
       // Query D1 user_data table for operative's personal Composio entityId and custom API key
@@ -593,7 +656,11 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
         devices: userRecord.devices,
       }), {
         status: 200,
-        headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+        headers: {
+          'Content-Type': 'application/json',
+          ...getCorsHeaders(request),
+          'Set-Cookie': getSessionCookieHeader(token, request),
+        },
       });
     }
 
@@ -603,13 +670,12 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
       (path.endsWith('/me') || actionParam === 'me');
 
     if (isMe) {
-      const authHeader = request.headers.get('Authorization') || '';
-      const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+      const token = extractSessionToken(request);
 
       if (!token) {
         return new Response(JSON.stringify({ ok: false, error: 'NO_TOKEN' }), {
           status: 401,
-          headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+          headers: { 'Content-Type': 'application/json', ...getCorsHeaders(request) },
         });
       }
 
@@ -671,13 +737,71 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
             composioEntityId: userEntityId || null,
             composioApiKey: userApiKey || null,
             devices: devs?.results || [],
-          }), { status: 200, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } });
+          }), { status: 200, headers: { 'Content-Type': 'application/json', ...getCorsHeaders(request) } });
+        }
+        return new Response(JSON.stringify({ ok: false, error: 'NO_VALID_SESSION' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json', ...getCorsHeaders(request) },
+        });
+      }
+
+      if (kv) {
+        const rawToken = await kv.get(`token:${token}`);
+        if (rawToken) {
+          try {
+            const tokenData = JSON.parse(rawToken);
+            if (!tokenData.expiresAt || new Date(tokenData.expiresAt).getTime() > Date.now()) {
+              const rawUser = await kv.get(`user:${tokenData.cleanUser || tokenData.userId}`);
+              const user = rawUser ? JSON.parse(rawUser) : null;
+              if (user) {
+                return new Response(JSON.stringify({
+                  ok: true,
+                  user: {
+                    id: user.id,
+                    username: user.username,
+                    email: user.email,
+                    callsign: user.callsign,
+                    securityClearance: user.securityClearance,
+                    createdAt: user.createdAt,
+                    lastLoginAt: user.lastLoginAt,
+                  },
+                  devices: user.devices || [],
+                }), { status: 200, headers: { 'Content-Type': 'application/json', ...getCorsHeaders(request) } });
+              }
+            }
+          } catch {}
+        }
+        return new Response(JSON.stringify({ ok: false, error: 'NO_VALID_SESSION' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json', ...getCorsHeaders(request) },
+        });
+      }
+
+      const memToken = memoryTokens.get(token);
+      if (memToken) {
+        if (!memToken.expiresAt || new Date(memToken.expiresAt).getTime() > Date.now()) {
+          const user = memoryUsers.get(memToken.cleanUser) || memoryUsers.get(memToken.userId);
+          if (user) {
+            return new Response(JSON.stringify({
+              ok: true,
+              user: {
+                id: user.id,
+                username: user.username,
+                email: user.email,
+                callsign: user.callsign,
+                securityClearance: user.securityClearance,
+                createdAt: user.createdAt,
+                lastLoginAt: user.lastLoginAt,
+              },
+              devices: user.devices || [],
+            }), { status: 200, headers: { 'Content-Type': 'application/json', ...getCorsHeaders(request) } });
+          }
         }
       }
 
-      return new Response(JSON.stringify({ ok: true, message: 'Valid token' }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+      return new Response(JSON.stringify({ ok: false, error: 'NO_VALID_SESSION' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json', ...getCorsHeaders(request) },
       });
     }
 
@@ -687,8 +811,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
       (path.endsWith('/logout') || actionParam === 'logout');
 
     if (isLogout) {
-      const authHeader = request.headers.get('Authorization') || '';
-      const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+      const token = extractSessionToken(request);
 
       if (token) {
         if (d1) {
@@ -702,7 +825,11 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
 
       return new Response(JSON.stringify({ ok: true, message: 'Logged out successfully.' }), {
         status: 200,
-        headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+        headers: {
+          'Content-Type': 'application/json',
+          ...getCorsHeaders(request),
+          'Set-Cookie': getClearSessionCookieHeader(),
+        },
       });
     }
 
@@ -833,18 +960,17 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
       }
 
       // Check authenticated session token
-      const authHeader = request.headers.get('Authorization') || '';
-      const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+      const token = extractSessionToken(request);
       if (!token) {
         return new Response(
           JSON.stringify({ error: 'SESSION_REQUIRED', message: 'Administrative session token required.' }),
-          { status: 401, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+          { status: 401, headers: { 'Content-Type': 'application/json', ...getCorsHeaders(request) } }
         );
       }
 
       return new Response(
         JSON.stringify({ ok: true, message: 'Admin authorization verified. State purge must be executed through controlled migration scripts.' }),
-        { status: 200, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+        { status: 200, headers: { 'Content-Type': 'application/json', ...getCorsHeaders(request) } }
       );
     }
 

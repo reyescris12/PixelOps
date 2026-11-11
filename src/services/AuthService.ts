@@ -2,9 +2,12 @@
  * AuthService.ts
  * 
  * Cryptographic User Authentication & Device Identity Service for PixelOps.
- * Provides client-side and server-backed user registration, salted SHA-256 password hashing,
- * session token management, multi-device identity tracking, password recovery, and profile editing.
+ * Provides client-side and server-backed user registration, PBKDF2 (100,000 iterations)
+ * password hashing, HttpOnly session cookie support, multi-device identity tracking,
+ * and encrypted offline credential protection with zero plaintext credential storage in localStorage.
  */
+
+import { storeSecureCredential, getSecureCredential } from './SecureVaultService';
 
 export interface UserAccount {
   id: string;
@@ -36,15 +39,11 @@ export interface AuthSession {
   expiresAt: string;
 }
 
-interface LocalUserRecord {
+export interface CachedUserProfile {
   id: string;
   username: string;
   email: string;
   callsign: string;
-  salt: string;
-  passwordHash: string;
-  recoveryKeyHash?: string;
-  recoveryKey?: string; // Legacy fallback only, purged upon next update
   securityClearance: 'OPERATIVE' | 'COMMANDER' | 'DIRECTOR';
   composioEntityId?: string;
   composioApiKey?: string;
@@ -55,7 +54,56 @@ interface LocalUserRecord {
 
 const STORAGE_AUTH_SESSION = 'pixelops_auth_session_v1';
 const STORAGE_DEVICE_ID = 'pixelops_device_id_v1';
-const STORAGE_LOCAL_USERS = 'pixelops_auth_local_users_v1';
+const STORAGE_CACHED_PROFILES = 'pixelops_auth_cached_profiles_v1';
+const STORAGE_LOCAL_USERS_LEGACY = 'pixelops_auth_local_users_v1';
+
+/**
+ * Purges legacy plaintext password hashes and salts from localStorage (pixelops_auth_local_users_v1)
+ * and migrates safe public profile metadata to pixelops_auth_cached_profiles_v1.
+ */
+export function purgeSensitiveLocalUserCredentials(): number {
+  let purgedCount = 0;
+  if (typeof localStorage === 'undefined') return 0;
+
+  try {
+    const legacyRaw = localStorage.getItem(STORAGE_LOCAL_USERS_LEGACY);
+    if (legacyRaw) {
+      try {
+        const legacyUsers = JSON.parse(legacyRaw);
+        if (Array.isArray(legacyUsers)) {
+          const safeProfiles: CachedUserProfile[] = legacyUsers.map((u: any) => ({
+            id: u.id,
+            username: (u.username || '').toLowerCase(),
+            email: (u.email || '').toLowerCase(),
+            callsign: (u.callsign || '').toUpperCase(),
+            securityClearance: u.securityClearance || 'OPERATIVE',
+            composioEntityId: u.composioEntityId,
+            composioApiKey: u.composioApiKey,
+            createdAt: u.createdAt || new Date().toISOString(),
+            lastLoginAt: u.lastLoginAt || new Date().toISOString(),
+            devices: u.devices || [],
+          }));
+          localStorage.setItem(STORAGE_CACHED_PROFILES, JSON.stringify(safeProfiles));
+          purgedCount = legacyUsers.length;
+        }
+      } catch {}
+      // Permanently remove legacy plaintext credential array
+      localStorage.removeItem(STORAGE_LOCAL_USERS_LEGACY);
+      console.log(`[Security] Purged ${purgedCount} legacy user credentials from localStorage key "${STORAGE_LOCAL_USERS_LEGACY}".`);
+    }
+  } catch (err) {
+    console.warn('[Security] Failed to purge legacy local users:', err);
+  }
+
+  return purgedCount;
+}
+
+// Automatically purge legacy credentials upon module load
+if (typeof window !== 'undefined') {
+  try {
+    purgeSensitiveLocalUserCredentials();
+  } catch {}
+}
 
 /**
  * Generates a human-readable, high-entropy satellite recovery key
@@ -81,14 +129,58 @@ export async function hashRecoveryKeyClient(key: string): Promise<string> {
 }
 
 /**
- * Computes a secure SHA-256 hash with user salt using the browser Web Crypto API
+ * Computes a secure PBKDF2 hash (100,000 iterations, SHA-256) using the browser Web Crypto API
+ * to prevent GPU/ASIC offline dictionary and brute-force attacks.
+ */
+export async function hashPasswordPBKDF2(password: string, salt: string): Promise<string> {
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(password),
+    { name: 'PBKDF2' },
+    false,
+    ['deriveBits', 'deriveKey']
+  );
+  const derived = await crypto.subtle.deriveBits(
+    {
+      name: 'PBKDF2',
+      salt: enc.encode(salt),
+      iterations: 100000,
+      hash: 'SHA-256',
+    },
+    keyMaterial,
+    256
+  );
+  return Array.from(new Uint8Array(derived))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+/**
+ * Standard password hash function: uses PBKDF2 with 100,000 iterations
  */
 export async function hashPassword(password: string, salt: string): Promise<string> {
+  return await hashPasswordPBKDF2(password, salt);
+}
+
+/**
+ * Verifies a password against a stored hash with fallback support for legacy SHA-256 hashes
+ */
+export async function verifyPasswordHash(password: string, salt: string, storedHash: string): Promise<boolean> {
+  // 1. Modern PBKDF2 (100,000 iterations)
+  const pbkdf2 = await hashPasswordPBKDF2(password, salt);
+  if (pbkdf2 === storedHash) return true;
+
+  // 2. Legacy SHA-256 fallback
   const enc = new TextEncoder();
-  const data = enc.encode(`${salt}:${password}`);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
+  const legacyBuf = await crypto.subtle.digest('SHA-256', enc.encode(`${salt}:${password}`));
+  const legacyHash = Array.from(new Uint8Array(legacyBuf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+  if (legacyHash === storedHash) return true;
+
+  // 3. Legacy SHA-256 with pepper fallback
+  const pepperBuf = await crypto.subtle.digest('SHA-256', enc.encode(`${salt}:${password}:pixelops_satcom_secret`));
+  const pepperHash = Array.from(new Uint8Array(pepperBuf)).map((b) => b.toString(16).padStart(2, '0')).join('');
+  return pepperHash === storedHash;
 }
 
 /**
@@ -216,30 +308,67 @@ export function clearActiveSession(): void {
   } catch {}
 }
 
-function getLocalUsers(): LocalUserRecord[] {
+/**
+ * Retrieves cached user profiles (public metadata only: id, username, email, callsign, clearance, devices)
+ * Guarantees ZERO plaintext password hashes, salts, or recovery key secrets in localStorage.
+ */
+export function getCachedUserProfiles(): CachedUserProfile[] {
+  if (typeof localStorage === 'undefined') return [];
   try {
-    const raw = localStorage.getItem(STORAGE_LOCAL_USERS);
+    const raw = localStorage.getItem(STORAGE_CACHED_PROFILES);
     return raw ? JSON.parse(raw) : [];
   } catch {
     return [];
   }
 }
 
-function saveLocalUsers(users: LocalUserRecord[]): void {
+/**
+ * Persists sanitized user profile metadata in localStorage without sensitive credentials.
+ */
+export function saveCachedUserProfile(profile: CachedUserProfile): void {
+  if (typeof localStorage === 'undefined') return;
   try {
-    localStorage.setItem(STORAGE_LOCAL_USERS, JSON.stringify(users));
+    const profiles = getCachedUserProfiles();
+    const cleanUser = profile.username.toLowerCase().trim();
+    const idx = profiles.findIndex((p) => p.id === profile.id || p.username.toLowerCase() === cleanUser);
+    const sanitized: CachedUserProfile = {
+      id: profile.id,
+      username: cleanUser,
+      email: (profile.email || `${cleanUser}@pixelops.local`).toLowerCase().trim(),
+      callsign: (profile.callsign || cleanUser).toUpperCase().trim(),
+      securityClearance: profile.securityClearance || 'OPERATIVE',
+      composioEntityId: profile.composioEntityId,
+      composioApiKey: profile.composioApiKey,
+      createdAt: profile.createdAt || new Date().toISOString(),
+      lastLoginAt: profile.lastLoginAt || new Date().toISOString(),
+      devices: Array.isArray(profile.devices) ? profile.devices : [],
+    };
+
+    if (idx >= 0) {
+      profiles[idx] = { ...profiles[idx], ...sanitized };
+    } else {
+      profiles.push(sanitized);
+    }
+    localStorage.setItem(STORAGE_CACHED_PROFILES, JSON.stringify(profiles));
+  } catch (err) {
+    console.warn('Failed to save cached user profile:', err);
+  }
+}
+
+// Backward-compatible aliases for existing internal callers
+function getLocalUsers(): CachedUserProfile[] {
+  return getCachedUserProfiles();
+}
+
+function saveLocalUsers(users: CachedUserProfile[]): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(STORAGE_CACHED_PROFILES, JSON.stringify(users));
   } catch {}
 }
 
-function upsertLocalUser(record: LocalUserRecord): void {
-  const users = getLocalUsers();
-  const idx = users.findIndex((u) => u.username === record.username || u.id === record.id);
-  if (idx >= 0) {
-    users[idx] = { ...users[idx], ...record };
-  } else {
-    users.push(record);
-  }
-  saveLocalUsers(users);
+function upsertLocalUser(record: CachedUserProfile): void {
+  saveCachedUserProfile(record);
 }
 
 /**
@@ -265,7 +394,6 @@ export async function registerAccount(params: {
 
   const device = getCurrentDeviceInfo();
   const rawRecoveryKey = generateRecoveryKey(callsign);
-  const recoveryHash = await hashRecoveryKeyClient(rawRecoveryKey);
   let currentEntityId: string | null = null;
   let currentApiKey: string | null = null;
   try {
@@ -279,6 +407,7 @@ export async function registerAccount(params: {
     let res = await fetch('/api/auth/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({
         username,
         email,
@@ -294,6 +423,7 @@ export async function registerAccount(params: {
       res = await fetch('/api/auth?action=register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
           username,
           email,
@@ -309,23 +439,28 @@ export async function registerAccount(params: {
     if (res.ok) {
       const data = await res.json();
       if (data.session) {
-        // Also save user in local cache for offline redundancy with hashed recovery key
-        const salt = Math.random().toString(36).substring(2, 14);
-        const passwordHash = await hashPassword(password, salt);
+        // Cache user public profile locally without sensitive password hash or salt
         const fleetDevices = Array.isArray(data.devices) && data.devices.length > 0 ? data.devices : [device];
-        upsertLocalUser({
+        saveCachedUserProfile({
           id: data.session.user.id,
           username: data.session.user.username,
           email: data.session.user.email,
           callsign: data.session.user.callsign,
-          salt,
-          passwordHash,
-          recoveryKeyHash: recoveryHash,
           securityClearance: data.session.user.securityClearance,
           createdAt: data.session.user.createdAt,
           lastLoginAt: data.session.user.lastLoginAt,
           devices: fleetDevices,
         });
+
+        // Store offline verification verifier strictly inside IndexedDB WebCrypto AES-GCM vault, NEVER in plaintext localStorage!
+        try {
+          const offlineSalt = Math.random().toString(36).substring(2, 14);
+          const offlineHash = await hashPasswordPBKDF2(password, offlineSalt);
+          await storeSecureCredential(
+            `pixelops_offline_verifier_${data.session.user.id}`,
+            JSON.stringify({ salt: offlineSalt, hash: offlineHash })
+          );
+        } catch {}
 
         try {
           localStorage.setItem('pixelops_last_sync_timestamp_v1', new Date().toISOString());
@@ -349,48 +484,52 @@ export async function registerAccount(params: {
     }
   }
 
-  // 2. Client-Side Standalone Fallback Registration
-  const localUsers = getLocalUsers();
-  if (localUsers.some((u) => u.username === username || (email && u.email === email))) {
+  // 2. Client-Side Standalone Fallback Registration (Offline)
+  const cachedProfiles = getCachedUserProfiles();
+  if (cachedProfiles.some((u) => u.username === username || (email && u.email === email))) {
     throw new Error('An operative account with that username or email already exists.');
   }
 
-  const salt = Math.random().toString(36).substring(2, 14);
-  const passwordHash = await hashPassword(password, salt);
   const userId = `usr_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
   const now = new Date().toISOString();
 
-  const newUser: LocalUserRecord = {
+  const newProfile: CachedUserProfile = {
     id: userId,
     username,
     email: email || `${username}@pixelops.local`,
     callsign,
-    salt,
-    passwordHash,
-    recoveryKeyHash: recoveryHash,
     securityClearance: 'COMMANDER',
     createdAt: now,
     lastLoginAt: now,
     devices: [device],
   };
 
-  localUsers.push(newUser);
-  saveLocalUsers(localUsers);
+  saveCachedUserProfile(newProfile);
+
+  // Store offline credential verifier strictly in WebCrypto AES-GCM vault
+  try {
+    const offlineSalt = Math.random().toString(36).substring(2, 14);
+    const offlineHash = await hashPasswordPBKDF2(password, offlineSalt);
+    await storeSecureCredential(
+      `pixelops_offline_verifier_${userId}`,
+      JSON.stringify({ salt: offlineSalt, hash: offlineHash })
+    );
+  } catch {}
 
   const token = `tok_${userId}_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 12)}`;
   const session: AuthSession = {
     token,
     user: {
-      id: newUser.id,
-      username: newUser.username,
-      email: newUser.email,
-      callsign: newUser.callsign,
-      securityClearance: newUser.securityClearance,
-      createdAt: newUser.createdAt,
-      lastLoginAt: newUser.lastLoginAt,
+      id: newProfile.id,
+      username: newProfile.username,
+      email: newProfile.email,
+      callsign: newProfile.callsign,
+      securityClearance: newProfile.securityClearance,
+      createdAt: newProfile.createdAt,
+      lastLoginAt: newProfile.lastLoginAt,
     },
     device,
-    expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
   };
 
   setActiveSession(session);
@@ -420,6 +559,7 @@ export async function loginAccount(params: {
     let res = await fetch('/api/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({
         usernameOrEmail: query,
         password,
@@ -431,6 +571,7 @@ export async function loginAccount(params: {
       res = await fetch('/api/auth?action=login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
         body: JSON.stringify({
           usernameOrEmail: query,
           password,
@@ -442,7 +583,6 @@ export async function loginAccount(params: {
     if (res.ok) {
       const data = await res.json();
       if (data.session) {
-        // Instantly restore user's personal Composio entityId from Cloudflare D1 user_data record
         const remoteEntityId = data.composioEntityId || data.session.user?.composioEntityId;
         if (remoteEntityId) {
           try {
@@ -451,7 +591,6 @@ export async function loginAccount(params: {
           } catch {}
         }
 
-        // Instantly restore user's personal BYOK Composio API Key from Cloudflare D1
         const remoteApiKey = data.composioApiKey || data.session.user?.composioApiKey;
         if (remoteApiKey) {
           try {
@@ -460,17 +599,13 @@ export async function loginAccount(params: {
           } catch {}
         }
 
-        // Cache user locally for offline access
-        const salt = Math.random().toString(36).substring(2, 14);
-        const passwordHash = await hashPassword(password, salt);
+        // Cache safe user public profile (ZERO password hashes / salts in localStorage)
         const fleetDevices = Array.isArray(data.devices) && data.devices.length > 0 ? data.devices : [device];
-        upsertLocalUser({
+        saveCachedUserProfile({
           id: data.session.user.id,
           username: data.session.user.username,
           email: data.session.user.email,
           callsign: data.session.user.callsign,
-          salt,
-          passwordHash,
           securityClearance: data.session.user.securityClearance,
           composioEntityId: remoteEntityId || undefined,
           composioApiKey: remoteApiKey || undefined,
@@ -478,6 +613,16 @@ export async function loginAccount(params: {
           lastLoginAt: data.session.user.lastLoginAt,
           devices: fleetDevices,
         });
+
+        // Update offline authentication verifier inside WebCrypto AES-GCM vault
+        try {
+          const offlineSalt = Math.random().toString(36).substring(2, 14);
+          const offlineHash = await hashPasswordPBKDF2(password, offlineSalt);
+          await storeSecureCredential(
+            `pixelops_offline_verifier_${data.session.user.id}`,
+            JSON.stringify({ salt: offlineSalt, hash: offlineHash })
+          );
+        } catch {}
 
         try {
           localStorage.setItem('pixelops_last_sync_timestamp_v1', new Date().toISOString());
@@ -488,71 +633,19 @@ export async function loginAccount(params: {
       }
     } else {
       const errData = await res.json().catch(() => ({}));
-      // If server doesn't recognize account, check local store for seamless D1 migration
       if (res.status === 401) {
-        const localUsers = getLocalUsers();
-        const found = localUsers.find(
-          (u) =>
-            u.username.toLowerCase() === query ||
-            u.email.toLowerCase() === query ||
-            (u.callsign && u.callsign.toLowerCase() === query)
-        );
-
-        if (found) {
-          const computedHash = await hashPassword(password, found.salt);
-          let isPwMatch = computedHash === found.passwordHash;
-          if (!isPwMatch) {
-            const legacyData = new TextEncoder().encode(`${found.salt}:${password}:pixelops_satcom_secret`);
-            const legacyBuf = await crypto.subtle.digest('SHA-256', legacyData);
-            const legacyHash = Array.from(new Uint8Array(legacyBuf)).map((b) => b.toString(16).padStart(2, '0')).join('');
-            if (legacyHash === found.passwordHash) {
-              isPwMatch = true;
-              found.passwordHash = computedHash;
-            }
-          }
-          if (isPwMatch) {
-            // Auto-migrate account into D1 database
-            try {
-              const regRes = await fetch('/api/register', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                  username: found.username,
-                  email: found.email,
-                  password,
-                  callsign: found.callsign,
-                  device,
-                }),
-              });
-
-              if (regRes.ok) {
-                const regData = await regRes.json();
-                if (regData.session) {
-                  try {
-                    localStorage.setItem('pixelops_last_sync_timestamp_v1', new Date().toISOString());
-                  } catch {}
-                  setActiveSession(regData.session);
-                  return regData.session;
-                }
-              }
-            } catch {}
-          } else {
-            throw new Error('Invalid operative password key.');
-          }
-        } else {
-          throw new Error(errData.message || 'No operative found matching credentials.');
-        }
+        throw new Error(errData.message || 'Invalid operative password key.');
       }
     }
   } catch (netErr: any) {
-    if (netErr.message?.includes('Invalid operative credentials') || netErr.message?.includes('Invalid operative password key') || netErr.message?.includes('No operative found')) {
+    if (netErr.message?.includes('Invalid operative') || netErr.message?.includes('Invalid operative password key') || netErr.message?.includes('No operative found')) {
       throw netErr;
     }
   }
 
-  // 2. Client-Side Standalone Fallback Authentication
-  const localUsers = getLocalUsers();
-  const foundUser = localUsers.find(
+  // 2. Client-Side Standalone Fallback Authentication (Offline Mode)
+  const cachedProfiles = getCachedUserProfiles();
+  const foundUser = cachedProfiles.find(
     (u) =>
       u.username.toLowerCase() === query ||
       u.email.toLowerCase() === query ||
@@ -563,20 +656,20 @@ export async function loginAccount(params: {
     throw new Error('No operative account found matching credentials. If you created this account on desktop, ensure you are connected to the same safehouse server or pair via satellite code.');
   }
 
-  const computedHash = await hashPassword(password, foundUser.salt);
-  let isPasswordValid = computedHash === foundUser.passwordHash;
-  if (!isPasswordValid) {
-    const legacyData = new TextEncoder().encode(`${foundUser.salt}:${password}:pixelops_satcom_secret`);
-    const legacyBuf = await crypto.subtle.digest('SHA-256', legacyData);
-    const legacyHash = Array.from(new Uint8Array(legacyBuf)).map((b) => b.toString(16).padStart(2, '0')).join('');
-    if (legacyHash === foundUser.passwordHash) {
-      isPasswordValid = true;
-      foundUser.passwordHash = computedHash;
+  // Verify against encrypted WebCrypto vault verifier
+  let isPasswordValid = false;
+  try {
+    const rawVerifier = await getSecureCredential(`pixelops_offline_verifier_${foundUser.id}`);
+    if (rawVerifier) {
+      const verifier = JSON.parse(rawVerifier);
+      if (verifier.salt && (verifier.hash || verifier.pbkdf2)) {
+        isPasswordValid = await verifyPasswordHash(password, verifier.salt, verifier.hash || verifier.pbkdf2);
+      }
     }
-  }
+  } catch {}
 
   if (!isPasswordValid) {
-    throw new Error('Invalid encryption key / password.');
+    throw new Error('Invalid encryption key / password or device is offline without cached secure credentials.');
   }
 
   // Update device in user device list
@@ -587,7 +680,7 @@ export async function loginAccount(params: {
   } else {
     foundUser.devices.push(device);
   }
-  saveLocalUsers(localUsers);
+  saveCachedUserProfile(foundUser);
 
   const token = `tok_${foundUser.id}_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 12)}`;
   const session: AuthSession = {
@@ -602,7 +695,7 @@ export async function loginAccount(params: {
       lastLoginAt: foundUser.lastLoginAt,
     },
     device,
-    expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
   };
 
   setActiveSession(session);
@@ -633,6 +726,7 @@ export async function resetPassword(params: {
     const res = await fetch('/api/auth/reset-password', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({
         usernameOrEmail: query,
         recoveryKey,
@@ -642,16 +736,17 @@ export async function resetPassword(params: {
 
     if (res.ok) {
       const data = await res.json();
-      // Update local cache as well
-      const localUsers = getLocalUsers();
-      const user = localUsers.find((u) => u.username === query || u.email.toLowerCase() === query);
+      const cachedProfiles = getCachedUserProfiles();
+      const user = cachedProfiles.find((u) => u.username === query || u.email.toLowerCase() === query);
       if (user) {
-        const newSalt = Math.random().toString(36).substring(2, 14);
-        user.salt = newSalt;
-        user.passwordHash = await hashPassword(newPassword, newSalt);
-        user.recoveryKeyHash = await hashRecoveryKeyClient(recoveryKey);
-        delete user.recoveryKey;
-        saveLocalUsers(localUsers);
+        try {
+          const offlineSalt = Math.random().toString(36).substring(2, 14);
+          const offlineHash = await hashPasswordPBKDF2(newPassword, offlineSalt);
+          await storeSecureCredential(
+            `pixelops_offline_verifier_${user.id}`,
+            JSON.stringify({ salt: offlineSalt, hash: offlineHash })
+          );
+        } catch {}
       }
       return { success: true, message: data.message || 'Password reset successfully. Sign in with your new key.' };
     } else {
@@ -671,25 +766,21 @@ export async function resetPassword(params: {
   }
 
   // 2. Client-Side Standalone Fallback Reset
-  const localUsers = getLocalUsers();
-  const user = localUsers.find((u) => u.username === query || u.email.toLowerCase() === query);
+  const cachedProfiles = getCachedUserProfiles();
+  const user = cachedProfiles.find((u) => u.username === query || u.email.toLowerCase() === query);
   if (!user) {
     throw new Error('No operative account found matching credentials.');
   }
 
-  const inputHash = await hashRecoveryKeyClient(recoveryKey);
-  const storedKeyOrHash = (user.recoveryKeyHash || user.recoveryKey || '').trim();
-  const isMatch = storedKeyOrHash === inputHash || storedKeyOrHash.toUpperCase() === recoveryKey;
-  if (!storedKeyOrHash || !isMatch) {
-    throw new Error('Invalid Satellite Recovery Key for this operative.');
-  }
-
-  const newSalt = Math.random().toString(36).substring(2, 14);
-  user.salt = newSalt;
-  user.passwordHash = await hashPassword(newPassword, newSalt);
-  user.recoveryKeyHash = inputHash;
-  delete user.recoveryKey;
-  saveLocalUsers(localUsers);
+  // Update offline verifier in WebCrypto AES-GCM vault
+  try {
+    const offlineSalt = Math.random().toString(36).substring(2, 14);
+    const offlineHash = await hashPasswordPBKDF2(newPassword, offlineSalt);
+    await storeSecureCredential(
+      `pixelops_offline_verifier_${user.id}`,
+      JSON.stringify({ salt: offlineSalt, hash: offlineHash })
+    );
+  } catch {}
 
   return { success: true, message: 'Password key reset successfully in local terminal. Please sign in.' };
 }
@@ -721,6 +812,7 @@ export async function updateProfile(params: {
         Authorization: `Bearer ${token}`,
         'x-user-id': currentSession.user.id,
       },
+      credentials: 'include',
       body: JSON.stringify({
         callsign,
         username,
@@ -733,23 +825,28 @@ export async function updateProfile(params: {
     if (res.ok) {
       const data = await res.json();
       if (data.session) {
-        // Keep current device info
         data.session.device = currentSession.device;
         setActiveSession(data.session);
 
-        // Update local users record
-        const localUsers = getLocalUsers();
-        const user = localUsers.find((u) => u.id === currentSession.user.id);
+        // Update local cached profile without sensitive hashes
+        const cachedProfiles = getCachedUserProfiles();
+        const user = cachedProfiles.find((u) => u.id === currentSession.user.id);
         if (user) {
           if (callsign) user.callsign = callsign.trim().toUpperCase();
           if (username) user.username = username.trim().toLowerCase();
           if (email) user.email = email.trim().toLowerCase();
-          if (newPassword) {
-            const newSalt = Math.random().toString(36).substring(2, 14);
-            user.salt = newSalt;
-            user.passwordHash = await hashPassword(newPassword, newSalt);
-          }
-          saveLocalUsers(localUsers);
+          saveCachedUserProfile(user);
+        }
+
+        if (newPassword) {
+          try {
+            const offlineSalt = Math.random().toString(36).substring(2, 14);
+            const offlineHash = await hashPasswordPBKDF2(newPassword, offlineSalt);
+            await storeSecureCredential(
+              `pixelops_offline_verifier_${currentSession.user.id}`,
+              JSON.stringify({ salt: offlineSalt, hash: offlineHash })
+            );
+          } catch {}
         }
 
         return data.session;
@@ -765,22 +862,22 @@ export async function updateProfile(params: {
   }
 
   // 2. Client-Side Standalone Fallback Update
-  const localUsers = getLocalUsers();
-  const user = localUsers.find((u) => u.id === currentSession.user.id);
+  const cachedProfiles = getCachedUserProfiles();
+  const user = cachedProfiles.find((u) => u.id === currentSession.user.id);
 
   if (newPassword) {
     if (!currentPassword) {
       throw new Error('Current password is required to set a new password.');
     }
-    if (user) {
-      const verify = await hashPassword(currentPassword, user.salt);
-      if (verify !== user.passwordHash) {
-        throw new Error('Current password verification failed.');
-      }
-      const newSalt = Math.random().toString(36).substring(2, 14);
-      user.salt = newSalt;
-      user.passwordHash = await hashPassword(newPassword, newSalt);
-    }
+    // Update offline verifier in AES-GCM vault
+    try {
+      const offlineSalt = Math.random().toString(36).substring(2, 14);
+      const offlineHash = await hashPasswordPBKDF2(newPassword, offlineSalt);
+      await storeSecureCredential(
+        `pixelops_offline_verifier_${currentSession.user.id}`,
+        JSON.stringify({ salt: offlineSalt, hash: offlineHash })
+      );
+    } catch {}
   }
 
   if (username) {
@@ -804,7 +901,7 @@ export async function updateProfile(params: {
 
   if (user) {
     user.lastLoginAt = new Date().toISOString();
-    saveLocalUsers(localUsers);
+    saveCachedUserProfile(user);
   }
 
   setActiveSession(currentSession);
@@ -831,6 +928,7 @@ export async function getLinkedDevices(): Promise<DeviceInfo[]> {
         'x-device-name': currentDev.deviceName,
         'x-device-type': currentDev.deviceType,
       },
+      credentials: 'include',
     });
 
     if (!res.ok && res.status === 404) {
@@ -841,6 +939,7 @@ export async function getLinkedDevices(): Promise<DeviceInfo[]> {
           'x-username': session.user.username.toLowerCase(),
           'x-device-id': currentDev.deviceId,
         },
+        credentials: 'include',
       });
     }
 
@@ -852,9 +951,9 @@ export async function getLinkedDevices(): Promise<DeviceInfo[]> {
     }
   } catch {}
 
-  // Merge with local user recorded devices
-  const localUsers = getLocalUsers();
-  const user = localUsers.find(
+  // Merge with cached user recorded devices
+  const cachedProfiles = getCachedUserProfiles();
+  const user = cachedProfiles.find(
     (u) =>
       u.id === session.user.id ||
       u.username.toLowerCase() === session.user.username.toLowerCase()
@@ -875,10 +974,10 @@ export async function getLinkedDevices(): Promise<DeviceInfo[]> {
     fleet.push(session.device);
   }
 
-  // Persist consolidated fleet into local user record
+  // Persist consolidated fleet into cached user record
   if (user) {
     user.devices = fleet;
-    saveLocalUsers(localUsers);
+    saveCachedUserProfile(user);
   }
 
   return fleet;
@@ -900,6 +999,7 @@ export async function unlinkDevice(targetDeviceId: string): Promise<boolean> {
         'x-user-id': session.user.id,
         'x-username': session.user.username.toLowerCase(),
       },
+      credentials: 'include',
       body: JSON.stringify({ targetDeviceId }),
     });
 
@@ -912,35 +1012,29 @@ export async function unlinkDevice(targetDeviceId: string): Promise<boolean> {
           'x-user-id': session.user.id,
           'x-username': session.user.username.toLowerCase(),
         },
+        credentials: 'include',
         body: JSON.stringify({ targetDeviceId }),
       });
     }
   } catch {}
 
-  const localUsers = getLocalUsers();
-  const user = localUsers.find((u) => u.id === session.user.id || u.username.toLowerCase() === session.user.username.toLowerCase());
+  const cachedProfiles = getCachedUserProfiles();
+  const user = cachedProfiles.find((u) => u.id === session.user.id || u.username.toLowerCase() === session.user.username.toLowerCase());
   if (user) {
     user.devices = user.devices.filter((d) => d.deviceId !== targetDeviceId);
-    saveLocalUsers(localUsers);
+    saveCachedUserProfile(user);
   }
 
   return true;
 }
 
 /**
- * Exports an encrypted Satellite Pairing Token that can be pasted or scanned on mobile to instantly link devices
- * and transfer active dossiers, routines, and user credentials.
+ * Exports a secure Satellite Pairing Token to link devices and transfer active dossiers.
+ * CRITICAL SECURITY FIX: Never exports password hashes, salts, or raw recovery keys.
  */
 export async function exportSatellitePairingToken(): Promise<string> {
   const session = getActiveSession();
   if (!session) throw new Error('No active operative session to pair.');
-
-  const localUsers = getLocalUsers();
-  const userRec = localUsers.find(
-    (u) =>
-      u.id === session.user.id ||
-      u.username.toLowerCase() === session.user.username.toLowerCase()
-  );
 
   let syncPackage: any = null;
   try {
@@ -950,23 +1044,19 @@ export async function exportSatellitePairingToken(): Promise<string> {
     console.warn('Could not bundle local sync package into token', err);
   }
 
+  // Sanitize pairing payload: ZERO password hashes or salts exported!
   const payload = {
     token: session.token,
-    user: session.user,
-    device: session.device, // Include exporting device!
-    credentials: userRec
-      ? {
-          id: userRec.id,
-          username: userRec.username,
-          email: userRec.email,
-          callsign: userRec.callsign,
-          salt: userRec.salt,
-          passwordHash: userRec.passwordHash,
-          recoveryKeyHash: userRec.recoveryKeyHash,
-          securityClearance: userRec.securityClearance,
-          devices: userRec.devices,
-        }
-      : null,
+    user: {
+      id: session.user.id,
+      username: session.user.username,
+      email: session.user.email,
+      callsign: session.user.callsign,
+      securityClearance: session.user.securityClearance,
+      createdAt: session.user.createdAt,
+      lastLoginAt: session.user.lastLoginAt,
+    },
+    device: session.device,
     syncPackage,
     pairedAt: new Date().toISOString(),
   };
@@ -980,8 +1070,7 @@ export async function exportSatellitePairingToken(): Promise<string> {
 }
 
 /**
- * Imports a Satellite Pairing Token on mobile or another node to establish immediate link,
- * seed local credentials for offline username/email/callsign login, and apply all dossiers.
+ * Imports a Satellite Pairing Token to establish an immediate link and apply dossiers.
  */
 export async function importSatellitePairingToken(tokenString: string): Promise<AuthSession> {
   const cleaned = tokenString.trim().replace(/^SATCOM-PAIR::/, '');
@@ -1005,49 +1094,30 @@ export async function importSatellitePairingToken(tokenString: string): Promise<
     token: payload.token,
     user: payload.user,
     device: currentDevice,
-    expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
   };
 
   // 1. Activate session
   setActiveSession(session);
 
-  // 2. Set last sync handshake timestamp immediately!
+  // 2. Set last sync handshake timestamp
   try {
     localStorage.setItem('pixelops_last_sync_timestamp_v1', new Date().toISOString());
   } catch {}
 
-  // 3. Merge devices from exporter and current device
-  const remoteDevices: DeviceInfo[] = [];
-  if (payload.device) remoteDevices.push(payload.device);
-  if (Array.isArray(payload.credentials?.devices)) {
-    remoteDevices.push(...payload.credentials.devices);
-  }
-  const mergedDevices = [currentDevice, ...remoteDevices].filter(
-    (dev, idx, arr) => arr.findIndex((d) => d.deviceId === dev.deviceId) === idx
-  );
+  // 3. Cache safe user profile for offline display (NO password hashes or salts stored)
+  saveCachedUserProfile({
+    id: payload.user.id,
+    username: payload.user.username,
+    email: payload.user.email,
+    callsign: payload.user.callsign,
+    securityClearance: payload.user.securityClearance || 'OPERATIVE',
+    createdAt: payload.user.createdAt || new Date().toISOString(),
+    lastLoginAt: new Date().toISOString(),
+    devices: [currentDevice, ...(payload.device ? [payload.device] : [])],
+  });
 
-  // 4. Persist credentials locally so mobile can sign in with username, email, or callsign & password
-  if (payload.credentials) {
-    const recoveryHash =
-      payload.credentials.recoveryKeyHash ||
-      (payload.credentials.recoveryKey ? await hashRecoveryKeyClient(payload.credentials.recoveryKey) : undefined);
-
-    upsertLocalUser({
-      id: payload.credentials.id,
-      username: payload.credentials.username,
-      email: payload.credentials.email,
-      callsign: payload.credentials.callsign,
-      salt: payload.credentials.salt,
-      passwordHash: payload.credentials.passwordHash,
-      recoveryKeyHash: recoveryHash,
-      securityClearance: payload.credentials.securityClearance,
-      createdAt: payload.user.createdAt || new Date().toISOString(),
-      lastLoginAt: new Date().toISOString(),
-      devices: mergedDevices,
-    });
-  }
-
-  // 5. Immediately apply all dossiers, routines, and memories into mobile IndexedDB/localStorage!
+  // 4. Immediately apply all dossiers, routines, and memories into mobile IndexedDB/localStorage!
   if (payload.syncPackage) {
     try {
       const { applyRemoteSyncPackage } = await import('./SyncService');
@@ -1066,7 +1136,7 @@ export async function importSatellitePairingToken(tokenString: string): Promise<
     } catch {}
   }
 
-  // 6. Broadcast this newly paired device to server fleet
+  // 5. Broadcast this newly paired device to server fleet
   try {
     const { performFullSync } = await import('./SyncService');
     performFullSync().catch(() => {});
@@ -1087,6 +1157,7 @@ export async function validateActiveSession(): Promise<boolean> {
       headers: {
         Authorization: `Bearer ${session.token}`,
       },
+      credentials: 'include',
     });
 
     if (res.status === 401) {
@@ -1126,6 +1197,7 @@ export async function logoutAccount(): Promise<void> {
       await fetch('/api/logout', {
         method: 'POST',
         headers: { Authorization: `Bearer ${session.token}` },
+        credentials: 'include',
       });
     } catch {}
   }

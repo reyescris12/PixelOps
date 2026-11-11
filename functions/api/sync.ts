@@ -58,7 +58,14 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
 
   if (!userKey) {
     const authHeader = request.headers.get('Authorization') || '';
-    const token = authHeader.replace(/^Bearer\s+/i, '').trim();
+    let token = authHeader.replace(/^Bearer\s+/i, '').trim();
+    if (!token) {
+      const cookieHeader = request.headers.get('Cookie') || '';
+      const match = cookieHeader.match(/(?:^|;\s*)pixelops_session=([^;]+)/);
+      if (match) {
+        token = decodeURIComponent(match[1].trim());
+      }
+    }
     if (token) {
       if (d1) {
         const row = await d1.prepare(`

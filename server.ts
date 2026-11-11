@@ -663,9 +663,100 @@ function hashRecoveryKeyServer(key: string): string {
   return crypto.createHash('sha256').update(`recovery:${key.trim().toUpperCase()}`).digest('hex');
 }
 
-function hashPasswordServer(password: string, salt: string): string {
+/**
+ * PBKDF2 Password Hashing (100,000 iterations, SHA-256)
+ * Upgraded from legacy single-pass SHA-256 to prevent GPU/ASIC offline dictionary & brute-force attacks.
+ */
+function hashPasswordPBKDF2Server(password: string, salt: string): string {
+  return crypto.pbkdf2Sync(password, salt, 100000, 32, 'sha256').toString('hex');
+}
+
+/**
+ * Legacy salted SHA-256 hashing for seamless backward compatibility with existing operative accounts.
+ */
+function hashPasswordLegacyServer(password: string, salt: string): string {
   const pepper = process.env.SATCOM_SECRET || 'pixelops_satcom_secret';
   return crypto.createHash('sha256').update(`${salt}:${password}:${pepper}`).digest('hex');
+}
+
+function hashPasswordServer(password: string, salt: string): string {
+  return hashPasswordPBKDF2Server(password, salt);
+}
+
+/**
+ * Verifies a password against stored hash, testing PBKDF2 first, then legacy SHA-256.
+ * Returns whether the password is valid and if the stored hash was legacy (for auto-upgrade).
+ */
+function verifyPasswordServer(password: string, salt: string, storedHash: string): { valid: boolean; isLegacy: boolean } {
+  if (!storedHash) return { valid: false, isLegacy: false };
+  const pbkdf2 = hashPasswordPBKDF2Server(password, salt);
+  if (timingSafeEqualStr(pbkdf2, storedHash)) {
+    return { valid: true, isLegacy: false };
+  }
+  const legacy = hashPasswordLegacyServer(password, salt);
+  if (timingSafeEqualStr(legacy, storedHash)) {
+    return { valid: true, isLegacy: true };
+  }
+  return { valid: false, isLegacy: false };
+}
+
+function parseCookies(cookieHeader: string | undefined): Record<string, string> {
+  const list: Record<string, string> = {};
+  if (!cookieHeader) return list;
+  cookieHeader.split(';').forEach((cookie) => {
+    const parts = cookie.split('=');
+    if (parts.length >= 2) {
+      const key = parts[0].trim();
+      const value = parts.slice(1).join('=').trim();
+      list[key] = decodeURIComponent(value);
+    }
+  });
+  return list;
+}
+
+function extractSessionToken(req: express.Request): string {
+  const authHeader = (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+  if (authHeader) return authHeader;
+  const cookies = parseCookies(req.headers.cookie);
+  return cookies['pixelops_session'] || '';
+}
+
+const SESSION_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000; // 7 days (reduced from unbounded 30 days)
+
+function setSessionCookie(res: express.Response, token: string, maxAgeSec = 7 * 24 * 60 * 60): void {
+  const isProd = process.env.NODE_ENV === 'production' || process.env.HTTPS === 'true';
+  const cookieParts = [
+    `pixelops_session=${encodeURIComponent(token)}`,
+    'Path=/',
+    'HttpOnly',
+    'SameSite=Strict',
+    `Max-Age=${maxAgeSec}`,
+  ];
+  if (isProd) {
+    cookieParts.push('Secure');
+  }
+  res.setHeader('Set-Cookie', cookieParts.join('; '));
+}
+
+function clearSessionCookie(res: express.Response): void {
+  res.setHeader('Set-Cookie', 'pixelops_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT');
+}
+
+function validateAndGetToken(store: SyncDataStore, token: string): { valid: boolean; tokenData?: any; expired?: boolean } {
+  if (!token) return { valid: false };
+  const tokenData = store.tokens[token];
+  if (!tokenData) return { valid: false };
+
+  if (tokenData.expiresAt) {
+    const exp = new Date(tokenData.expiresAt).getTime();
+    if (!isNaN(exp) && exp <= Date.now()) {
+      delete store.tokens[token];
+      saveSyncStore(store);
+      return { valid: false, expired: true };
+    }
+  }
+
+  return { valid: true, tokenData };
 }
 
 const resetAttemptTracker = new Map<string, { attempts: number; resetAt: number }>();
@@ -690,11 +781,17 @@ async function startServer() {
 
   // CORS Middleware for Mobile Browsers & Cross-Origin Sync
   app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', '*');
+    const origin = req.headers.origin;
+    if (origin) {
+      res.header('Access-Control-Allow-Origin', origin);
+      res.header('Access-Control-Allow-Credentials', 'true');
+    } else {
+      res.header('Access-Control-Allow-Origin', '*');
+    }
     res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.header(
       'Access-Control-Allow-Headers',
-      'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-user-id, x-device-id'
+      'Origin, X-Requested-With, Content-Type, Accept, Authorization, x-user-id, x-device-id, x-username, x-entity-id, x-composio-api-key, Cookie'
     );
     if (req.method === 'OPTIONS') {
       return res.sendStatus(204);
@@ -721,9 +818,11 @@ async function startServer() {
       }
 
       const salt = Math.random().toString(36).substring(2, 12);
-      const passwordHash = hashPasswordServer(password, salt);
+      // Cryptographically secure PBKDF2 (100,000 iterations)
+      const passwordHash = hashPasswordPBKDF2Server(password, salt);
       const userId = `usr_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 8)}`;
       const now = new Date().toISOString();
+      const expiresAt = new Date(Date.now() + SESSION_LIFETIME_MS).toISOString();
       const incomingEntityId = req.body?.composioEntityId || req.body?.entityId || (req.headers['x-entity-id'] as string) || null;
       const incomingApiKey = req.body?.composioApiKey || req.body?.apiKey || (req.headers['x-composio-api-key'] as string) || null;
 
@@ -749,7 +848,7 @@ async function startServer() {
 
       const token = `tok_${userId}_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 12)}`;
       store.users[cleanUser] = userRecord;
-      store.tokens[token] = { userId, username: cleanUser };
+      store.tokens[token] = { userId, username: cleanUser, expiresAt, createdAt: now };
       if (incomingEntityId || incomingApiKey) {
         store.vaults[userId] = { composioEntityId: incomingEntityId, composioApiKey: incomingApiKey };
         store.vaults[cleanUser] = { composioEntityId: incomingEntityId, composioApiKey: incomingApiKey };
@@ -760,6 +859,9 @@ async function startServer() {
         store.devices[cleanUser] = store.devices[userId];
       }
       saveSyncStore(store);
+
+      // Issue HttpOnly, Secure, SameSite=Strict session cookie
+      setSessionCookie(res, token);
 
       const session = {
         token,
@@ -775,7 +877,7 @@ async function startServer() {
           lastLoginAt: now,
         },
         device: device || { deviceId: 'default', deviceName: 'Browser', deviceType: 'desktop', lastActive: now },
-        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        expiresAt,
       };
 
       res.json({ ok: true, session, composioEntityId: incomingEntityId, composioApiKey: incomingApiKey, oneTimeRecoveryKey: rawRecoveryKey, devices: userRecord.devices });
@@ -805,9 +907,15 @@ async function startServer() {
         return res.status(401).json({ error: 'INVALID_CREDENTIALS', message: 'No operative found matching credentials.' });
       }
 
-      const computed = hashPasswordServer(password, userRecord.salt);
-      if (computed !== userRecord.passwordHash) {
+      const verifyResult = verifyPasswordServer(password, userRecord.salt, userRecord.passwordHash);
+      if (!verifyResult.valid) {
         return res.status(401).json({ error: 'INVALID_PASSWORD', message: 'Invalid operative password key.' });
+      }
+
+      // Automatically upgrade legacy SHA-256 hash to PBKDF2 upon successful authentication
+      if (verifyResult.isLegacy) {
+        userRecord.passwordHash = hashPasswordPBKDF2Server(password, userRecord.salt);
+        userRecord.passwordUpgradedAt = new Date().toISOString();
       }
 
       if (!userRecord.recoveryKeyHash && userRecord.recoveryKey) {
@@ -815,7 +923,10 @@ async function startServer() {
         delete userRecord.recoveryKey;
       }
 
-      userRecord.lastLoginAt = new Date().toISOString();
+      const now = new Date().toISOString();
+      const expiresAt = new Date(Date.now() + SESSION_LIFETIME_MS).toISOString();
+
+      userRecord.lastLoginAt = now;
       if (device) {
         userRecord.devices = userRecord.devices || [];
         const existingIdx = userRecord.devices.findIndex((d: any) => d.deviceId === device.deviceId);
@@ -829,8 +940,11 @@ async function startServer() {
       }
 
       const token = `tok_${userRecord.id}_${Date.now().toString(36)}_${Math.random().toString(36).substring(2, 12)}`;
-      store.tokens[token] = { userId: userRecord.id, username: userRecord.username };
+      store.tokens[token] = { userId: userRecord.id, username: userRecord.username, expiresAt, createdAt: now };
       saveSyncStore(store);
+
+      // Issue HttpOnly, Secure, SameSite=Strict session cookie
+      setSessionCookie(res, token);
 
       const userEntityId = userRecord.composioEntityId || store.vaults[userRecord.id]?.composioEntityId || store.vaults[userRecord.username]?.composioEntityId || null;
       const userApiKey = userRecord.composioApiKey || store.vaults[userRecord.id]?.composioApiKey || store.vaults[userRecord.username]?.composioApiKey || null;
@@ -848,8 +962,8 @@ async function startServer() {
           createdAt: userRecord.createdAt,
           lastLoginAt: userRecord.lastLoginAt,
         },
-        device: device || { deviceId: 'default', deviceName: 'Browser', deviceType: 'desktop', lastActive: new Date().toISOString() },
-        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        device: device || { deviceId: 'default', deviceName: 'Browser', deviceType: 'desktop', lastActive: now },
+        expiresAt,
       };
 
       res.json({ ok: true, session, composioEntityId: userEntityId, composioApiKey: userApiKey, devices: userRecord.devices });
@@ -865,24 +979,27 @@ async function startServer() {
 
   app.post('/api/logout', (req, res) => {
     try {
-      const authHeader = (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
-      if (authHeader) {
+      const token = extractSessionToken(req);
+      if (token) {
         const store = loadSyncStore();
-        delete store.tokens[authHeader];
+        delete store.tokens[token];
         saveSyncStore(store);
       }
+      clearSessionCookie(res);
       res.json({ ok: true, message: 'Logged out successfully.' });
     } catch {
+      clearSessionCookie(res);
       res.json({ ok: true });
     }
   });
 
   app.get('/api/me', (req, res) => {
     try {
-      const authHeader = (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+      const token = extractSessionToken(req);
       const store = loadSyncStore();
-      if (authHeader && store.tokens[authHeader]) {
-        const { username } = store.tokens[authHeader];
+      const tokenCheck = validateAndGetToken(store, token);
+      if (tokenCheck.valid && tokenCheck.tokenData) {
+        const { username } = tokenCheck.tokenData;
         const user = store.users[username];
         if (user) {
           const userEntityId = user.composioEntityId || store.vaults[user.id]?.composioEntityId || store.vaults[user.username]?.composioEntityId || null;
@@ -906,7 +1023,7 @@ async function startServer() {
           });
         }
       }
-      res.status(401).json({ ok: false, error: 'NO_VALID_SESSION' });
+      res.status(401).json({ ok: false, error: tokenCheck.expired ? 'SESSION_EXPIRED' : 'NO_VALID_SESSION' });
     } catch (err: any) {
       res.status(500).json({ error: 'SERVER_ERROR', message: err?.message });
     }
@@ -974,7 +1091,7 @@ async function startServer() {
 
       const newSalt = Math.random().toString(36).substring(2, 12);
       userRecord.salt = newSalt;
-      userRecord.passwordHash = hashPasswordServer(newPassword, newSalt);
+      userRecord.passwordHash = hashPasswordPBKDF2Server(newPassword, newSalt);
       userRecord.recoveryKeyHash = hashRecoveryKeyServer(cleanKey || 'RECONFIGURED');
       delete userRecord.recoveryKey;
       userRecord.lastUpdatedAt = new Date().toISOString();
@@ -1005,17 +1122,17 @@ async function startServer() {
         });
       }
 
-      const authHeader = (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
+      const token = extractSessionToken(req);
       const store = loadSyncStore();
-      const tokenData = store.tokens[authHeader];
-      if (!tokenData) {
+      const tokenCheck = validateAndGetToken(store, token);
+      if (!tokenCheck.valid || !tokenCheck.tokenData) {
         return res.status(401).json({
-          error: 'SESSION_REQUIRED',
+          error: tokenCheck.expired ? 'SESSION_EXPIRED' : 'SESSION_REQUIRED',
           message: 'Authenticated administrative session required.',
         });
       }
 
-      const user = store.users[tokenData.username];
+      const user = store.users[tokenCheck.tokenData.username];
       if (!user || (user.securityClearance !== 'COMMANDER' && user.securityClearance !== 'DIRECTOR')) {
         return res.status(403).json({
           error: 'INSUFFICIENT_CLEARANCE',
@@ -1034,16 +1151,15 @@ async function startServer() {
 
   app.post('/api/auth/update-profile', (req, res) => {
     try {
-      const authHeader = req.headers.authorization || '';
-      const token = authHeader.replace(/^Bearer\s+/i, '');
+      const token = extractSessionToken(req);
       const store = loadSyncStore();
-      const tokenData = store.tokens[token];
+      const tokenCheck = validateAndGetToken(store, token);
 
-      if (!tokenData) {
-        return res.status(401).json({ error: 'UNAUTHORIZED', message: 'Session expired or invalid.' });
+      if (!tokenCheck.valid || !tokenCheck.tokenData) {
+        return res.status(401).json({ error: 'UNAUTHORIZED', message: tokenCheck.expired ? 'Session expired.' : 'Session expired or invalid.' });
       }
 
-      const userRecord = Object.values(store.users).find((u: any) => u.id === tokenData.userId);
+      const userRecord = Object.values(store.users).find((u: any) => u.id === tokenCheck.tokenData.userId);
       if (!userRecord) {
         return res.status(404).json({ error: 'USER_NOT_FOUND', message: 'Operative profile not found.' });
       }
@@ -1055,8 +1171,8 @@ async function startServer() {
         if (!currentPassword) {
           return res.status(400).json({ error: 'CURRENT_PASSWORD_REQUIRED', message: 'Enter your current password to set a new password.' });
         }
-        const verifyHash = hashPasswordServer(currentPassword, userRecord.salt);
-        if (verifyHash !== userRecord.passwordHash) {
+        const verifyCurrent = verifyPasswordServer(currentPassword, userRecord.salt, userRecord.passwordHash);
+        if (!verifyCurrent.valid) {
           return res.status(401).json({ error: 'INVALID_CURRENT_PASSWORD', message: 'Current password verification failed.' });
         }
         if (newPassword.length < 6) {
@@ -1064,7 +1180,7 @@ async function startServer() {
         }
         const newSalt = Math.random().toString(36).substring(2, 12);
         userRecord.salt = newSalt;
-        userRecord.passwordHash = hashPasswordServer(newPassword, newSalt);
+        userRecord.passwordHash = hashPasswordPBKDF2Server(newPassword, newSalt);
       }
 
       // If username changed, ensure not taken
@@ -1080,7 +1196,7 @@ async function startServer() {
           delete store.users[userRecord.username];
           userRecord.username = cleanNewUser;
           store.users[cleanNewUser] = userRecord;
-          tokenData.username = cleanNewUser;
+          tokenCheck.tokenData.username = cleanNewUser;
         }
       }
 
@@ -1107,7 +1223,7 @@ async function startServer() {
           lastLoginAt: userRecord.lastLoginAt,
         },
         device: { deviceId: 'current', deviceName: 'Updated Node', deviceType: 'desktop', lastActive: new Date().toISOString() },
-        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        expiresAt: new Date(Date.now() + SESSION_LIFETIME_MS).toISOString(),
       };
 
       res.json({ ok: true, session });
@@ -1118,16 +1234,15 @@ async function startServer() {
 
   app.get('/api/auth/me', (req, res) => {
     try {
-      const authHeader = req.headers.authorization || '';
-      const token = authHeader.replace(/^Bearer\s+/i, '');
+      const token = extractSessionToken(req);
       const store = loadSyncStore();
-      const tokenData = store.tokens[token];
+      const tokenCheck = validateAndGetToken(store, token);
 
-      if (!tokenData) {
-        return res.status(401).json({ error: 'UNAUTHORIZED', message: 'Invalid session token' });
+      if (!tokenCheck.valid || !tokenCheck.tokenData) {
+        return res.status(401).json({ error: 'UNAUTHORIZED', message: tokenCheck.expired ? 'Session expired' : 'Invalid session token' });
       }
 
-      const user = Object.values(store.users).find((u: any) => u.id === tokenData.userId);
+      const user = Object.values(store.users).find((u: any) => u.id === tokenCheck.tokenData.userId);
       if (!user) {
         return res.status(404).json({ error: 'NOT_FOUND', message: 'User not found' });
       }
@@ -1155,9 +1270,12 @@ async function startServer() {
     const rawUserId = (req.headers['x-user-id'] as string) || (req.query.userId as string) || '';
 
     if (!userKey) {
-      const authHeader = (req.headers.authorization || '').replace(/^Bearer\s+/i, '').trim();
-      if (authHeader && store.tokens[authHeader]) {
-        userKey = store.tokens[authHeader].username;
+      const token = extractSessionToken(req);
+      if (token) {
+        const tokenCheck = validateAndGetToken(store, token);
+        if (tokenCheck.valid && tokenCheck.tokenData) {
+          userKey = tokenCheck.tokenData.username;
+        }
       }
     }
 

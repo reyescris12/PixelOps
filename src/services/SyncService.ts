@@ -477,6 +477,7 @@ export async function pushToCloud(): Promise<{ success: boolean; error?: string 
     let res = await fetch('/api/sync/push', {
       method: 'POST',
       headers,
+      credentials: 'include',
       body: JSON.stringify(pkg),
     });
 
@@ -484,6 +485,7 @@ export async function pushToCloud(): Promise<{ success: boolean; error?: string 
       res = await fetch(`/api/sync?action=push&username=${encodeURIComponent(session.user.username.toLowerCase())}`, {
         method: 'POST',
         headers,
+        credentials: 'include',
         body: JSON.stringify(pkg),
       });
     }
@@ -525,12 +527,14 @@ export async function pullFromCloud(): Promise<{ success: boolean; updated: bool
     let res = await fetch('/api/sync/pull', {
       method: 'GET',
       headers,
+      credentials: 'include',
     });
 
     if (!res.ok && res.status === 404) {
       res = await fetch(`/api/sync?action=pull&username=${encodeURIComponent(session.user.username.toLowerCase())}`, {
         method: 'GET',
         headers,
+        credentials: 'include',
       });
     }
 

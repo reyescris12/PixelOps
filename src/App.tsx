@@ -158,6 +158,7 @@ import {
   PluginAuthCredential,
   purgeLegacyPluginAuthStorage,
 } from './engine/pluginAuthManager';
+import { purgeSensitiveLocalUserCredentials } from './services/AuthService';
 import { handleOpenRouterCallback } from './services/OpenRouterAuth';
 
 type NavTab = 'hq' | 'crew' | 'plugins' | 'themes';
@@ -573,6 +574,11 @@ const CommandCenterContent: React.FC = () => {
   useEffect(() => {
     purgeLegacyStorage().catch((e) => console.warn('[Security] Legacy storage purge warning:', e));
     purgeLegacyPluginAuthStorage();
+    try {
+      purgeSensitiveLocalUserCredentials();
+    } catch (e) {
+      console.warn('[Security] Local user credential purge warning:', e);
+    }
     runStartupVaultValidation();
     refreshCommandLedger();
     auditStorageHealth().catch((e) => console.warn('Storage health audit warning:', e));

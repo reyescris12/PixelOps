@@ -748,10 +748,17 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                       {showManualOpenRouterInput && (
                         <div className="flex items-center gap-1 pt-1">
                           <input
+                            id="openrouter-api-key"
+                            name="openrouter_api_key"
                             type="password"
                             value={customOpenRouterKeyInput}
                             onChange={(e) => setCustomOpenRouterKeyInput(e.target.value)}
                             placeholder="sk-or-v1-..."
+                            aria-label="OpenRouter API Key"
+                            autoComplete="off"
+                            autoCorrect="off"
+                            autoCapitalize="none"
+                            spellCheck={false}
                             className="flex-1 bg-[#12151f] border border-slate-800 rounded px-2.5 py-1 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-indigo-500"
                           />
                           <button
@@ -1004,15 +1011,21 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
                     {/* API Key Input Row */}
                     <div className="flex flex-col gap-1">
-                      <label className="text-[10px] text-slate-400 font-mono-tabular uppercase">
+                      <label htmlFor={`vault-key-${pId}`} className="text-[10px] text-slate-400 font-mono-tabular uppercase cursor-pointer">
                         {meta.name} API Key
                       </label>
                       <div className="relative flex items-center">
                         <input
+                          id={`vault-key-${pId}`}
+                          name={`vault_key_${pId}`}
                           type={isRevealed ? 'text' : 'password'}
                           value={entry.apiKey}
                           onChange={(e) => handleUpdateVaultKey(pId, e.target.value)}
                           placeholder={meta.placeholderKey}
+                          autoComplete="off"
+                          autoCorrect="off"
+                          autoCapitalize="none"
+                          spellCheck={false}
                           className="w-full bg-[#12151f] border border-slate-800 rounded-lg px-2.5 py-1.5 pr-8 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-cyan-500"
                         />
                         <button
@@ -1085,7 +1098,12 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     </button>
                   )}
                 </div>
+                <label htmlFor="llm-custom-endpoint" className="text-xs font-bold text-slate-200 cursor-pointer sr-only">
+                  Local Ollama Endpoint
+                </label>
                 <input
+                  id="llm-custom-endpoint"
+                  name="llm_custom_endpoint"
                   type="text"
                   value={llmConfig.endpoint}
                   onChange={(e) => {
@@ -1094,6 +1112,10 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                     saveLLMProviderConfig(updated);
                   }}
                   placeholder="http://localhost:11434"
+                  autoComplete="url"
+                  autoCorrect="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   className="w-full bg-[#12151f] border border-slate-800 rounded-lg px-2.5 py-1.5 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-cyan-500"
                 />
               </div>
@@ -1198,84 +1220,120 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
 
               {/* Shodan */}
               <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-mono-tabular uppercase font-semibold text-slate-300">
+                <label htmlFor="osint-key-shodan" className="text-[10px] font-mono-tabular uppercase font-semibold text-slate-300 cursor-pointer">
                   Shodan API Key
                 </label>
                 <input
+                  id="osint-key-shodan"
+                  name="osint_key_shodan"
                   type="password"
                   value={osintKeys.shodan}
                   onChange={(e) => setOsintKeys((prev) => ({ ...prev, shodan: e.target.value }))}
                   placeholder="Shodan developer key..."
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   className="w-full bg-[#12151f] border border-slate-800 rounded px-2.5 py-1 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-emerald-500"
                 />
               </div>
 
               {/* AbuseIPDB */}
               <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-mono-tabular uppercase font-semibold text-slate-300">
+                <label htmlFor="osint-key-abuseipdb" className="text-[10px] font-mono-tabular uppercase font-semibold text-slate-300 cursor-pointer">
                   AbuseIPDB API Key
                 </label>
                 <input
+                  id="osint-key-abuseipdb"
+                  name="osint_key_abuseipdb"
                   type="password"
                   value={osintKeys.abuseipdb}
                   onChange={(e) => setOsintKeys((prev) => ({ ...prev, abuseipdb: e.target.value }))}
                   placeholder="AbuseIPDB API v2 key..."
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   className="w-full bg-[#12151f] border border-slate-800 rounded px-2.5 py-1 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-emerald-500"
                 />
               </div>
 
               {/* VirusTotal */}
               <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-mono-tabular uppercase font-semibold text-slate-300">
+                <label htmlFor="osint-key-virustotal" className="text-[10px] font-mono-tabular uppercase font-semibold text-slate-300 cursor-pointer">
                   VirusTotal API Key
                 </label>
                 <input
+                  id="osint-key-virustotal"
+                  name="osint_key_virustotal"
                   type="password"
                   value={osintKeys.virustotal}
                   onChange={(e) => setOsintKeys((prev) => ({ ...prev, virustotal: e.target.value }))}
                   placeholder="VirusTotal v3 API key..."
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   className="w-full bg-[#12151f] border border-slate-800 rounded px-2.5 py-1 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-emerald-500"
                 />
               </div>
 
               {/* AlienVault OTX */}
               <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-mono-tabular uppercase font-semibold text-slate-300">
+                <label htmlFor="osint-key-otx" className="text-[10px] font-mono-tabular uppercase font-semibold text-slate-300 cursor-pointer">
                   AlienVault OTX API Key
                 </label>
                 <input
+                  id="osint-key-otx"
+                  name="osint_key_otx"
                   type="password"
                   value={osintKeys.otx}
                   onChange={(e) => setOsintKeys((prev) => ({ ...prev, otx: e.target.value }))}
                   placeholder="OTX threat pulse key..."
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   className="w-full bg-[#12151f] border border-slate-800 rounded px-2.5 py-1 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-emerald-500"
                 />
               </div>
 
               {/* IPinfo */}
               <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-mono-tabular uppercase font-semibold text-slate-300">
+                <label htmlFor="osint-key-ipinfo" className="text-[10px] font-mono-tabular uppercase font-semibold text-slate-300 cursor-pointer">
                   IPinfo Token
                 </label>
                 <input
+                  id="osint-key-ipinfo"
+                  name="osint_key_ipinfo"
                   type="password"
                   value={osintKeys.ipinfo}
                   onChange={(e) => setOsintKeys((prev) => ({ ...prev, ipinfo: e.target.value }))}
                   placeholder="IPinfo geolocation token..."
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   className="w-full bg-[#12151f] border border-slate-800 rounded px-2.5 py-1 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-emerald-500"
                 />
               </div>
 
               {/* GitHub Token */}
               <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-mono-tabular uppercase font-semibold text-slate-300">
+                <label htmlFor="osint-key-github" className="text-[10px] font-mono-tabular uppercase font-semibold text-slate-300 cursor-pointer">
                   GitHub Personal Access Token (Code Search)
                 </label>
                 <input
+                  id="osint-key-github"
+                  name="osint_key_github"
                   type="password"
                   value={osintKeys.github}
                   onChange={(e) => setOsintKeys((prev) => ({ ...prev, github: e.target.value }))}
                   placeholder="ghp_..."
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   className="w-full bg-[#12151f] border border-slate-800 rounded px-2.5 py-1 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-emerald-500"
                 />
               </div>

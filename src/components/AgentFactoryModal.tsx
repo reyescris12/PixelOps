@@ -248,6 +248,7 @@ export const AgentFactoryModal: React.FC<AgentFactoryModalProps> = ({
             </label>
             <input
               id="agent-factory-name"
+              name="agent_factory_name"
               type="text"
               required
               maxLength={28}
@@ -265,6 +266,7 @@ export const AgentFactoryModal: React.FC<AgentFactoryModalProps> = ({
               </label>
               <input
                 id="agent-factory-role"
+                name="agent_factory_role"
                 type="text"
                 required
                 maxLength={65}
@@ -280,6 +282,7 @@ export const AgentFactoryModal: React.FC<AgentFactoryModalProps> = ({
               </label>
               <input
                 id="agent-factory-specialty"
+                name="agent_factory_specialty"
                 type="text"
                 required
                 maxLength={80}

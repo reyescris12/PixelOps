@@ -880,41 +880,59 @@ export const SyncAccountModal: React.FC<SyncAccountModalProps> = ({
                       <form onSubmit={handleUpdateProfileSubmit} className="space-y-3">
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           <div>
-                            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1">
+                            <label htmlFor="sync-edit-callsign" className="block text-[10px] uppercase font-bold text-zinc-400 mb-1 cursor-pointer">
                               Operative Callsign
                             </label>
                             <input
+                              id="sync-edit-callsign"
+                              name="callsign"
                               type="text"
                               required
                               value={editCallsign}
                               onChange={(e) => setEditCallsign(e.target.value)}
+                              autoComplete="nickname"
+                              autoCorrect="off"
+                              autoCapitalize="words"
+                              spellCheck={false}
                               className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded text-zinc-100 text-xs focus:outline-none focus:border-cyan-400"
                             />
                           </div>
 
                           <div>
-                            <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1">
+                            <label htmlFor="sync-edit-username" className="block text-[10px] uppercase font-bold text-zinc-400 mb-1 cursor-pointer">
                               Agent Handle / Username
                             </label>
                             <input
+                              id="sync-edit-username"
+                              name="username"
                               type="text"
                               required
                               value={editUsername}
                               onChange={(e) => setEditUsername(e.target.value)}
+                              autoComplete="username"
+                              autoCorrect="off"
+                              autoCapitalize="none"
+                              spellCheck={false}
                               className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded text-zinc-100 text-xs focus:outline-none focus:border-cyan-400"
                             />
                           </div>
                         </div>
 
                         <div>
-                          <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1">
+                          <label htmlFor="sync-edit-email" className="block text-[10px] uppercase font-bold text-zinc-400 mb-1 cursor-pointer">
                             Satellite Comms Email
                           </label>
                           <input
+                            id="sync-edit-email"
+                            name="email"
                             type="email"
                             required
                             value={editEmail}
                             onChange={(e) => setEditEmail(e.target.value)}
+                            autoComplete="email"
+                            autoCorrect="off"
+                            autoCapitalize="none"
+                            spellCheck={false}
                             className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded text-zinc-100 text-xs focus:outline-none focus:border-cyan-400"
                           />
                         </div>
@@ -925,40 +943,58 @@ export const SyncAccountModal: React.FC<SyncAccountModalProps> = ({
                           </span>
 
                           <div>
-                            <label className="block text-[9px] uppercase font-bold text-zinc-400 mb-1">
+                            <label htmlFor="sync-edit-current-password" className="block text-[9px] uppercase font-bold text-zinc-400 mb-1 cursor-pointer">
                               Current Password (Required for changes)
                             </label>
                             <input
+                              id="sync-edit-current-password"
+                              name="current_password"
                               type="password"
                               placeholder="••••••••••••"
                               value={editCurrentPassword}
                               onChange={(e) => setEditCurrentPassword(e.target.value)}
+                              autoComplete="current-password"
+                              autoCorrect="off"
+                              autoCapitalize="none"
+                              spellCheck={false}
                               className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded text-zinc-100 text-xs focus:outline-none focus:border-cyan-400"
                             />
                           </div>
 
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                             <div>
-                              <label className="block text-[9px] uppercase font-bold text-zinc-400 mb-1">
+                              <label htmlFor="sync-edit-new-password" className="block text-[9px] uppercase font-bold text-zinc-400 mb-1 cursor-pointer">
                                 New Password
                               </label>
                               <input
+                                id="sync-edit-new-password"
+                                name="new_password"
                                 type="password"
                                 placeholder="••••••••••••"
                                 value={editNewPassword}
                                 onChange={(e) => setEditNewPassword(e.target.value)}
+                                autoComplete="new-password"
+                                autoCorrect="off"
+                                autoCapitalize="none"
+                                spellCheck={false}
                                 className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded text-zinc-100 text-xs focus:outline-none focus:border-cyan-400"
                               />
                             </div>
                             <div>
-                              <label className="block text-[9px] uppercase font-bold text-zinc-400 mb-1">
+                              <label htmlFor="sync-edit-confirm-password" className="block text-[9px] uppercase font-bold text-zinc-400 mb-1 cursor-pointer">
                                 Confirm New Password
                               </label>
                               <input
+                                id="sync-edit-confirm-password"
+                                name="confirm_new_password"
                                 type="password"
                                 placeholder="••••••••••••"
                                 value={editConfirmPassword}
                                 onChange={(e) => setEditConfirmPassword(e.target.value)}
+                                autoComplete="new-password"
+                                autoCorrect="off"
+                                autoCapitalize="none"
+                                spellCheck={false}
                                 className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded text-zinc-100 text-xs focus:outline-none focus:border-cyan-400"
                               />
                             </div>
@@ -1088,22 +1124,28 @@ export const SyncAccountModal: React.FC<SyncAccountModalProps> = ({
                   {authMode === 'login' && (
                     <form onSubmit={handleAuthSubmit} className="space-y-3">
                       <div>
-                        <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1">
+                        <label htmlFor="sync-login-username" className="block text-[10px] uppercase font-bold text-zinc-400 mb-1 cursor-pointer">
                           Operative Callsign, Username or Email
                         </label>
                         <input
+                          id="sync-login-username"
+                          name="username"
                           type="text"
                           required
                           placeholder="e.g. commander99 or SPECTRE"
                           value={username}
                           onChange={(e) => setUsername(e.target.value)}
+                          autoComplete="username"
+                          autoCorrect="off"
+                          autoCapitalize="none"
+                          spellCheck={false}
                           className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded text-zinc-100 placeholder-zinc-500 text-xs focus:outline-none focus:border-emerald-400"
                         />
                       </div>
 
                       <div>
                         <div className="flex items-center justify-between mb-1">
-                          <label className="block text-[10px] uppercase font-bold text-zinc-400">
+                          <label htmlFor="sync-login-password" className="block text-[10px] uppercase font-bold text-zinc-400 cursor-pointer">
                             Cryptographic Password
                           </label>
                           <button
@@ -1120,11 +1162,17 @@ export const SyncAccountModal: React.FC<SyncAccountModalProps> = ({
                           </button>
                         </div>
                         <input
+                          id="sync-login-password"
+                          name="password"
                           type="password"
                           required
                           placeholder="••••••••••••"
                           value={password}
                           onChange={(e) => setPassword(e.target.value)}
+                          autoComplete="current-password"
+                          autoCorrect="off"
+                          autoCapitalize="none"
+                          spellCheck={false}
                           className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded text-zinc-100 placeholder-zinc-500 text-xs focus:outline-none focus:border-emerald-400"
                         />
                       </div>
@@ -1161,70 +1209,100 @@ export const SyncAccountModal: React.FC<SyncAccountModalProps> = ({
                   {authMode === 'register' && (
                     <form onSubmit={handleAuthSubmit} className="space-y-3">
                       <div>
-                        <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1">
+                        <label htmlFor="sync-register-callsign" className="block text-[10px] uppercase font-bold text-zinc-400 mb-1 cursor-pointer">
                           Operative Callsign (Display Name)
                         </label>
                         <input
+                          id="sync-register-callsign"
+                          name="callsign"
                           type="text"
                           required
                           placeholder="e.g. SPECTRE, CIPHER, VANCE"
                           value={callsign}
                           onChange={(e) => setCallsign(e.target.value)}
+                          autoComplete="nickname"
+                          autoCorrect="off"
+                          autoCapitalize="words"
+                          spellCheck={false}
                           className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded text-zinc-100 placeholder-zinc-500 text-xs focus:outline-none focus:border-emerald-400"
                         />
                       </div>
 
                       <div>
-                        <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1">
+                        <label htmlFor="sync-register-username" className="block text-[10px] uppercase font-bold text-zinc-400 mb-1 cursor-pointer">
                           Username / Agent Handle
                         </label>
                         <input
+                          id="sync-register-username"
+                          name="username"
                           type="text"
                           required
                           placeholder="e.g. commander99"
                           value={username}
                           onChange={(e) => setUsername(e.target.value)}
+                          autoComplete="username"
+                          autoCorrect="off"
+                          autoCapitalize="none"
+                          spellCheck={false}
                           className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded text-zinc-100 placeholder-zinc-500 text-xs focus:outline-none focus:border-emerald-400"
                         />
                       </div>
 
                       <div>
-                        <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1">
+                        <label htmlFor="sync-register-email" className="block text-[10px] uppercase font-bold text-zinc-400 mb-1 cursor-pointer">
                           Satellite Comms Email (Optional)
                         </label>
                         <input
+                          id="sync-register-email"
+                          name="email"
                           type="email"
                           placeholder="operative@agency.mil"
                           value={email}
                           onChange={(e) => setEmail(e.target.value)}
+                          autoComplete="email"
+                          autoCorrect="off"
+                          autoCapitalize="none"
+                          spellCheck={false}
                           className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded text-zinc-100 placeholder-zinc-500 text-xs focus:outline-none focus:border-emerald-400"
                         />
                       </div>
 
                       <div>
-                        <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1">
+                        <label htmlFor="sync-register-password" className="block text-[10px] uppercase font-bold text-zinc-400 mb-1 cursor-pointer">
                           Cryptographic Key / Password
                         </label>
                         <input
+                          id="sync-register-password"
+                          name="password"
                           type="password"
                           required
                           placeholder="••••••••••••"
                           value={password}
                           onChange={(e) => setPassword(e.target.value)}
+                          autoComplete="new-password"
+                          autoCorrect="off"
+                          autoCapitalize="none"
+                          spellCheck={false}
                           className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded text-zinc-100 placeholder-zinc-500 text-xs focus:outline-none focus:border-emerald-400"
                         />
                       </div>
 
                       <div>
-                        <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1">
+                        <label htmlFor="sync-register-confirm-password" className="block text-[10px] uppercase font-bold text-zinc-400 mb-1 cursor-pointer">
                           Confirm Encryption Key
                         </label>
                         <input
+                          id="sync-register-confirm-password"
+                          name="confirm_password"
                           type="password"
                           required
                           placeholder="••••••••••••"
                           value={confirmPassword}
                           onChange={(e) => setConfirmPassword(e.target.value)}
+                          autoComplete="new-password"
+                          autoCorrect="off"
+                          autoCapitalize="none"
+                          spellCheck={false}
                           className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded text-zinc-100 placeholder-zinc-500 text-xs focus:outline-none focus:border-emerald-400"
                         />
                       </div>
@@ -1254,57 +1332,81 @@ export const SyncAccountModal: React.FC<SyncAccountModalProps> = ({
                       </div>
 
                       <div>
-                        <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1">
+                        <label htmlFor="sync-recovery-username" className="block text-[10px] uppercase font-bold text-zinc-400 mb-1 cursor-pointer">
                           Operative Username or Email
                         </label>
                         <input
+                          id="sync-recovery-username"
+                          name="recovery_username"
                           type="text"
                           required
                           placeholder="e.g. commander99"
                           value={username}
                           onChange={(e) => setUsername(e.target.value)}
+                          autoComplete="username"
+                          autoCorrect="off"
+                          autoCapitalize="none"
+                          spellCheck={false}
                           className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded text-zinc-100 text-xs focus:outline-none focus:border-amber-400"
                         />
                       </div>
 
                       <div>
-                        <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1">
+                        <label htmlFor="sync-recovery-key" className="block text-[10px] uppercase font-bold text-zinc-400 mb-1 cursor-pointer">
                           Satellite Recovery Key
                         </label>
                         <input
+                          id="sync-recovery-key"
+                          name="recovery_key"
                           type="text"
                           required
                           placeholder="e.g. SATCOM-CIPHER-XXXX-XXXX"
                           value={recoveryKeyInput}
                           onChange={(e) => setRecoveryKeyInput(e.target.value)}
+                          autoComplete="off"
+                          autoCorrect="off"
+                          autoCapitalize="characters"
+                          spellCheck={false}
                           className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded text-zinc-100 font-mono text-xs focus:outline-none focus:border-amber-400"
                         />
                       </div>
 
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <div>
-                          <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1">
+                          <label htmlFor="sync-recovery-new-password" className="block text-[10px] uppercase font-bold text-zinc-400 mb-1 cursor-pointer">
                             New Password
                           </label>
                           <input
+                            id="sync-recovery-new-password"
+                            name="new_password"
                             type="password"
                             required
                             placeholder="••••••••••••"
                             value={password}
                             onChange={(e) => setPassword(e.target.value)}
+                            autoComplete="new-password"
+                            autoCorrect="off"
+                            autoCapitalize="none"
+                            spellCheck={false}
                             className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded text-zinc-100 text-xs focus:outline-none focus:border-amber-400"
                           />
                         </div>
                         <div>
-                          <label className="block text-[10px] uppercase font-bold text-zinc-400 mb-1">
+                          <label htmlFor="sync-recovery-confirm-password" className="block text-[10px] uppercase font-bold text-zinc-400 mb-1 cursor-pointer">
                             Confirm New Password
                           </label>
                           <input
+                            id="sync-recovery-confirm-password"
+                            name="confirm_new_password"
                             type="password"
                             required
                             placeholder="••••••••••••"
                             value={confirmPassword}
                             onChange={(e) => setConfirmPassword(e.target.value)}
+                            autoComplete="new-password"
+                            autoCorrect="off"
+                            autoCapitalize="none"
+                            spellCheck={false}
                             className="w-full px-3 py-2 bg-zinc-900 border border-zinc-700 rounded text-zinc-100 text-xs focus:outline-none focus:border-amber-400"
                           />
                         </div>

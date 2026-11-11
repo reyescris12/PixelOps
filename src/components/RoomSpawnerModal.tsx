@@ -428,46 +428,55 @@ export const RoomSpawnerModal: React.FC<RoomSpawnerModalProps> = ({
                 <form onSubmit={handleCreateCustomRoom} className="space-y-3">
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                     <div>
-                      <label className="block text-[10px] text-[#64748b] mb-1">
+                      <label htmlFor="room-spawner-id" className="block text-[10px] text-[#64748b] mb-1 cursor-pointer">
                         ROOM ID (KEY)
                       </label>
                       <input
+                        id="room-spawner-id"
+                        name="room_id"
                         type="text"
                         placeholder="e.g. bio_vault"
                         value={customForm.id}
                         onChange={(e) =>
                           setCustomForm({ ...customForm, id: e.target.value.toLowerCase() })
                         }
+                        autoComplete="off"
                         className="w-full bg-[#090d14] border border-[#1e293b] px-2 py-1 text-xs text-[#f3ead8] focus:border-[#38bdf8] outline-none"
                         required
                       />
                     </div>
                     <div>
-                      <label className="block text-[10px] text-[#64748b] mb-1">
+                      <label htmlFor="room-spawner-short-badge" className="block text-[10px] text-[#64748b] mb-1 cursor-pointer">
                         SHORT BADGE (HEADER)
                       </label>
                       <input
+                        id="room-spawner-short-badge"
+                        name="room_short_badge"
                         type="text"
                         placeholder="e.g. BIO VAULT"
                         value={customForm.shortBadge}
                         onChange={(e) =>
                           setCustomForm({ ...customForm, shortBadge: e.target.value })
                         }
+                        autoComplete="off"
                         className="w-full bg-[#090d14] border border-[#1e293b] px-2 py-1 text-xs text-[#f3ead8] focus:border-[#38bdf8] outline-none"
                         required
                       />
                     </div>
                     <div>
-                      <label className="block text-[10px] text-[#64748b] mb-1">
+                      <label htmlFor="room-spawner-sector-code" className="block text-[10px] text-[#64748b] mb-1 cursor-pointer">
                         SECTOR CODE
                       </label>
                       <input
+                        id="room-spawner-sector-code"
+                        name="room_sector_code"
                         type="text"
                         placeholder="SEC-D2"
                         value={customForm.sectorCode}
                         onChange={(e) =>
                           setCustomForm({ ...customForm, sectorCode: e.target.value })
                         }
+                        autoComplete="off"
                         className="w-full bg-[#090d14] border border-[#1e293b] px-2 py-1 text-xs text-[#f3ead8] focus:border-[#38bdf8] outline-none"
                       />
                     </div>
@@ -475,16 +484,19 @@ export const RoomSpawnerModal: React.FC<RoomSpawnerModalProps> = ({
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                     <div>
-                      <label className="block text-[10px] text-[#64748b] mb-1">
+                      <label htmlFor="room-spawner-spy-title" className="block text-[10px] text-[#64748b] mb-1 cursor-pointer">
                         FULL OPERATIONAL TITLE
                       </label>
                       <input
+                        id="room-spawner-spy-title"
+                        name="room_spy_title"
                         type="text"
                         placeholder="Spy Safehouse · Bio-Hazard Vault [D-02]"
                         value={customForm.spyTitle}
                         onChange={(e) =>
                           setCustomForm({ ...customForm, spyTitle: e.target.value })
                         }
+                        autoComplete="off"
                         className="w-full bg-[#090d14] border border-[#1e293b] px-2 py-1 text-xs text-[#f3ead8] focus:border-[#38bdf8] outline-none"
                       />
                     </div>

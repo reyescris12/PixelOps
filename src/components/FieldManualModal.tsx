@@ -1387,10 +1387,14 @@ export const FieldManualModal: React.FC<FieldManualModalProps> = ({
                 <div className="relative w-full sm:w-64">
                   <Search className="w-4 h-4 text-[#9c8265] absolute left-2.5 top-2.5" />
                   <input
+                    id="field-manual-search-query"
+                    name="field_manual_search"
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder="Search directives (e.g. report, email, git)..."
+                    aria-label="Search directives"
+                    autoComplete="off"
                     className="w-full bg-[#141724] border border-[#363d54] focus:border-[#e59838] pl-8 pr-3 py-1.5 text-xs text-[#f3ead8] placeholder-[#64748b] outline-none"
                   />
                   {searchQuery && (

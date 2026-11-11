@@ -103,10 +103,14 @@ export const CommandLogScreen: React.FC<CommandLogScreenProps> = ({
           <div className="flex items-center gap-1.5 flex-1 min-w-[180px] bg-[#0d0c0b] border border-[#382917] px-2.5 py-1">
             <Search className="w-3.5 h-3.5 text-[#8c7a65] shrink-0" />
             <input
+              id="command-log-filter-query"
+              name="command_log_filter"
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Filter command_input, tool_used, agent..."
+              aria-label="Filter command log"
+              autoComplete="off"
               className="w-full bg-transparent font-mono-tabular text-xs text-[#f3ead8] placeholder:text-[#6e5d4b] focus:outline-none"
             />
           </div>

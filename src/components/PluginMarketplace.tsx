@@ -493,9 +493,13 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
           <div className="relative">
             <input
               type="text"
+              id="composio-search-query"
+              name="composio_search_query"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               placeholder="Search toolkits by name, action or category (e.g. GitHub, Slack, Notion, Jira)..."
+              aria-label="Search toolkits by name, action or category"
+              autoComplete="off"
               className="w-full bg-[#0d0c0b] text-[#f3ead8] placeholder-[#7d6c59] border border-[#4a351d] px-3.5 py-2 font-mono-tabular text-xs sm:text-sm focus:outline-none focus:border-[#e59838] transition-colors"
             />
             {searchQuery && (
@@ -925,17 +929,26 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
               </div>
 
               <div className="flex flex-col gap-1">
-                <label className="text-[11px] text-[#e59838] font-bold uppercase tracking-wider">
+                <label
+                  htmlFor="composio-api-key"
+                  className="text-[11px] text-[#e59838] font-bold uppercase tracking-wider cursor-pointer"
+                >
                   Composio API Key:
                 </label>
                 <input
                   type="password"
+                  id="composio-api-key"
+                  name="composio_api_key"
                   value={inputApiKey}
                   onChange={(e) => {
                     setInputApiKey(e.target.value);
                     setTestResult(null);
                   }}
                   placeholder="Paste ak_... or project key here"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   className="w-full bg-[#0d0c0b] text-[#f3ead8] placeholder-[#665442] border border-[#4a351d] px-3 py-2 font-mono-tabular text-xs focus:outline-none focus:border-[#e59838]"
                 />
               </div>
@@ -1193,17 +1206,23 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
 
               {/* Option 1: Existing Auth Config ID */}
               <div className="p-3 bg-[#0d0c0b] border border-[#2a1e12] flex flex-col gap-2">
-                <span className="font-bold text-xs text-[#e59838] uppercase">
+                <label htmlFor="composio-auth-config-id" className="font-bold text-xs text-[#e59838] uppercase cursor-pointer">
                   Option 1: Paste Composio Auth Config ID (Recommended)
-                </span>
+                </label>
                 <p className="text-[11px] text-[#8c7a65]">
                   If you created an Auth Config in <a href="https://dashboard.composio.dev" target="_blank" rel="noopener noreferrer" className="text-[#38bdf8] underline">dashboard.composio.dev &rarr; Auth Configs</a>, paste its ID (starts with <code className="text-[#e59838]">ac_...</code>) below:
                 </p>
                 <input
                   type="text"
+                  id="composio-auth-config-id"
+                  name="composio_auth_config_id"
                   value={authConfigIdInput}
                   onChange={(e) => setAuthConfigIdInput(e.target.value)}
                   placeholder="e.g. ac_1234567890abcdef"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   className="w-full bg-[#141210] text-[#f3ead8] placeholder-[#574432] border border-[#4a351d] px-3 py-1.5 text-xs focus:outline-none focus:border-[#38bdf8]"
                 />
               </div>
@@ -1218,36 +1237,54 @@ export const PluginMarketplace: React.FC<PluginMarketplaceProps> = ({
                 </p>
 
                 <div className="flex flex-col gap-1">
-                  <label className="text-[10px] text-[#8c7a65] uppercase font-bold">Client ID:</label>
+                  <label htmlFor="composio-client-id" className="text-[10px] text-[#8c7a65] uppercase font-bold cursor-pointer">Client ID:</label>
                   <input
                     type="text"
+                    id="composio-client-id"
+                    name="composio_client_id"
                     value={customClientId}
                     onChange={(e) => setCustomClientId(e.target.value)}
                     placeholder="OAuth 2.0 Client ID"
+                    autoComplete="off"
+                    autoCorrect="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
                     className="w-full bg-[#141210] text-[#f3ead8] placeholder-[#574432] border border-[#4a351d] px-3 py-1.5 text-xs focus:outline-none focus:border-[#38bdf8]"
                   />
                 </div>
 
                 <div className="flex flex-col gap-1">
-                  <label className="text-[10px] text-[#8c7a65] uppercase font-bold">Client Secret:</label>
+                  <label htmlFor="composio-client-secret" className="text-[10px] text-[#8c7a65] uppercase font-bold cursor-pointer">Client Secret:</label>
                   <input
                     type="password"
+                    id="composio-client-secret"
+                    name="composio_client_secret"
                     value={customClientSecret}
                     onChange={(e) => setCustomClientSecret(e.target.value)}
                     placeholder="OAuth 2.0 Client Secret"
+                    autoComplete="off"
+                    autoCorrect="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
                     className="w-full bg-[#141210] text-[#f3ead8] placeholder-[#574432] border border-[#4a351d] px-3 py-1.5 text-xs focus:outline-none focus:border-[#38bdf8]"
                   />
                 </div>
 
                 <div className="flex flex-col gap-1">
-                  <label className="text-[10px] text-[#8c7a65] uppercase font-bold">
+                  <label htmlFor="composio-bearer-token" className="text-[10px] text-[#8c7a65] uppercase font-bold cursor-pointer">
                     Bearer Token (Optional, for search & tweet reads):
                   </label>
                   <input
                     type="password"
+                    id="composio-bearer-token"
+                    name="composio_bearer_token"
                     value={customBearerToken}
                     onChange={(e) => setCustomBearerToken(e.target.value)}
                     placeholder="App Bearer Token (optional)"
+                    autoComplete="off"
+                    autoCorrect="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
                     className="w-full bg-[#141210] text-[#f3ead8] placeholder-[#574432] border border-[#4a351d] px-3 py-1.5 text-xs focus:outline-none focus:border-[#38bdf8]"
                   />
                 </div>

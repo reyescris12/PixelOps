@@ -327,10 +327,14 @@ export const TaskQueuePanel: React.FC<TaskQueuePanelProps> = ({
           </div>
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-1.5">
             <input
+              id="task-queue-new-directive"
+              name="new_directive"
               type="text"
               value={newDirective}
               onChange={(e) => setNewDirective(e.target.value)}
               placeholder="e.g. Audit Stripe interchange pricing updates, or sweep GitHub open CVEs"
+              aria-label="Enqueue tactical directive"
+              autoComplete="off"
               className="flex-1 px-2.5 py-1.5 bg-[#07090d] border border-[#382b1b] text-xs text-[#f3ead8] outline-none focus:border-[#e59838]"
             />
             <div className="flex items-center gap-1.5">

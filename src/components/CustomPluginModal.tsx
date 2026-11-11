@@ -134,24 +134,33 @@ export const CustomPluginModal: React.FC<CustomPluginModalProps> = ({
         <form onSubmit={handleFormSubmit} className="flex flex-col gap-3.5">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="flex flex-col gap-1">
-              <label className="text-[11px] text-slate-300 font-medium">Plugin Name</label>
+              <label htmlFor="custom-plugin-name" className="text-[11px] text-slate-300 font-medium cursor-pointer">Plugin Name</label>
               <input
+                id="custom-plugin-name"
+                name="plugin_name"
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="e.g., Weather API, Jira, Custom Webhook"
+                autoComplete="off"
                 className="bg-[#12151f] border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-emerald-500"
                 required
               />
             </div>
 
             <div className="flex flex-col gap-1">
-              <label className="text-[11px] text-slate-300 font-medium">Tool Function Name</label>
+              <label htmlFor="custom-plugin-function-name" className="text-[11px] text-slate-300 font-medium cursor-pointer">Tool Function Name</label>
               <input
+                id="custom-plugin-function-name"
+                name="tool_function_name"
                 type="text"
                 value={toolFunctionName}
                 onChange={(e) => setToolFunctionName(e.target.value)}
                 placeholder="e.g., fetch_jira_tickets"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="none"
+                spellCheck={false}
                 className="bg-[#12151f] border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-emerald-500"
                 required
               />
@@ -159,12 +168,18 @@ export const CustomPluginModal: React.FC<CustomPluginModalProps> = ({
           </div>
 
           <div className="flex flex-col gap-1">
-            <label className="text-[11px] text-slate-300 font-medium">Endpoint URL / API Hook</label>
+            <label htmlFor="custom-plugin-endpoint" className="text-[11px] text-slate-300 font-medium cursor-pointer">Endpoint URL / API Hook</label>
             <input
+              id="custom-plugin-endpoint"
+              name="endpoint_url"
               type="url"
               value={endpointUrl}
               onChange={(e) => setEndpointUrl(e.target.value)}
               placeholder="https://api.example.com/v1/data"
+              autoComplete="url"
+              autoCorrect="off"
+              autoCapitalize="none"
+              spellCheck={false}
               className="bg-[#12151f] border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-emerald-500"
               required
             />
@@ -172,35 +187,50 @@ export const CustomPluginModal: React.FC<CustomPluginModalProps> = ({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="flex flex-col gap-1">
-              <label className="text-[11px] text-slate-300 font-medium">Auth Header Key</label>
+              <label htmlFor="custom-plugin-auth-header-key" className="text-[11px] text-slate-300 font-medium cursor-pointer">Auth Header Key</label>
               <input
+                id="custom-plugin-auth-header-key"
+                name="auth_header_key"
                 type="text"
                 value={authHeaderKey}
                 onChange={(e) => setAuthHeaderKey(e.target.value)}
                 placeholder="Authorization / X-Api-Key"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="none"
+                spellCheck={false}
                 className="bg-[#12151f] border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-emerald-500"
               />
             </div>
 
             <div className="flex flex-col gap-1">
-              <label className="text-[11px] text-slate-300 font-medium">Auth Token / Secret</label>
+              <label htmlFor="custom-plugin-auth-token" className="text-[11px] text-slate-300 font-medium cursor-pointer">Auth Token / Secret</label>
               <input
+                id="custom-plugin-auth-token"
+                name="auth_token"
                 type="password"
                 value={authHeaderValue}
                 onChange={(e) => setAuthHeaderValue(e.target.value)}
                 placeholder="Bearer sk-..."
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="none"
+                spellCheck={false}
                 className="bg-[#12151f] border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono-tabular text-slate-100 focus:outline-none focus:border-emerald-500"
               />
             </div>
           </div>
 
           <div className="flex flex-col gap-1">
-            <label className="text-[11px] text-slate-300 font-medium">Description (Agent Instructions)</label>
+            <label htmlFor="custom-plugin-description" className="text-[11px] text-slate-300 font-medium cursor-pointer">Description (Agent Instructions)</label>
             <input
+              id="custom-plugin-description"
+              name="description"
               type="text"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Describes what this tool does so the AI agent knows when to invoke it."
+              autoComplete="off"
               className="bg-[#12151f] border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-emerald-500"
             />
           </div>

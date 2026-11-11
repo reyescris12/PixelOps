@@ -647,11 +647,13 @@ export const ThreatMonitorModal: React.FC<ThreatMonitorModalProps> = ({
 
             {/* 2. Specific Postal Code / City / Coordinates Override */}
             <div>
-              <label className="block text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-1 flex items-center gap-1">
+              <label htmlFor="threat-custom-location" className="block text-[10px] uppercase tracking-wider text-slate-400 font-bold mb-1 flex items-center gap-1 cursor-pointer">
                 <Globe className="w-3 h-3 text-cyan-400" /> Postal Code, City, or Coordinates (Optional)
               </label>
               <div className="flex gap-1.5">
                 <input
+                  id="threat-custom-location"
+                  name="custom_location"
                   type="text"
                   value={customLocation}
                   onChange={(e) => setCustomLocation(e.target.value)}
@@ -659,6 +661,7 @@ export const ThreatMonitorModal: React.FC<ThreatMonitorModalProps> = ({
                     if (e.key === 'Enter') fetchThreatMatrix(selectedZone, customLocation);
                   }}
                   placeholder="e.g., 90210, SW1A 1AA, Ashburn VA, 30.04N 31.23E"
+                  autoComplete="off"
                   className="w-full px-2.5 py-1.5 text-xs bg-slate-950 border border-slate-700 rounded text-slate-100 placeholder-slate-500 focus:outline-none focus:border-cyan-400"
                 />
                 <button

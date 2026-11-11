@@ -666,14 +666,17 @@ export const NightShiftModal: React.FC<NightShiftModalProps> = ({
                 {/* Title & Frequency */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block mb-1">
+                    <label htmlFor="nightshift-routine-title" className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block mb-1 cursor-pointer">
                       Routine Title
                     </label>
                     <input
+                      id="nightshift-routine-title"
+                      name="routine_title"
                       type="text"
                       value={formTitle}
                       onChange={(e) => setFormTitle(e.target.value)}
                       placeholder="e.g. Daily Vulnerability Scan & Intel Brief"
+                      autoComplete="off"
                       className="w-full bg-[#121622] border border-slate-800 rounded-lg px-3 py-2 text-xs text-slate-100 focus:outline-none focus:border-indigo-500"
                       required
                     />
@@ -906,12 +909,19 @@ export const NightShiftModal: React.FC<NightShiftModalProps> = ({
                       </label>
                       {notifConfig.notifyGmail && (
                         <input
+                          id="nightshift-gmail-recipient"
+                          name="gmail_recipient"
                           type="email"
                           value={notifConfig.gmailRecipient || ''}
                           onChange={(e) =>
                             setNotifConfig({ ...notifConfig, gmailRecipient: e.target.value })
                           }
                           placeholder={hasGmailConnected ? 'Using connected Composio account' : 'recipient@example.com'}
+                          aria-label="Gmail Email Briefing Recipient"
+                          autoComplete="email"
+                          autoCorrect="off"
+                          autoCapitalize="none"
+                          spellCheck={false}
                           className="w-full bg-[#151926] border border-slate-700 rounded px-2 py-1 text-[11px] text-slate-100 font-mono"
                         />
                       )}
@@ -933,12 +943,16 @@ export const NightShiftModal: React.FC<NightShiftModalProps> = ({
                       </label>
                       {notifConfig.notifySlack && (
                         <input
+                          id="nightshift-slack-channel"
+                          name="slack_channel"
                           type="text"
                           value={notifConfig.slackChannel || ''}
                           onChange={(e) =>
                             setNotifConfig({ ...notifConfig, slackChannel: e.target.value })
                           }
                           placeholder="#intel-briefings or channel ID"
+                          aria-label="Slack Channel Dispatch Name"
+                          autoComplete="off"
                           className="w-full bg-[#151926] border border-slate-700 rounded px-2 py-1 text-[11px] text-slate-100 font-mono"
                         />
                       )}
@@ -1353,15 +1367,21 @@ export const NightShiftModal: React.FC<NightShiftModalProps> = ({
 
               {/* Webhook URL Endpoint */}
               <div className="flex flex-col gap-1">
-                <label className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider">
+                <label htmlFor="nightshift-webhook-url" className="text-[10px] font-semibold text-slate-400 uppercase tracking-wider cursor-pointer">
                   {webhookConfig.serviceType.toUpperCase()} Webhook Endpoint URL
                 </label>
                 <input
+                  id="nightshift-webhook-url"
+                  name="webhook_url"
                   type="url"
                   value={webhookConfig.webhookUrl}
                   onChange={(e) =>
                     setWebhookConfig({ ...webhookConfig, webhookUrl: e.target.value })
                   }
+                  autoComplete="url"
+                  autoCorrect="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   placeholder={
                     webhookConfig.serviceType === 'slack'
                       ? 'https://hooks.slack.com/services/T00/B00/XXXX'

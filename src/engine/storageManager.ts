@@ -8,8 +8,21 @@
  * - Handles empty states gracefully and provides initial tactical seed reports.
  */
 
-import { ledgerDb, WorkspaceFileDbEntry } from '../services/CommandLedgerDb';
+import { ledgerDb, WorkspaceFileDbEntry, requestPersistentStorage } from '../services/CommandLedgerDb';
 import { sanitizeAndDeduplicateReportContent, deduplicateReportIntel } from '../services/ReportService';
+
+export { requestPersistentStorage };
+
+// Automatically request storage persistence when VFS storageManager loads in the browser
+if (typeof window !== 'undefined' && typeof navigator !== 'undefined') {
+  if (navigator.storage && navigator.storage.persist) {
+    navigator.storage.persist().then((granted) => {
+      if (granted) {
+        console.log('Storage persistence granted.');
+      }
+    }).catch(() => {});
+  }
+}
 
 export interface WorkspaceFileRecord {
   id?: number;

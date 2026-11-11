@@ -393,11 +393,15 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({
         <div className="flex items-center gap-2 px-3.5 py-2.5 border-b border-[#2c2217]">
           <span className="font-mono-tabular text-sm font-bold text-[#a38c70] select-none">&gt;</span>
           <input
+            id="terminal-prompt-input"
+            name="mission_prompt"
             type="text"
             value={promptInput}
             onChange={(e) => setPromptInput(e.target.value)}
             disabled={isExecuting}
             placeholder="Type mission parameters..."
+            aria-label="Mission prompt input"
+            autoComplete="off"
             className="w-full bg-transparent font-mono-tabular text-xs sm:text-sm text-[#f3ead8] placeholder:text-[#786c5e] focus:outline-none"
           />
         </div>
@@ -467,8 +471,11 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({
           <div className="flex items-center gap-2 shrink-0">
             <input
               ref={fileInputRef}
+              id="terminal-file-attachment"
+              name="file_attachment"
               type="file"
               accept="image/*"
+              aria-label="Attach mission image or file"
               onChange={handleFileChange}
               className="hidden"
             />

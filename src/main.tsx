@@ -103,3 +103,12 @@ if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
     reg.update().catch(() => {});
   });
 }
+
+// Request persistent storage on application startup using modern standardized navigator.storage API
+if (typeof navigator !== 'undefined' && navigator.storage && navigator.storage.persist) {
+  navigator.storage.persist().then((granted) => {
+    if (granted) {
+      console.log('Storage persistence granted.');
+    }
+  }).catch(() => {});
+}

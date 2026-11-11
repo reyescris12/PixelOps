@@ -469,6 +469,13 @@ export async function auditStorageHealth(): Promise<StorageHealthReport> {
       if (typeof est.quota === 'number' && est.quota > 0) {
         quotaBytes = est.quota;
       }
+      if (typeof navigator.storage.persist === 'function') {
+        navigator.storage.persist().then((granted) => {
+          if (granted) {
+            console.log('Storage persistence granted.');
+          }
+        }).catch(() => {});
+      }
     } catch {
       // Fall through to manual estimate
     }

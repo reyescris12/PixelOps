@@ -429,41 +429,50 @@ export const AgentEditorModal: React.FC<AgentEditorModalProps> = ({
                 {/* 2. Visual Layer & Display Title */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-[11px] text-[#9c8265] uppercase mb-1 font-semibold">
+                    <label htmlFor="agent-editor-codename" className="block text-[11px] text-[#9c8265] uppercase mb-1 font-semibold cursor-pointer">
                       Operative Codename
                     </label>
                     <input
+                      id="agent-editor-codename"
+                      name="agent_codename"
                       type="text"
                       value={customName}
                       onChange={(e) => setCustomName(e.target.value)}
                       maxLength={24}
+                      autoComplete="off"
                       className="w-full px-3 py-1.5 bg-[#0a0908] border border-[#5e4326] focus:border-[#e59838] text-[#f3ead8] text-xs font-bold outline-none"
                     />
                   </div>
                   <div>
-                    <label className="block text-[11px] text-[#9c8265] uppercase mb-1 font-semibold">
+                    <label htmlFor="agent-editor-role" className="block text-[11px] text-[#9c8265] uppercase mb-1 font-semibold cursor-pointer">
                       Displayed Thematic Role
                     </label>
                     <input
+                      id="agent-editor-role"
+                      name="agent_role"
                       type="text"
                       value={role}
                       onChange={(e) => setRole(e.target.value)}
                       maxLength={65}
                       placeholder="e.g. Code-Ops Specialist [Software Engineering Module]"
+                      autoComplete="off"
                       className="w-full px-3 py-1.5 bg-[#0a0908] border border-[#5e4326] focus:border-[#e59838] text-[#f3ead8] text-xs outline-none"
                     />
                   </div>
                 </div>
 
                 <div>
-                  <label className="block text-[11px] text-[#9c8265] uppercase mb-1 font-semibold">
+                  <label htmlFor="agent-editor-specialty" className="block text-[11px] text-[#9c8265] uppercase mb-1 font-semibold cursor-pointer">
                     Core Technical Specialty
                   </label>
                   <input
+                    id="agent-editor-specialty"
+                    name="agent_specialty"
                     type="text"
                     value={specialty}
                     onChange={(e) => setSpecialty(e.target.value)}
                     maxLength={80}
+                    autoComplete="off"
                     className="w-full px-3 py-1.5 bg-[#0a0908] border border-[#5e4326] focus:border-[#e59838] text-[#f3ead8] text-xs outline-none"
                   />
                 </div>

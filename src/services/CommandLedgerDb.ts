@@ -133,6 +133,37 @@ export const ledgerDb = new PixelOpsLedgerDatabase();
 export const db = ledgerDb;
 if (typeof globalThis !== 'undefined') (globalThis as any).__ledgerDb = ledgerDb;
 
+/**
+ * Standardized storage persistence request using the modern navigator.storage API.
+ * Replaces legacy browser storage persistence APIs.
+ */
+export async function requestPersistentStorage(): Promise<boolean> {
+  if (typeof navigator !== 'undefined' && navigator.storage && typeof navigator.storage.persist === 'function') {
+    try {
+      const granted = await navigator.storage.persist();
+      if (granted) {
+        console.log('Storage persistence granted.');
+      }
+      return Boolean(granted);
+    } catch (err) {
+      console.warn('[StorageManager] Error requesting storage persistence:', err);
+      return false;
+    }
+  }
+  return false;
+}
+
+// Request persistent storage on database initialization in browser environments
+if (typeof window !== 'undefined' && typeof navigator !== 'undefined') {
+  if (navigator.storage && navigator.storage.persist) {
+    navigator.storage.persist().then((granted) => {
+      if (granted) {
+        console.log('Storage persistence granted.');
+      }
+    }).catch(() => {});
+  }
+}
+
 const INITIAL_SEED_COMMANDS: Array<
   Omit<CommandLedgerEntry, 'id' | 'ledger_hash'>
 > = [];

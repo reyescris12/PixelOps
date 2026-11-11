@@ -397,12 +397,15 @@ export const PluginAuthModal: React.FC<PluginAuthModalProps> = ({
             <div className="relative">
               <input
                 id="plugin-auth-apikey"
+                name="plugin_auth_apikey"
                 type={showPassword ? 'text' : 'password'}
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
                 placeholder={guidance.placeholder}
                 className="w-full px-3 py-2 bg-[#0c0a08] border border-[#3d2e1d] focus:border-[#e59838] focus:outline-none rounded text-xs text-[#f3ead8] placeholder:text-[#635544] pr-10"
                 autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="none"
                 spellCheck={false}
               />
               <button
@@ -438,10 +441,15 @@ export const PluginAuthModal: React.FC<PluginAuthModalProps> = ({
                   </label>
                   <input
                     id="plugin-auth-handle"
+                    name="plugin_auth_handle"
                     type="text"
                     value={accountHandle}
                     onChange={(e) => setAccountHandle(e.target.value)}
                     placeholder="e.g. operative@field-net or user-12"
+                    autoComplete="off"
+                    autoCorrect="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
                     className="w-full px-2.5 py-1.5 bg-[#0c0a08] border border-[#3d2e1d] focus:border-[#e59838] focus:outline-none rounded text-xs text-[#f3ead8] placeholder:text-[#635544]"
                   />
                 </div>
@@ -452,10 +460,15 @@ export const PluginAuthModal: React.FC<PluginAuthModalProps> = ({
                   </label>
                   <input
                     id="plugin-auth-endpoint"
+                    name="plugin_auth_endpoint"
                     type="text"
                     value={endpointUrl}
                     onChange={(e) => setEndpointUrl(e.target.value)}
                     placeholder="https://api.custom-service.internal/v1"
+                    autoComplete="url"
+                    autoCorrect="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
                     className="w-full px-2.5 py-1.5 bg-[#0c0a08] border border-[#3d2e1d] focus:border-[#e59838] focus:outline-none rounded text-xs text-[#f3ead8] placeholder:text-[#635544]"
                   />
                 </div>

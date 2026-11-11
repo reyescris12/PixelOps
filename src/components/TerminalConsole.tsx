@@ -212,11 +212,15 @@ export const TerminalConsole: React.FC<TerminalConsoleProps> = ({
             <span className="text-[#e59838] font-bold text-xs select-none">pixelops&gt;</span>
             <input
               ref={inputRef}
+              id="pixelops-cli-command-input"
+              name="cli_command"
               type="text"
               value={inputVal}
               onChange={(e) => setInputVal(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder='Try "status", "dispatch <agent> <task>", "logs", or "help"'
+              aria-label="PixelOps CLI command input"
+              autoComplete="off"
               className="flex-1 bg-transparent border-none outline-none text-[#f3ead8] font-mono text-xs focus:ring-0 placeholder:text-[#334155]"
             />
             <button

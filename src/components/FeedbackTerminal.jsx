@@ -290,7 +290,12 @@ export const FeedbackTerminal = ({ isOpen, onClose }) => {
                 type="password"
                 defaultValue={resendApiKey}
                 id="resend-api-key-input"
+                name="resend_api_key"
                 placeholder="re_123456789..."
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="none"
+                spellCheck={false}
                 className="flex-1 bg-[#020502] border border-[#00aa44] text-[#00ff66] px-2 py-1 text-xs focus:outline-none focus:border-[#00ff66]"
               />
               <button
@@ -366,26 +371,38 @@ export const FeedbackTerminal = ({ isOpen, onClose }) => {
               {/* Operative Identity / Contact Fields */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-[10px] text-[#00cc55] uppercase tracking-wider mb-0.5">
+                  <label htmlFor="feedback-callsign" className="block text-[10px] text-[#00cc55] uppercase tracking-wider mb-0.5 cursor-pointer">
                     OPERATIVE CALLSIGN (OPTIONAL):
                   </label>
                   <input
+                    id="feedback-callsign"
+                    name="feedback_callsign"
                     type="text"
                     value={callsign}
                     onChange={(e) => setCallsign(e.target.value)}
                     placeholder="e.g. CIPHER / COMMANDER"
+                    autoComplete="nickname"
+                    autoCorrect="off"
+                    autoCapitalize="words"
+                    spellCheck={false}
                     className="w-full bg-[#050c05] border border-[#00aa44] text-[#00ff66] placeholder-[#006622] px-2 py-1 text-xs focus:outline-none focus:border-[#00ff66] focus:ring-1 focus:ring-[#00ff66]"
                   />
                 </div>
                 <div>
-                  <label className="block text-[10px] text-[#00cc55] uppercase tracking-wider mb-0.5">
+                  <label htmlFor="feedback-email" className="block text-[10px] text-[#00cc55] uppercase tracking-wider mb-0.5 cursor-pointer">
                     RETURN FREQUENCY / EMAIL (OPTIONAL):
                   </label>
                   <input
+                    id="feedback-email"
+                    name="feedback_email"
                     type="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     placeholder="operative@domain.com"
+                    autoComplete="email"
+                    autoCorrect="off"
+                    autoCapitalize="none"
+                    spellCheck={false}
                     className="w-full bg-[#050c05] border border-[#00aa44] text-[#00ff66] placeholder-[#006622] px-2 py-1 text-xs focus:outline-none focus:border-[#00ff66] focus:ring-1 focus:ring-[#00ff66]"
                   />
                 </div>

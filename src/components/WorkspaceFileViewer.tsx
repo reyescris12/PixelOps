@@ -775,10 +775,14 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
                 <div className="relative">
                   <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-500" />
                   <input
+                    id="vfs-search-query"
+                    name="vfs_search_query"
                     type="text"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     placeholder="Search reports & files..."
+                    aria-label="Search reports & files"
+                    autoComplete="off"
                     className="w-full bg-[#131720] border border-slate-700 rounded px-2.5 pl-8 py-1 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-slate-500 font-mono"
                   />
                   {searchQuery && (
@@ -887,6 +891,8 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
                   <div className="p-2 rounded bg-[#111722] border border-amber-700/60 flex items-center gap-1.5 text-[11px]">
                     <FolderPlus className="w-3.5 h-3.5 text-amber-400 shrink-0" />
                     <input
+                      id="vfs-new-folder-name"
+                      name="new_folder_name"
                       type="text"
                       value={newFolderName}
                       onChange={(e) => setNewFolderName(e.target.value)}
@@ -895,6 +901,8 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
                         if (e.key === 'Escape') setIsCreatingFolder(false);
                       }}
                       placeholder="New folder name..."
+                      aria-label="New folder name"
+                      autoComplete="off"
                       autoFocus
                       className="flex-1 bg-[#0a0d14] border border-slate-700 rounded px-2 py-1 text-[11px] text-white font-mono focus:outline-none focus:border-amber-500"
                     />
@@ -953,10 +961,14 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
                       </div>
                       {bulkMoveFolder === 'custom' && (
                         <input
+                          id="vfs-custom-move-folder"
+                          name="custom_move_folder"
                           type="text"
                           value={customMoveFolder}
                           onChange={(e) => setCustomMoveFolder(e.target.value)}
                           placeholder="Folder name (e.g. briefings)"
+                          aria-label="Custom destination folder name"
+                          autoComplete="off"
                           className="w-full bg-[#0a0d14] border border-slate-700 rounded px-2 py-1 text-[11px] text-white font-mono focus:outline-none focus:border-slate-500"
                         />
                       )}
@@ -1516,13 +1528,16 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-xs text-slate-400 font-semibold">
+                  <label htmlFor="vfs-new-file-path" className="text-xs text-slate-400 font-semibold cursor-pointer">
                     File Path (e.g. reports/ops_brief.md):
                   </label>
                   <input
+                    id="vfs-new-file-path"
+                    name="new_file_path"
                     type="text"
                     value={newFilePath}
                     onChange={(e) => setNewFilePath(e.target.value)}
+                    autoComplete="off"
                     className="w-full bg-[#0a0d11] border border-slate-700 rounded px-2.5 py-1.5 text-xs text-white font-mono focus:outline-none focus:border-slate-500"
                   />
                 </div>

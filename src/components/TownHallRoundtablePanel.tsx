@@ -739,11 +739,15 @@ export const TownHallRoundtablePanel: React.FC<TownHallRoundtablePanelProps> = (
             [ROUNDTABLE TOPIC] &gt;
           </span>
           <input
+            id="roundtable-topic-input"
+            name="roundtable_topic"
             type="text"
             value={topicInput}
             onChange={(e) => setTopicInput(e.target.value)}
             disabled={isExecutingMeeting}
             placeholder="Pose a question or mission dilemma to all 3 agents at the table..."
+            aria-label="Roundtable topic input"
+            autoComplete="off"
             className="w-full bg-transparent font-mono-tabular text-xs sm:text-sm text-[#f3ead8] placeholder:text-[#64748b] focus:outline-none"
           />
         </div>

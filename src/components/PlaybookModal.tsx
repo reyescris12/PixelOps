@@ -467,7 +467,7 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
                   </p>
 
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold text-[#94a3b8]">
+                    <label htmlFor="playbook-target-name" className="text-[10px] uppercase font-bold text-[#94a3b8] cursor-pointer">
                       {playbook.id === 'triage_gmail'
                         ? 'Gmail Search Filter / Query (e.g. is:unread, label:important, from:clients):'
                         : playbook.id === 'calendar_brief' || playbook.id === 'quick_schedule_briefing'
@@ -477,6 +477,8 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
                         : 'Target Name, Organization, Stack, or Entity:'}
                     </label>
                     <input
+                      id="playbook-target-name"
+                      name="target_name"
                       type="text"
                       value={targetName}
                       onChange={(e) => setTargetName(e.target.value)}
@@ -485,6 +487,7 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
                           ? 'is:unread (leave blank for default)'
                           : playbook.targetPlaceholder
                       }
+                      autoComplete="off"
                       className="w-full px-3 py-1.5 bg-[#070b10] border border-[#2c3d54] text-xs text-[#f3ead8] outline-none focus:border-[#e59838] transition-colors"
                     />
                     {playbook.id === 'triage_gmail' && (
@@ -530,7 +533,7 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
 
                   {/* Auto-Watch Trigger / Recurrence Criteria */}
                   <div className="space-y-1">
-                    <label className="text-[10px] uppercase font-bold text-[#38bdf8] flex items-center gap-1.5">
+                    <label htmlFor="playbook-watch-condition" className="text-[10px] uppercase font-bold text-[#38bdf8] flex items-center gap-1.5 cursor-pointer">
                       <Clock className="w-3 h-3 text-[#38bdf8]" />
                       <span>
                         {playbook.id === 'wiretap_watch'
@@ -539,6 +542,8 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
                       </span>
                     </label>
                     <input
+                      id="playbook-watch-condition"
+                      name="watch_condition"
                       type="text"
                       value={watchCondition}
                       onChange={(e) => setWatchCondition(e.target.value)}
@@ -555,20 +560,24 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
                           ? "e.g. Today's upcoming syncs, VIP meeting prep, agenda changes"
                           : 'e.g. Critical P0/P1 issues, new pull requests, or security CVEs'
                       }
+                      autoComplete="off"
                       className="w-full px-3 py-1.5 bg-[#070b10] border border-[#2c3d54] text-xs text-[#f3ead8] outline-none focus:border-[#38bdf8] transition-colors"
                     />
                   </div>
 
                   {playbook.supportsActionDispatch && (
                     <div className="space-y-1">
-                      <label className="text-[10px] uppercase font-bold text-[#94a3b8]">
+                      <label htmlFor="playbook-recipient-email" className="text-[10px] uppercase font-bold text-[#94a3b8] cursor-pointer">
                         Optional Email Broadcast Destination:
                       </label>
                       <input
+                        id="playbook-recipient-email"
+                        name="recipient_email"
                         type="email"
                         value={recipientEmail}
                         onChange={(e) => setRecipientEmail(e.target.value)}
                         placeholder="recipient@domain.com"
+                        autoComplete="email"
                         className="w-full px-3 py-1.5 bg-[#070b10] border border-[#2c3d54] text-xs text-[#f3ead8] outline-none focus:border-[#e59838] transition-colors"
                       />
                     </div>
@@ -772,10 +781,14 @@ export const PlaybookModal: React.FC<PlaybookModalProps> = ({
 
                 <div className="flex items-center gap-2 shrink-0 w-full sm:w-auto">
                   <input
+                    id="playbook-dispatch-recipient-email"
+                    name="dispatch_recipient_email"
                     type="email"
                     value={recipientEmail}
                     onChange={(e) => setRecipientEmail(e.target.value)}
                     placeholder="recipient@domain.com"
+                    aria-label="Email broadcast recipient"
+                    autoComplete="email"
                     className="px-2.5 py-1 bg-[#090d14] border border-[#2d3d52] text-xs text-[#f3ead8] w-full sm:w-48 outline-none focus:border-[#38bdf8]"
                   />
                   <button

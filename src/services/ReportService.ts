@@ -777,8 +777,8 @@ export function sanitizeAndDeduplicateReportContent(
 
   // 1. Check if the report has structured sections (Section 1: Executive Summary & Section 2: Detailed / Tactical Findings)
   // Support #{1,4}, bold, or bare numbered headings
-  const sec1Regex = /((?:^|\n)(?:#{1,4}\s*|\*{0,2})(?:1\.\s*)?(?:BLUF(?:\s*[\/\|]\s*Executive\s+Intelligence\s+Summary)?|Executive\s+Intelligence\s+Summary|Executive\s+Summary|BLUF|Operational\s+Diagnostic|Mission\s+Brief(?:ing)?)(?:\*{0,2})\s*\n+)([\s\S]*?)(?=\n#{1,4}|\n---|$)/i;
-  const sec2Regex = /((?:^|\n)(?:#{1,4}\s*|\*{0,2})(?:2\.\s*)?(?:Detailed\s+Intelligence(?:\s*&\s*Tactical\s+Findings)?|Detailed\s+Findings|Tactical\s+Findings|Key\s+Findings(?:\s*&\s*Tactical\s+Analysis)?|Core\s+Intelligence(?:\s*Findings)?(?:\s*&\s*Technical\s+Analysis)?|Core\s+Operational\s+Findings(?:\s*&\s*Technical\s+Analysis)?|Key\s+Intelligence\s+Findings(?:\s*&\s*Live\s+Telemetry)?|Communications\s*&\s*Relay\s*Protocol\s*Analysis)(?:\*{0,2})\s*\n+)([\s\S]*?)(?=\n#{1,4}\s*[3-9]|\n---|$)/i;
+  const sec1Regex = /((?:^|\n)(?:#{1,4}\s*|\*{0,2})(?:1\.\s*)?(?:BLUF(?:\s*[\/\|]\s*Executive\s+Intelligence\s+Summary)?|Executive\s+Intelligence\s+Summary|Executive\s+Summary|BLUF|Operational\s+Diagnostic|Mission\s+Brief(?:ing)?)(?:\*{0,2})\s*\n+)([\s\S]*?)(?=\n#{1,4}|\n---|\n___|\n\*{0,2}[2-9]\.\s+[A-Z]|$)/i;
+  const sec2Regex = /((?:^|\n)(?:#{1,4}\s*|\*{0,2})(?:2\.\s*)?(?:Detailed\s+Intelligence(?:\s*&\s*Tactical\s+Findings)?|Detailed\s+Findings|Tactical\s+Findings|Key\s+Findings(?:\s*&\s*Tactical\s+Analysis)?|Core\s+Intelligence(?:\s*Findings)?(?:\s*&\s*Technical\s+Analysis)?|Core\s+Operational\s+Findings(?:\s*&\s*Technical\s+Analysis)?|Key\s+Intelligence\s+Findings(?:\s*&\s*Live\s+Telemetry)?|Communications\s*&\s*Relay\s*Protocol\s*Analysis)(?:\*{0,2})\s*\n+)([\s\S]*?)(?=\n#{1,4}\s*[3-9]|\n---|\n___|\n\*{0,2}[3-9]\.\s+[A-Z]|$)/i;
 
   const sec1Match = content.match(sec1Regex);
   const sec2Match = content.match(sec2Regex);
@@ -974,10 +974,10 @@ export function formatOrganizedReportMarkdown(params: ReportGenerationParams): {
 
   // Check if content ALREADY contains explicit structured section headers
   const sec1Match = cleanedBody.match(
-    /(?:^|\n)(?:#{1,4}\s*|\*{0,2})(?:1\.\s*)?(?:BLUF(?:\s*[\/\|]\s*Executive\s+Intelligence\s+Summary)?|Executive\s+Intelligence\s+Summary|Executive\s+Summary|Operational\s+Diagnostic|Mission\s+Brief(?:ing)?)(?:\*{0,2})\s*\n+([\s\S]*?)(?=\n#{1,4}|\n---|$)/i
+    /(?:^|\n)(?:#{1,4}\s*|\*{0,2})(?:1\.\s*)?(?:BLUF(?:\s*[\/\|]\s*Executive\s+Intelligence\s+Summary)?|Executive\s+Intelligence\s+Summary|Executive\s+Summary|Operational\s+Diagnostic|Mission\s+Brief(?:ing)?)(?:\*{0,2})\s*\n+([\s\S]*?)(?=\n#{1,4}|\n---|\n___|\n\*{0,2}[2-9]\.\s+[A-Z]|$)/i
   );
   const sec2Match = cleanedBody.match(
-    /(?:^|\n)(?:#{1,4}\s*|\*{0,2})(?:2\.\s*)?(?:Detailed\s+Intelligence(?:\s*&\s*Tactical\s+Findings)?|Detailed\s+Findings|Tactical\s+Findings|Key\s+Findings(?:\s*&\s*Tactical\s+Analysis)?|Core\s+Intelligence(?:\s*Findings)?(?:\s*&\s*Technical\s+Analysis)?|Core\s+Operational\s+Findings(?:\s*&\s*Technical\s+Analysis)?|Key\s+Intelligence\s+Findings(?:\s*&\s*Live\s+Telemetry)?|Communications\s*&\s*Relay\s*Protocol\s*Analysis)(?:\*{0,2})\s*\n+([\s\S]*?)(?=\n#{1,4}\s*[3-9]|\n---|$)/i
+    /(?:^|\n)(?:#{1,4}\s*|\*{0,2})(?:2\.\s*)?(?:Detailed\s+Intelligence(?:\s*&\s*Tactical\s+Findings)?|Detailed\s+Findings|Tactical\s+Findings|Key\s+Findings(?:\s*&\s*Tactical\s+Analysis)?|Core\s+Intelligence(?:\s*Findings)?(?:\s*&\s*Technical\s+Analysis)?|Core\s+Operational\s+Findings(?:\s*&\s*Technical\s+Analysis)?|Key\s+Intelligence\s+Findings(?:\s*&\s*Live\s+Telemetry)?|Communications\s*&\s*Relay\s*Protocol\s*Analysis)(?:\*{0,2})\s*\n+([\s\S]*?)(?=\n#{1,4}\s*[3-9]|\n---|\n___|\n\*{0,2}[3-9]\.\s+[A-Z]|$)/i
   );
 
   let execSummaryText = '';

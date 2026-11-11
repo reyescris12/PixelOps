@@ -3,6 +3,7 @@ import path from 'path';
 import fs from 'fs';
 import zlib from 'zlib';
 import crypto from 'crypto';
+import dns from 'dns';
 import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, FunctionDeclaration, Type } from '@google/genai';
@@ -14,6 +15,11 @@ import { onRequest as handleSpectrumOsint } from './functions/api/osint/spectrum
 import { onRequest as handleThreatMatrixOsint } from './functions/api/osint/threat-matrix';
 import { onRequest as handleClassifiedFeed } from './functions/api/intel/classified-feed';
 import { onRequest as handleUniversalSearch } from './functions/api/search';
+import {
+  isPrivateOrReservedIP,
+  validateTargetUrl,
+  ALLOWED_DOMAINS as ALLOWED_FETCH_DOMAINS,
+} from './functions/api/fetch';
 import { fetchS2WireFeed, buildAgentSITREPContext } from './server/services/s2Parser.js';
 
 dotenv.config();
@@ -1637,9 +1643,28 @@ async function startServer() {
   void handleSearchRequest;
 
   /**
+   * Helper to resolve DNS and check all resolved IP addresses against private/reserved ranges
+   * to protect against DNS rebinding attacks.
+   */
+  const checkDnsResolution = async (hostname: string): Promise<{ safe: boolean; reason?: string }> => {
+    try {
+      const records = await dns.promises.lookup(hostname, { all: true });
+      for (const record of records) {
+        if (isPrivateOrReservedIP(record.address)) {
+          return { safe: false, reason: `Resolved IP ${record.address} is private or reserved. SSRF blocked.` };
+        }
+      }
+      return { safe: true };
+    } catch (e: any) {
+      return { safe: false, reason: `DNS resolution failed for ${hostname}: ${e?.message || 'Host not found'}` };
+    }
+  };
+
+  /**
    * Universal Web Crawler & URL Reader Proxy
    * Route: /api/fetch (GET & POST)
-   * Fetches any URL across the internet without CORS restrictions.
+   * Fetches authorized URLs with strict SSRF mitigation, private IP blocking,
+   * DNS rebinding defense, and manual redirect hop verification.
    */
   const handleFetchRequest = async (req: express.Request, res: express.Response) => {
     let targetUrl = String(req.query.url || req.query.u || req.body?.url || req.body?.targetUrl || '').trim();
@@ -1653,33 +1678,6 @@ async function startServer() {
       targetUrl = `https://${targetUrl}`;
     }
 
-    // SSRF Mitigation: Strict domain whitelist enforcement
-    const ALLOWED_FETCH_DOMAINS = [
-      'understandingwar.org', 
-      'api.anthropic.com', 
-      'generativelanguage.googleapis.com',
-      'openrouter.ai',
-      'api.openai.com',
-      'api.groq.com',
-      'feeds.buzzsprout.com',
-      'api.github.com',
-      'gitlab.com',
-      'api.shodan.io',
-      'api.securitytrails.com',
-      'api.abuseipdb.com',
-      'crt.sh',
-      'api.bgpview.io',
-      'ipinfo.io',
-      'otx.alienvault.com',
-      'www.virustotal.com',
-      'earthquake.usgs.gov',
-      'services.swpc.noaa.gov',
-      'en.wikipedia.org',
-      'hn.algolia.com',
-      'api.duckduckgo.com',
-      'news.google.com',
-    ];
-
     let parsedTargetUrl: URL;
     try {
       parsedTargetUrl = new URL(targetUrl);
@@ -1687,15 +1685,21 @@ async function startServer() {
       return res.status(400).json({ error: 'INVALID_URL', message: 'Target URL is malformed.' });
     }
 
-    const host = parsedTargetUrl.hostname.toLowerCase().trim();
-    const isDomainAllowed = ALLOWED_FETCH_DOMAINS.some(
-      (allowed) => host === allowed || host.endsWith('.' + allowed)
-    );
-
-    if (!isDomainAllowed) {
+    // SSRF Mitigation Step 1: Validate protocol, port, userinfo, IP ranges, and domain allowlist
+    const urlValidation = validateTargetUrl(parsedTargetUrl);
+    if (!urlValidation.valid) {
       return res.status(403).json({
-        error: 'Forbidden: Target domain is not whitelisted',
-        message: `SSRF Guard: Domain "${parsedTargetUrl.hostname}" is not in the safehouse allowlist.`,
+        error: 'Forbidden: Target domain or URL blocked by SSRF policy',
+        message: urlValidation.reason,
+      });
+    }
+
+    // SSRF Mitigation Step 2: Pre-resolve DNS to detect DNS rebinding to internal/private IPs
+    const dnsCheck = await checkDnsResolution(parsedTargetUrl.hostname);
+    if (!dnsCheck.safe) {
+      return res.status(403).json({
+        error: 'Forbidden: DNS resolution blocked by SSRF policy',
+        message: dnsCheck.reason,
       });
     }
 
@@ -1706,17 +1710,72 @@ async function startServer() {
         ...(req.body?.headers || {}),
       };
 
-      const fetchOptions: RequestInit = {
-        method,
-        headers: fetchHeaders,
-        redirect: 'follow',
-      };
+      let currentUrl = targetUrl;
+      let externalRes: Response | null = null;
+      let remainingRedirects = 3;
 
-      if (method !== 'GET' && method !== 'HEAD' && req.body?.body) {
-        fetchOptions.body = typeof req.body.body === 'string' ? req.body.body : JSON.stringify(req.body.body);
+      // SSRF Mitigation Step 3: Manual redirect loop re-validating each hop
+      while (true) {
+        let hopUrl: URL;
+        try {
+          hopUrl = new URL(currentUrl);
+        } catch {
+          return res.status(400).json({ error: 'INVALID_URL', message: `Malformed redirect URL: ${currentUrl}` });
+        }
+
+        const hopValidation = validateTargetUrl(hopUrl);
+        if (!hopValidation.valid) {
+          return res.status(403).json({
+            error: 'Forbidden: Redirect target blocked by SSRF policy',
+            message: hopValidation.reason,
+          });
+        }
+
+        const hopDns = await checkDnsResolution(hopUrl.hostname);
+        if (!hopDns.safe) {
+          return res.status(403).json({
+            error: 'Forbidden: Redirect target DNS blocked by SSRF policy',
+            message: hopDns.reason,
+          });
+        }
+
+        const fetchOptions: RequestInit = {
+          method,
+          headers: fetchHeaders,
+          redirect: 'manual',
+        };
+
+        if (method !== 'GET' && method !== 'HEAD' && req.body?.body) {
+          fetchOptions.body = typeof req.body.body === 'string' ? req.body.body : JSON.stringify(req.body.body);
+        }
+
+        externalRes = await fetch(currentUrl, fetchOptions);
+
+        if ([301, 302, 303, 307, 308].includes(externalRes.status)) {
+          if (remainingRedirects <= 0) {
+            return res.status(502).json({
+              error: 'FETCH_FAILED',
+              message: 'Maximum redirect limit (3 hops) exceeded during proxy fetch.',
+            });
+          }
+
+          const location = externalRes.headers.get('location');
+          if (!location) {
+            break; // No location header, return as-is
+          }
+
+          currentUrl = new URL(location, currentUrl).toString();
+          remainingRedirects--;
+          continue;
+        }
+
+        break;
       }
 
-      const externalRes = await fetch(targetUrl, fetchOptions);
+      if (!externalRes) {
+        throw new Error('No response received from target host.');
+      }
+
       const contentType = externalRes.headers.get('content-type') || '';
 
       if (contentType.includes('application/json')) {
@@ -1724,7 +1783,7 @@ async function startServer() {
         return res.json({
           ok: externalRes.ok,
           status: externalRes.status,
-          url: targetUrl,
+          url: currentUrl,
           contentType: 'application/json',
           data: json,
         });
@@ -1751,7 +1810,7 @@ async function startServer() {
       res.json({
         ok: externalRes.ok,
         status: externalRes.status,
-        url: targetUrl,
+        url: currentUrl,
         contentType: contentType || 'text/plain',
         text: cleanText.slice(0, 10000),
         totalLength: cleanText.length,

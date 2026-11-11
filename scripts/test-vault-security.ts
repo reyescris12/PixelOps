@@ -11,7 +11,14 @@ import {
   getRawEncryptedCredentialForVerification,
 } from '../src/services/SecureVaultService';
 import { ledgerDb, db } from '../src/services/CommandLedgerDb';
-import { ALLOWED_DOMAINS, isAllowedDomain, handleFetchProxy } from '../functions/api/fetch';
+import {
+  ALLOWED_DOMAINS,
+  isAllowedDomain,
+  handleFetchProxy,
+  isPrivateOrReservedIP,
+  validateTargetUrl,
+  executeSafeFetch,
+} from '../functions/api/fetch';
 import {
   savePluginAuth,
   getPluginAuth,
@@ -119,6 +126,68 @@ async function runTests() {
   } else {
     console.log('PASS: Unwhitelisted domain rejected immediately with 403 Forbidden!');
   }
+
+  console.log('\n=== TEST 3B: SSRF Private IP & Cloud Metadata Blocking ===');
+  const ipTestCases = [
+    { ip: '127.0.0.1', isPrivate: true },
+    { ip: '127.255.255.255', isPrivate: true },
+    { ip: '10.0.0.1', isPrivate: true },
+    { ip: '172.16.0.1', isPrivate: true },
+    { ip: '172.31.255.255', isPrivate: true },
+    { ip: '192.168.1.1', isPrivate: true },
+    { ip: '169.254.169.254', isPrivate: true },
+    { ip: '0.0.0.0', isPrivate: true },
+    { ip: '100.64.0.1', isPrivate: true },
+    { ip: '::1', isPrivate: true },
+    { ip: '[::1]', isPrivate: true },
+    { ip: 'fe80::1', isPrivate: true },
+    { ip: 'fd00::1', isPrivate: true },
+    { ip: '::ffff:127.0.0.1', isPrivate: true },
+    { ip: '::ffff:169.254.169.254', isPrivate: true },
+    { ip: '2130706433', isPrivate: true },
+    { ip: '0x7f000001', isPrivate: true },
+    { ip: '8.8.8.8', isPrivate: false },
+    { ip: '1.1.1.1', isPrivate: false },
+  ];
+
+  for (const tc of ipTestCases) {
+    const res = isPrivateOrReservedIP(tc.ip);
+    if (res !== tc.isPrivate) {
+      console.error(`FAIL: IP "${tc.ip}" expected isPrivate=${tc.isPrivate}, got ${res}`);
+      process.exit(1);
+    }
+  }
+  console.log('PASS: All private, link-local metadata, loopback, and reserved IP checks passed!');
+
+  console.log('\n=== TEST 3C: SSRF URL Protocol, Port & Userinfo Validation ===');
+  const urlTestCases = [
+    { url: 'http://localhost:8080', expectedValid: false, desc: 'localhost with custom port' },
+    { url: 'http://169.254.169.254/latest/meta-data/', expectedValid: false, desc: 'cloud metadata link-local IP' },
+    { url: 'http://127.0.0.1:8080/internal', expectedValid: false, desc: 'internal loopback IP' },
+    { url: 'https://understandingwar.org:8080', expectedValid: false, desc: 'disallowed port 8080 on allowed host' },
+    { url: 'file:///etc/passwd', expectedValid: false, desc: 'forbidden file: protocol' },
+    { url: 'gopher://127.0.0.1:70', expectedValid: false, desc: 'forbidden gopher: protocol' },
+    { url: 'https://admin:secret@understandingwar.org', expectedValid: false, desc: 'forbidden userinfo in URL' },
+    { url: 'https://understandingwar.org/report', expectedValid: true, desc: 'valid HTTPS on allowed host' },
+    { url: 'https://feeds.buzzsprout.com/123.xml', expectedValid: true, desc: 'valid HTTPS on allowed podcast feed' },
+  ];
+
+  for (const tc of urlTestCases) {
+    try {
+      const parsed = new URL(tc.url);
+      const res = validateTargetUrl(parsed);
+      if (res.valid !== tc.expectedValid) {
+        console.error(`FAIL: ${tc.desc} (${tc.url}) expected valid=${tc.expectedValid}, got ${res.valid}. Reason: ${res.reason}`);
+        process.exit(1);
+      }
+    } catch (e: any) {
+      if (tc.expectedValid) {
+        console.error(`FAIL: ${tc.desc} (${tc.url}) threw unexpected error:`, e);
+        process.exit(1);
+      }
+    }
+  }
+  console.log('PASS: All protocol, port, userinfo, and host SSRF validation checks passed!');
 
   console.log('\n=== TEST 4: Legacy Storage Purge & Safe Migration ===');
   // Seed legacy plaintext keys in localStorage

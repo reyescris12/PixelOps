@@ -50,7 +50,9 @@ import {
   loadWorkspaceFolders,
   ensureWorkspaceFolderExists,
   deleteWorkspaceFolder,
+  repairAllStoredReports,
 } from '../engine/storageManager';
+import { sanitizeAndDeduplicateReportContent } from '../services/ReportService';
 import { pushToCloud } from '../services/SyncService';
 
 export interface WorkspaceFileViewerProps {
@@ -192,6 +194,7 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
   useEffect(() => {
     if (isOpen) {
       loadFiles(true, false);
+      repairAllStoredReports().catch(() => {});
     }
   }, [isOpen]);
 
@@ -288,8 +291,20 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
 
   const handleSelectFile = (file: WorkspaceFileRecord) => {
     playBeep('tap');
-    setSelectedFile(file);
-    setEditContent(file.content);
+    const cleanContent =
+      file.content &&
+      (file.path.endsWith('.md') ||
+        file.path.startsWith('reports/') ||
+        file.path.startsWith('intel/') ||
+        file.format === 'markdown')
+        ? sanitizeAndDeduplicateReportContent(file.content, file.path).content
+        : file.content;
+    const cleanFile =
+      cleanContent !== file.content
+        ? { ...file, content: cleanContent, sizeBytes: cleanContent.length }
+        : file;
+    setSelectedFile(cleanFile);
+    setEditContent(cleanFile.content);
     setDeleteConfirmPath(null);
     if (viewMode === 'edit') setViewMode('rendered');
     setMobileActiveTab('preview');
@@ -1519,8 +1534,12 @@ interface RetroMarkdownRendererProps {
 }
 
 export const RetroMarkdownRenderer: React.FC<RetroMarkdownRendererProps> = ({ content }) => {
+  const sanitizedContent = useMemo(() => {
+    return sanitizeAndDeduplicateReportContent(content || '').content;
+  }, [content]);
+
   const renderedElements = useMemo(() => {
-    if (!content || !content.trim()) {
+    if (!sanitizedContent || !sanitizedContent.trim()) {
       return (
         <div className="text-slate-500 italic p-4 text-center">
           (Empty markdown file)
@@ -1528,7 +1547,7 @@ export const RetroMarkdownRenderer: React.FC<RetroMarkdownRendererProps> = ({ co
       );
     }
 
-    const lines = content.split('\n');
+    const lines = sanitizedContent.split('\n');
     const elements: React.ReactNode[] = [];
     let inCodeBlock = false;
     let codeLanguage = '';

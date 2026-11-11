@@ -145,7 +145,7 @@ import {
   executeTaskChain,
   saveMissionDossierToVfs,
 } from './services/TaskChainService';
-import { writeWorkspaceFile } from './engine/storageManager';
+import { writeWorkspaceFile, repairAllStoredReports } from './engine/storageManager';
 import { TaskChainHUD } from './components/TaskChainHUD';
 import type { PluginAuthTarget } from './components/PluginAuthModal';
 const PluginAuthModal = lazy(() => import('./components/PluginAuthModal').then((m) => ({ default: m.PluginAuthModal })));
@@ -572,6 +572,7 @@ const CommandCenterContent: React.FC = () => {
     runStartupVaultValidation();
     refreshCommandLedger();
     auditStorageHealth().catch((e) => console.warn('Storage health audit warning:', e));
+    repairAllStoredReports().catch((e) => console.warn('Report audit/repair warning:', e));
     backgroundWorkerEngine.startBackgroundLoop();
   }, []);
 

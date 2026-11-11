@@ -9,6 +9,7 @@
  */
 
 import { ledgerDb, WorkspaceFileDbEntry } from '../services/CommandLedgerDb';
+import { sanitizeAndDeduplicateReportContent, deduplicateReportIntel } from '../services/ReportService';
 
 export interface WorkspaceFileRecord {
   id?: number;
@@ -434,10 +435,14 @@ export async function listWorkspaceFiles(categoryFilter?: string): Promise<Works
 
 /**
  * Reads a single workspace file by its path.
+ * Automatically verifies and sanitizes markdown reports to strip duplicate sections
+ * and correct mismatched topic tags.
  */
 export async function readWorkspaceFile(rawPath: string): Promise<WorkspaceFileRecord | null> {
   const norm = normalizeFilePath(rawPath);
   if (!norm) return null;
+
+  let resultRecord: WorkspaceFileRecord | null = null;
 
   // 1. Try Dexie/IndexedDB
   try {
@@ -447,7 +452,7 @@ export async function readWorkspaceFile(rawPath: string): Promise<WorkspaceFileR
         if (isWorkspaceFileDeleted(norm, entry.updatedAt)) {
           return null;
         }
-        return {
+        resultRecord = {
           id: entry.id,
           path: norm,
           category: entry.category || resolveCategoryFromPath(norm),
@@ -464,7 +469,7 @@ export async function readWorkspaceFile(rawPath: string): Promise<WorkspaceFileR
   }
 
   // 2. Try LocalStorage VFS
-  if (typeof localStorage !== 'undefined') {
+  if (!resultRecord && typeof localStorage !== 'undefined') {
     try {
       const raw = localStorage.getItem(VFS_KEY);
       if (raw) {
@@ -475,7 +480,7 @@ export async function readWorkspaceFile(rawPath: string): Promise<WorkspaceFileR
             return null;
           }
           const content = meta.content || '';
-          return {
+          resultRecord = {
             path: norm,
             category: resolveCategoryFromPath(norm),
             format: meta.format || resolveFormatFromPath(norm),
@@ -490,14 +495,139 @@ export async function readWorkspaceFile(rawPath: string): Promise<WorkspaceFileR
   }
 
   // 3. Try In-Memory Map
-  if (memoryFileMap.has(norm)) {
+  if (!resultRecord && memoryFileMap.has(norm)) {
     const rec = memoryFileMap.get(norm)!;
     if (!isWorkspaceFileDeleted(norm, rec.updatedAt)) {
-      return rec;
+      resultRecord = { ...rec };
     }
   }
 
-  return null;
+  if (!resultRecord) return null;
+
+  // 4. Auto-sanitize and repair report content if it's a markdown report
+  if (
+    resultRecord.content &&
+    (norm.endsWith('.md') ||
+      norm.startsWith('reports/') ||
+      norm.startsWith('intel/') ||
+      resultRecord.format === 'markdown')
+  ) {
+    const { content: sanitized, changed } = sanitizeAndDeduplicateReportContent(
+      resultRecord.content,
+      norm
+    );
+    if (changed) {
+      resultRecord.content = sanitized;
+      resultRecord.sizeBytes = sanitized.length;
+      resultRecord.previewSnippet = sanitized.slice(0, 160).replace(/\n/g, ' ');
+
+      // Persist the repaired content back to IndexedDB and VFS silently
+      if (ledgerDb && ledgerDb.workspace_files && resultRecord.id !== undefined) {
+        ledgerDb.workspace_files
+          .update(resultRecord.id, {
+            content: sanitized,
+            sizeBytes: sanitized.length,
+            updatedAt: new Date().toISOString(),
+          })
+          .catch(() => {});
+      }
+      if (typeof localStorage !== 'undefined') {
+        try {
+          const raw = localStorage.getItem(VFS_KEY);
+          if (raw) {
+            const vfs = JSON.parse(raw);
+            if (vfs[norm]) {
+              vfs[norm].content = sanitized;
+              vfs[norm].sizeBytes = sanitized.length;
+              vfs[norm].updatedAt = new Date().toISOString();
+              localStorage.setItem(VFS_KEY, JSON.stringify(vfs));
+            }
+          }
+        } catch {}
+      }
+    }
+  }
+
+  return resultRecord;
+}
+
+/**
+ * Automatically inspects and repairs all stored workspace reports in IndexedDB and LocalStorage VFS,
+ * stripping duplicated sections, eliminating repeated paragraphs, and correcting mismatched topic tags.
+ * Returns the count of repaired reports.
+ */
+export async function repairAllStoredReports(): Promise<number> {
+  let repairedCount = 0;
+
+  // 1. Repair IndexedDB workspace_files table
+  try {
+    if (ledgerDb && ledgerDb.workspace_files) {
+      const dbEntries = await ledgerDb.workspace_files.toArray();
+      for (const entry of dbEntries) {
+        if (!entry.content) continue;
+        const norm = normalizeFilePath(entry.path);
+        if (
+          norm.endsWith('.md') ||
+          norm.startsWith('reports/') ||
+          norm.startsWith('intel/') ||
+          entry.format === 'markdown'
+        ) {
+          const { content: sanitized, changed } = sanitizeAndDeduplicateReportContent(
+            entry.content,
+            norm
+          );
+          if (changed && entry.id !== undefined) {
+            await ledgerDb.workspace_files.update(entry.id, {
+              content: sanitized,
+              sizeBytes: sanitized.length,
+              updatedAt: new Date().toISOString(),
+            });
+            repairedCount++;
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('[StorageManager] Error repairing IndexedDB reports:', err);
+  }
+
+  // 2. Repair LocalStorage VFS
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const raw = localStorage.getItem(VFS_KEY);
+      if (raw) {
+        const vfs = JSON.parse(raw);
+        let vfsChanged = false;
+        for (const [rawPath, meta] of Object.entries(vfs)) {
+          if (!meta || typeof (meta as any).content !== 'string') continue;
+          const norm = normalizeFilePath(rawPath);
+          if (
+            norm.endsWith('.md') ||
+            norm.startsWith('reports/') ||
+            norm.startsWith('intel/') ||
+            (meta as any).format === 'markdown'
+          ) {
+            const { content: sanitized, changed } = sanitizeAndDeduplicateReportContent(
+              (meta as any).content,
+              norm
+            );
+            if (changed) {
+              (meta as any).content = sanitized;
+              (meta as any).sizeBytes = sanitized.length;
+              (meta as any).updatedAt = new Date().toISOString();
+              vfsChanged = true;
+              repairedCount++;
+            }
+          }
+        }
+        if (vfsChanged) {
+          localStorage.setItem(VFS_KEY, JSON.stringify(vfs));
+        }
+      }
+    } catch {}
+  }
+
+  return repairedCount;
 }
 
 /**
@@ -1062,6 +1192,7 @@ export async function consolidateWorkspaceFiles(params: {
 
   const fileSections: string[] = [];
   let totalChars = 0;
+  let accumulatedIntel = '';
 
   for (let idx = 0; idx < loadedFiles.length; idx++) {
     const f = loadedFiles[idx];
@@ -1073,15 +1204,17 @@ export async function consolidateWorkspaceFiles(params: {
       .replace(/\n*📁 \*\*\[WORKSPACE REPORT UPLOADED\]\*\*[\s\S]*$/, '')
       .trim();
 
+    // Deduplicate against already accumulated intel to eliminate duplicate intel across similar files
+    const nonRedundant = deduplicateReportIntel(cleanContent, accumulatedIntel);
+    accumulatedIntel = accumulatedIntel ? `${accumulatedIntel}\n\n${cleanContent}` : cleanContent;
+
     fileSections.push(
       [
         `## ${idx + 2}. Source Dossier: \`${f.path}\` (${f.sizeBytes} bytes, updated ${f.updatedAt.slice(0, 16)})`,
-        cleanContent,
+        nonRedundant,
       ].join('\n\n')
     );
   }
-
-  const finalMarkdown = [header, ...fileSections].join('\n\n');
 
   // Resolve target path
   const finalTargetPath = targetPath
@@ -1089,6 +1222,9 @@ export async function consolidateWorkspaceFiles(params: {
     : normalizeFilePath(
         `reports/consolidated_${cleanTopic.toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 40)}.md`
       );
+
+  const rawMarkdown = [header, ...fileSections].join('\n\n');
+  const finalMarkdown = sanitizeAndDeduplicateReportContent(rawMarkdown, finalTargetPath).content;
 
   // 1. Write the new consolidated file to IndexedDB / VFS
   await writeWorkspaceFile(finalTargetPath, finalMarkdown, 'markdown', 'reports');

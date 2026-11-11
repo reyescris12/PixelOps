@@ -66,6 +66,7 @@ import {
   formatOrganizedReportMarkdown,
   synthesizeComprehensiveReport,
   uploadReportToWorkspaceFiles,
+  sanitizeAndDeduplicateReportContent,
 } from './ReportService';
 import {
   writeWorkspaceFile,
@@ -2652,17 +2653,21 @@ ${findings || 'No additional telemetry findings attached.'}
           ? extractReportFilePath(content.slice(0, 300), 'tactical_intel', content)
           : path;
 
-        // Format markdown cleanly if writing a report
-        const resolvedContent =
-          format === 'markdown' && !content.includes('## 1. Executive') && content.length > 60
-            ? formatOrganizedReportMarkdown({
-                prompt: isGenericOrPromptLiteral ? '' : rawPath,
-                agentName: 'Safehouse Operative',
-                agentRole: 'Intelligence Analyst',
-                existingDialogue: content,
-                explicitFilePath: resolvedWritePath,
-              }).markdown
-            : content;
+        // Format markdown cleanly if writing a report and guarantee zero repeated intel
+        let resolvedContent = content;
+        if (format === 'markdown' && content.length > 50) {
+          if (!content.includes('## 1. Executive') && !content.includes('## 1. BLUF')) {
+            resolvedContent = formatOrganizedReportMarkdown({
+              prompt: isGenericOrPromptLiteral ? '' : rawPath,
+              agentName: 'Safehouse Operative',
+              agentRole: 'Intelligence Analyst',
+              existingDialogue: content,
+              explicitFilePath: resolvedWritePath,
+            }).markdown;
+          } else {
+            resolvedContent = sanitizeAndDeduplicateReportContent(content, resolvedWritePath).content;
+          }
+        }
 
         let savedRec: any = null;
         try {
@@ -6898,7 +6903,7 @@ CRITICAL MEMORY RECALL INSTRUCTION:
         : `You are ${params.activeAgentName || 'Agent'}, an AI assistant. Help the user complete their directives and tasks directly, clearly, and effectively using your available tools.`;
 
       if (declaredToolNames) {
-        systemInstruction += `\n\n### Available Tools & Integrations:\n${declaredToolNames}\nWhen executing external or connected tool operations (e.g. GitHub, Slack, Gmail, Google Calendar, Notion, Linear, web search, code sandbox, file storage), you can invoke them directly or emit a structured action tag in your response:\n[AGENT_ACTION: <tool_name>] { "param": "value" } [/AGENT_ACTION]\n\n### Workspace File System Operations (fs_storage_manager):\nYou have full read/write/edit/delete/organize/audit/consolidate power over the local workspace files in IndexedDB:\n- "write" / "create": Save or upload markdown reports, briefs, configs, or dossiers.\n- "read": Inspect existing file content by path.\n- "edit" / "append": Update or add to existing workspace files.\n- "delete": Permanently remove obsolete files or test artifacts.\n- "organize": Move files into folders (e.g. "reports", "intel", "archive", "logs").\n- "audit": Inspect the entire workspace for integrity, size, stale items, and duplicate content.\n- "consolidate": Merge multiple related files into a single unified dossier without duplicating intel, and delete the superseded source files so only the new unified master dossier remains.\n- "list": Inspect all workspace files.\n\n### Critical Consolidation Rule:\nWhen the user asks to consolidate, combine, or merge files, or says "gather all intel from similar files into one and delete the old ones":\n1. ALWAYS read and combine all content from the source files into a single authoritative master dossier.\n2. ALWAYS delete the superseded individual source files from the workspace.\n3. NEVER simply write a message saying you did it—actually invoke fs_storage_manager action "consolidate" with deleteSources: true!\n\n### Report Writing & Non-Redundancy Standards:\nWhen compiling multi-part reports or executing investigative workflows:\n- Write crisp, distinct intelligence without repeating identical findings, preambles, or citations in part 1 and part 2.\n- Always synthesize and consolidate field signals into clear, actionable sections (Executive Summary, Findings, Telemetry Matrix, Recommendations).\n\n### Calendar Tool Parameter Rules:\nWhen invoking composio_googlecalendar_create_event or scheduling calendar events, strictly enforce clean JSON parameters:\n- Required keys: "summary", "start_time", "end_time", "time_zone".\n- Datetime format: ISO 8601 local wall-clock string without trailing Z offset (e.g. "2026-11-09T16:21:19").\n- Summary: Clean title only without conversational filler, prefix narratives, or debug blocks.\n\n### Specialized OSINT & Adversarial Tool Capabilities:\nYou have native access to professional-grade OSINT and threat intelligence tools:\n- "osint_shodan_host_lookup": Query open ports, exposed services, SSL certificates, OS banners, and CVE vulnerabilities for target IPs.\n- "osint_crtsh_subdomain_discovery": Query Certificate Transparency logs to discover subdomains, internal staging environments, and wildcard certificates for target domains.\n- "osint_bgp_route_lookup": Query BGPView and RIR registries for Autonomous System Numbers (ASNs), routing prefixes, and network topology.\n- "osint_ip_reputation_audit": Cross-examine AbuseIPDB and IPinfo for malicious confidence scores, brute-force history, geolocation, and ISP classification.\n- "osint_virustotal_threat_check": Query VirusTotal & AlienVault OTX for malware consensus, threat tags, and OTX threat Pulses.\n- "osint_code_leak_audit": Search public repositories for leaked API secrets, hardcoded credentials, and exposed .env files.`;
+        systemInstruction += `\n\n### Available Tools & Integrations:\n${declaredToolNames}\nWhen executing external or connected tool operations (e.g. GitHub, Slack, Gmail, Google Calendar, Notion, Linear, web search, code sandbox, file storage), you can invoke them directly or emit a structured action tag in your response:\n[AGENT_ACTION: <tool_name>] { "param": "value" } [/AGENT_ACTION]\n\n### Workspace File System Operations (fs_storage_manager):\nYou have full read/write/edit/delete/organize/audit/consolidate power over the local workspace files in IndexedDB:\n- "write" / "create": Save or upload markdown reports, briefs, configs, or dossiers.\n- "read": Inspect existing file content by path.\n- "edit" / "append": Update or add to existing workspace files.\n- "delete": Permanently remove obsolete files or test artifacts.\n- "organize": Move files into folders (e.g. "reports", "intel", "archive", "logs").\n- "audit": Inspect the entire workspace for integrity, size, stale items, and duplicate content.\n- "consolidate": Merge multiple related files into a single unified dossier without duplicating intel, and delete the superseded source files so only the new unified master dossier remains.\n- "list": Inspect all workspace files.\n\n### Critical Consolidation Rule:\nWhen the user asks to consolidate, combine, or merge files, or says "gather all intel from similar files into one and delete the old ones":\n1. ALWAYS read and combine all content from the source files into a single authoritative master dossier.\n2. ALWAYS delete the superseded individual source files from the workspace.\n3. NEVER simply write a message saying you did it—actually invoke fs_storage_manager action "consolidate" with deleteSources: true!\n\n### Report Writing & Non-Redundancy Standards:\nWhen compiling multi-part reports or executing investigative workflows:\n- Write crisp, distinct intelligence without repeating identical findings, preambles, or citations in part 1 and part 2.\n- Always synthesize and consolidate field signals into clear, actionable sections (Executive Summary, Findings, Telemetry Matrix, Recommendations).\n- STRICT ZERO-REPETITION MANDATE: Never repeat or copy-paste text between Section 1 (Executive Summary) and Section 2 (Tactical Findings). Section 1 is strictly for the high-level BLUF, while Section 2 provides distinct, granular technical metrics, anomaly tables, and tactical breakdown.\n- Ensure topic tags accurately reflect the subject (e.g. FININT/MARKET_RECON for financial markets, CYBER_SEC for vulnerabilities, GEO_HAZARDS for earthquakes/tsunamis).\n\n### Calendar Tool Parameter Rules:\nWhen invoking composio_googlecalendar_create_event or scheduling calendar events, strictly enforce clean JSON parameters:\n- Required keys: "summary", "start_time", "end_time", "time_zone".\n- Datetime format: ISO 8601 local wall-clock string without trailing Z offset (e.g. "2026-11-09T16:21:19").\n- Summary: Clean title only without conversational filler, prefix narratives, or debug blocks.\n\n### Specialized OSINT & Adversarial Tool Capabilities:\nYou have native access to professional-grade OSINT and threat intelligence tools:\n- "osint_shodan_host_lookup": Query open ports, exposed services, SSL certificates, OS banners, and CVE vulnerabilities for target IPs.\n- "osint_crtsh_subdomain_discovery": Query Certificate Transparency logs to discover subdomains, internal staging environments, and wildcard certificates for target domains.\n- "osint_bgp_route_lookup": Query BGPView and RIR registries for Autonomous System Numbers (ASNs), routing prefixes, and network topology.\n- "osint_ip_reputation_audit": Cross-examine AbuseIPDB and IPinfo for malicious confidence scores, brute-force history, geolocation, and ISP classification.\n- "osint_virustotal_threat_check": Query VirusTotal & AlienVault OTX for malware consensus, threat tags, and OTX threat Pulses.\n- "osint_code_leak_audit": Search public repositories for leaked API secrets, hardcoded credentials, and exposed .env files.`;
       }
 
       if (memoryContextStr) {

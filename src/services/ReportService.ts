@@ -776,8 +776,9 @@ export function sanitizeAndDeduplicateReportContent(
   let hasChanged = false;
 
   // 1. Check if the report has structured sections (Section 1: Executive Summary & Section 2: Detailed / Tactical Findings)
-  const sec1Regex = /(##\s*(?:1\.\s*)?(?:Executive\s+Intelligence\s+Summary|Executive\s+Summary|BLUF)\s*\n+)([\s\S]*?)(?=\n##|\n---|$)/i;
-  const sec2Regex = /(##\s*(?:2\.\s*)?(?:Detailed\s+Intelligence(?:\s*&\s*Tactical\s+Findings)?|Tactical\s+Findings|Key\s+Findings|Core\s+Intelligence(?:\s*Findings)?|Key\s+Intelligence\s+Findings)\s*\n+)([\s\S]*?)(?=\n##\s*[3-9]|\n---|$)/i;
+  // Support #{1,4}, bold, or bare numbered headings
+  const sec1Regex = /((?:^|\n)(?:#{1,4}\s*|\*{0,2})(?:1\.\s*)?(?:BLUF(?:\s*[\/\|]\s*Executive\s+Intelligence\s+Summary)?|Executive\s+Intelligence\s+Summary|Executive\s+Summary|BLUF|Operational\s+Diagnostic|Mission\s+Brief(?:ing)?)(?:\*{0,2})\s*\n+)([\s\S]*?)(?=\n#{1,4}|\n---|$)/i;
+  const sec2Regex = /((?:^|\n)(?:#{1,4}\s*|\*{0,2})(?:2\.\s*)?(?:Detailed\s+Intelligence(?:\s*&\s*Tactical\s+Findings)?|Detailed\s+Findings|Tactical\s+Findings|Key\s+Findings(?:\s*&\s*Tactical\s+Analysis)?|Core\s+Intelligence(?:\s*Findings)?(?:\s*&\s*Technical\s+Analysis)?|Core\s+Operational\s+Findings(?:\s*&\s*Technical\s+Analysis)?|Key\s+Intelligence\s+Findings(?:\s*&\s*Live\s+Telemetry)?|Communications\s*&\s*Relay\s*Protocol\s*Analysis)(?:\*{0,2})\s*\n+)([\s\S]*?)(?=\n#{1,4}\s*[3-9]|\n---|$)/i;
 
   const sec1Match = content.match(sec1Regex);
   const sec2Match = content.match(sec2Regex);
@@ -792,8 +793,9 @@ export function sanitizeAndDeduplicateReportContent(
     const isDirectDupe = isDuplicateParagraph(sec2Body, [sec1Body]);
 
     // Check paragraph-by-paragraph duplication
+    const sec1Paras = sec1Body.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
     const sec2Paras = sec2Body.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean);
-    const nonDupeSec2Paras = sec2Paras.filter((p) => !isDuplicateParagraph(p, [sec1Body]));
+    const nonDupeSec2Paras = sec2Paras.filter((p) => !isDuplicateParagraph(p, sec1Paras));
 
     if (isDirectDupe || nonDupeSec2Paras.length === 0) {
       // Complete duplication: Section 2 repeats Section 1 entirely!
@@ -824,8 +826,8 @@ export function sanitizeAndDeduplicateReportContent(
 
   // 2. Audit and repair Topic Tags & Domain in header if mismatched with content
   // Example: GEO_HAZARDS or USGS_SEISMIC when content is about stock market / finance / crypto
-  const domainMatch = content.match(/\*\*Intelligence Domain:\*\*\s*([^\n\r]+)/i);
-  const tagsMatch = content.match(/\*\*Topic Tags:\*\*\s*([^\n\r]+)/i);
+  const domainMatch = content.match(/(?:\*\*)?Intelligence Domain:(?:\*\*)?\s*([^\n\r]+)/i);
+  const tagsMatch = content.match(/(?:\*\*)?Topic Tags:(?:\*\*)?\s*([^\n\r]+)/i);
 
   if (tagsMatch || domainMatch) {
     const existingTags = tagsMatch ? tagsMatch[1] : '';
@@ -845,7 +847,15 @@ export function sanitizeAndDeduplicateReportContent(
     const isMismatchedGeneral =
       existingDomain.includes('Seismic') && !computedDomain.includes('Seismic');
 
-    if (isMismatchedSeismic || isMismatchedGeneral) {
+    const isGeneralTagMismatch =
+      computedTags.length > 0 &&
+      !computedTags.some((t) => existingTags.includes(t)) &&
+      (existingTags.includes('GEO_HAZARDS') ||
+        existingTags.includes('USGS_SEISMIC') ||
+        existingTags.includes('GENERAL') ||
+        existingTags.includes('TACTICAL_OSINT'));
+
+    if (isMismatchedSeismic || isMismatchedGeneral || isGeneralTagMismatch) {
       const formattedTags = computedTags.map((t) => `\`${t}\``).join(', ');
       if (tagsMatch) {
         content = content.replace(tagsMatch[0], `**Topic Tags:** ${formattedTags}  `);
@@ -857,26 +867,33 @@ export function sanitizeAndDeduplicateReportContent(
     }
   }
 
-  // 3. Remove consecutive duplicate paragraphs anywhere in the document
+  // 3. Remove ANY duplicate paragraphs across the entire document
   const paras = content.split(/\n{2,}/);
   const uniqueParas: string[] = [];
+  const seenParagraphFingerprints: string[] = [];
   let paraDupeFound = false;
 
   for (let i = 0; i < paras.length; i++) {
-    const p = paras[i].trim();
+    const rawP = paras[i];
+    const p = rawP.trim();
     if (!p) continue;
-    if (p === '---' || p.startsWith('#') || p.startsWith('|') || p.startsWith('```')) {
-      uniqueParas.push(paras[i]);
+    // Don't deduplicate markdown dividers, headers, table rows, or code blocks
+    if (
+      p === '---' ||
+      p.startsWith('#') ||
+      p.startsWith('|') ||
+      p.startsWith('```') ||
+      /^(?:#{1,4}\s*|\*{0,2})\d+\.\s+/.test(p)
+    ) {
+      uniqueParas.push(rawP);
       continue;
     }
-    const lastNonHeader = [...uniqueParas].reverse().find(
-      (up) => !up.startsWith('#') && up !== '---' && !up.startsWith('|')
-    );
-    if (lastNonHeader && isDuplicateParagraph(p, [lastNonHeader])) {
+    if (isDuplicateParagraph(p, seenParagraphFingerprints)) {
       paraDupeFound = true;
       continue;
     }
-    uniqueParas.push(paras[i]);
+    seenParagraphFingerprints.push(p);
+    uniqueParas.push(rawP);
   }
 
   if (paraDupeFound) {
@@ -957,10 +974,10 @@ export function formatOrganizedReportMarkdown(params: ReportGenerationParams): {
 
   // Check if content ALREADY contains explicit structured section headers
   const sec1Match = cleanedBody.match(
-    /##\s*(?:1\.\s*)?(?:Executive\s+Intelligence\s+Summary|Executive\s+Summary|BLUF)\s*\n+([\s\S]*?)(?=\n##|\n---|$)/i
+    /(?:^|\n)(?:#{1,4}\s*|\*{0,2})(?:1\.\s*)?(?:BLUF(?:\s*[\/\|]\s*Executive\s+Intelligence\s+Summary)?|Executive\s+Intelligence\s+Summary|Executive\s+Summary|Operational\s+Diagnostic|Mission\s+Brief(?:ing)?)(?:\*{0,2})\s*\n+([\s\S]*?)(?=\n#{1,4}|\n---|$)/i
   );
   const sec2Match = cleanedBody.match(
-    /##\s*(?:2\.\s*)?(?:Detailed\s+Intelligence(?:\s*&\s*Tactical\s+Findings)?|Tactical\s+Findings|Key\s+Findings|Core\s+Intelligence(?:\s*Findings)?|Key\s+Intelligence\s+Findings)\s*\n+([\s\S]*?)(?=\n##\s*[3-9]|\n---|$)/i
+    /(?:^|\n)(?:#{1,4}\s*|\*{0,2})(?:2\.\s*)?(?:Detailed\s+Intelligence(?:\s*&\s*Tactical\s+Findings)?|Detailed\s+Findings|Tactical\s+Findings|Key\s+Findings(?:\s*&\s*Tactical\s+Analysis)?|Core\s+Intelligence(?:\s*Findings)?(?:\s*&\s*Technical\s+Analysis)?|Core\s+Operational\s+Findings(?:\s*&\s*Technical\s+Analysis)?|Key\s+Intelligence\s+Findings(?:\s*&\s*Live\s+Telemetry)?|Communications\s*&\s*Relay\s*Protocol\s*Analysis)(?:\*{0,2})\s*\n+([\s\S]*?)(?=\n#{1,4}\s*[3-9]|\n---|$)/i
   );
 
   let execSummaryText = '';

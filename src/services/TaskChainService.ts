@@ -689,7 +689,7 @@ export function buildStepEnrichedPrompt(
 
   const isReportStep = isReportDirective(currentStep.directive);
   const reportMandate = isReportStep
-    ? `\n\nOPERATIONAL REPORT MANDATE:\nYou must compile and commit this comprehensive report to safehouse workspace files (reports/). Integrate all preceding intelligence findings, architecture principles, and verification matrices.`
+    ? `\n\nOPERATIONAL REPORT MANDATE & ZERO-REPETITION STANDARD:\nYou must compile and commit this comprehensive report to safehouse workspace files (reports/). Integrate all preceding intelligence findings, architecture principles, and verification matrices.\nSTRICT ZERO-REPETITION MANDATE: Never duplicate, echo, or copy-paste identical paragraphs between Section 1 (Executive Summary) and Section 2 (Detailed Findings). Section 1 is strictly for the high-level BLUF, while Section 2 provides distinct, granular technical metrics, anomaly tables, and tactical breakdown.`
     : '';
 
   return `${currentStep.directive}
@@ -702,7 +702,7 @@ Preceding operatives have autonomously executed their designated phases and comm
 ${previousFindings}${artifactsSummary}
 
 OPERATIONAL HANDOFF DIRECTIVE:
-Execute your phase immediately using the verified intelligence and tool payloads above. Do not ask the user for confirmation or repeat prior steps—build directly upon their findings.${reportMandate}
+Execute your phase immediately using the verified intelligence and tool payloads above. Do not ask the user for confirmation or repeat prior steps—build directly upon their findings. Never duplicate text from prior agents or between report sections.${reportMandate}
 ================================================================================`;
 }
 

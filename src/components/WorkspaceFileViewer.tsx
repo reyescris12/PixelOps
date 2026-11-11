@@ -150,37 +150,58 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
       setCategories(['all', ...cats]);
       setPersistedFolders(loadWorkspaceFolders());
 
+      const cleanRecord = (f: WorkspaceFileRecord): WorkspaceFileRecord => {
+        if (
+          f.content &&
+          (f.path.endsWith('.md') ||
+            f.path.startsWith('reports/') ||
+            f.path.startsWith('intel/') ||
+            f.format === 'markdown')
+        ) {
+          const { content: clean, changed } = sanitizeAndDeduplicateReportContent(f.content, f.path);
+          if (changed) {
+            return { ...f, content: clean, sizeBytes: clean.length };
+          }
+        }
+        return f;
+      };
+
       const activeCurrentPath = selectedFileRef.current?.path;
 
       if (preserveSelected && activeCurrentPath) {
         const stillExists = allFiles.find((f) => f.path === activeCurrentPath);
         if (stillExists) {
+          const cleaned = cleanRecord(stillExists);
           // If the file is currently being edited, don't overwrite user's edit content!
           if (viewModeRef.current !== 'edit') {
-            setSelectedFile(stillExists);
-            setEditContent(stillExists.content);
+            setSelectedFile(cleaned);
+            setEditContent(cleaned.content);
           } else {
-            setSelectedFile(stillExists);
+            setSelectedFile(cleaned);
           }
         } else if (allFiles.length > 0) {
-          setSelectedFile(allFiles[0]);
-          setEditContent(allFiles[0].content);
+          const cleanedFirst = cleanRecord(allFiles[0]);
+          setSelectedFile(cleanedFirst);
+          setEditContent(cleanedFirst.content);
         } else {
           setSelectedFile(null);
         }
       } else if (initialFilePath && !activeCurrentPath) {
         const target = allFiles.find((f) => f.path === initialFilePath);
         if (target) {
-          setSelectedFile(target);
-          setEditContent(target.content);
+          const cleanedTarget = cleanRecord(target);
+          setSelectedFile(cleanedTarget);
+          setEditContent(cleanedTarget.content);
           setMobileActiveTab('preview');
         } else if (allFiles.length > 0) {
-          setSelectedFile(allFiles[0]);
-          setEditContent(allFiles[0].content);
+          const cleanedFirst = cleanRecord(allFiles[0]);
+          setSelectedFile(cleanedFirst);
+          setEditContent(cleanedFirst.content);
         }
       } else if (allFiles.length > 0 && !activeCurrentPath) {
-        setSelectedFile(allFiles[0]);
-        setEditContent(allFiles[0].content);
+        const cleanedFirst = cleanRecord(allFiles[0]);
+        setSelectedFile(cleanedFirst);
+        setEditContent(cleanedFirst.content);
       }
     } catch (e) {
       console.error('[WorkspaceFileViewer] Failed to load files:', e);
@@ -194,7 +215,13 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
   useEffect(() => {
     if (isOpen) {
       loadFiles(true, false);
-      repairAllStoredReports().catch(() => {});
+      repairAllStoredReports()
+        .then((repaired) => {
+          if (repaired > 0) {
+            loadFiles(true, true);
+          }
+        })
+        .catch(() => {});
     }
   }, [isOpen]);
 
@@ -303,6 +330,9 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
       cleanContent !== file.content
         ? { ...file, content: cleanContent, sizeBytes: cleanContent.length }
         : file;
+    if (cleanContent !== file.content) {
+      writeWorkspaceFile(cleanFile.path, cleanContent).catch(() => {});
+    }
     setSelectedFile(cleanFile);
     setEditContent(cleanFile.content);
     setDeleteConfirmPath(null);
@@ -1429,7 +1459,16 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
                         {selectedFile.content || '(File is currently empty)'}
                       </pre>
                     ) : (
-                      <RetroMarkdownRenderer content={selectedFile.content} />
+                      <RetroMarkdownRenderer
+                        content={
+                          selectedFile.path.endsWith('.md') ||
+                          selectedFile.path.startsWith('reports/') ||
+                          selectedFile.path.startsWith('intel/') ||
+                          selectedFile.format === 'markdown'
+                            ? sanitizeAndDeduplicateReportContent(selectedFile.content, selectedFile.path).content
+                            : selectedFile.content
+                        }
+                      />
                     )}
                   </div>
                 </>

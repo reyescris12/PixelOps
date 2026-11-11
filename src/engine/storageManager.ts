@@ -418,6 +418,54 @@ export async function listWorkspaceFiles(categoryFilter?: string): Promise<Works
     (f) => !isWorkspaceFileDeleted(f.path, f.updatedAt)
   );
 
+  // Auto-sanitize all markdown reports to strip duplicate sections and correct mismatched topic tags
+  for (let i = 0; i < fileList.length; i++) {
+    const f = fileList[i];
+    if (
+      f.content &&
+      (f.path.endsWith('.md') ||
+        f.path.startsWith('reports/') ||
+        f.path.startsWith('intel/') ||
+        f.format === 'markdown')
+    ) {
+      const { content: sanitized, changed } = sanitizeAndDeduplicateReportContent(
+        f.content,
+        f.path
+      );
+      if (changed) {
+        f.content = sanitized;
+        f.sizeBytes = sanitized.length;
+        f.previewSnippet = sanitized.slice(0, 160).replace(/\n/g, ' ');
+        memoryFileMap.set(f.path, f);
+
+        // Persist the repaired content back to IndexedDB and VFS asynchronously
+        if (ledgerDb && ledgerDb.workspace_files && f.id !== undefined) {
+          ledgerDb.workspace_files
+            .update(f.id, {
+              content: sanitized,
+              sizeBytes: sanitized.length,
+              updatedAt: new Date().toISOString(),
+            })
+            .catch(() => {});
+        }
+        if (typeof localStorage !== 'undefined') {
+          try {
+            const raw = localStorage.getItem(VFS_KEY);
+            if (raw) {
+              const vfs = JSON.parse(raw);
+              if (vfs[f.path]) {
+                vfs[f.path].content = sanitized;
+                vfs[f.path].sizeBytes = sanitized.length;
+                vfs[f.path].updatedAt = new Date().toISOString();
+                localStorage.setItem(VFS_KEY, JSON.stringify(vfs));
+              }
+            }
+          } catch {}
+        }
+      }
+    }
+  }
+
   // Filter by category if requested
   if (categoryFilter && categoryFilter !== 'all') {
     fileList = fileList.filter((f) => f.category === categoryFilter);
@@ -627,11 +675,42 @@ export async function repairAllStoredReports(): Promise<number> {
     } catch {}
   }
 
+  // 3. Update in-memory file map and notify active listeners
+  if (repairedCount > 0) {
+    for (const [norm, rec] of memoryFileMap.entries()) {
+      if (
+        rec.content &&
+        (norm.endsWith('.md') ||
+          norm.startsWith('reports/') ||
+          norm.startsWith('intel/') ||
+          rec.format === 'markdown')
+      ) {
+        const { content: sanitized, changed } = sanitizeAndDeduplicateReportContent(
+          rec.content,
+          norm
+        );
+        if (changed) {
+          rec.content = sanitized;
+          rec.sizeBytes = sanitized.length;
+          rec.previewSnippet = sanitized.slice(0, 160).replace(/\n/g, ' ');
+          memoryFileMap.set(norm, rec);
+        }
+      }
+    }
+
+    if (typeof window !== 'undefined') {
+      try {
+        window.dispatchEvent(new CustomEvent('pixelops:workspace_files_changed'));
+      } catch {}
+    }
+  }
+
   return repairedCount;
 }
 
 /**
  * Writes or updates a workspace file in both IndexedDB and LocalStorage VFS.
+ * Automatically guarantees that all markdown reports are deduplicated and clean before persistence.
  */
 export async function writeWorkspaceFile(
   rawPath: string,
@@ -643,7 +722,19 @@ export async function writeWorkspaceFile(
   const category = resolveCategoryFromPath(norm, explicitCategory);
   const format = resolveFormatFromPath(norm, explicitFormat);
   const updatedAt = new Date().toISOString();
-  const sizeBytes = (content || '').length;
+
+  // Auto-sanitize and deduplicate before saving any markdown report
+  let finalContent = content || '';
+  if (
+    finalContent &&
+    (norm.endsWith('.md') ||
+      norm.startsWith('reports/') ||
+      norm.startsWith('intel/') ||
+      format === 'markdown')
+  ) {
+    finalContent = sanitizeAndDeduplicateReportContent(finalContent, norm).content;
+  }
+  const sizeBytes = finalContent.length;
 
   // Clear any prior deletion tombstone since this file is being explicitly created/updated
   clearDeletedWorkspaceFileTombstone(norm);
@@ -655,10 +746,10 @@ export async function writeWorkspaceFile(
     path: norm,
     category,
     format,
-    content,
+    content: finalContent,
     sizeBytes,
     updatedAt,
-    previewSnippet: (content || '').slice(0, 160).replace(/\n/g, ' '),
+    previewSnippet: (finalContent || '').slice(0, 160).replace(/\n/g, ' '),
   };
 
   // 1. Write to Dexie/IndexedDB
@@ -667,7 +758,7 @@ export async function writeWorkspaceFile(
       const existing = await ledgerDb.workspace_files.where('path').equals(norm).first();
       if (existing && existing.id !== undefined) {
         await ledgerDb.workspace_files.update(existing.id, {
-          content,
+          content: finalContent,
           format,
           category,
           sizeBytes,
@@ -679,7 +770,7 @@ export async function writeWorkspaceFile(
           path: norm,
           category,
           format,
-          content,
+          content: finalContent,
           sizeBytes,
           updatedAt,
         });
@@ -695,7 +786,7 @@ export async function writeWorkspaceFile(
     try {
       const raw = localStorage.getItem(VFS_KEY);
       const vfs = raw ? JSON.parse(raw) : {};
-      vfs[norm] = { content, format, updatedAt };
+      vfs[norm] = { content: finalContent, format, updatedAt };
       localStorage.setItem(VFS_KEY, JSON.stringify(vfs));
     } catch {
       // Storage quota or sandboxed access

@@ -8275,7 +8275,8 @@ ROUNDTABLE RULES:
 1. Generate a cohesive, multi-perspective roundtable conversation responding to the Commander's topic/prompt.
 2. Have the operatives contribute sequentially based on their specialized functional roles (providing viewpoints across strategic, technical, archival, and tactical dimensions).
 3. Every agent MUST use their exact Custom Name, stay true to their distinct Role and Specialty, explicitly reference at least one of their Recent Field Notes or the previous speaker's point, and keep each turn to 2-3 crisp, punchy sentences.
-4. Provide a concise meetingTitle, a 1-2 sentence consensusSummary, and actionable next steps.`;
+4. Provide a concise meetingTitle, a 1-2 sentence consensusSummary, and actionable next steps.
+5. ZERO REDUNDANCY: Never echo, repeat, or copy-paste identical statements or report sections between agents or turns.`;
 
         const res = await executeSafeOperation(
           async (signal) => {

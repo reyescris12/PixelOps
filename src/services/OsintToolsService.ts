@@ -22,6 +22,13 @@
  *    - GitHub Search: Public code auditing for leaked API keys, tokens, exposed .env templates.
  */
 
+import {
+  storeSecureCredential,
+  getSecureCredential,
+  deleteSecureCredential,
+  getCachedDecryptedCredential,
+} from './SecureVaultService';
+
 // LocalStorage API key keys for OSINT services (BYOK)
 export const OSINT_KEYS_STORAGE = {
   SHODAN: 'pixelops_osint_shodan_key',
@@ -36,16 +43,29 @@ export const OSINT_KEYS_STORAGE = {
 };
 
 export function getOsintKey(service: keyof typeof OSINT_KEYS_STORAGE): string {
+  const keyName = OSINT_KEYS_STORAGE[service];
+  const cached = getCachedDecryptedCredential(keyName);
+  if (cached) return cached;
+
   if (typeof localStorage === 'undefined') return '';
-  return (localStorage.getItem(OSINT_KEYS_STORAGE[service]) || '').trim();
+  return (localStorage.getItem(keyName) || '').trim();
 }
 
 export function setOsintKey(service: keyof typeof OSINT_KEYS_STORAGE, value: string): void {
-  if (typeof localStorage === 'undefined') return;
-  if (!value) {
-    localStorage.removeItem(OSINT_KEYS_STORAGE[service]);
+  const keyName = OSINT_KEYS_STORAGE[service];
+  const cleanVal = (value || '').trim();
+
+  if (!cleanVal) {
+    deleteSecureCredential(keyName).catch(() => {});
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(keyName);
+    }
   } else {
-    localStorage.setItem(OSINT_KEYS_STORAGE[service], value.trim());
+    storeSecureCredential(keyName, cleanVal).catch(() => {});
+    // Purge plaintext from localStorage
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(keyName);
+    }
   }
 }
 

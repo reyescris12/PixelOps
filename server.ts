@@ -1653,6 +1653,52 @@ async function startServer() {
       targetUrl = `https://${targetUrl}`;
     }
 
+    // SSRF Mitigation: Strict domain whitelist enforcement
+    const ALLOWED_FETCH_DOMAINS = [
+      'understandingwar.org', 
+      'api.anthropic.com', 
+      'generativelanguage.googleapis.com',
+      'openrouter.ai',
+      'api.openai.com',
+      'api.groq.com',
+      'feeds.buzzsprout.com',
+      'api.github.com',
+      'gitlab.com',
+      'api.shodan.io',
+      'api.securitytrails.com',
+      'api.abuseipdb.com',
+      'crt.sh',
+      'api.bgpview.io',
+      'ipinfo.io',
+      'otx.alienvault.com',
+      'www.virustotal.com',
+      'earthquake.usgs.gov',
+      'services.swpc.noaa.gov',
+      'en.wikipedia.org',
+      'hn.algolia.com',
+      'api.duckduckgo.com',
+      'news.google.com',
+    ];
+
+    let parsedTargetUrl: URL;
+    try {
+      parsedTargetUrl = new URL(targetUrl);
+    } catch {
+      return res.status(400).json({ error: 'INVALID_URL', message: 'Target URL is malformed.' });
+    }
+
+    const host = parsedTargetUrl.hostname.toLowerCase().trim();
+    const isDomainAllowed = ALLOWED_FETCH_DOMAINS.some(
+      (allowed) => host === allowed || host.endsWith('.' + allowed)
+    );
+
+    if (!isDomainAllowed) {
+      return res.status(403).json({
+        error: 'Forbidden: Target domain is not whitelisted',
+        message: `SSRF Guard: Domain "${parsedTargetUrl.hostname}" is not in the safehouse allowlist.`,
+      });
+    }
+
     try {
       const fetchHeaders: Record<string, string> = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36 PixelOps-Intelligence/2.0',

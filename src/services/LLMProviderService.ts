@@ -1,4 +1,9 @@
 import { ThemeId } from '../context/ThemeContext';
+import {
+  storeSecureCredential,
+  getSecureCredential,
+  getCachedDecryptedCredential,
+} from './SecureVaultService';
 
 export type LLMProviderType = 'gemini' | 'openai' | 'anthropic' | 'groq' | 'ollama';
 
@@ -215,6 +220,12 @@ export function normalizeGeminiModel(modelName?: string): string {
  */
 function resolveLocalApiKeyForProvider(pId: string): string {
   try {
+    // 0. Check in-memory decrypted credentials cache first
+    const inMem =
+      getCachedDecryptedCredential(`byok::${pId}`) ||
+      getCachedDecryptedCredential(`pixelops_${pId}_api_key`);
+    if (inMem) return inMem;
+
     if (pId === 'gemini') {
       return (
         localStorage.getItem('pixelops_gemini_api_key') ||
@@ -350,8 +361,18 @@ export function loadLLMProviderConfig(): LLMProviderConfig {
     const pId = (parsed?.providerId || 'gemini') as LLMProviderType;
     let apiKey = (parsed?.apiKey || '').trim();
 
+    // If key is masked or empty in localStorage, check in-memory decrypted credentials
+    if (!apiKey || apiKey === '••••••••' || apiKey.startsWith('••••') || apiKey === 'MY_GEMINI_API_KEY') {
+      const inMem =
+        getCachedDecryptedCredential(`byok::${pId}`) ||
+        getCachedDecryptedCredential(`pixelops_${pId}_api_key`);
+      if (inMem) {
+        apiKey = inMem;
+      }
+    }
+
     // Check alternate storage locations & environment variables if key is unset
-    if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
+    if (!apiKey || apiKey === '••••••••' || apiKey.startsWith('••••') || apiKey === 'MY_GEMINI_API_KEY') {
       const altKey =
         localStorage.getItem('pixelops_gemini_api_key') ||
         localStorage.getItem('gemini_api_key') ||
@@ -432,21 +453,27 @@ export function loadLLMProviderConfig(): LLMProviderConfig {
 
 export function saveLLMProviderConfig(config: LLMProviderConfig) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
-    if (config.apiKey && config.apiKey.trim()) {
-      const cleanKey = config.apiKey.trim();
+    const cleanKey = (config.apiKey || '').trim();
+
+    // Sanitize config stored in localStorage: never persist raw plaintext API keys
+    const sanitizedConfig = {
+      ...config,
+      apiKey: cleanKey ? '••••••••' : '',
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(sanitizedConfig));
+
+    if (cleanKey && cleanKey !== '••••••••' && !cleanKey.startsWith('••••')) {
+      // Store encrypted in IndexedDB vault
+      storeSecureCredential(`byok::${config.providerId}`, cleanKey).catch(() => {});
+      storeSecureCredential(`pixelops_${config.providerId}_api_key`, cleanKey).catch(() => {});
+
+      // Purge any legacy plaintext keys from localStorage
+      localStorage.removeItem(`pixelops_${config.providerId}_api_key`);
+      localStorage.removeItem(`${config.providerId}_api_key`);
       if (config.providerId === 'gemini') {
-        localStorage.setItem('pixelops_gemini_api_key', cleanKey);
-        localStorage.setItem('gemini_api_key', cleanKey);
-      } else if (config.providerId === 'openai') {
-        localStorage.setItem('pixelops_openai_api_key', cleanKey);
-        localStorage.setItem('openai_api_key', cleanKey);
-      } else if (config.providerId === 'anthropic') {
-        localStorage.setItem('pixelops_anthropic_api_key', cleanKey);
-        localStorage.setItem('anthropic_api_key', cleanKey);
-      } else if (config.providerId === 'groq') {
-        localStorage.setItem('pixelops_groq_api_key', cleanKey);
-        localStorage.setItem('groq_api_key', cleanKey);
+        localStorage.removeItem('apiKey');
+        localStorage.removeItem('pixelops_api_key');
+        localStorage.removeItem('GOOGLE_API_KEY');
       }
     }
     if (config.googleClientId && config.googleClientId.trim()) {

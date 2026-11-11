@@ -1,10 +1,9 @@
 /**
- * Cloudflare Pages Function: Universal Web Crawler & URL Reader Proxy
+ * Cloudflare Pages Function: Safehouse Web Crawler & Fetch Proxy
  * Route: /api/fetch
  * 
- * Allows operatives to fetch and read content from ANY site on the entire web
- * (including Google, GitHub, Reddit, news portals, and company documentation)
- * without browser CORS restrictions.
+ * Enforces strict domain whitelisting (SSRF Mitigation) to prevent proxy abuse
+ * while securely proxying authorized intelligence feeds, models, and OSINT APIs.
  */
 
 const CORS_HEADERS = {
@@ -13,12 +12,84 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-target-url',
 };
 
+/**
+ * Cloudflare Worker SSRF Whitelist Enforcement
+ * Restricts external fetch proxy to verified safehouse domains and API hosts.
+ */
+export const ALLOWED_DOMAINS = [
+  'understandingwar.org', 
+  'api.anthropic.com', 
+  'generativelanguage.googleapis.com',
+  'openrouter.ai',
+  'api.openai.com',
+  'api.groq.com',
+  'feeds.buzzsprout.com',
+  'api.github.com',
+  'gitlab.com',
+  'api.shodan.io',
+  'api.securitytrails.com',
+  'api.abuseipdb.com',
+  'crt.sh',
+  'api.bgpview.io',
+  'ipinfo.io',
+  'otx.alienvault.com',
+  'www.virustotal.com',
+  'earthquake.usgs.gov',
+  'services.swpc.noaa.gov',
+  'en.wikipedia.org',
+  'hn.algolia.com',
+  'api.duckduckgo.com',
+  'news.google.com',
+];
+
+export function isAllowedDomain(hostname: string): boolean {
+  const host = (hostname || '').toLowerCase().trim();
+  return ALLOWED_DOMAINS.some(
+    (allowed) => host === allowed || host.endsWith('.' + allowed)
+  );
+}
+
 export const onRequestOptions = async () => {
   return new Response(null, {
     status: 204,
     headers: CORS_HEADERS,
   });
 };
+
+/**
+ * Cloudflare Worker SSRF whitelist enforcement handler
+ */
+export async function handleFetchProxy(request: Request): Promise<Response> {
+  const urlParam = new URL(request.url).searchParams.get('url');
+  if (!urlParam) {
+    return new Response(JSON.stringify({ error: 'Missing target URL' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+    });
+  }
+
+  let targetUrl: URL;
+  try {
+    targetUrl = new URL(
+      urlParam.startsWith('http://') || urlParam.startsWith('https://') ? urlParam : `https://${urlParam}`
+    );
+  } catch {
+    return new Response(JSON.stringify({ error: 'Invalid target URL' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+    });
+  }
+
+  if (!isAllowedDomain(targetUrl.hostname)) {
+    return new Response(
+      JSON.stringify({ error: 'Forbidden: Target domain is not whitelisted' }),
+      { status: 403, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+    );
+  }
+
+  // Proceed with safe fetch execution
+  return fetch(targetUrl.toString());
+}
 
 export const onRequest = async (context: {
   request: Request;
@@ -59,6 +130,27 @@ export const onRequest = async (context: {
   // Ensure protocol is present
   if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
     targetUrl = `https://${targetUrl}`;
+  }
+
+  let parsedTarget: URL;
+  try {
+    parsedTarget = new URL(targetUrl);
+  } catch {
+    return new Response(
+      JSON.stringify({ error: 'INVALID_URL', message: 'Target URL is malformed.' }),
+      { status: 400, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+    );
+  }
+
+  // SSRF Mitigation: Enforce strict domain whitelist
+  if (!isAllowedDomain(parsedTarget.hostname)) {
+    return new Response(
+      JSON.stringify({
+        error: 'Forbidden: Target domain is not whitelisted',
+        message: `SSRF Guard: Domain "${parsedTarget.hostname}" is not authorized.`,
+      }),
+      { status: 403, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+    );
   }
 
   try {

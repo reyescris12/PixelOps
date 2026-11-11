@@ -1,5 +1,6 @@
 import { createStore, get, set, del, keys } from 'idb-keyval';
 import { checkServerStatus } from './ApiService';
+import { ledgerDb } from './CommandLedgerDb';
 
 /**
  * Cross-platform PWA Keychain & Encrypted Credential Vault Service
@@ -101,17 +102,43 @@ function maskToken(token: string): string {
   return `${token.slice(0, 6)}••••${token.slice(-4)}`;
 }
 
+// In-memory cache of decrypted credentials for transient session access
+const transientDecryptedCredentials = new Map<string, string>();
+let inMemoryMasterKey: CryptoKey | null = null;
+const inMemoryEncryptedCredentialsStore = new Map<string, any>();
+
+export function getCachedDecryptedCredential(key: string): string | null {
+  return transientDecryptedCredentials.get(key) || null;
+}
+
+export function setCachedDecryptedCredential(key: string, value: string): void {
+  transientDecryptedCredentials.set(key, value);
+}
+
+export function clearCachedDecryptedCredentials(): void {
+  transientDecryptedCredentials.clear();
+}
+
 /**
  * Retrieves or generates a non-extractable 256-bit AES-GCM CryptoKey stored inside IndexedDB.
+ * Device-bound: Non-extractable (extractable: false) prevents scripts or extensions from exporting raw keys.
  */
-async function getOrCreateMasterKey(): Promise<CryptoKey> {
-  const existingKey = await get<CryptoKey>(MASTER_KEY_IDB_KEY, vaultStore);
-  if (existingKey && existingKey.type === 'secret') {
-    return existingKey;
+export async function getLocalMasterKey(): Promise<CryptoKey> {
+  const cryptoEngine = typeof window !== 'undefined' ? window.crypto : globalThis.crypto;
+
+  if (typeof indexedDB !== 'undefined') {
+    try {
+      const existingKey = await get<CryptoKey>(MASTER_KEY_IDB_KEY, vaultStore);
+      if (existingKey && existingKey.type === 'secret') {
+        return existingKey;
+      }
+    } catch {}
+  } else if (inMemoryMasterKey && inMemoryMasterKey.type === 'secret') {
+    return inMemoryMasterKey;
   }
 
   // Generate a non-extractable AES-256-GCM key so raw key material cannot be exported from the browser
-  const newKey = await window.crypto.subtle.generateKey(
+  const newKey = await cryptoEngine.subtle.generateKey(
     {
       name: 'AES-GCM',
       length: 256,
@@ -120,8 +147,245 @@ async function getOrCreateMasterKey(): Promise<CryptoKey> {
     ['encrypt', 'decrypt']
   );
 
-  await set(MASTER_KEY_IDB_KEY, newKey, vaultStore);
+  if (typeof indexedDB !== 'undefined') {
+    try {
+      await set(MASTER_KEY_IDB_KEY, newKey, vaultStore);
+    } catch {}
+  } else {
+    inMemoryMasterKey = newKey;
+  }
+
   return newKey;
+}
+
+export const getOrCreateMasterKey = getLocalMasterKey;
+
+/**
+ * Encrypts sensitive credentials at rest using the non-extractable master crypto key
+ * before writing to IndexedDB (encrypted_credentials), replacing insecure plaintext localStorage.
+ */
+export async function storeSecureCredential(keyName: string, plaintextValue: string): Promise<void> {
+  if (!plaintextValue) return;
+  const encoder = new TextEncoder();
+  const data = encoder.encode(plaintextValue);
+
+  // Retrieve local non-extractable master crypto key
+  const cryptoKey = await getLocalMasterKey();
+  const cryptoEngine = typeof window !== 'undefined' ? window.crypto : globalThis.crypto;
+  const iv = cryptoEngine.getRandomValues(new Uint8Array(12));
+
+  const ciphertext = await cryptoEngine.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    cryptoKey,
+    data
+  );
+
+  const b64 = bytesToBase64(new Uint8Array(ciphertext));
+  const ivArr = Array.from(iv);
+  const ivB64 = bytesToBase64(iv);
+  const now = new Date().toISOString();
+
+  const recordPayload = {
+    key: keyName,
+    ciphertextB4: b64,
+    ciphertextB64: b64,
+    iv: ivArr,
+    ivB64,
+    algorithm: 'AES-256-GCM',
+    updatedAt: now,
+  };
+
+  // Store encrypted payload safely inside IndexedDB
+  if (typeof indexedDB !== 'undefined') {
+    try {
+      if (ledgerDb && ledgerDb.encrypted_credentials) {
+        await ledgerDb.encrypted_credentials.put(recordPayload);
+      }
+    } catch (err) {
+      console.warn('[SecureVault] Error writing to Dexie encrypted_credentials:', err);
+    }
+
+    // Dual-persist to idb-keyval vault store for keychain compatibility
+    try {
+      await setGenericPassword('device_user', plaintextValue, { service: keyName });
+    } catch {}
+  } else {
+    inMemoryEncryptedCredentialsStore.set(keyName, recordPayload);
+  }
+
+  // Keep in transient in-memory cache for active session
+  setCachedDecryptedCredential(keyName, plaintextValue);
+}
+
+/**
+ * Retrieves and decrypts a sensitive credential from IndexedDB using the non-extractable master crypto key.
+ */
+export async function getSecureCredential(keyName: string): Promise<string | null> {
+  // Check transient active session cache first
+  const cached = getCachedDecryptedCredential(keyName);
+  if (cached) return cached;
+
+  const cryptoEngine = typeof window !== 'undefined' ? window.crypto : globalThis.crypto;
+
+  // 1. Check Dexie encrypted_credentials table
+  if (typeof indexedDB !== 'undefined') {
+    try {
+      if (ledgerDb && ledgerDb.encrypted_credentials) {
+        const rec = await ledgerDb.encrypted_credentials.get(keyName);
+        if (rec && (rec.ciphertextB4 || rec.ciphertextB64)) {
+          const cryptoKey = await getLocalMasterKey();
+          const ivBytes = rec.ivB64 ? base64ToBytes(rec.ivB64) : new Uint8Array(rec.iv);
+          const cipherBytes = base64ToBytes(rec.ciphertextB4 || rec.ciphertextB64 || '');
+
+          const decryptedBuffer = await cryptoEngine.subtle.decrypt(
+            { name: 'AES-GCM', iv: ivBytes as BufferSource },
+            cryptoKey,
+            cipherBytes as BufferSource
+          );
+          const decrypted = new TextDecoder().decode(decryptedBuffer);
+          setCachedDecryptedCredential(keyName, decrypted);
+          return decrypted;
+        }
+      }
+    } catch (err) {
+      console.warn('[SecureVault] Error reading from Dexie encrypted_credentials:', err);
+    }
+
+    // 2. Fallback to idb-keyval keychain
+    try {
+      const cred = await getGenericPassword({ service: keyName });
+      if (cred && cred.password) {
+        setCachedDecryptedCredential(keyName, cred.password);
+        return cred.password;
+      }
+    } catch {}
+  } else if (inMemoryEncryptedCredentialsStore.has(keyName)) {
+    const rec = inMemoryEncryptedCredentialsStore.get(keyName);
+    if (rec && (rec.ciphertextB4 || rec.ciphertextB64)) {
+      const cryptoKey = await getLocalMasterKey();
+      const ivBytes = rec.ivB64 ? base64ToBytes(rec.ivB64) : new Uint8Array(rec.iv);
+      const cipherBytes = base64ToBytes(rec.ciphertextB4 || rec.ciphertextB64 || '');
+
+      const decryptedBuffer = await cryptoEngine.subtle.decrypt(
+        { name: 'AES-GCM', iv: ivBytes as BufferSource },
+        cryptoKey,
+        cipherBytes as BufferSource
+      );
+      const decrypted = new TextDecoder().decode(decryptedBuffer);
+      setCachedDecryptedCredential(keyName, decrypted);
+      return decrypted;
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Permanently removes a credential from IndexedDB and transient session cache.
+ */
+export async function deleteSecureCredential(keyName: string): Promise<void> {
+  transientDecryptedCredentials.delete(keyName);
+  inMemoryEncryptedCredentialsStore.delete(keyName);
+  if (typeof indexedDB !== 'undefined') {
+    try {
+      if (ledgerDb && ledgerDb.encrypted_credentials) {
+        await ledgerDb.encrypted_credentials.delete(keyName);
+      }
+    } catch {}
+    try {
+      await resetGenericPassword({ service: keyName });
+    } catch {}
+  }
+}
+
+/**
+ * Returns raw stored encrypted credential record for testing or verification.
+ */
+export async function getRawEncryptedCredentialForVerification(keyName: string) {
+  if (typeof indexedDB !== 'undefined' && ledgerDb && ledgerDb.encrypted_credentials) {
+    try {
+      return await ledgerDb.encrypted_credentials.get(keyName);
+    } catch {}
+  }
+  return inMemoryEncryptedCredentialsStore.get(keyName) || null;
+}
+
+/**
+ * Lists all encrypted credentials stored in IndexedDB.
+ */
+export async function listSecureCredentials(): Promise<{ key: string; updatedAt: string }[]> {
+  try {
+    if (ledgerDb && ledgerDb.encrypted_credentials) {
+      const records = await ledgerDb.encrypted_credentials.toArray();
+      return records.map((r) => ({ key: r.key, updatedAt: r.updatedAt }));
+    }
+  } catch {}
+  return [];
+}
+
+/**
+ * Purges legacy unencrypted plaintext API keys from localStorage on app boot,
+ * migrating any found keys into the encrypted IndexedDB vault first so no user settings are lost.
+ */
+export async function purgeLegacyStorage(): Promise<string[]> {
+  const legacyKeys = [
+    'pixelops_gemini_api_key',
+    'pixelops_openai_api_key',
+    'pixelops_anthropic_api_key',
+    'pixelops_groq_api_key',
+    'pixelops_openrouter_key',
+    'pixelops_google_key',
+    'gemini_api_key',
+    'pixelops_osint_shodan_key',
+    'pixelops_osint_sectrails_key',
+    'pixelops_osint_abuseipdb_key',
+    'pixelops_osint_virustotal_key',
+    'pixelops_osint_otx_key',
+    'pixelops_osint_github_key',
+    'pixelops_osint_gitlab_key',
+  ];
+
+  if (typeof localStorage === 'undefined') return [];
+
+  const purged: string[] = [];
+
+  for (const key of legacyKeys) {
+    try {
+      const val = localStorage.getItem(key);
+      if (val && val.trim()) {
+        const cleanVal = val.trim();
+        // Check if already securely stored; if not, encrypt into IndexedDB first
+        const existing = await getSecureCredential(key);
+        if (!existing) {
+          await storeSecureCredential(key, cleanVal);
+        }
+        localStorage.removeItem(key);
+        console.warn(`[SECURITY] Purged legacy plaintext key from localStorage: ${key}`);
+        purged.push(key);
+      }
+    } catch {}
+  }
+
+  // Also sanitize pixelops_llm_provider_config_v2 if it contains a plaintext apiKey
+  try {
+    const rawConfig = localStorage.getItem('pixelops_llm_provider_config_v2');
+    if (rawConfig) {
+      const parsed = JSON.parse(rawConfig);
+      if (parsed && parsed.apiKey && parsed.apiKey !== '••••••••' && !parsed.apiKey.startsWith('••••')) {
+        const pKey = `byok::${parsed.providerId}`;
+        const existing = await getSecureCredential(pKey);
+        if (!existing) {
+          await storeSecureCredential(pKey, parsed.apiKey);
+        }
+        parsed.apiKey = '••••••••';
+        localStorage.setItem('pixelops_llm_provider_config_v2', JSON.stringify(parsed));
+        console.warn(`[SECURITY] Purged plaintext apiKey from pixelops_llm_provider_config_v2 in localStorage`);
+        purged.push('pixelops_llm_provider_config_v2.apiKey');
+      }
+    }
+  } catch {}
+
+  return purged;
 }
 
 /**

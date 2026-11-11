@@ -72,6 +72,7 @@ import {
   initializeAndValidateVaultOnStartup,
   refreshOAuthProviderToken,
   revokeOAuthProviderToken,
+  purgeLegacyStorage,
 } from './services/SecureVaultService';
 import {
   CommandLedgerEntry,
@@ -569,6 +570,7 @@ const CommandCenterContent: React.FC = () => {
   };
 
   useEffect(() => {
+    purgeLegacyStorage().catch((e) => console.warn('[Security] Legacy storage purge warning:', e));
     runStartupVaultValidation();
     refreshCommandLedger();
     auditStorageHealth().catch((e) => console.warn('Storage health audit warning:', e));

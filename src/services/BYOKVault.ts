@@ -16,7 +16,14 @@ import {
   testLLMProviderConnection,
   DEFAULT_PROVIDER_CONFIGS,
 } from './LLMProviderService';
-import { setGenericPassword, getGenericPassword } from './SecureVaultService';
+import {
+  setGenericPassword,
+  getGenericPassword,
+  storeSecureCredential,
+  getSecureCredential,
+  deleteSecureCredential,
+  getCachedDecryptedCredential,
+} from './SecureVaultService';
 
 export interface ProviderVaultEntry {
   providerId: 'gemini' | 'anthropic' | 'openai' | 'groq';
@@ -95,12 +102,18 @@ export function getBYOKVaultSnapshot(): Record<'gemini' | 'anthropic' | 'openai'
   ][]) {
     let key = '';
     try {
-      key = localStorage.getItem(meta.storageKey) || '';
-      if (!key && pId === activeConfig.providerId) {
-        key = activeConfig.apiKey || '';
+      key =
+        getCachedDecryptedCredential(meta.storageKey) ||
+        getCachedDecryptedCredential(`byok::${pId}`) ||
+        '';
+      if (!key && pId === activeConfig.providerId && activeConfig.apiKey && !activeConfig.apiKey.startsWith('••••')) {
+        key = activeConfig.apiKey;
+      }
+      if (!key) {
+        key = (localStorage.getItem(meta.storageKey) || '').trim();
       }
       if (!key && pId === 'gemini') {
-        key = localStorage.getItem('gemini_api_key') || '';
+        key = (localStorage.getItem('gemini_api_key') || '').trim();
       }
     } catch {}
 
@@ -146,44 +159,33 @@ export async function saveBYOKVaultEntry(
   const cleanKey = apiKey.trim();
   const cleanModel = model || meta.defaultModel;
 
-  // 1. Write to LocalStorage for fast synchronous retrieval
+  // 1. Encrypt and write to IndexedDB (encrypted_credentials) using non-extractable master key
   try {
     if (cleanKey) {
-      localStorage.setItem(meta.storageKey, cleanKey);
-      if (provider === 'gemini') {
-        localStorage.setItem('gemini_api_key', cleanKey);
-      } else if (provider === 'openai') {
-        localStorage.setItem('openai_api_key', cleanKey);
-      } else if (provider === 'anthropic') {
-        localStorage.setItem('anthropic_api_key', cleanKey);
-      } else if (provider === 'groq') {
-        localStorage.setItem('groq_api_key', cleanKey);
-      }
+      await storeSecureCredential(meta.storageKey, cleanKey);
+      await storeSecureCredential(`byok::${provider}`, cleanKey);
     } else {
-      localStorage.removeItem(meta.storageKey);
-      if (provider === 'gemini') {
-        localStorage.removeItem('gemini_api_key');
-      } else if (provider === 'openai') {
-        localStorage.removeItem('openai_api_key');
-      } else if (provider === 'anthropic') {
-        localStorage.removeItem('anthropic_api_key');
-      } else if (provider === 'groq') {
-        localStorage.removeItem('groq_api_key');
-      }
+      await deleteSecureCredential(meta.storageKey);
+      await deleteSecureCredential(`byok::${provider}`);
+    }
+  } catch (idbErr) {
+    console.warn('[BYOKVault] IndexedDB keychain encryption error:', idbErr);
+  }
+
+  // 2. Remove plaintext keys from LocalStorage (security compliance)
+  try {
+    localStorage.removeItem(meta.storageKey);
+    if (provider === 'gemini') {
+      localStorage.removeItem('gemini_api_key');
+    } else if (provider === 'openai') {
+      localStorage.removeItem('openai_api_key');
+    } else if (provider === 'anthropic') {
+      localStorage.removeItem('anthropic_api_key');
+    } else if (provider === 'groq') {
+      localStorage.removeItem('groq_api_key');
     }
     localStorage.setItem(`pixelops_${provider}_model`, cleanModel);
   } catch {}
-
-  // 2. Encrypt & write to IndexedDB Web Crypto keychain
-  try {
-    if (cleanKey) {
-      await setGenericPassword('byok_user', cleanKey, {
-        service: `byok::${provider}`,
-      });
-    }
-  } catch (idbErr) {
-    console.warn('[BYOKVault] IndexedDB keychain encryption skipped:', idbErr);
-  }
 
   // 3. If this provider is currently active in LLMProviderConfig, update it as well
   const activeConfig = loadLLMProviderConfig();
@@ -283,6 +285,12 @@ export function getProviderApiKey(provider: 'gemini' | 'anthropic' | 'openai' | 
   if (!meta) return '';
 
   try {
+    // 0. Check in-memory decrypted credentials cache (session-bound)
+    const inMem =
+      getCachedDecryptedCredential(meta.storageKey) ||
+      getCachedDecryptedCredential(`byok::${provider}`);
+    if (inMem) return inMem;
+
     // 1. Primary storage key from SUPPORTED_VAULT_PROVIDERS (e.g. pixelops_gemini_api_key)
     let key = (localStorage.getItem(meta.storageKey) || '').trim();
     if (key && key !== 'MY_GEMINI_API_KEY') return key;
@@ -362,6 +370,30 @@ export function getProviderApiKey(provider: 'gemini' | 'anthropic' | 'openai' | 
   } catch {
     return '';
   }
+}
+
+/**
+ * Asynchronously retrieves the provider API key, reading from encrypted IndexedDB if not cached.
+ */
+export async function getProviderApiKeyAsync(
+  provider: 'gemini' | 'anthropic' | 'openai' | 'groq'
+): Promise<string> {
+  const meta = SUPPORTED_VAULT_PROVIDERS[provider];
+  if (!meta) return '';
+
+  const inMem =
+    getCachedDecryptedCredential(meta.storageKey) ||
+    getCachedDecryptedCredential(`byok::${provider}`);
+  if (inMem) return inMem;
+
+  try {
+    const secure =
+      (await getSecureCredential(meta.storageKey)) ||
+      (await getSecureCredential(`byok::${provider}`));
+    if (secure) return secure;
+  } catch {}
+
+  return getProviderApiKey(provider);
 }
 
 /**

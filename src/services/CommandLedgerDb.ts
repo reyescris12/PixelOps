@@ -64,10 +64,25 @@ export interface WorkspaceFileDbEntry {
   updatedAt: string;
 }
 
+/**
+ * Encrypted Credential Schema stored in Dexie.js IndexedDB (encrypted_credentials).
+ * Holds encrypted tokens and keys at rest using non-extractable WebCrypto AES-GCM 256-bit keys.
+ */
+export interface EncryptedCredentialDbEntry {
+  key: string;
+  ciphertextB4: string;
+  ciphertextB64?: string;
+  iv: number[];
+  ivB64?: string;
+  algorithm?: string;
+  updatedAt: string;
+}
+
 class PixelOpsLedgerDatabase extends Dexie {
   command_ledger!: Table<CommandLedgerEntry, number>;
   agent_memories!: Table<AgentMemoryDbEntry, number>;
   workspace_files!: Table<WorkspaceFileDbEntry, number>;
+  encrypted_credentials!: Table<EncryptedCredentialDbEntry, string>;
 
   constructor() {
     super('PixelOpsImmutableLedgerDB');
@@ -86,6 +101,17 @@ class PixelOpsLedgerDatabase extends Dexie {
         '++id, agentId, timestamp, prompt',
       workspace_files:
         '++id, &path, category, format, updatedAt',
+    });
+
+    this.version(4).stores({
+      command_ledger:
+        '++id, timestamp, involved_agent, tool_used, success_boost_achieved, ledger_hash',
+      agent_memories:
+        '++id, agentId, timestamp, prompt',
+      workspace_files:
+        '++id, &path, category, format, updatedAt',
+      encrypted_credentials:
+        '&key, updatedAt',
     });
 
     // Enforce append-only immutability on the command_ledger table

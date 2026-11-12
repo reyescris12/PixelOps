@@ -90,6 +90,17 @@ async function main() {
   const path = world.buildAgentWaypointPath('war_room', 40, 80, 'war_room', world.getTownHallSeat(2));
   check(Array.isArray(path) && path.length > 0, 'buildAgentWaypointPath returns a route');
 
+  console.log('\n=== 3b. Single source of truth for room data ===');
+  const roomData = await import('../src/engine/roomData');
+  for (const k of ['ROOM_ORDER', 'ROOM_STATIONS', 'ROOM_METADATA', 'ROOM_OBSTACLES', 'ROOM_CORRIDOR_WAYPOINTS'] as const) {
+    check((world as any)[k] === (roomData as any)[k], `spriteWorld.${k} is the same object as roomData.${k}`);
+  }
+  const knownStationIds = new Set(Object.values(roomData.ROOM_STATIONS).flat().map((s) => s.id));
+  const appStationLiterals = [...src('src/App.tsx').matchAll(/targetStation\s*=[^;]*/g)]
+    .flatMap((m) => [...m[0].matchAll(/'([a-z]+_[a-z_]+)'/g)].map((x) => x[1]));
+  const unknown = appStationLiterals.filter((id) => !knownStationIds.has(id));
+  check(appStationLiterals.length > 0 && unknown.length === 0, `all ${appStationLiterals.length} station ids routed by App exist on the canvas${unknown.length ? ' (unknown: ' + unknown.join(', ') + ')' : ''}`);
+
   console.log('\n=== 4. Playbook pipelines load on demand ===');
   const playbooks = await import('../src/engine/intelligencePlaybooks');
   check(Object.keys(playbooks.INTELLIGENCE_PLAYBOOKS).length > 0, 'playbook definitions available eagerly');

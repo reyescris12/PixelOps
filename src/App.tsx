@@ -18,7 +18,7 @@ import {
 } from './context/CrewContext';
 import { SpriteCanvas } from './components/SpriteCanvas';
 import { AgentSpriteFigure } from './components/AgentSpriteFigure';
-import { RoomId, ROOM_ORDER, ROOM_METADATA, ROOM_STATIONS } from './components/spriteWorld';
+import type { RoomId } from './components/spriteWorld';
 import {
   getAllRooms,
   getAllRoomIds,
@@ -838,7 +838,7 @@ const CommandCenterContent: React.FC = () => {
     else if (/\b(go\s+to|move\s+to|head\s+to|in\s+the)?\s*(war\s+room|flight\s+node|center\s+desk)\b/i.test(lower)) {
       targetRoom = 'war_room';
       targetStation = /server|rack/.test(lower)
-        ? 'war_server_rack'
+        ? 'war_right_desk' // Mainframe Terminal: the rack-side station that exists on the canvas
         : /left|flight/.test(lower)
         ? 'war_left_desk'
         : 'war_center_desk';

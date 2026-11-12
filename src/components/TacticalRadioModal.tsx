@@ -19,6 +19,7 @@ import {
   type RadioLiveModelId,
   type RadioConnectionStatus,
   type RadioTranscriptEntry,
+  type RadioTransportRoute,
 } from '../services/TacticalVoiceService';
 import { useTheme } from '../context/ThemeContext';
 
@@ -42,9 +43,7 @@ export const TacticalRadioModal: React.FC<TacticalRadioModalProps> = ({
   const [liveModel, setLiveModel] = useState<RadioLiveModelId>('gemini-3.8-live');
   const [status, setStatus] = useState<RadioConnectionStatus>('disconnected');
   const [statusDetail, setStatusDetail] = useState<string>('Transceiver idle');
-  const [transportRoute, setTransportRoute] = useState<'cloudflare-proxy' | 'direct-byok' | null>(
-    null
-  );
+  const [transportRoute, setTransportRoute] = useState<RadioTransportRoute | null>(null);
   const [transcripts, setTranscripts] = useState<RadioTranscriptEntry[]>([]);
   const [audioLevel, setAudioLevel] = useState(0);
   const [quickText, setQuickText] = useState('');
@@ -55,10 +54,13 @@ export const TacticalRadioModal: React.FC<TacticalRadioModalProps> = ({
   } | null>(null);
 
   const transceiverRef = useRef<TacticalRadioTransceiver | null>(null);
+  const onDispatchRef = useRef(onDispatchDirective);
+  onDispatchRef.current = onDispatchDirective;
 
   useEffect(() => {
     if (!isOpen) {
       void transceiverRef.current?.disconnect();
+      setTransportRoute(null);
       return;
     }
     probeGeminiLiveProxy().then((res) => {
@@ -80,7 +82,7 @@ export const TacticalRadioModal: React.FC<TacticalRadioModalProps> = ({
       onAudioLevel: (lvl) => setAudioLevel(lvl),
       onTransportRoute: (route) => setTransportRoute(route),
       onDirectiveDispatched: (directive, opId) => {
-        onDispatchDirective?.(directive, opId);
+        onDispatchRef.current?.(directive, opId);
       },
     });
     transceiverRef.current = tx;
@@ -120,14 +122,24 @@ export const TacticalRadioModal: React.FC<TacticalRadioModalProps> = ({
     }
   };
 
+  const handleSwitchModel = async (nextModel: RadioLiveModelId) => {
+    playBeep('tap');
+    setLiveModel(nextModel);
+    if (isConnected && transportRoute !== 'tactical-relay') {
+      try {
+        await transceiverRef.current?.connect(selectedOp, nextModel);
+      } catch {}
+    }
+  };
+
   const handlePttStart = async () => {
     if (!isConnected) return;
     playBeep('tap');
     try {
       await transceiverRef.current?.startPushToTalk();
     } catch (err: any) {
-      setStatus('error');
-      setStatusDetail(err?.message || 'Microphone permission denied');
+      setStatus('standby');
+      setStatusDetail(err?.message || 'Microphone permission denied — use TX input below');
     }
   };
 
@@ -148,19 +160,22 @@ export const TacticalRadioModal: React.FC<TacticalRadioModalProps> = ({
 
   const persona = OPERATIVE_RADIO_CHANNELS[selectedOp];
 
+  const activeBadge =
+    transportRoute === 'cloudflare-proxy'
+      ? 'CLOUDFLARE PROXY WS'
+      : transportRoute === 'direct-byok'
+      ? 'BYOK DIRECT WS'
+      : transportRoute === 'tactical-relay'
+      ? 'TACTICAL VOICE RELAY'
+      : persona.frequencyMhz;
+
   return (
     <TacticalModalDialog
       isOpen={isOpen}
       onClose={onClose}
       title="Tactical Push-To-Talk Live Radio"
       subtitle="Gemini Multimodal Live WebSocket Transceiver · Real-Time Barge-In Voice Comms"
-      badge={
-        transportRoute === 'cloudflare-proxy'
-          ? 'CLOUDFLARE PROXY WS'
-          : transportRoute === 'direct-byok'
-          ? 'BYOK DIRECT WS'
-          : persona.frequencyMhz
-      }
+      badge={activeBadge}
       icon={<Radio className="w-4 h-4" />}
       maxWidthClass="max-w-4xl"
     >
@@ -210,7 +225,7 @@ export const TacticalRadioModal: React.FC<TacticalRadioModalProps> = ({
             <div className="grid grid-cols-2 gap-1.5">
               <button
                 type="button"
-                onClick={() => setLiveModel('gemini-3.8-live')}
+                onClick={() => void handleSwitchModel('gemini-3.8-live')}
                 className={`py-1.5 px-2 text-[10px] font-bold border cursor-pointer ${
                   liveModel === 'gemini-3.8-live'
                     ? 'bg-[#10291e] border-[#4ade80] text-[#4ade80]'
@@ -221,7 +236,7 @@ export const TacticalRadioModal: React.FC<TacticalRadioModalProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => setLiveModel('gemini-3.8-live-extended-thinking')}
+                onClick={() => void handleSwitchModel('gemini-3.8-live-extended-thinking')}
                 className={`py-1.5 px-2 text-[10px] font-bold border cursor-pointer ${
                   liveModel === 'gemini-3.8-live-extended-thinking'
                     ? 'bg-[#172554] border-[#60a5fa] text-[#93c5fd]'
@@ -246,7 +261,7 @@ export const TacticalRadioModal: React.FC<TacticalRadioModalProps> = ({
             <Wifi className="w-4 h-4" />
             <span>
               {status === 'connecting'
-                ? 'HANDSHAKING WEBSOCKET...'
+                ? 'HANDSHAKING TRANSCEIVER...'
                 : isConnected
                 ? 'SEVER LIVE RADIO CARRIER'
                 : `OPEN ${persona.callsign} CARRIER`}
@@ -258,9 +273,13 @@ export const TacticalRadioModal: React.FC<TacticalRadioModalProps> = ({
             <button
               type="button"
               disabled={!isConnected}
+              onContextMenu={(e) => e.preventDefault()}
               onPointerDown={() => void handlePttStart()}
               onPointerUp={handlePttEnd}
               onPointerCancel={handlePttEnd}
+              onPointerLeave={() => {
+                if (status === 'transmitting_ptt') handlePttEnd();
+              }}
               onKeyDown={(e) => {
                 if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) {
                   e.preventDefault();
@@ -290,7 +309,9 @@ export const TacticalRadioModal: React.FC<TacticalRadioModalProps> = ({
               )}
               <span>
                 {status === 'transmitting_ptt'
-                  ? 'TRANSMITTING 16kHz PCM — RELEASE TO SEND'
+                  ? transportRoute === 'tactical-relay'
+                    ? 'CAPTURING VOICE — RELEASE TO DISPATCH'
+                    : 'TRANSMITTING 16kHz PCM — RELEASE TO SEND'
                   : status === 'receiving_voice'
                   ? `${persona.displayName.toUpperCase()} SPEAKING (HOLD TO BARGE IN)`
                   : 'HOLD PUSH-TO-TALK (OR SPACEBAR)'}
@@ -320,9 +341,11 @@ export const TacticalRadioModal: React.FC<TacticalRadioModalProps> = ({
               )}
             </div>
 
-            <div className="w-full flex items-center justify-between text-[10px] text-[#94a3b8]">
-              <span>STATUS: {status.toUpperCase()}</span>
-              <span className="truncate max-w-[180px]">{statusDetail}</span>
+            <div className="w-full flex items-center justify-between gap-2 text-[10px] text-[#94a3b8]">
+              <span className="shrink-0">STATUS: {status.toUpperCase()}</span>
+              <span className="truncate text-right" title={statusDetail}>
+                {statusDetail}
+              </span>
             </div>
 
             {proxyStatus && !proxyStatus.hasServerKey && !proxyStatus.hasClientByokKey && onOpenSettings && (
@@ -332,10 +355,10 @@ export const TacticalRadioModal: React.FC<TacticalRadioModalProps> = ({
                   onClose();
                   onOpenSettings();
                 }}
-                className="w-full py-1.5 px-2.5 bg-[#3b1d06] border border-[#f59e0b] text-[11px] font-bold text-[#fde68a] flex items-center justify-center gap-1.5 cursor-pointer"
+                className="w-full py-1.5 px-2.5 bg-[#1a2234] hover:bg-[#232f47] border border-[#38bdf8]/60 text-[11px] font-bold text-[#bae6fd] flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <Settings className="w-3.5 h-3.5" />
-                <span>Configure Gemini Key in Vault Settings</span>
+                <span>Add Gemini Key in Vault for 24kHz Native Live WS</span>
               </button>
             )}
           </div>

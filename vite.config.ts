@@ -54,6 +54,7 @@ export default defineConfig(() => {
         workbox: {
           // Precache core application shell files and agent sprites
           maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+          navigateFallbackDenylist: [/^\/api\//],
           globPatterns: ['**/*.{js,css,html,svg,ico}', 'assets/agents/*.png'],
           globIgnores: ['**/assets/rooms/**', '**/assets/large-sprites/**', '**/scratch/**'],
           runtimeCaching: [
@@ -172,6 +173,7 @@ export default defineConfig(() => {
         '/api': {
           target: 'http://localhost:3000',
           changeOrigin: true,
+          ws: true,
         },
       },
     },

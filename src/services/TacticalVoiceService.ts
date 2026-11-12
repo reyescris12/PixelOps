@@ -5,7 +5,8 @@
  * Push-to-Talk (PTT) full-duplex transceiver wired to the Gemini Multimodal Live
  * WebSocket API (`gemini-3.8-live` and `gemini-3.8-live-extended-thinking`),
  * routed via the Cloudflare Worker / Express WebSocket proxy (`/api/gemini-live`)
- * with automatic BYOK fallback.
+ * with automatic encrypted BYOK Vault decryption, non-hanging WebSocket handshake
+ * negotiation, and zero-key Tactical Voice Relay fallback.
  *
  * Supports real-time voice command & barge-in replies with Operatives:
  *   - Vance  (Lead Strategist — Voice: Charon)
@@ -13,13 +14,24 @@
  *   - Cipher (Systems & Vault Cryptographer — Voice: Puck)
  */
 
-import { GoogleGenAI, Modality, Behavior, Type, type Session, type LiveServerMessage } from '@google/genai';
-import { getBYOKVaultSnapshot } from './BYOKVault';
+import {
+  GoogleGenAI,
+  Modality,
+  Behavior,
+  Type,
+  type Session,
+  type LiveServerMessage,
+} from '@google/genai';
+import { getBYOKVaultSnapshot, getProviderApiKeyAsync } from './BYOKVault';
+import { loadLLMProviderConfig } from './LLMProviderService';
+import { getSecureCredential } from './SecureVaultService';
 import { queryEntityNeighborhood, getEvidenceGraphSnapshot } from './EvidenceGraphService';
 import { listTripwireAlerts, listTripwireWatches } from './TripwireDiffService';
+import { executeAgentDirective } from './agentEngineLazy';
 
 export type RadioOperativeId = 'vance' | 'nyx' | 'cipher';
 export type RadioLiveModelId = 'gemini-3.8-live' | 'gemini-3.8-live-extended-thinking';
+export type RadioTransportRoute = 'cloudflare-proxy' | 'direct-byok' | 'tactical-relay';
 
 export type RadioConnectionStatus =
   | 'disconnected'
@@ -86,6 +98,71 @@ export const OPERATIVE_RADIO_CHANNELS: Record<RadioOperativeId, OperativeRadioPe
   },
 };
 
+const COMPATIBILITY_LIVE_MODELS = [
+  'gemini-2.5-flash-native-audio-preview-12-2025',
+  'gemini-2.0-flash-live-001',
+] as const;
+
+function isValidRealGeminiKey(candidate: string | null | undefined): candidate is string {
+  if (!candidate) return false;
+  const trimmed = candidate.trim();
+  return (
+    trimmed.length > 8 &&
+    trimmed !== 'MY_GEMINI_API_KEY' &&
+    trimmed !== 'PROXY_MANAGED' &&
+    trimmed !== '••••••••' &&
+    !trimmed.startsWith('••••')
+  );
+}
+
+/**
+ * Resolves the Commander's Gemini API key across encrypted IndexedDB (`SecureVaultService`),
+ * `BYOKVault`, `LLMProviderService`, and Vite env variables.
+ */
+export async function resolveClientGeminiKeyAsync(): Promise<string> {
+  try {
+    const asyncVaultKey = await getProviderApiKeyAsync('gemini');
+    if (isValidRealGeminiKey(asyncVaultKey)) {
+      return asyncVaultKey.trim();
+    }
+  } catch {}
+
+  try {
+    const idbDirect =
+      (await getSecureCredential('byok::gemini')) ||
+      (await getSecureCredential('pixelops_gemini_api_key'));
+    if (isValidRealGeminiKey(idbDirect)) {
+      return idbDirect.trim();
+    }
+  } catch {}
+
+  try {
+    const snap = getBYOKVaultSnapshot();
+    if (isValidRealGeminiKey(snap.gemini?.apiKey)) {
+      return snap.gemini.apiKey.trim();
+    }
+  } catch {}
+
+  try {
+    const cfg = loadLLMProviderConfig();
+    if (cfg.providerId === 'gemini' && isValidRealGeminiKey(cfg.apiKey)) {
+      return cfg.apiKey.trim();
+    }
+  } catch {}
+
+  try {
+    const envKey =
+      (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_GEMINI_API_KEY) ||
+      (typeof import.meta !== 'undefined' && (import.meta as any).env?.GEMINI_API_KEY) ||
+      '';
+    if (isValidRealGeminiKey(envKey)) {
+      return String(envKey).trim();
+    }
+  } catch {}
+
+  return '';
+}
+
 /**
  * Converts Float32 Web Audio samples [-1, 1] downsampled to 16kHz into base64 16-bit little-endian PCM.
  */
@@ -147,7 +224,8 @@ export function decodeBase64Pcm16ToFloat32(base64Pcm: string): Float32Array {
   return float32;
 }
 
-export function buildTacticalRadioTools() {
+export function buildTacticalRadioTools(options?: { omitNonBlockingBehavior?: boolean }) {
+  const includeBehavior = !options?.omitNonBlockingBehavior;
   return [
     {
       functionDeclarations: [
@@ -155,7 +233,7 @@ export function buildTacticalRadioTools() {
           name: 'dispatch_safehouse_directive',
           description:
             'Dispatches an actionable intelligence, OSINT, or workspace mission directive into the PixelOps Command Center terminal for full autonomous execution.',
-          behavior: Behavior.NON_BLOCKING,
+          ...(includeBehavior ? { behavior: Behavior.NON_BLOCKING } : {}),
           parameters: {
             type: Type.OBJECT,
             properties: {
@@ -175,7 +253,7 @@ export function buildTacticalRadioTools() {
           name: 'query_evidence_graph',
           description:
             'Searches the local IndexedDB Evidence Graph for cross-investigation entity overlaps (domains, IPs, ASNs, CVEs, threat actors) across VFS dossiers.',
-          behavior: Behavior.NON_BLOCKING,
+          ...(includeBehavior ? { behavior: Behavior.NON_BLOCKING } : {}),
           parameters: {
             type: Type.OBJECT,
             properties: {
@@ -191,7 +269,7 @@ export function buildTacticalRadioTools() {
           name: 'check_tripwire_alerts',
           description:
             'Checks stateful SHA-256 deterministic tripwire watchlists and any pending zero-noise delta alerts.',
-          behavior: Behavior.NON_BLOCKING,
+          ...(includeBehavior ? { behavior: Behavior.NON_BLOCKING } : {}),
           parameters: {
             type: Type.OBJECT,
             properties: {
@@ -239,33 +317,65 @@ export function buildLiveSessionConfig(
   return { model: modelId, config };
 }
 
+function buildCompatibilityLiveConfig(operativeId: RadioOperativeId): Record<string, any> {
+  const persona = OPERATIVE_RADIO_CHANNELS[operativeId] || OPERATIVE_RADIO_CHANNELS.vance;
+  return {
+    responseModalities: [Modality.AUDIO],
+    speechConfig: {
+      voiceConfig: {
+        prebuiltVoiceConfig: {
+          voiceName: persona.voiceName,
+        },
+      },
+    },
+    inputAudioTranscription: {},
+    outputAudioTranscription: {},
+    systemInstruction: persona.systemPersona,
+    tools: buildTacticalRadioTools({ omitNonBlockingBehavior: true }),
+  };
+}
+
 export async function probeGeminiLiveProxy(): Promise<{
   proxyReachable: boolean;
   hasServerKey: boolean;
   hasClientByokKey: boolean;
   clientByokKey: string;
 }> {
-  let hasClientByokKey = false;
-  let clientByokKey = '';
-  try {
-    const snap = getBYOKVaultSnapshot();
-    const k = (snap.gemini?.apiKey || '').trim();
-    if (k && k !== 'MY_GEMINI_API_KEY' && !k.startsWith('••••')) {
-      hasClientByokKey = true;
-      clientByokKey = k;
-    }
-  } catch {}
+  const clientByokKey = await resolveClientGeminiKeyAsync();
+  const hasClientByokKey = Boolean(clientByokKey);
 
   try {
-    const res = await fetch('/api/gemini-live', { method: 'GET' });
-    if (res.ok) {
-      const json = await res.json();
-      return {
-        proxyReachable: Boolean(json?.proxyReady),
-        hasServerKey: Boolean(json?.hasServerKey),
-        hasClientByokKey,
-        clientByokKey,
-      };
+    if (typeof fetch === 'function') {
+      const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+      const timer = controller ? setTimeout(() => controller.abort(), 3500) : null;
+      try {
+        const res = await fetch('/api/gemini-live', {
+          method: 'GET',
+          cache: 'no-store',
+          headers: { Accept: 'application/json' },
+          ...(controller ? { signal: controller.signal } : {}),
+        });
+        if (res.ok) {
+          const contentType = (res.headers.get('content-type') || '').toLowerCase();
+          if (contentType.includes('application/json')) {
+            const json = await res.json();
+            const isAuthenticProxy = Boolean(
+              json?.proxyReady === true &&
+                (json?.service === 'pixelops-gemini-live-proxy' || json?.runtime)
+            );
+            if (isAuthenticProxy) {
+              return {
+                proxyReachable: true,
+                hasServerKey: Boolean(json?.hasServerKey),
+                hasClientByokKey,
+                clientByokKey,
+              };
+            }
+          }
+        }
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
     }
   } catch {}
 
@@ -281,12 +391,19 @@ export interface TacticalRadioCallbacks {
   onStatusChange?: (status: RadioConnectionStatus, detail?: string) => void;
   onTranscriptUpdate?: (entries: RadioTranscriptEntry[]) => void;
   onAudioLevel?: (rmsLevel: number) => void;
-  onTransportRoute?: (route: 'cloudflare-proxy' | 'direct-byok') => void;
+  onTransportRoute?: (route: RadioTransportRoute) => void;
   onDirectiveDispatched?: (directive: string, operativeId: RadioOperativeId) => void;
+}
+
+interface HandshakeAttemptError extends Error {
+  socketOpened?: boolean;
+  closeCode?: number;
 }
 
 export class TacticalRadioTransceiver {
   private session: Session | null = null;
+  private relayActive = false;
+  private transportRoute: RadioTransportRoute | null = null;
   private operativeId: RadioOperativeId = 'vance';
   private modelId: RadioLiveModelId = 'gemini-3.8-live';
   private status: RadioConnectionStatus = 'disconnected';
@@ -297,6 +414,12 @@ export class TacticalRadioTransceiver {
   private playbackCtx: AudioContext | null = null;
   private activeSources = new Set<AudioBufferSourceNode>();
   private nextPlayTime = 0;
+
+  // Web Speech Synthesis fallback (Tactical Voice Relay mode)
+  private speechMeterTimer: ReturnType<typeof setInterval> | null = null;
+  private speechRecognition: any = null;
+  private relaySpokenFinal = '';
+  private relaySpokenInterim = '';
 
   // Web Audio microphone capture (16kHz input)
   private micStream: MediaStream | null = null;
@@ -313,6 +436,14 @@ export class TacticalRadioTransceiver {
     return this.status;
   }
 
+  public getTransportRoute(): RadioTransportRoute | null {
+    return this.transportRoute;
+  }
+
+  private isCarrierActive(): boolean {
+    return Boolean(this.session || this.relayActive);
+  }
+
   private setStatus(next: RadioConnectionStatus, detail?: string) {
     this.status = next;
     this.callbacks.onStatusChange?.(next, detail);
@@ -321,14 +452,15 @@ export class TacticalRadioTransceiver {
   private appendOrMergeTranscript(
     speaker: 'COMMANDER' | 'OPERATIVE' | 'SYS_TOOL',
     text: string,
-    isPartial: boolean
+    isPartial: boolean,
+    replacePartial = false
   ) {
     const clean = text;
     if (!clean) return;
 
     const last = this.transcripts[this.transcripts.length - 1];
     if (last && last.speaker === speaker && last.isPartial && speaker !== 'SYS_TOOL') {
-      last.text += clean;
+      last.text = replacePartial ? clean : last.text + clean;
       last.isPartial = isPartial;
     } else {
       this.transcripts.push({
@@ -364,13 +496,24 @@ export class TacticalRadioTransceiver {
     const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
     if (!AudioCtx) return null;
     if (!this.playbackCtx || this.playbackCtx.state === 'closed') {
-      this.playbackCtx = new AudioCtx({ sampleRate: 24000 });
-      this.nextPlayTime = 0;
+      try {
+        this.playbackCtx = new AudioCtx({ sampleRate: 24000 });
+        this.nextPlayTime = 0;
+      } catch {
+        return null;
+      }
     }
     if (this.playbackCtx.state === 'suspended') {
       this.playbackCtx.resume().catch(() => {});
     }
     return this.playbackCtx;
+  }
+
+  private clearSpeechMeter() {
+    if (this.speechMeterTimer) {
+      clearInterval(this.speechMeterTimer);
+      this.speechMeterTimer = null;
+    }
   }
 
   /**
@@ -387,6 +530,15 @@ export class TacticalRadioTransceiver {
     if (this.playbackCtx) {
       this.nextPlayTime = this.playbackCtx.currentTime;
     }
+
+    this.clearSpeechMeter();
+    try {
+      if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
+        window.speechSynthesis.cancel();
+      }
+    } catch {}
+
+    this.callbacks.onAudioLevel?.(0);
     this.finalizePartialTranscripts();
     if (this.status === 'receiving_voice') {
       this.setStatus(this.isTransmittingPtt ? 'transmitting_ptt' : 'standby');
@@ -429,11 +581,187 @@ export class TacticalRadioTransceiver {
 
     source.onended = () => {
       this.activeSources.delete(source);
-      if (this.activeSources.size === 0 && !this.isTransmittingPtt && this.session) {
+      if (this.activeSources.size === 0 && !this.isTransmittingPtt && this.isCarrierActive()) {
         this.callbacks.onAudioLevel?.(0);
         this.setStatus('standby');
       }
     };
+  }
+
+  private speakViaBrowserSynthesis(rawText: string) {
+    const cleanSpeech = rawText
+      .replace(/```[\s\S]*?```/g, ' ')
+      .replace(/[*#_`~>|]/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    if (
+      !cleanSpeech ||
+      typeof window === 'undefined' ||
+      !('speechSynthesis' in window) ||
+      typeof SpeechSynthesisUtterance === 'undefined'
+    ) {
+      if (this.isCarrierActive() && !this.isTransmittingPtt) {
+        this.setStatus('standby', 'Reply logged on tactical transcript');
+      }
+      return;
+    }
+
+    try {
+      window.speechSynthesis.cancel();
+      const utter = new SpeechSynthesisUtterance(cleanSpeech);
+      if (this.operativeId === 'vance') {
+        utter.pitch = 0.86;
+        utter.rate = 1.02;
+      } else if (this.operativeId === 'nyx') {
+        utter.pitch = 1.08;
+        utter.rate = 1.05;
+      } else {
+        utter.pitch = 0.94;
+        utter.rate = 1.04;
+      }
+
+      const voices = window.speechSynthesis.getVoices?.() || [];
+      const englishVoices = voices.filter((v) => v.lang?.toLowerCase().startsWith('en'));
+      if (englishVoices.length > 0) {
+        if (this.operativeId === 'nyx') {
+          utter.voice =
+            englishVoices.find((v) => /female|zira|samantha|victoria|google uk english female/i.test(v.name)) ||
+            englishVoices[0];
+        } else {
+          utter.voice =
+            englishVoices.find((v) => /male|david|mark|daniel|google us english/i.test(v.name)) ||
+            englishVoices[0];
+        }
+      }
+
+      utter.onstart = () => {
+        if (!this.isCarrierActive() || this.isTransmittingPtt) return;
+        this.setStatus('receiving_voice', `${OPERATIVE_RADIO_CHANNELS[this.operativeId].displayName} transmitting...`);
+        this.clearSpeechMeter();
+        let tick = 0;
+        this.speechMeterTimer = setInterval(() => {
+          tick++;
+          const wave = 0.3 + Math.abs(Math.sin(tick * 0.65)) * 0.48;
+          this.callbacks.onAudioLevel?.(wave);
+        }, 90);
+      };
+
+      const finishSpeech = () => {
+        this.clearSpeechMeter();
+        this.callbacks.onAudioLevel?.(0);
+        if (this.isCarrierActive() && !this.isTransmittingPtt) {
+          this.setStatus('standby', 'Tactical Voice Relay standby');
+        }
+      };
+
+      utter.onend = finishSpeech;
+      utter.onerror = finishSpeech;
+
+      window.speechSynthesis.speak(utter);
+    } catch {
+      if (this.isCarrierActive() && !this.isTransmittingPtt) {
+        this.setStatus('standby');
+      }
+    }
+  }
+
+  private async executeRelayTurn(userCommand: string): Promise<void> {
+    const trimmed = userCommand.trim();
+    if (!trimmed || !this.relayActive) return;
+
+    const persona = OPERATIVE_RADIO_CHANNELS[this.operativeId] || OPERATIVE_RADIO_CHANNELS.vance;
+    this.setStatus('extended_thinking', `${persona.displayName} analyzing transmission...`);
+
+    const lower = trimmed.toLowerCase();
+    const contextSnippets: string[] = [];
+
+    // 1. Check if Commander explicitly asked to dispatch a full terminal directive
+    if (/\b(dispatch|launch mission|execute directive|run scan on|investigate)\b/i.test(trimmed) && trimmed.length > 14) {
+      this.appendOrMergeTranscript(
+        'SYS_TOOL',
+        `[RADIO DISPATCH → TERMINAL] "${trimmed}"`,
+        false
+      );
+      this.callbacks.onDirectiveDispatched?.(trimmed, this.operativeId);
+      contextSnippets.push(`Action taken: Dispatched "${trimmed}" to the Safehouse Command Terminal.`);
+    }
+
+    // 2. Gather local Safehouse Evidence Graph & Tripwire telemetry when relevant
+    try {
+      if (/\b(graph|link board|bridge|overlap|dossier|asn|cve|domain|ip)\b/i.test(lower)) {
+        const snap = await getEvidenceGraphSnapshot();
+        const topBridges = snap.crossInvestigationBridges
+          .slice(0, 4)
+          .map((b) => `${b.node.label} (${b.overlapCount} dossiers)`)
+          .join(', ');
+        contextSnippets.push(
+          `Evidence Graph Telemetry: ${snap.stats.totalEntities} entities across ${snap.stats.totalDossiers} dossiers, ${snap.stats.bridgeCount} cross-investigation bridges${
+            topBridges ? ` [${topBridges}]` : ''
+          }.`
+        );
+        this.appendOrMergeTranscript(
+          'SYS_TOOL',
+          `[LINK BOARD SUMMARY] ${snap.stats.bridgeCount} cross-dossier bridge(s)`,
+          false
+        );
+      }
+    } catch {}
+
+    try {
+      if (/\b(tripwire|alert|delta|watch|hash|sha)\b/i.test(lower)) {
+        const alerts = await listTripwireAlerts();
+        const watches = await listTripwireWatches();
+        const pending = alerts.filter((a) => a.status === 'pending_approval');
+        contextSnippets.push(
+          `Tripwire Telemetry: ${watches.filter((w) => w.enabled).length} active watches, ${pending.length} pending SHA-256 delta alerts.`
+        );
+        this.appendOrMergeTranscript(
+          'SYS_TOOL',
+          `[TRIPWIRE CHECK] ${pending.length} pending SHA-256 delta alert(s)`,
+          false
+        );
+      }
+    } catch {}
+
+    const radioPrompt = `[TACTICAL VOICE RADIO TRANSMISSION FROM COMMANDER]
+Commander said: "${trimmed}"
+${contextSnippets.length > 0 ? `\nLive Safehouse Telemetry:\n${contextSnippets.join('\n')}\n` : ''}
+Respond in character as ${persona.displayName} (${persona.role}) over tactical voice radio in 1 to 3 crisp, natural spoken sentences (plain text suitable for voice synthesis, no markdown tables or code blocks).`;
+
+    let spokenReply = '';
+    try {
+      const card = await executeAgentDirective({
+        prompt: radioPrompt,
+        themeId: 'green',
+        activeAgentName: persona.displayName,
+        activeAgentRole: persona.role,
+        agentSystemPrompt: persona.systemPersona,
+        enabledPlugins: [],
+        temperature: 0.5,
+      });
+      spokenReply = String(card?.dialogue || '').trim();
+    } catch {}
+
+    if (!spokenReply) {
+      const fallbackSummary =
+        contextSnippets.length > 0
+          ? contextSnippets.join(' ')
+          : 'Safehouse channels are green and standing by for your target coordinates.';
+      spokenReply = `Copy that, Commander. ${persona.displayName} on ${persona.frequencyMhz}—${fallbackSummary}`;
+    }
+
+    // Keep voice transcript concise & clean
+    const cleaned = spokenReply
+      .replace(/^---[\s\S]*?---\s*/m, '')
+      .replace(/```[\s\S]*?```/g, '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 520);
+
+    if (!this.relayActive) return;
+    this.appendOrMergeTranscript('OPERATIVE', cleaned, false);
+    this.speakViaBrowserSynthesis(cleaned);
   }
 
   private async handleIncomingMessage(message: LiveServerMessage) {
@@ -581,9 +909,151 @@ export class TacticalRadioTransceiver {
     }
   }
 
+  /**
+   * Non-hanging wrapper around `ai.live.connect(...)`.
+   * `@google/genai`'s internal `onopenPromise` and `setupCompletePromise` do not reject on
+   * WebSocket `onerror` / `onclose`, which previously hung fallback routes and trapped status in `'error'`.
+   */
+  private connectLiveSessionOnce(
+    ai: GoogleGenAI,
+    targetModel: string,
+    sessionConfig: Record<string, any>,
+    timeoutMs = 7500
+  ): Promise<Session> {
+    return new Promise<Session>((resolve, reject) => {
+      let settled = false;
+      let socketOpened = false;
+      let activeSession: Session | null = null;
+
+      const failHandshake = (reason: string, closeCode?: number) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        const err: HandshakeAttemptError = new Error(reason);
+        err.socketOpened = socketOpened;
+        err.closeCode = closeCode;
+        reject(err);
+      };
+
+      const timer = setTimeout(() => {
+        failHandshake(`Live WebSocket handshake timed out (${targetModel})`);
+      }, timeoutMs);
+
+      ai.live
+        .connect({
+          model: targetModel,
+          config: sessionConfig,
+          callbacks: {
+            onopen: () => {
+              socketOpened = true;
+            },
+            onmessage: (msg: LiveServerMessage) => {
+              void this.handleIncomingMessage(msg);
+            },
+            onerror: (err: any) => {
+              const errMsg =
+                (typeof err?.message === 'string' && err.message.trim()) ||
+                (typeof err?.error?.message === 'string' && err.error.message.trim()) ||
+                'WebSocket carrier fault';
+              if (!settled) {
+                failHandshake(errMsg);
+                return;
+              }
+              if (activeSession && this.session === activeSession) {
+                this.setStatus('error', errMsg);
+              }
+            },
+            onclose: (ev: any) => {
+              const code = typeof ev?.code === 'number' ? ev.code : undefined;
+              const reason = typeof ev?.reason === 'string' ? ev.reason.trim() : '';
+              if (!settled) {
+                const msg = reason
+                  ? `Handshake closed (${code || 'ws'}): ${reason}`
+                  : `Handshake closed (${code || 'ws'})`;
+                failHandshake(msg, code);
+                return;
+              }
+              if (activeSession && this.session === activeSession) {
+                this.stopPushToTalk();
+                this.session = null;
+                if (this.status !== 'error') {
+                  this.setStatus('disconnected', reason || 'Carrier closed');
+                }
+              }
+            },
+          },
+        })
+        .then((session) => {
+          if (settled) {
+            try {
+              session.close();
+            } catch {}
+            return;
+          }
+          settled = true;
+          activeSession = session;
+          clearTimeout(timer);
+          resolve(session);
+        })
+        .catch((err: any) => {
+          failHandshake(err?.message || 'Live connect failed');
+        });
+    });
+  }
+
+  /**
+   * Attempts primary Gemini 3.8 Live model first, and if the socket opened (`101`)
+   * but `setup` rejected the model identifier (`1008` / not found), automatically negotiates
+   * compatible native-audio Live models on the same client.
+   */
+  private async negotiateLiveSessionOnClient(
+    ai: GoogleGenAI,
+    operativeId: RadioOperativeId,
+    preferredModel: RadioLiveModelId
+  ): Promise<{ session: Session; negotiatedModel: string }> {
+    const primary = buildLiveSessionConfig(operativeId, preferredModel);
+    try {
+      const session = await this.connectLiveSessionOnce(ai, primary.model, primary.config);
+      return { session, negotiatedModel: primary.model };
+    } catch (err: any) {
+      const attemptErr = err as HandshakeAttemptError;
+      const errText = String(attemptErr?.message || '').toLowerCase();
+      const isAuthFailure =
+        errText.includes('api key not valid') ||
+        errText.includes('api_key_invalid') ||
+        errText.includes('permission_denied') ||
+        errText.includes('unauthenticated') ||
+        errText.includes('quota');
+
+      // If the WebSocket never even upgraded (`!socketOpened`) or key is invalid, skip model retries on this transport
+      if (!attemptErr.socketOpened || isAuthFailure) {
+        throw attemptErr;
+      }
+
+      const compatConfig = buildCompatibilityLiveConfig(operativeId);
+      for (const fallbackModel of COMPATIBILITY_LIVE_MODELS) {
+        try {
+          const session = await this.connectLiveSessionOnce(ai, fallbackModel, compatConfig, 6500);
+          return { session, negotiatedModel: fallbackModel };
+        } catch {}
+      }
+
+      throw attemptErr;
+    }
+  }
+
+  private activateTacticalRelayFallback(detailMessage: string) {
+    this.session = null;
+    this.relayActive = true;
+    this.transportRoute = 'tactical-relay';
+    this.callbacks.onTransportRoute?.('tactical-relay');
+    this.setStatus('standby', detailMessage);
+  }
+
   public async connect(
     operativeId: RadioOperativeId,
-    modelId: RadioLiveModelId = 'gemini-3.8-live'
+    modelId: RadioLiveModelId = 'gemini-3.8-live',
+    options?: { disableRelayFallback?: boolean }
   ): Promise<void> {
     await this.disconnect();
     this.operativeId = operativeId;
@@ -592,80 +1062,97 @@ export class TacticalRadioTransceiver {
     this.ensurePlaybackContext();
 
     const probe = await probeGeminiLiveProxy();
-    if (!probe.hasServerKey && !probe.hasClientByokKey) {
-      this.setStatus(
-        'error',
-        'No Gemini API key found on Worker proxy or BYOK Vault. Add a Gemini API key in Settings [⚙️] to open live radio.'
-      );
-      throw new Error('Missing Gemini API key for Live Radio Dispatch.');
+
+    // Build ordered WebSocket transport candidates:
+    //  - When Worker proxy has a server-managed GEMINI_API_KEY, prefer `/api/gemini-live`.
+    //  - When Commander has a decrypted BYOK Gemini key (and server key is absent), prefer Direct BYOK WS
+    //    for single-hop low latency, with `/api/gemini-live` as backup if proxy is reachable.
+    const candidates: Array<{
+      route: 'cloudflare-proxy' | 'direct-byok';
+      createClient: () => GoogleGenAI;
+      label: string;
+    }> = [];
+
+    if (probe.proxyReachable && probe.hasServerKey && typeof window !== 'undefined' && window.location?.origin) {
+      candidates.push({
+        route: 'cloudflare-proxy',
+        label: '/api/gemini-live proxy',
+        createClient: () =>
+          new GoogleGenAI({
+            apiKey: probe.clientByokKey || 'PROXY_MANAGED',
+            httpOptions: {
+              baseUrl: `${window.location.origin}/api/gemini-live`,
+            },
+          }),
+      });
     }
 
-    const { model, config } = buildLiveSessionConfig(operativeId, modelId);
-
-    const openWithClient = async (ai: GoogleGenAI): Promise<Session> => {
-      return await ai.live.connect({
-        model,
-        config,
-        callbacks: {
-          onopen: () => {
-            this.setStatus('standby', 'Carrier locked');
-          },
-          onmessage: (msg: LiveServerMessage) => {
-            void this.handleIncomingMessage(msg);
-          },
-          onerror: (err: any) => {
-            const errText = err?.message || 'WebSocket carrier fault';
-            this.setStatus('error', errText);
-          },
-          onclose: () => {
-            this.stopPushToTalk();
-            if (this.status !== 'error') {
-              this.setStatus('disconnected');
-            }
-          },
-        },
+    if (probe.hasClientByokKey) {
+      candidates.push({
+        route: 'direct-byok',
+        label: 'direct BYOK Gemini Live',
+        createClient: () => new GoogleGenAI({ apiKey: probe.clientByokKey }),
       });
-    };
+    }
 
-    // Route 1: Cloudflare Worker / Express `/api/gemini-live` WebSocket proxy
-    if (probe.proxyReachable && typeof window !== 'undefined') {
+    if (
+      probe.proxyReachable &&
+      !probe.hasServerKey &&
+      probe.hasClientByokKey &&
+      typeof window !== 'undefined' &&
+      window.location?.origin
+    ) {
+      candidates.push({
+        route: 'cloudflare-proxy',
+        label: '/api/gemini-live BYOK relay',
+        createClient: () =>
+          new GoogleGenAI({
+            apiKey: probe.clientByokKey,
+            httpOptions: {
+              baseUrl: `${window.location.origin}/api/gemini-live`,
+            },
+          }),
+      });
+    }
+
+    let lastWsError: Error | null = null;
+    for (const candidate of candidates) {
       try {
-        const proxyAi = new GoogleGenAI({
-          apiKey: probe.clientByokKey || 'PROXY_MANAGED',
-          httpOptions: {
-            baseUrl: `${window.location.origin}/api/gemini-live`,
-          },
-        });
-        this.session = await openWithClient(proxyAi);
-        this.callbacks.onTransportRoute?.('cloudflare-proxy');
-        this.setStatus('standby', 'Connected via /api/gemini-live proxy');
+        const ai = candidate.createClient();
+        const { session } = await this.negotiateLiveSessionOnClient(ai, operativeId, modelId);
+        this.session = session;
+        this.relayActive = false;
+        this.transportRoute = candidate.route;
+        this.callbacks.onTransportRoute?.(candidate.route);
+        this.setStatus('standby', `Carrier locked · ${candidate.label}`);
         return;
-      } catch (proxyErr) {
-        if (!probe.hasClientByokKey) {
-          const msg = (proxyErr as any)?.message || 'Live proxy connection failed';
-          this.setStatus('error', msg);
-          throw proxyErr;
-        }
+      } catch (err: any) {
+        lastWsError = err instanceof Error ? err : new Error(String(err?.message || err));
       }
     }
 
-    // Route 2: Direct BYOK WebSocket fallback when static edge has no Worker secret
-    if (probe.hasClientByokKey) {
-      const directAi = new GoogleGenAI({ apiKey: probe.clientByokKey });
-      this.session = await openWithClient(directAi);
-      this.callbacks.onTransportRoute?.('direct-byok');
-      this.setStatus('standby', 'Connected via direct BYOK Gemini Live');
+    // Seamless Tactical Voice Relay fallback when no Gemini Live WS key is configured or WS is blocked
+    if (!options?.disableRelayFallback) {
+      const relayNote =
+        !probe.hasServerKey && !probe.hasClientByokKey
+          ? 'Standby · Tactical Voice Relay (Add Gemini key in Settings for 24kHz Live WS)'
+          : 'Standby · Tactical Voice Relay fallback active';
+      this.activateTacticalRelayFallback(relayNote);
       return;
     }
 
-    this.setStatus('error', 'Unable to establish Gemini Live WebSocket.');
+    const errDetail =
+      lastWsError?.message ||
+      'No Gemini API key found on Worker proxy or BYOK Vault. Add a Gemini API key in Settings [⚙️] to open live radio.';
+    this.setStatus('error', errDetail);
+    throw lastWsError || new Error(errDetail);
   }
 
   /**
    * Starts Push-To-Talk microphone transmission (immediately triggers barge-in cut of ongoing agent speech).
    */
   public async startPushToTalk(): Promise<void> {
-    if (!this.session) {
+    if (!this.isCarrierActive()) {
       throw new Error('Connect radio channel first before holding Push-To-Talk.');
     }
     if (this.isTransmittingPtt) return;
@@ -674,6 +1161,96 @@ export class TacticalRadioTransceiver {
     this.bargeInInterrupt();
     this.ensurePlaybackContext();
 
+    // Branch A: Tactical Voice Relay Mode (Web Speech STT + Mic VU meter)
+    if (this.relayActive && !this.session) {
+      this.relaySpokenFinal = '';
+      this.relaySpokenInterim = '';
+
+      const SpeechRecCtor =
+        typeof window !== 'undefined'
+          ? (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+          : null;
+
+      let startedSpeechRec = false;
+      if (SpeechRecCtor) {
+        try {
+          const rec = new SpeechRecCtor();
+          rec.continuous = true;
+          rec.interimResults = true;
+          rec.lang = 'en-US';
+          rec.onresult = (event: any) => {
+            let finalChunk = '';
+            let interimChunk = '';
+            for (let i = 0; i < event.results.length; i++) {
+              const res = event.results[i];
+              const transcript = String(res[0]?.transcript || '');
+              if (res.isFinal) {
+                finalChunk += transcript + ' ';
+              } else {
+                interimChunk += transcript;
+              }
+            }
+            this.relaySpokenFinal = finalChunk.trim();
+            this.relaySpokenInterim = interimChunk.trim();
+            const combined = `${this.relaySpokenFinal} ${this.relaySpokenInterim}`.trim();
+            if (combined) {
+              this.appendOrMergeTranscript('COMMANDER', combined, true, true);
+            }
+          };
+          rec.onerror = () => {};
+          rec.start();
+          this.speechRecognition = rec;
+          startedSpeechRec = true;
+        } catch {}
+      }
+
+      let startedMicMeter = false;
+      if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+        try {
+          this.micStream = await navigator.mediaDevices.getUserMedia({
+            audio: {
+              channelCount: 1,
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            },
+          });
+          const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+          if (AudioCtx) {
+            this.micCtx = new AudioCtx();
+            this.micSource = this.micCtx.createMediaStreamSource(this.micStream);
+            this.micProcessor = this.micCtx.createScriptProcessor(2048, 1, 1);
+            this.micProcessor.onaudioprocess = (event: AudioProcessingEvent) => {
+              if (!this.isTransmittingPtt) return;
+              const inputData = event.inputBuffer.getChannelData(0);
+              let sumSq = 0;
+              for (let i = 0; i < inputData.length; i += 8) {
+                sumSq += inputData[i] * inputData[i];
+              }
+              const rms = Math.min(1, Math.sqrt(sumSq / Math.max(1, inputData.length / 8)) * 4.0);
+              this.callbacks.onAudioLevel?.(rms);
+            };
+            this.micSource.connect(this.micProcessor);
+            this.micProcessor.connect(this.micCtx.destination);
+            startedMicMeter = true;
+          }
+        } catch {}
+      }
+
+      if (!startedSpeechRec && !startedMicMeter) {
+        this.setStatus('standby', 'Browser mic unavailable — transmit via TX bar below');
+        return;
+      }
+
+      this.isTransmittingPtt = true;
+      this.setStatus(
+        'transmitting_ptt',
+        startedSpeechRec ? 'PTT VOICE CAPTURE — RELEASE TO DISPATCH' : 'PTT MIC LIVE (USE TX BAR IF NO STT)'
+      );
+      return;
+    }
+
+    // Branch B: Full-Duplex 16kHz PCM Streaming over Gemini Multimodal Live WebSocket
     if (!navigator?.mediaDevices?.getUserMedia) {
       throw new Error('Microphone capture is unavailable in this browser context.');
     }
@@ -694,7 +1271,7 @@ export class TacticalRadioTransceiver {
     this.micProcessor = this.micCtx.createScriptProcessor(2048, 1, 1);
 
     this.isTransmittingPtt = true;
-    this.setStatus('transmitting_ptt', 'PTT TX LIVE');
+    this.setStatus('transmitting_ptt', 'PTT TX LIVE (16kHz PCM)');
 
     this.micProcessor.onaudioprocess = (event: AudioProcessingEvent) => {
       if (!this.isTransmittingPtt || !this.session) return;
@@ -728,12 +1305,19 @@ export class TacticalRadioTransceiver {
   }
 
   /**
-   * Releases Push-To-Talk and sends `{ audioStreamEnd: true }` to flush server VAD immediately.
+   * Releases Push-To-Talk and sends `{ audioStreamEnd: true }` (or dispatches spoken STT in Relay mode).
    */
   public stopPushToTalk(): void {
     const wasTransmitting = this.isTransmittingPtt;
     this.isTransmittingPtt = false;
     this.callbacks.onAudioLevel?.(0);
+
+    if (this.speechRecognition) {
+      try {
+        this.speechRecognition.stop();
+      } catch {}
+      this.speechRecognition = null;
+    }
 
     try {
       this.micProcessor?.disconnect();
@@ -756,12 +1340,27 @@ export class TacticalRadioTransceiver {
     }
     this.micCtx = null;
 
-    if (wasTransmitting && this.session) {
+    if (!wasTransmitting) return;
+
+    if (this.session) {
       try {
         this.session.sendRealtimeInput({ audioStreamEnd: true });
       } catch {}
       if (this.status === 'transmitting_ptt') {
         this.setStatus('standby', 'Awaiting operative reply...');
+      }
+      return;
+    }
+
+    if (this.relayActive) {
+      this.finalizePartialTranscripts();
+      const captured = `${this.relaySpokenFinal} ${this.relaySpokenInterim}`.trim();
+      this.relaySpokenFinal = '';
+      this.relaySpokenInterim = '';
+      if (captured) {
+        void this.executeRelayTurn(captured);
+      } else if (this.status === 'transmitting_ptt') {
+        this.setStatus('standby', 'Hold PTT & speak clearly, or type in TX bar');
       }
     }
   }
@@ -771,10 +1370,18 @@ export class TacticalRadioTransceiver {
    */
   public sendTextDispatchOverRadio(text: string): void {
     const clean = text.trim();
-    if (!clean || !this.session) return;
+    if (!clean || !this.isCarrierActive()) return;
     this.bargeInInterrupt();
     this.appendOrMergeTranscript('COMMANDER', clean, false);
-    this.session.sendRealtimeInput({ text: clean });
+
+    if (this.session) {
+      this.session.sendRealtimeInput({ text: clean });
+      return;
+    }
+
+    if (this.relayActive) {
+      void this.executeRelayTurn(clean);
+    }
   }
 
   public clearTranscripts(): void {
@@ -785,11 +1392,14 @@ export class TacticalRadioTransceiver {
   public async disconnect(): Promise<void> {
     this.stopPushToTalk();
     this.bargeInInterrupt();
+    this.relayActive = false;
+    this.transportRoute = null;
     if (this.session) {
-      try {
-        this.session.close();
-      } catch {}
+      const closing = this.session;
       this.session = null;
+      try {
+        closing.close();
+      } catch {}
     }
     if (this.playbackCtx && this.playbackCtx.state !== 'closed') {
       try {
@@ -797,6 +1407,6 @@ export class TacticalRadioTransceiver {
       } catch {}
     }
     this.playbackCtx = null;
-    this.setStatus('disconnected');
+    this.setStatus('disconnected', 'Transceiver idle');
   }
 }

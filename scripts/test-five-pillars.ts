@@ -358,6 +358,47 @@ async function main() {
     'PCM16 48kHz->16kHz downsample & base64 round-trip preserves waveform amplitude'
   );
 
+  // Verify Cloudflare Pages API middleware preserves 101 WebSocket upgrades without RangeError
+  const apiMiddleware = await import('../functions/api/_middleware');
+  const fakeUpgradeSentinel = { status: 101, webSocket: { accepted: true } } as unknown as Response;
+  const passthroughRes = await apiMiddleware.onRequest({
+    request: new Request('https://pixelops.app/api/gemini-live', {
+      headers: { Upgrade: 'websocket' },
+    }),
+    next: async () => fakeUpgradeSentinel,
+  });
+  assertCheck(
+    passthroughRes === fakeUpgradeSentinel && (passthroughRes as any).webSocket?.accepted === true,
+    'Cloudflare /api/_middleware passes 101 WebSocket upgrade responses untouched'
+  );
+
+  // Verify zero-key Tactical Voice Relay connects cleanly to standby instead of error
+  g.localStorage.clear();
+  let observedRoute = '';
+  const relayTx = new voice.TacticalRadioTransceiver({
+    onTransportRoute: (r) => {
+      observedRoute = r;
+    },
+  });
+  await relayTx.connect('nyx', 'gemini-3.8-live');
+  assertCheck(
+    relayTx.getStatus() === 'standby' && observedRoute === 'tactical-relay',
+    'Zero-key TacticalRadioTransceiver connects to standby via tactical-relay instead of error'
+  );
+  await relayTx.disconnect();
+
+  // Verify encrypted BYOK Vault Gemini key is discovered asynchronously even when localStorage is scrubbed
+  const secureVault = await import('../src/services/SecureVaultService');
+  await secureVault.storeSecureCredential('pixelops_gemini_api_key', 'AIzaSyTestEncryptedLiveKey123456789');
+  g.localStorage.removeItem('pixelops_gemini_api_key');
+  g.localStorage.removeItem('gemini_api_key');
+  const resolvedKey = await voice.resolveClientGeminiKeyAsync();
+  assertCheck(
+    resolvedKey === 'AIzaSyTestEncryptedLiveKey123456789',
+    'resolveClientGeminiKeyAsync recovers encrypted BYOK Gemini key when plaintext localStorage is scrubbed'
+  );
+  await secureVault.deleteSecureCredential('pixelops_gemini_api_key');
+
   console.log(
     failures === 0 ? '\nALL 5 PILLAR TESTS PASSED!' : `\n${failures} TEST(S) FAILED`
   );

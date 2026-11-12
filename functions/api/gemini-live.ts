@@ -65,6 +65,7 @@ export const onRequest = async (context: { request: Request; env?: Env }) => {
       JSON.stringify({
         ok: true,
         proxyReady: true,
+        service: 'pixelops-gemini-live-proxy',
         runtime: 'cloudflare-pages-worker',
         hasServerKey,
         defaultModel: 'gemini-3.8-live',
@@ -74,6 +75,7 @@ export const onRequest = async (context: { request: Request; env?: Env }) => {
         status: 200,
         headers: {
           'Content-Type': 'application/json',
+          'Cache-Control': 'no-store',
           ...CORS_HEADERS,
         },
       }
@@ -144,9 +146,7 @@ export const onRequest = async (context: { request: Request; env?: Env }) => {
   const clientWs = pair[0];
   const serverWs = pair[1];
 
-  upstreamWs.accept();
-  serverWs.accept();
-
+  // Attach listeners BEFORE calling accept() so initial setup frames are never dropped
   upstreamWs.addEventListener('message', (event: any) => {
     try {
       serverWs.send(event.data);
@@ -182,6 +182,9 @@ export const onRequest = async (context: { request: Request; env?: Env }) => {
       upstreamWs.close(1011, 'Client socket error');
     } catch {}
   });
+
+  upstreamWs.accept();
+  serverWs.accept();
 
   return new Response(null, {
     status: 101,

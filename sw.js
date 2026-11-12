@@ -3,7 +3,7 @@
  * Provides offline execution, asset caching, and background synchronization.
  */
 
-const CACHE_NAME = 'pixelops-pwa-v1';
+const CACHE_NAME = 'pixelops-pwa-v3';
 
 const PRECACHE_ASSETS = [
   './',
@@ -57,8 +57,9 @@ self.addEventListener('fetch', (event) => {
 
   const url = new URL(event.request.url);
 
-  // Bypass Chrome extensions or non-http protocols
+  // Bypass Chrome extensions, non-http protocols, and live API/WebSocket routes
   if (!url.protocol.startsWith('http')) return;
+  if (url.pathname.startsWith('/api/')) return;
 
   event.respondWith(
     caches.match(event.request).then((cachedResponse) => {

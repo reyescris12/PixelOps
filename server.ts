@@ -2302,9 +2302,11 @@ async function startServer() {
   app.get('/api/gemini-live', (_req, res) => {
     const rawKey = (process.env.GEMINI_API_KEY || '').trim();
     const hasServerKey = Boolean(rawKey && rawKey !== 'MY_GEMINI_API_KEY');
+    res.setHeader('Cache-Control', 'no-store');
     res.json({
       ok: true,
       proxyReady: true,
+      service: 'pixelops-gemini-live-proxy',
       runtime: 'node-express',
       hasServerKey,
       defaultModel: 'gemini-3.8-live',

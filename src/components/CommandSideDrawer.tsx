@@ -14,6 +14,11 @@ import {
   ChevronRight,
   Radio,
   Zap,
+  Network,
+  Plug,
+  Package,
+  Hash,
+  Mic,
 } from 'lucide-react';
 import { useTheme, THEMES, ThemeId } from '../context/ThemeContext';
 import { PWAInstallButton } from './PWAInstallButton';
@@ -36,6 +41,7 @@ export interface CommandSideDrawerProps {
   };
   isReconOverlayOpen: boolean;
   nightShiftUnreadCount: number;
+  tripwirePendingCount?: number;
   onOpenSettings: () => void;
   onToggleReconOverlay: () => void;
   onOpenNightShift: () => void;
@@ -43,6 +49,11 @@ export interface CommandSideDrawerProps {
   onOpenThreatMonitor: () => void;
   onOpenFieldManual: () => void;
   onOpenThemesConsole: () => void;
+  onOpenLinkBoard?: () => void;
+  onOpenSpatialMcp?: () => void;
+  onOpenCartridges?: () => void;
+  onOpenTripwires?: () => void;
+  onOpenTacticalRadio?: () => void;
 }
 
 export const CommandSideDrawer: React.FC<CommandSideDrawerProps> = ({
@@ -58,6 +69,7 @@ export const CommandSideDrawer: React.FC<CommandSideDrawerProps> = ({
   authInfo,
   isReconOverlayOpen,
   nightShiftUnreadCount,
+  tripwirePendingCount = 0,
   onOpenSettings,
   onToggleReconOverlay,
   onOpenNightShift,
@@ -65,6 +77,11 @@ export const CommandSideDrawer: React.FC<CommandSideDrawerProps> = ({
   onOpenThreatMonitor,
   onOpenFieldManual,
   onOpenThemesConsole,
+  onOpenLinkBoard,
+  onOpenSpatialMcp,
+  onOpenCartridges,
+  onOpenTripwires,
+  onOpenTacticalRadio,
 }) => {
   const { theme, themeId, setThemeId, soundEnabled, playBeep } = useTheme();
   const [isOpen, setIsOpen] = useState(false);
@@ -274,8 +291,36 @@ export const CommandSideDrawer: React.FC<CommandSideDrawerProps> = ({
           </span>
         </div>
 
-        {/* Passive Right-Side Sector & Alert Status Readout */}
-        <div className="flex items-center gap-2 text-[11px] text-[#94a3b8] shrink-0">
+        {/* Right-Side Quick Radio PTT, Tripwire Delta Gate & Sector Status Readout */}
+        <div className="flex items-center gap-1.5 sm:gap-2 text-[11px] text-[#94a3b8] shrink-0">
+          {tripwirePendingCount > 0 && onOpenTripwires && (
+            <button
+              type="button"
+              onClick={() => {
+                playBeep('tap');
+                onOpenTripwires();
+              }}
+              title="Verified SHA-256 Tripwire Delta Awaiting Approval"
+              className="tactical-ctrl min-h-[30px] px-2 py-0.5 bg-[#451a03] hover:bg-[#5c2306] border border-[#f59e0b] text-[#fde68a] text-[10px] font-bold animate-pulse flex items-center gap-1 cursor-pointer"
+            >
+              <Hash className="w-3 h-3" aria-hidden="true" />
+              <span>{tripwirePendingCount} DELTA</span>
+            </button>
+          )}
+          {onOpenTacticalRadio && (
+            <button
+              type="button"
+              onClick={() => {
+                playBeep('tap');
+                onOpenTacticalRadio();
+              }}
+              title="Open Tactical Push-To-Talk Live Radio (Vance, Nyx, Cipher)"
+              className="tactical-ctrl min-h-[30px] px-2 py-0.5 bg-[#0e261c] hover:bg-[#153829] border border-[#4ade80]/80 text-[#4ade80] text-[10px] font-bold flex items-center gap-1 cursor-pointer"
+            >
+              <Mic className="w-3 h-3" aria-hidden="true" />
+              <span className="hidden xs:inline sm:inline">PTT RADIO</span>
+            </button>
+          )}
           {isMeetingActive && (
             <span className="px-1.5 py-0.5 bg-[#38bdf8]/15 border border-[#38bdf8] text-[#38bdf8] text-[10px] font-bold animate-pulse hidden md:inline-flex items-center gap-1">
               <Radio className="w-3 h-3" aria-hidden="true" />
@@ -567,6 +612,107 @@ export const CommandSideDrawer: React.FC<CommandSideDrawerProps> = ({
                       <span className="text-[10px] opacity-80">[OSINT]</span>
                     </button>
                   </li>
+
+                  {onOpenTacticalRadio && (
+                    <li>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          playBeep('tap');
+                          closeDrawer(onOpenTacticalRadio);
+                        }}
+                        className="tactical-ctrl min-h-[42px] w-full px-3 py-2 bg-[#0d2219] hover:bg-[#133325] border border-[#10b981]/60 hover:border-[#4ade80] text-[#6ee7b7] text-xs flex items-center justify-between gap-2 cursor-pointer"
+                      >
+                        <span className="flex items-center gap-2">
+                          <Mic className="w-4 h-4 shrink-0" aria-hidden="true" />
+                          <span>Tactical Live Radio (PTT)</span>
+                        </span>
+                        <span className="text-[10px] font-bold text-[#4ade80]">[VOICE]</span>
+                      </button>
+                    </li>
+                  )}
+
+                  {onOpenLinkBoard && (
+                    <li>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          playBeep('tap');
+                          closeDrawer(onOpenLinkBoard);
+                        }}
+                        className="tactical-ctrl min-h-[42px] w-full px-3 py-2 bg-[#141126] hover:bg-[#1e1938] border border-[#6d28d9]/60 hover:border-[#c084fc] text-[#e9d5ff] text-xs flex items-center justify-between gap-2 cursor-pointer"
+                      >
+                        <span className="flex items-center gap-2">
+                          <Network className="w-4 h-4 shrink-0 text-[#c084fc]" aria-hidden="true" />
+                          <span>Basement Evidence Link Board</span>
+                        </span>
+                        <span className="text-[10px] text-[#c084fc]">[GRAPH]</span>
+                      </button>
+                    </li>
+                  )}
+
+                  {onOpenSpatialMcp && (
+                    <li>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          playBeep('tap');
+                          closeDrawer(onOpenSpatialMcp);
+                        }}
+                        className="tactical-ctrl min-h-[42px] w-full px-3 py-2 bg-[#0f1a2b] hover:bg-[#162740] border border-[#0284c7]/60 hover:border-[#38bdf8] text-[#bae6fd] text-xs flex items-center justify-between gap-2 cursor-pointer"
+                      >
+                        <span className="flex items-center gap-2">
+                          <Plug className="w-4 h-4 shrink-0 text-[#38bdf8]" aria-hidden="true" />
+                          <span>Spatial MCP &amp; Room Leashes</span>
+                        </span>
+                        <span className="text-[10px] text-[#38bdf8]">[MCP]</span>
+                      </button>
+                    </li>
+                  )}
+
+                  {onOpenCartridges && (
+                    <li>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          playBeep('tap');
+                          closeDrawer(onOpenCartridges);
+                        }}
+                        className="tactical-ctrl min-h-[42px] w-full px-3 py-2 bg-[#1b1610] hover:bg-[#292016] border border-[#d97706]/60 hover:border-[#fbbf24] text-[#fde68a] text-xs flex items-center justify-between gap-2 cursor-pointer"
+                      >
+                        <span className="flex items-center gap-2">
+                          <Package className="w-4 h-4 shrink-0 text-[#fbbf24]" aria-hidden="true" />
+                          <span>Armory Mission Cartridges</span>
+                        </span>
+                        <span className="text-[10px] text-[#fbbf24]">[1-CLICK]</span>
+                      </button>
+                    </li>
+                  )}
+
+                  {onOpenTripwires && (
+                    <li>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          playBeep('tap');
+                          closeDrawer(onOpenTripwires);
+                        }}
+                        className="tactical-ctrl min-h-[42px] w-full px-3 py-2 bg-[#191310] hover:bg-[#261d17] border border-[#ea580c]/60 hover:border-[#fb923c] text-[#fed7aa] text-xs flex items-center justify-between gap-2 cursor-pointer"
+                      >
+                        <span className="flex items-center gap-2">
+                          <Hash className="w-4 h-4 shrink-0 text-[#fb923c]" aria-hidden="true" />
+                          <span>Tripwire Diff Watchlists</span>
+                        </span>
+                        {tripwirePendingCount > 0 ? (
+                          <span className="px-1.5 py-0.5 bg-[#f59e0b]/25 border border-[#f59e0b] text-[#fde68a] text-[10px] font-bold">
+                            {tripwirePendingCount} DELTA
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-[#fb923c]">[SHA-256]</span>
+                        )}
+                      </button>
+                    </li>
+                  )}
 
                   <li>
                     <button

@@ -1,4 +1,5 @@
 import express from 'express';
+import https from 'https';
 import path from 'path';
 import fs from 'fs';
 import zlib from 'zlib';
@@ -15,6 +16,10 @@ import { onRequest as handleSpectrumOsint } from './functions/api/osint/spectrum
 import { onRequest as handleThreatMatrixOsint } from './functions/api/osint/threat-matrix';
 import { onRequest as handleClassifiedFeed } from './functions/api/intel/classified-feed';
 import { onRequest as handleUniversalSearch } from './functions/api/search';
+import {
+  onRequestPost as handleMcpPost,
+  onRequestOptions as handleMcpOptions,
+} from './functions/api/mcp';
 import {
   isPrivateOrReservedIP,
   validateTargetUrl,
@@ -2289,6 +2294,24 @@ async function startServer() {
     adaptCloudflareHandler((ctx) => handleUniversalSearch({ request: ctx.request, env: process.env as any }))
   );
 
+  // Stateless Spatial MCP JSON-RPC 2.0 Relay
+  app.options('/api/mcp', adaptCloudflareHandler(() => handleMcpOptions()));
+  app.post('/api/mcp', adaptCloudflareHandler((ctx) => handleMcpPost({ request: ctx.request })));
+
+  // Tactical Voice Comms: Gemini Live Proxy Health Check
+  app.get('/api/gemini-live', (_req, res) => {
+    const rawKey = (process.env.GEMINI_API_KEY || '').trim();
+    const hasServerKey = Boolean(rawKey && rawKey !== 'MY_GEMINI_API_KEY');
+    res.json({
+      ok: true,
+      proxyReady: true,
+      runtime: 'node-express',
+      hasServerKey,
+      defaultModel: 'gemini-3.8-live',
+      extendedThinkingModel: 'gemini-3.8-live-extended-thinking',
+    });
+  });
+
   /**
    * Turn 1: Initial Gemini API Request with Dynamic Function Declarations (`tools`).
    * If Gemini decides to invoke one or more `functionCalls`, returns `{ requiresToolExecution: true, functionCalls, modelContent }`
@@ -3633,8 +3656,96 @@ Before invoking any tool from Composio, analyze the user's intent:
     }
   });
 
-  app.listen(PORT, '0.0.0.0', () => {
+  const httpServer = app.listen(PORT, '0.0.0.0', () => {
     console.log(`PixelOps Command Server running on http://localhost:${PORT}`);
+  });
+
+  // WebSocket Upgrade Tunnel for Gemini Multimodal Live Push-To-Talk Radio (/api/gemini-live/*)
+  httpServer.on('upgrade', (req, socket, head) => {
+    const rawUrl = req.url || '';
+    if (!rawUrl.startsWith('/api/gemini-live')) {
+      return;
+    }
+
+    try {
+      const parsed = new URL(rawUrl, `http://${req.headers.host || 'localhost'}`);
+      const qKey = (parsed.searchParams.get('key') || '').trim();
+      const hdrKey = String(
+        req.headers['x-gemini-api-key'] || req.headers['x-goog-api-key'] || ''
+      ).trim();
+      const envKey = String(process.env.GEMINI_API_KEY || '').trim();
+
+      const effectiveKey =
+        qKey && qKey !== 'PROXY_MANAGED' && qKey !== 'MY_GEMINI_API_KEY'
+          ? qKey
+          : hdrKey && hdrKey !== 'PROXY_MANAGED' && hdrKey !== 'MY_GEMINI_API_KEY'
+          ? hdrKey
+          : envKey && envKey !== 'MY_GEMINI_API_KEY'
+          ? envKey
+          : '';
+
+      if (!effectiveKey) {
+        socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+
+      const upstreamPath = `/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${encodeURIComponent(
+        effectiveKey
+      )}`;
+
+      const upHeaders: Record<string, string> = {
+        Connection: 'Upgrade',
+        Upgrade: 'websocket',
+        'Sec-WebSocket-Key': String(req.headers['sec-websocket-key'] || ''),
+        'Sec-WebSocket-Version': String(req.headers['sec-websocket-version'] || '13'),
+      };
+      if (req.headers['sec-websocket-protocol']) {
+        upHeaders['Sec-WebSocket-Protocol'] = String(req.headers['sec-websocket-protocol']);
+      }
+
+      const upReq = https.request({
+        hostname: 'generativelanguage.googleapis.com',
+        port: 443,
+        path: upstreamPath,
+        method: 'GET',
+        headers: upHeaders,
+      });
+
+      upReq.on('upgrade', (upRes, upSocket, upHead) => {
+        const resLines = [
+          'HTTP/1.1 101 Switching Protocols',
+          'Upgrade: websocket',
+          'Connection: Upgrade',
+          `Sec-WebSocket-Accept: ${upRes.headers['sec-websocket-accept'] || ''}`,
+        ];
+        if (upRes.headers['sec-websocket-protocol']) {
+          resLines.push(`Sec-WebSocket-Protocol: ${upRes.headers['sec-websocket-protocol']}`);
+        }
+        socket.write(resLines.join('\r\n') + '\r\n\r\n');
+        if (upHead && upHead.length > 0) socket.write(upHead);
+        if (head && head.length > 0) upSocket.write(head);
+
+        upSocket.pipe(socket);
+        socket.pipe(upSocket);
+
+        upSocket.on('error', () => socket.destroy());
+        socket.on('error', () => upSocket.destroy());
+      });
+
+      upReq.on('response', (upRes) => {
+        socket.write(`HTTP/1.1 ${upRes.statusCode || 502} Bad Gateway\r\nConnection: close\r\n\r\n`);
+        socket.destroy();
+      });
+
+      upReq.on('error', () => {
+        socket.destroy();
+      });
+
+      upReq.end();
+    } catch {
+      socket.destroy();
+    }
   });
 }
 

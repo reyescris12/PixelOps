@@ -131,6 +131,11 @@ import { TaskChainHUD } from './components/TaskChainHUD';
 import type { PluginAuthTarget } from './components/PluginAuthModal';
 const PluginAuthModal = lazy(() => import('./components/PluginAuthModal').then((m) => ({ default: m.PluginAuthModal })));
 const FieldManualModal = lazy(() => import('./components/FieldManualModal').then((m) => ({ default: m.FieldManualModal })));
+const BasementLinkBoardModal = lazy(() => import('./components/BasementLinkBoardModal').then((m) => ({ default: m.BasementLinkBoardModal })));
+const SpatialMcpModal = lazy(() => import('./components/SpatialMcpModal').then((m) => ({ default: m.SpatialMcpModal })));
+const MissionCartridgeModal = lazy(() => import('./components/MissionCartridgeModal').then((m) => ({ default: m.MissionCartridgeModal })));
+const TripwireWatchModal = lazy(() => import('./components/TripwireWatchModal').then((m) => ({ default: m.TripwireWatchModal })));
+const TacticalRadioModal = lazy(() => import('./components/TacticalRadioModal').then((m) => ({ default: m.TacticalRadioModal })));
 import { ErrorBoundary } from './components/ErrorBoundary';
 import {
   isPluginAuthenticated,
@@ -243,6 +248,12 @@ const CommandCenterContent: React.FC = () => {
       import('./services/iswFeedService')
         .then((m) => m.initISWFeedIngestion())
         .catch((err) => console.warn('[Feeds] ISW feed ingestion failed to start:', err));
+      import('./services/TripwireDiffService')
+        .then((m) => m.initTripwireBackgroundScheduler())
+        .catch((err) => console.warn('[Tripwire] Background scheduler warning:', err));
+      import('./services/EvidenceGraphService')
+        .then((m) => m.syncEvidenceGraphFromVFS())
+        .catch(() => {});
       preloadAgentEngine();
     });
   }, []);
@@ -327,6 +338,40 @@ const CommandCenterContent: React.FC = () => {
   const [isAgentFactoryOpen, setIsAgentFactoryOpen] = useState(false);
   const [isTerminalConsoleOpen, setIsTerminalConsoleOpen] = useState(false);
   const [isWorkspaceFilesOpen, setIsWorkspaceFilesOpen] = useState(false);
+  const [vfsInitialFilePath, setVfsInitialFilePath] = useState<string | undefined>(undefined);
+  const [isLinkBoardOpen, setIsLinkBoardOpen] = useState(false);
+  const [isSpatialMcpOpen, setIsSpatialMcpOpen] = useState(false);
+  const [isCartridgesOpen, setIsCartridgesOpen] = useState(false);
+  const [isTripwiresOpen, setIsTripwiresOpen] = useState(false);
+  const [isTacticalRadioOpen, setIsTacticalRadioOpen] = useState(false);
+  const [tripwirePendingCount, setTripwirePendingCount] = useState(0);
+
+  useEffect(() => {
+    const syncTripwireBadge = () => {
+      import('./services/TripwireDiffService')
+        .then((m) => m.listTripwireAlerts())
+        .then((alerts) => {
+          setTripwirePendingCount(alerts.filter((a) => a.status === 'pending_approval').length);
+        })
+        .catch(() => {});
+    };
+    syncTripwireBadge();
+    window.addEventListener('pixelops:tripwire_updated', syncTripwireBadge);
+
+    const handleOpenModalEvent = (e: Event) => {
+      const modal = (e as CustomEvent)?.detail?.modal;
+      if (modal === 'link_board') setIsLinkBoardOpen(true);
+      else if (modal === 'spatial_mcp') setIsSpatialMcpOpen(true);
+      else if (modal === 'cartridges') setIsCartridgesOpen(true);
+      else if (modal === 'tripwires') setIsTripwiresOpen(true);
+      else if (modal === 'tactical_radio') setIsTacticalRadioOpen(true);
+    };
+    window.addEventListener('pixelops:open_modal', handleOpenModalEvent);
+    return () => {
+      window.removeEventListener('pixelops:tripwire_updated', syncTripwireBadge);
+      window.removeEventListener('pixelops:open_modal', handleOpenModalEvent);
+    };
+  }, []);
   const [activePlaybook, setActivePlaybook] = useState<IntelligencePlaybookDef | null>(null);
   const [isPlaybookModalOpen, setIsPlaybookModalOpen] = useState(false);
   const [isPlaybookRunning, setIsPlaybookRunning] = useState(false);
@@ -1172,6 +1217,7 @@ const CommandCenterContent: React.FC = () => {
         themeId,
         activeAgentName: routedDisplayName,
         activeAgentRole: routedCrewMember?.role || routedAgent.role,
+        activeAgentRoom: operativeRoom,
         agentSystemPrompt: combinedSystemPrompt || undefined,
         agentAssignedTools: combinedTools.length > 0 ? combinedTools : undefined,
         agentMemoryLog: routedCrewMember?.memoryLog,
@@ -1825,7 +1871,18 @@ const CommandCenterContent: React.FC = () => {
                 🕵️ CREW CUSTOMIZATION & WAYPOINT DISPATCH · {theme.name}
               </span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsCartridgesOpen(true);
+                  playBeep('tap');
+                }}
+                className="px-2.5 py-1 bg-[#14261c] border border-[#4ade80] hover:bg-[#1d3829] font-mono-tabular text-xs text-[#4ade80] font-bold flex items-center gap-1 cursor-pointer"
+                title="Load or share 1-click Armory Mission Cartridges"
+              >
+                <span>📦 Armory Cartridges</span>
+              </button>
               <button
                 type="button"
                 onClick={() => {
@@ -2292,6 +2349,16 @@ const CommandCenterContent: React.FC = () => {
           >
             🔌 Custom & Core Connectors ({customPlugins.length + plugins.length})
           </button>
+          <button
+            type="button"
+            onClick={() => {
+              setIsSpatialMcpOpen(true);
+              playBeep('tap');
+            }}
+            className="px-3 py-1 font-mono-tabular text-xs cursor-pointer rounded-xs bg-[#0f2138] hover:bg-[#173154] border border-[#38bdf8] text-[#7dd3fc] font-bold transition-colors"
+          >
+            🛰️ Spatial MCP &amp; Room Leashes
+          </button>
         </div>
 
         <button
@@ -2583,6 +2650,7 @@ const CommandCenterContent: React.FC = () => {
               authInfo={authInfo}
               isReconOverlayOpen={isReconOverlayOpen}
               nightShiftUnreadCount={nightShiftUnreadCount}
+              tripwirePendingCount={tripwirePendingCount}
               onOpenSettings={() => setIsSettingsOpen(true)}
               onToggleReconOverlay={() => setIsReconOverlayOpen((prev) => !prev)}
               onOpenNightShift={() => setIsNightShiftOpen(true)}
@@ -2590,6 +2658,11 @@ const CommandCenterContent: React.FC = () => {
               onOpenThreatMonitor={() => setIsThreatMonitorOpen(true)}
               onOpenFieldManual={() => setIsFieldManualOpen(true)}
               onOpenThemesConsole={() => setActiveTab('themes')}
+              onOpenLinkBoard={() => setIsLinkBoardOpen(true)}
+              onOpenSpatialMcp={() => setIsSpatialMcpOpen(true)}
+              onOpenCartridges={() => setIsCartridgesOpen(true)}
+              onOpenTripwires={() => setIsTripwiresOpen(true)}
+              onOpenTacticalRadio={() => setIsTacticalRadioOpen(true)}
             />
           );
         })()}
@@ -3185,10 +3258,16 @@ const CommandCenterContent: React.FC = () => {
       />
 
       <DeferredMount when={isWorkspaceFilesOpen}>
-        <WorkspaceFileViewer
-          isOpen={isWorkspaceFilesOpen}
-          onClose={() => setIsWorkspaceFilesOpen(false)}
-        />
+        <Suspense fallback={null}>
+          <WorkspaceFileViewer
+            isOpen={isWorkspaceFilesOpen}
+            onClose={() => {
+              setIsWorkspaceFilesOpen(false);
+              setVfsInitialFilePath(undefined);
+            }}
+            initialFilePath={vfsInitialFilePath}
+          />
+        </Suspense>
       </DeferredMount>
 
       <DeferredMount when={isPlaybookModalOpen}>
@@ -3207,6 +3286,7 @@ const CommandCenterContent: React.FC = () => {
           }}
           onOpenInVfs={(filePath) => {
             setIsPlaybookModalOpen(false);
+            setVfsInitialFilePath(filePath);
             setIsWorkspaceFilesOpen(true);
           }}
         />
@@ -3242,6 +3322,82 @@ const CommandCenterContent: React.FC = () => {
           onClose={() => setIsFieldManualOpen(false)}
           onSelectPrompt={(samplePrompt) => handleExecuteDirective(samplePrompt)}
         />
+      </DeferredMount>
+
+      <DeferredMount when={isLinkBoardOpen}>
+        <Suspense fallback={null}>
+          <BasementLinkBoardModal
+            isOpen={isLinkBoardOpen}
+            onClose={() => setIsLinkBoardOpen(false)}
+            onOpenVfsFile={(filePath) => {
+              setIsLinkBoardOpen(false);
+              setVfsInitialFilePath(filePath);
+              setIsWorkspaceFilesOpen(true);
+            }}
+            onDispatchCorrelation={(prompt) => {
+              handleExecuteDirective(prompt);
+            }}
+          />
+        </Suspense>
+      </DeferredMount>
+
+      <DeferredMount when={isSpatialMcpOpen}>
+        <Suspense fallback={null}>
+          <SpatialMcpModal
+            isOpen={isSpatialMcpOpen}
+            onClose={() => setIsSpatialMcpOpen(false)}
+            currentRoom={currentRoom}
+          />
+        </Suspense>
+      </DeferredMount>
+
+      <DeferredMount when={isCartridgesOpen}>
+        <Suspense fallback={null}>
+          <MissionCartridgeModal
+            isOpen={isCartridgesOpen}
+            onClose={() => setIsCartridgesOpen(false)}
+            onSwitchRoom={(room) => handleRoomChange(room)}
+            onMoveAgentToRoom={(agentId, room) => handleMoveAgentToRoom(agentId, room)}
+            onLaunchStarterDirective={(directive, room) => {
+              handleRoomChange(room);
+              setActiveTab('hq');
+              handleExecuteDirective(directive);
+            }}
+          />
+        </Suspense>
+      </DeferredMount>
+
+      <DeferredMount when={isTripwiresOpen}>
+        <Suspense fallback={null}>
+          <TripwireWatchModal
+            isOpen={isTripwiresOpen}
+            onClose={() => setIsTripwiresOpen(false)}
+            onApproveAndDispatch={(directive, assignedAgentId, assignedRoom) => {
+              handleRoomChange(assignedRoom as RoomId);
+              handleMoveAgentToRoom(assignedAgentId, assignedRoom as RoomId);
+              setActiveTab('hq');
+              handleExecuteDirective(directive);
+            }}
+          />
+        </Suspense>
+      </DeferredMount>
+
+      <DeferredMount when={isTacticalRadioOpen}>
+        <Suspense fallback={null}>
+          <TacticalRadioModal
+            isOpen={isTacticalRadioOpen}
+            onClose={() => setIsTacticalRadioOpen(false)}
+            defaultOperativeId={
+              activeAgent.id === 'nyx' || activeAgent.id === 'cipher' ? activeAgent.id : 'vance'
+            }
+            onDispatchDirective={(directive, opId) => {
+              setActiveAgentId(opId);
+              setActiveTab('hq');
+              handleExecuteDirective(directive);
+            }}
+            onOpenSettings={() => setIsSettingsOpen(true)}
+          />
+        </Suspense>
       </DeferredMount>
     </div>
   );

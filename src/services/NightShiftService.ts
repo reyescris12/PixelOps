@@ -654,6 +654,14 @@ export async function runPendingNightShiftTasks(
   const finishedNotifications: NightShiftNotification[] = [];
 
   try {
+    // Evaluate any due deterministic SHA-256 Tripwire Watchlists silently (zero-noise unless verified delta occurs)
+    try {
+      const { runDueTripwireChecks } = await import('./TripwireDiffService');
+      await runDueTripwireChecks();
+    } catch (tripErr) {
+      console.warn('[NightShift] Deterministic tripwire check warning:', tripErr);
+    }
+
     const schedules = loadNightShiftSchedules();
     const dueTasks = schedules.filter(
       (s) => s.enabled && !isRoutineDeleted(s.id) && !activeCancelledTaskIds.has(s.id) && isTaskDue(s)

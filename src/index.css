@@ -293,3 +293,37 @@
     100% { --drawer-backdrop: 0; }
   }
 }
+
+/* ==========================================================================
+   Native Modal Dialogs (<dialog closedby="any">) — Modern Web Guidance
+   ========================================================================== */
+
+dialog:modal {
+  overscroll-behavior: contain;
+}
+
+dialog::backdrop {
+  overflow: hidden;
+  overscroll-behavior: contain;
+}
+
+.tactical-modal-dialog {
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--theme-border-color);
+  background-color: #0b0e15;
+  color: #f1f5f9;
+  width: min(72rem, calc(100dvw - 16px));
+  max-height: min(90dvh, 880px);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.92), 0 0 24px var(--theme-glow-soft);
+}
+
+.tactical-modal-dialog[open] {
+  display: flex;
+  flex-direction: column;
+}
+
+.tactical-modal-dialog::backdrop {
+  background-color: rgba(3, 5, 10, 0.8);
+  backdrop-filter: blur(4px);
+}

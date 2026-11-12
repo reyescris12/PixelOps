@@ -82,11 +82,104 @@ export interface EncryptedCredentialDbEntry {
   rawKeyData?: JsonWebKey;
 }
 
+export type EvidenceEntityType =
+  | 'ip'
+  | 'domain'
+  | 'asn'
+  | 'cve'
+  | 'threat_actor'
+  | 'mitre'
+  | 'hash'
+  | 'dossier';
+
+export interface EvidenceNodeDbEntry {
+  id: string; // e.g. "ip:185.220.101.45" or "dossier:intel/report.md"
+  type: EvidenceEntityType;
+  label: string;
+  value: string;
+  dossierPaths: string[];
+  hitCount: number;
+  firstSeenAt: string;
+  lastSeenAt: string;
+  metadata?: Record<string, string | number | boolean>;
+}
+
+export interface EvidenceEdgeDbEntry {
+  id: string; // e.g. "ip:1.2.3.4->dossier:intel/a.md:MENTIONED_IN"
+  sourceId: string;
+  targetId: string;
+  relation: 'MENTIONED_IN' | 'CO_OCCURS_WITH';
+  filePath: string;
+  weight: number;
+  contextSnippet?: string;
+  updatedAt: string;
+}
+
+export interface McpStationDbEntry {
+  id: string;
+  name: string;
+  serverUrl: string;
+  room: string;
+  stationId?: string;
+  enabled: boolean;
+  strictRoomLeash: boolean;
+  authHeaderName?: string;
+  hasStoredToken?: boolean;
+  cachedToolsJson?: string;
+  lastProbedAt?: string;
+  lastStatus?: 'online' | 'offline' | 'untested' | 'error';
+  lastError?: string;
+  updatedAt: string;
+}
+
+export interface TripwireWatchDbEntry {
+  id: string;
+  label: string;
+  category: 'dns' | 'ct_certs' | 'usgs_seismic' | 'maritime_ais' | 'web_hash';
+  target: string;
+  assignedRoom: string;
+  assignedAgentId: string;
+  intervalMinutes: number;
+  enabled: boolean;
+  requireHumanApproval: boolean;
+  lastSha256?: string;
+  lastNormalizedSnapshot?: string;
+  lastCheckedAt?: string;
+  unchangedChecksCount: number;
+  deltaCount: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TripwireAlertDbEntry {
+  id: string;
+  watchId: string;
+  watchLabel: string;
+  category: TripwireWatchDbEntry['category'];
+  target: string;
+  previousHash: string;
+  newHash: string;
+  addedItems: string[];
+  removedItems: string[];
+  diffSummary: string;
+  recommendedDirective: string;
+  assignedAgentId: string;
+  assignedRoom: string;
+  status: 'pending_approval' | 'approved_dispatched' | 'acknowledged' | 'dismissed';
+  detectedAt: string;
+  resolvedAt?: string;
+}
+
 class PixelOpsLedgerDatabase extends Dexie {
   command_ledger!: Table<CommandLedgerEntry, number>;
   agent_memories!: Table<AgentMemoryDbEntry, number>;
   workspace_files!: Table<WorkspaceFileDbEntry, number>;
   encrypted_credentials!: Table<EncryptedCredentialDbEntry, string>;
+  evidence_nodes!: Table<EvidenceNodeDbEntry, string>;
+  evidence_edges!: Table<EvidenceEdgeDbEntry, string>;
+  mcp_stations!: Table<McpStationDbEntry, string>;
+  tripwire_watches!: Table<TripwireWatchDbEntry, string>;
+  tripwire_alerts!: Table<TripwireAlertDbEntry, string>;
 
   constructor() {
     super('PixelOpsImmutableLedgerDB');
@@ -116,6 +209,27 @@ class PixelOpsLedgerDatabase extends Dexie {
         '++id, &path, category, format, updatedAt',
       encrypted_credentials:
         '&key, updatedAt',
+    });
+
+    this.version(5).stores({
+      command_ledger:
+        '++id, timestamp, involved_agent, tool_used, success_boost_achieved, ledger_hash',
+      agent_memories:
+        '++id, agentId, timestamp, prompt',
+      workspace_files:
+        '++id, &path, category, format, updatedAt',
+      encrypted_credentials:
+        '&key, updatedAt',
+      evidence_nodes:
+        '&id, type, value, hitCount, lastSeenAt',
+      evidence_edges:
+        '&id, sourceId, targetId, relation, filePath, updatedAt',
+      mcp_stations:
+        '&id, room, enabled, updatedAt',
+      tripwire_watches:
+        '&id, category, target, enabled, lastCheckedAt',
+      tripwire_alerts:
+        '&id, watchId, status, detectedAt',
     });
 
     // Enforce append-only immutability on the command_ledger table

@@ -941,6 +941,19 @@ export async function writeWorkspaceFile(
   // 3. Keep in-memory cache
   memoryFileMap.set(norm, record);
 
+  // 4. Auto-extract entities (IPs, domains, ASNs, CVEs, threat actors) into the local Evidence Graph
+  if (
+    finalContent &&
+    (norm.endsWith('.md') ||
+      norm.startsWith('reports/') ||
+      norm.startsWith('intel/') ||
+      format === 'markdown')
+  ) {
+    import('../services/EvidenceGraphService')
+      .then((m) => m.indexDossierIntoEvidenceGraph(norm, finalContent))
+      .catch(() => {});
+  }
+
   if (typeof window !== 'undefined') {
     try {
       window.dispatchEvent(
@@ -1007,6 +1020,10 @@ export async function deleteWorkspaceFile(rawPath: string): Promise<boolean> {
     memoryFileMap.delete(norm);
     deleted = true;
   }
+
+  import('../services/EvidenceGraphService')
+    .then((m) => m.removeDossierFromEvidenceGraph(norm))
+    .catch(() => {});
 
   if (typeof window !== 'undefined') {
     try {

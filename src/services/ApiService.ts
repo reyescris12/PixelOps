@@ -49,6 +49,16 @@ import {
 } from './SafetyService';
 import { draftExternalMessageContent } from './ComposioDraftingService';
 import {
+  queryEntityNeighborhood,
+  getEvidenceGraphSnapshot,
+  syncEvidenceGraphFromVFS,
+} from './EvidenceGraphService';
+import {
+  evaluateSpatialToolLeash,
+  buildSpatialMcpFunctionDeclarations,
+  executeSpatialMcpToolCall,
+} from './SpatialMcpService';
+import {
   queryCrtShSubdomains,
   queryBgpViewAsn,
   queryIpInfo,
@@ -641,6 +651,23 @@ export const GEMINI_TOOL_DECLARATIONS: Record<string, GeminiFunctionDeclarationS
       required: ['query'],
     },
   },
+  query_evidence_graph: {
+    name: 'query_evidence_graph',
+    description:
+      'Query the Basement Evidence Knowledge Graph to discover hidden cross-investigation overlaps across separate VFS dossiers by IP, domain, ASN, CVE, MITRE ATT&CK ID, cryptographic hash, or threat actor.',
+    parameters: {
+      type: 'OBJECT',
+      description: 'Evidence graph search parameters',
+      properties: {
+        entity: {
+          type: 'STRING',
+          description:
+            'Optional entity value or label to inspect (e.g., "AS13335", "CVE-2024-3094", "Volt Typhoon", or a domain/IP). Omit to list top cross-dossier bridge entities.',
+        },
+      },
+      required: [],
+    },
+  },
 };
 
 /**
@@ -669,6 +696,7 @@ export function buildDynamicToolDeclarations(
     GEMINI_TOOL_DECLARATIONS.osint_ip_reputation_audit,
     GEMINI_TOOL_DECLARATIONS.osint_virustotal_threat_check,
     GEMINI_TOOL_DECLARATIONS.osint_code_leak_audit,
+    GEMINI_TOOL_DECLARATIONS.query_evidence_graph,
   ];
 
   const pluginMap: Record<string, GeminiFunctionDeclarationSchema[]> = {
@@ -1073,7 +1101,22 @@ export function resolveToolWorkflowDestination(toolName: string): {
         targetStationId: 'vault_core_rack',
         taskTag: 'CODE LEAK AUDIT',
       };
+    case 'query_evidence_graph':
+      return {
+        pluginId: 'evidence_graph',
+        targetRoom: 'archive_basement',
+        targetStationId: 'basement_microfiche',
+        taskTag: 'LINK BOARD',
+      };
     default:
+      if (toolName.startsWith('mcp__')) {
+        return {
+          pluginId: 'spatial_mcp',
+          targetRoom: 'comms_tower',
+          targetStationId: 'comms_dish_console',
+          taskTag: 'SPATIAL MCP',
+        };
+      }
       return {
         pluginId: 'server_vault',
         targetRoom: 'server_vault',
@@ -1316,6 +1359,8 @@ export async function executeFunctionCallHandler(fc: {
   id?: string;
   name: string;
   args: Record<string, any>;
+  agentName?: string;
+  currentAgentRoom?: string;
 }): Promise<{
   id?: string;
   name: string;
@@ -1330,6 +1375,129 @@ export async function executeFunctionCallHandler(fc: {
   }
 
   try {
+    // Spatial Tool Leash Enforcement: check physical room permissions when operative room context is present
+    if (fc.currentAgentRoom) {
+      const leash = await evaluateSpatialToolLeash({
+        toolName: name,
+        agentName: fc.agentName || 'Operative',
+        currentAgentRoom: fc.currentAgentRoom,
+      });
+      if (!leash.allowed) {
+        return {
+          id: fc.id,
+          name,
+          response: {
+            successful: false,
+            status: 'blocked_by_spatial_leash',
+            error: leash.reason,
+            requiredRooms: leash.requiredRooms,
+          },
+          executedToolMeta: {
+            pluginId: 'spatial_leash',
+            toolName: name,
+            args,
+            resultSummary: `Spatial Leash Blocked: ${leash.reason}`,
+            livePayload: { blocked: true, requiredRooms: leash.requiredRooms, reason: leash.reason },
+            targetRoom: (leash.requiredRooms[0] as RoomId) || dest.targetRoom,
+            targetStationId: dest.targetStationId,
+          },
+        };
+      }
+    }
+
+    // Spatial MCP Station Dynamic Tool Execution (`mcp__<station>__<tool>`)
+    if (name.startsWith('mcp__')) {
+      const mcpOut = await executeSpatialMcpToolCall({
+        compositeToolName: name,
+        args,
+        agentName: fc.agentName || 'Operative',
+        currentAgentRoom: fc.currentAgentRoom || dest.targetRoom,
+      });
+      const targetRoom = (mcpOut.station?.room as RoomId) || dest.targetRoom;
+      const summary = mcpOut.ok
+        ? `Spatial MCP [${mcpOut.station?.name || 'Remote'} · ${mcpOut.remoteToolName}]: Executed in ${targetRoom}`
+        : `Spatial MCP Error: ${mcpOut.error || 'Call failed'}`;
+      return {
+        id: fc.id,
+        name,
+        response: mcpOut.ok
+          ? { successful: true, station: mcpOut.station?.name, room: targetRoom, data: mcpOut.result }
+          : { successful: false, error: mcpOut.error, leashBlocked: mcpOut.leashBlocked },
+        executedToolMeta: {
+          pluginId: 'spatial_mcp',
+          toolName: name,
+          args,
+          resultSummary: summary,
+          livePayload: mcpOut.result || { error: mcpOut.error },
+          targetRoom,
+          targetStationId: dest.targetStationId,
+        },
+      };
+    }
+
+    // Evidence Knowledge Graph Lookup (`query_evidence_graph`)
+    if (name === 'query_evidence_graph') {
+      await syncEvidenceGraphFromVFS().catch(() => {});
+      const entityQuery = String(args.entity || args.query || '').trim();
+      if (entityQuery) {
+        const hood = await queryEntityNeighborhood(entityQuery);
+        const payload = {
+          successful: true,
+          matchedEntity: hood.centerNode,
+          connectedDossiers: hood.connectedDossiers.map((d) => ({
+            path: d.value,
+            title: d.label,
+          })),
+          coOccurringEntities: hood.coOccurringEntities.slice(0, 12).map((c) => ({
+            type: c.node.type,
+            label: c.node.label,
+            sharedDossiers: c.sharedDossiers,
+            weight: c.weight,
+          })),
+        };
+        return {
+          id: fc.id,
+          name,
+          response: payload,
+          executedToolMeta: {
+            pluginId: 'evidence_graph',
+            toolName: name,
+            args,
+            resultSummary: `Evidence Graph: "${entityQuery}" linked across ${hood.connectedDossiers.length} dossier(s) and ${hood.coOccurringEntities.length} co-occurring indicator(s)`,
+            livePayload: payload,
+            targetRoom: 'archive_basement',
+            targetStationId: 'basement_microfiche',
+          },
+        };
+      }
+
+      const snap = await getEvidenceGraphSnapshot();
+      const payload = {
+        successful: true,
+        stats: snap.stats,
+        crossInvestigationBridges: snap.crossInvestigationBridges.slice(0, 10).map((b) => ({
+          type: b.node.type,
+          entity: b.node.label,
+          overlapCount: b.overlapCount,
+          dossierPaths: b.dossierPaths,
+          connectedEntities: b.connectedEntities,
+        })),
+      };
+      return {
+        id: fc.id,
+        name,
+        response: payload,
+        executedToolMeta: {
+          pluginId: 'evidence_graph',
+          toolName: name,
+          args,
+          resultSummary: `Evidence Graph: ${snap.stats.totalEntities} entities, ${snap.stats.bridgeCount} cross-investigation bridge(s)`,
+          livePayload: payload,
+          targetRoom: 'archive_basement',
+          targetStationId: 'basement_microfiche',
+        },
+      };
+    }
     // Debug logging for tool invocations
     console.log(
       `[AGENT EXECUTION ROUTER] Invoking Tool Slug: "${name}" | Destination: [${dest.targetRoom}/${dest.targetStationId}] | Parameters:`,
@@ -6319,6 +6487,7 @@ export async function executeAgentDirective(params: {
   themeId: ThemeId;
   activeAgentName: string;
   activeAgentRole: string;
+  activeAgentRoom?: string;
   agentSystemPrompt?: string;
   agentAssignedTools?: string[];
   agentMemoryLog?: Array<{ prompt: string; summary: string }>;
@@ -6515,12 +6684,37 @@ export async function executeAgentDirective(params: {
       } catch (dynamicToolErr) {
         console.warn('[AGENT DISPATCH] Could not augment with dynamic Composio tools:', dynamicToolErr);
       }
+      // Dynamically merge Spatial MCP station tools bound to accessible rooms
+      try {
+        const mcpTools = await buildSpatialMcpFunctionDeclarations(params.activeAgentRoom);
+        if (mcpTools.length > 0) {
+          const existingNames = new Set(baseDeclarations.map((d) => d.name));
+          for (const mt of mcpTools) {
+            if (!existingNames.has(mt.name)) {
+              baseDeclarations.push({
+                name: mt.name,
+                description: mt.description,
+                parameters: {
+                  type: 'OBJECT',
+                  properties: mt.parameters.properties,
+                  required: mt.parameters.required || [],
+                },
+              });
+              existingNames.add(mt.name);
+            }
+          }
+        }
+      } catch (mcpErr) {
+        console.warn('[AGENT DISPATCH] Could not augment Spatial MCP tools:', mcpErr);
+      }
+
       // Guarantee core capabilities (live_web_search, fs_storage_manager, code_sandbox_eval, memory_vector_lookup, and OSINT threat toolkit) are always available
       const CORE_AGENT_TOOLS = new Set([
         'live_web_search',
         'fs_storage_manager',
         'code_sandbox_eval',
         'memory_vector_lookup',
+        'query_evidence_graph',
         'osint_maritime_tracker',
         'osint_hazard_tracker',
         'osint_satellite_recon',
@@ -6536,7 +6730,9 @@ export async function executeAgentDirective(params: {
       let activeDeclarations = baseDeclarations;
       if (Array.isArray(params.agentAssignedTools) && params.agentAssignedTools.length > 0) {
         const allowed = new Set([...params.agentAssignedTools, ...CORE_AGENT_TOOLS]);
-        activeDeclarations = baseDeclarations.filter((d) => allowed.has(d.name));
+        activeDeclarations = baseDeclarations.filter(
+          (d) => allowed.has(d.name) || d.name.startsWith('mcp__')
+        );
       }
 
       const declaredToolNames = activeDeclarations.map((d) => d.name).join(', ');
@@ -7415,7 +7611,13 @@ CRITICAL MEMORY RECALL INSTRUCTION:
           });
 
           const handlerOutputs = await Promise.all(
-            lastFunctionCalls.map((fc: any) => executeFunctionCallHandler(fc))
+            lastFunctionCalls.map((fc: any) =>
+              executeFunctionCallHandler({
+                ...fc,
+                agentName: params.activeAgentName,
+                currentAgentRoom: params.activeAgentRoom,
+              })
+            )
           );
 
           for (const out of handlerOutputs) {

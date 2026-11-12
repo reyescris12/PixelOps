@@ -527,6 +527,64 @@ export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = (
                   <span>[🛰️ RECON MONITOR]</span>
                 </button>
               )}
+              {(currentRoom === 'archive_basement' ||
+                currentRoom === 'war_room' ||
+                currentRoom === 'library') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    playBeep('tap');
+                    window.dispatchEvent(
+                      new CustomEvent('pixelops:open_modal', { detail: { modal: 'link_board' } })
+                    );
+                  }}
+                  className="px-2 py-0.5 bg-[#1e1233] hover:bg-[#2c1a4d] text-[#d8b4fe] border border-[#9333ea]/60 text-[10px] font-bold cursor-pointer transition-colors flex items-center gap-1"
+                >
+                  <span>[🕸️ LINK BOARD]</span>
+                </button>
+              )}
+              {(currentRoom === 'comms_tower' || currentRoom === 'server_vault') && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      playBeep('tap');
+                      window.dispatchEvent(
+                        new CustomEvent('pixelops:open_modal', { detail: { modal: 'spatial_mcp' } })
+                      );
+                    }}
+                    className="px-2 py-0.5 bg-[#0f2138] hover:bg-[#173154] text-[#7dd3fc] border border-[#38bdf8]/60 text-[10px] font-bold cursor-pointer transition-colors flex items-center gap-1"
+                  >
+                    <span>[🔌 SPATIAL MCP]</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      playBeep('tap');
+                      window.dispatchEvent(
+                        new CustomEvent('pixelops:open_modal', { detail: { modal: 'tripwires' } })
+                      );
+                    }}
+                    className="px-2 py-0.5 bg-[#291709] hover:bg-[#3d220d] text-[#fdba74] border border-[#f97316]/60 text-[10px] font-bold cursor-pointer transition-colors flex items-center gap-1"
+                  >
+                    <span>[#️⃣ TRIPWIRES]</span>
+                  </button>
+                </>
+              )}
+              {(currentRoom === 'armory' || currentRoom === 'briefing_lounge') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    playBeep('tap');
+                    window.dispatchEvent(
+                      new CustomEvent('pixelops:open_modal', { detail: { modal: 'cartridges' } })
+                    );
+                  }}
+                  className="px-2 py-0.5 bg-[#261d09] hover:bg-[#3b2c0d] text-[#fde68a] border border-[#eab308]/60 text-[10px] font-bold cursor-pointer transition-colors flex items-center gap-1"
+                >
+                  <span>[📦 CARTRIDGES]</span>
+                </button>
+              )}
               {currentRoom === 'archive_basement' && onOpenVfs && (
                 <button
                   type="button"

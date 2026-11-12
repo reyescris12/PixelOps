@@ -728,6 +728,21 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
 
               <button
                 type="button"
+                onClick={() => {
+                  playBeep('tap');
+                  window.dispatchEvent(
+                    new CustomEvent('pixelops:open_modal', { detail: { modal: 'link_board' } })
+                  );
+                }}
+                className="flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded bg-[#23153c] hover:bg-[#311d54] text-[#e9d5ff] border border-[#7e22ce] transition-colors text-xs font-semibold cursor-pointer"
+                title="Open Basement Evidence Link Board (Cross-Dossier Entity Graph)"
+              >
+                <span>🕸️</span>
+                <span className="hidden sm:inline">Link Board</span>
+              </button>
+
+              <button
+                type="button"
                 onClick={() => setIsCreatingFolder((prev) => !prev)}
                 className="flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded bg-[#1e293b] hover:bg-[#334155] text-white border border-slate-600 transition-colors text-xs font-semibold cursor-pointer"
                 title="Create a new workspace folder"

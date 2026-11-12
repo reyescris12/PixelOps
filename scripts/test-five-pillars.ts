@@ -399,6 +399,122 @@ async function main() {
   );
   await secureVault.deleteSecureCredential('pixelops_gemini_api_key');
 
+  // Verify explicit Push-To-Talk manual VAD configuration & adaptive mic normalization
+  assertCheck(
+    lowLat.config.realtimeInputConfig?.automaticActivityDetection?.disabled === true &&
+      lowLat.config.realtimeInputConfig?.activityHandling === 'START_OF_ACTIVITY_INTERRUPTS',
+    'buildLiveSessionConfig disables automatic VAD for explicit PTT activityStart/activityEnd boundaries'
+  );
+
+  const quietWave = new Float32Array(256);
+  for (let i = 0; i < quietWave.length; i++) {
+    quietWave[i] = Math.sin((i / 256) * Math.PI * 2) * 0.02;
+  }
+  const boosted = voice.normalizeMicChunkForSpeech(quietWave);
+  const zeroWave = new Float32Array(128);
+  const unboostedZero = voice.normalizeMicChunkForSpeech(zeroWave);
+  assertCheck(
+    boosted.samples[64] > quietWave[64] * 2.5 && unboostedZero.rms === 0 && unboostedZero.samples[10] === 0,
+    'normalizeMicChunkForSpeech boosts quiet speech without amplifying digital silence'
+  );
+
+  // Verify end-to-end PTT lifecycle: suspended native AudioContext resume, activityStart -> audio/pcm -> activityEnd
+  const sentRealtimePayloads: any[] = [];
+  let resumeCalled = false;
+  let capturedProcessor: any = null;
+  const prevAudioCtx = g.AudioContext;
+  const origMediaDevicesDesc = Object.getOwnPropertyDescriptor(globalThis.navigator, 'mediaDevices');
+
+  try {
+    g.AudioContext = class MockAudioContext {
+      public sampleRate = 48000;
+      public state: string = 'suspended';
+      public destination = {};
+      public audioWorklet = undefined;
+      public async resume() {
+        resumeCalled = true;
+        this.state = 'running';
+      }
+      public createMediaStreamSource() {
+        return { connect() {}, disconnect() {} };
+      }
+      public createGain() {
+        return { gain: { value: 1 }, connect() {}, disconnect() {} };
+      }
+      public createScriptProcessor() {
+        capturedProcessor = { onaudioprocess: null, connect() {}, disconnect() {} };
+        return capturedProcessor;
+      }
+      public async close() {
+        this.state = 'closed';
+      }
+    };
+
+    Object.defineProperty(globalThis.navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        getUserMedia: async () => ({
+          getTracks: () => [{ stop() {} }],
+        }),
+      },
+    });
+
+    const pttTx = new voice.TacticalRadioTransceiver();
+    (pttTx as any).session = {
+      sendRealtimeInput: (payload: any) => {
+        sentRealtimePayloads.push(payload);
+      },
+      close() {},
+    };
+    (pttTx as any).manualActivitySignaling = true;
+    (pttTx as any).status = 'standby';
+
+    await pttTx.startPushToTalk();
+    assertCheck(
+      resumeCalled && Boolean(capturedProcessor?.onaudioprocess),
+      'startPushToTalk unlocks suspended AudioContext synchronously and wires mic processor'
+    );
+
+    const fakeSpeechBuf = new Float32Array(4096);
+    for (let i = 0; i < fakeSpeechBuf.length; i++) {
+      fakeSpeechBuf[i] = Math.sin((i / 64) * Math.PI * 2) * 0.25;
+    }
+    capturedProcessor.onaudioprocess({
+      inputBuffer: { getChannelData: () => fakeSpeechBuf },
+    });
+
+    pttTx.stopPushToTalk();
+
+    const hasActivityStart = sentRealtimePayloads.some((p) => p && 'activityStart' in p);
+    const hasPcmAudio = sentRealtimePayloads.some(
+      (p) => p?.audio?.mimeType === 'audio/pcm;rate=16000' && typeof p?.audio?.data === 'string' && p.audio.data.length > 0
+    );
+    const hasActivityEnd = sentRealtimePayloads.some((p) => p && 'activityEnd' in p);
+    assertCheck(
+      hasActivityStart && hasPcmAudio && hasActivityEnd,
+      'Live PTT lifecycle emits activityStart -> 16kHz PCM audio chunk -> trailing pad + activityEnd'
+    );
+
+    sentRealtimePayloads.length = 0;
+    pttTx.sendTextDispatchOverRadio('Sitrep');
+    const textIdx = sentRealtimePayloads.findIndex((p) => p?.text === 'Sitrep');
+    const textStartIdx = sentRealtimePayloads.findIndex((p) => p && 'activityStart' in p);
+    const textEndIdx = sentRealtimePayloads.findIndex((p) => p && 'activityEnd' in p);
+    assertCheck(
+      textStartIdx === 0 && textIdx === 1 && textEndIdx === 2,
+      'sendTextDispatchOverRadio frames manual activityStart -> text -> activityEnd when auto-VAD is disabled'
+    );
+
+    await pttTx.disconnect();
+  } finally {
+    g.AudioContext = prevAudioCtx;
+    if (origMediaDevicesDesc) {
+      Object.defineProperty(globalThis.navigator, 'mediaDevices', origMediaDevicesDesc);
+    } else {
+      delete (globalThis.navigator as any).mediaDevices;
+    }
+  }
+
   console.log(
     failures === 0 ? '\nALL 5 PILLAR TESTS PASSED!' : `\n${failures} TEST(S) FAILED`
   );

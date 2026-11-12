@@ -47,6 +47,8 @@ export const TacticalRadioModal: React.FC<TacticalRadioModalProps> = ({
   const [transcripts, setTranscripts] = useState<RadioTranscriptEntry[]>([]);
   const [audioLevel, setAudioLevel] = useState(0);
   const [quickText, setQuickText] = useState('');
+  const [audioDevices, setAudioDevices] = useState<Array<{ deviceId: string; label: string }>>([]);
+  const [selectedMicId, setSelectedMicId] = useState<string>('');
   const [proxyStatus, setProxyStatus] = useState<{
     proxyReachable: boolean;
     hasServerKey: boolean;
@@ -56,13 +58,32 @@ export const TacticalRadioModal: React.FC<TacticalRadioModalProps> = ({
   const transceiverRef = useRef<TacticalRadioTransceiver | null>(null);
   const onDispatchRef = useRef(onDispatchDirective);
   onDispatchRef.current = onDispatchDirective;
+  const pttPressStartMsRef = useRef<number | null>(null);
+  const pttStopOnReleaseRef = useRef<boolean>(false);
+
+  const refreshAudioInputs = async () => {
+    try {
+      if (!navigator?.mediaDevices?.enumerateDevices) return;
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const inputs = devices
+        .filter((d) => d.kind === 'audioinput')
+        .map((d, idx) => ({
+          deviceId: d.deviceId,
+          label: d.label || `Microphone ${idx + 1}`,
+        }));
+      setAudioDevices(inputs);
+    } catch {}
+  };
 
   useEffect(() => {
     if (!isOpen) {
+      pttPressStartMsRef.current = null;
+      pttStopOnReleaseRef.current = false;
       void transceiverRef.current?.disconnect();
       setTransportRoute(null);
       return;
     }
+    void refreshAudioInputs();
     probeGeminiLiveProxy().then((res) => {
       setProxyStatus({
         proxyReachable: res.proxyReachable,
@@ -132,23 +153,63 @@ export const TacticalRadioModal: React.FC<TacticalRadioModalProps> = ({
     }
   };
 
-  const handlePttStart = async () => {
+  const handlePttRelease = () => {
+    if (pttPressStartMsRef.current === null) {
+      return;
+    }
+    const heldMs = Date.now() - pttPressStartMsRef.current;
+    pttPressStartMsRef.current = null;
+
+    if (heldMs >= 380 && pttStopOnReleaseRef.current) {
+      pttStopOnReleaseRef.current = false;
+      playBeep('tap');
+      transceiverRef.current?.stopPushToTalk();
+    } else {
+      // Quick tap (<380ms): latch Tap-to-Talk open; next tap sends & closes
+      pttStopOnReleaseRef.current = false;
+    }
+  };
+
+  const handlePttPointerDown = async () => {
     if (!isConnected) return;
+
+    // If already transmitting or opening (Tap-to-Talk mode), second tap stops & sends
+    if (transceiverRef.current?.isPttActiveOrOpening()) {
+      pttStopOnReleaseRef.current = false;
+      pttPressStartMsRef.current = null;
+      playBeep('tap');
+      transceiverRef.current?.stopPushToTalk();
+      return;
+    }
+
+    pttPressStartMsRef.current = Date.now();
+    pttStopOnReleaseRef.current = true;
     playBeep('tap');
     try {
       await transceiverRef.current?.startPushToTalk();
+      void refreshAudioInputs();
     } catch (err: any) {
+      pttPressStartMsRef.current = null;
+      pttStopOnReleaseRef.current = false;
       setStatus('standby');
       setStatusDetail(err?.message || 'Microphone permission denied — use TX input below');
     }
   };
 
-  const handlePttEnd = () => {
-    if (status === 'transmitting_ptt') {
-      playBeep('tap');
-    }
-    transceiverRef.current?.stopPushToTalk();
-  };
+  useEffect(() => {
+    if (!isOpen) return;
+    const onGlobalRelease = () => {
+      if (pttPressStartMsRef.current !== null) {
+        handlePttRelease();
+      }
+    };
+    window.addEventListener('pointerup', onGlobalRelease);
+    window.addEventListener('pointercancel', onGlobalRelease);
+    return () => {
+      window.removeEventListener('pointerup', onGlobalRelease);
+      window.removeEventListener('pointercancel', onGlobalRelease);
+    };
+  }, [isOpen]);
 
   const handleSendTextOverRadio = (e: React.FormEvent) => {
     e.preventDefault();
@@ -268,28 +329,25 @@ export const TacticalRadioModal: React.FC<TacticalRadioModalProps> = ({
             </span>
           </button>
 
-          {/* Tactile Hold-to-Talk PTT Transceiver Pad */}
+          {/* Tactile Tap-or-Hold PTT Transceiver Pad */}
           <div className="p-3.5 bg-[#090d16] border border-[#283548] flex flex-col items-center gap-2.5">
             <button
               type="button"
               disabled={!isConnected}
               onContextMenu={(e) => e.preventDefault()}
-              onPointerDown={() => void handlePttStart()}
-              onPointerUp={handlePttEnd}
-              onPointerCancel={handlePttEnd}
-              onPointerLeave={() => {
-                if (status === 'transmitting_ptt') handlePttEnd();
-              }}
+              onPointerDown={() => void handlePttPointerDown()}
+              onPointerUp={handlePttRelease}
+              onPointerCancel={handlePttRelease}
               onKeyDown={(e) => {
                 if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) {
                   e.preventDefault();
-                  void handlePttStart();
+                  void handlePttPointerDown();
                 }
               }}
               onKeyUp={(e) => {
                 if (e.key === ' ' || e.key === 'Enter') {
                   e.preventDefault();
-                  handlePttEnd();
+                  handlePttRelease();
                 }
               }}
               className={`w-full py-5 border-2 text-xs font-bold uppercase tracking-wider flex flex-col items-center justify-center gap-2 select-none touch-none cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-all ${
@@ -310,13 +368,34 @@ export const TacticalRadioModal: React.FC<TacticalRadioModalProps> = ({
               <span>
                 {status === 'transmitting_ptt'
                   ? transportRoute === 'tactical-relay'
-                    ? 'CAPTURING VOICE — RELEASE TO DISPATCH'
-                    : 'TRANSMITTING 16kHz PCM — RELEASE TO SEND'
+                    ? '🎙️ CAPTURING VOICE — TAP OR RELEASE TO SEND'
+                    : '🎙️ MIC LIVE — TAP OR RELEASE TO SEND'
                   : status === 'receiving_voice'
-                  ? `${persona.displayName.toUpperCase()} SPEAKING (HOLD TO BARGE IN)`
-                  : 'HOLD PUSH-TO-TALK (OR SPACEBAR)'}
+                  ? `${persona.displayName.toUpperCase()} SPEAKING (TAP/HOLD TO BARGE IN)`
+                  : 'TAP OR HOLD TO TALK (SPACEBAR)'}
               </span>
             </button>
+
+            {audioDevices.length > 0 && (
+              <select
+                id="tactical-radio-mic-select"
+                name="tacticalRadioMicSelect"
+                aria-label="Select microphone input device"
+                value={selectedMicId}
+                onChange={(e) => {
+                  setSelectedMicId(e.target.value);
+                  transceiverRef.current?.setPreferredMicrophone(e.target.value);
+                }}
+                className="w-full px-2 py-1 bg-[#0e1422] border border-[#24324b] text-[10px] text-[#cbd5e1] truncate"
+              >
+                <option value="">Default System Microphone</option>
+                {audioDevices.map((dev) => (
+                  <option key={dev.deviceId || dev.label} value={dev.deviceId}>
+                    Mic: {dev.label}
+                  </option>
+                ))}
+              </select>
+            )}
 
             {/* Live Audio VU Meter + Barge-In Cut Button */}
             <div className="w-full flex items-center gap-2">
@@ -413,6 +492,8 @@ export const TacticalRadioModal: React.FC<TacticalRadioModalProps> = ({
             className="p-2.5 bg-[#0e1422] border-t border-[#1e293b] flex items-center gap-2"
           >
             <input
+              id="tactical-radio-quick-text"
+              name="tacticalRadioQuickText"
               type="text"
               disabled={!isConnected}
               value={quickText}

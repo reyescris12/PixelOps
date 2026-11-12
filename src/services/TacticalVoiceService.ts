@@ -19,6 +19,7 @@ import {
   Modality,
   Behavior,
   Type,
+  ActivityHandling,
   type Session,
   type LiveServerMessage,
 } from '@google/genai';
@@ -164,7 +165,40 @@ export async function resolveClientGeminiKeyAsync(): Promise<string> {
 }
 
 /**
- * Converts Float32 Web Audio samples [-1, 1] downsampled to 16kHz into base64 16-bit little-endian PCM.
+ * Computes RMS and applies clean adaptive microphone gain for quiet laptop/headset mics
+ * so Push-To-Talk speech reaches Gemini Live at healthy amplitude without clipping.
+ */
+export function normalizeMicChunkForSpeech(inputSamples: Float32Array): {
+  samples: Float32Array;
+  rms: number;
+} {
+  if (inputSamples.length === 0) {
+    return { samples: inputSamples, rms: 0 };
+  }
+
+  let sumSq = 0;
+  for (let i = 0; i < inputSamples.length; i++) {
+    const s = inputSamples[i];
+    sumSq += s * s;
+  }
+  const rms = Math.sqrt(sumSq / inputSamples.length);
+
+  if (rms > 0.0025 && rms < 0.14) {
+    const gain = Math.min(4.0, Math.max(1.0, 0.16 / rms));
+    const boosted = new Float32Array(inputSamples.length);
+    for (let i = 0; i < inputSamples.length; i++) {
+      const scaled = inputSamples[i] * gain;
+      boosted[i] = scaled < -1 ? -1 : scaled > 1 ? 1 : scaled;
+    }
+    return { samples: boosted, rms };
+  }
+
+  return { samples: inputSamples, rms };
+}
+
+/**
+ * Converts Float32 Web Audio samples [-1, 1] downsampled to 16kHz (box-filtered to prevent
+ * speech aliasing) into base64 16-bit little-endian PCM.
  */
 export function encodeFloat32ToBase64Pcm16(
   inputSamples: Float32Array,
@@ -177,8 +211,16 @@ export function encodeFloat32ToBase64Pcm16(
     const outLength = Math.max(1, Math.round(inputSamples.length / ratio));
     const downsampled = new Float32Array(outLength);
     for (let i = 0; i < outLength; i++) {
-      const srcIdx = Math.min(inputSamples.length - 1, Math.floor(i * ratio));
-      downsampled[i] = inputSamples[srcIdx];
+      const startIdx = Math.min(inputSamples.length - 1, Math.floor(i * ratio));
+      const endIdx = Math.min(
+        inputSamples.length,
+        Math.max(startIdx + 1, Math.floor((i + 1) * ratio))
+      );
+      let acc = 0;
+      for (let j = startIdx; j < endIdx; j++) {
+        acc += inputSamples[j];
+      }
+      downsampled[i] = acc / (endIdx - startIdx);
     }
     samples = downsampled;
   }
@@ -300,6 +342,12 @@ export function buildLiveSessionConfig(
         },
       },
     },
+    realtimeInputConfig: {
+      automaticActivityDetection: {
+        disabled: true,
+      },
+      activityHandling: ActivityHandling.START_OF_ACTIVITY_INTERRUPTS,
+    },
     inputAudioTranscription: {},
     outputAudioTranscription: {},
     systemInstruction: persona.systemPersona,
@@ -317,9 +365,12 @@ export function buildLiveSessionConfig(
   return { model: modelId, config };
 }
 
-function buildCompatibilityLiveConfig(operativeId: RadioOperativeId): Record<string, any> {
+function buildCompatibilityLiveConfig(
+  operativeId: RadioOperativeId,
+  options?: { disableAutoVad?: boolean }
+): Record<string, any> {
   const persona = OPERATIVE_RADIO_CHANNELS[operativeId] || OPERATIVE_RADIO_CHANNELS.vance;
-  return {
+  const cfg: Record<string, any> = {
     responseModalities: [Modality.AUDIO],
     speechConfig: {
       voiceConfig: {
@@ -333,6 +384,17 @@ function buildCompatibilityLiveConfig(operativeId: RadioOperativeId): Record<str
     systemInstruction: persona.systemPersona,
     tools: buildTacticalRadioTools({ omitNonBlockingBehavior: true }),
   };
+
+  if (options?.disableAutoVad !== false) {
+    cfg.realtimeInputConfig = {
+      automaticActivityDetection: {
+        disabled: true,
+      },
+      activityHandling: ActivityHandling.START_OF_ACTIVITY_INTERRUPTS,
+    };
+  }
+
+  return cfg;
 }
 
 export async function probeGeminiLiveProxy(): Promise<{
@@ -421,12 +483,22 @@ export class TacticalRadioTransceiver {
   private relaySpokenFinal = '';
   private relaySpokenInterim = '';
 
-  // Web Audio microphone capture (16kHz input)
+  // Web Audio microphone capture (resampled to 16kHz PCM16 for Gemini Live)
   private micStream: MediaStream | null = null;
   private micCtx: AudioContext | null = null;
   private micSource: MediaStreamAudioSourceNode | null = null;
   private micProcessor: ScriptProcessorNode | null = null;
+  private micWorkletNode: AudioWorkletNode | null = null;
+  private micSilentGain: GainNode | null = null;
   private isTransmittingPtt = false;
+  private manualActivitySignaling = true;
+  private pttOpening = false;
+  private pttAbortRequested = false;
+  private pttActivityStartedOnServer = false;
+  private pttChunksSent = 0;
+  private pttPeakRms = 0;
+  private preferredAudioDeviceId = '';
+  private replyWatchdogTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(callbacks: TacticalRadioCallbacks = {}) {
     this.callbacks = callbacks;
@@ -438,6 +510,34 @@ export class TacticalRadioTransceiver {
 
   public getTransportRoute(): RadioTransportRoute | null {
     return this.transportRoute;
+  }
+
+  public setPreferredMicrophone(deviceId: string): void {
+    this.preferredAudioDeviceId = deviceId.trim();
+  }
+
+  public isPttActiveOrOpening(): boolean {
+    return this.isTransmittingPtt || this.pttOpening;
+  }
+
+  private clearReplyWatchdog(): void {
+    if (this.replyWatchdogTimer) {
+      clearTimeout(this.replyWatchdogTimer);
+      this.replyWatchdogTimer = null;
+    }
+  }
+
+  private startReplyWatchdog(chunksSent: number): void {
+    this.clearReplyWatchdog();
+    this.replyWatchdogTimer = setTimeout(() => {
+      this.replyWatchdogTimer = null;
+      if (this.status === 'standby' && this.session) {
+        this.setStatus(
+          'standby',
+          `No reply received after ${chunksSent} pkts — speak louder or check selected mic`
+        );
+      }
+    }, 9000);
   }
 
   private isCarrierActive(): boolean {
@@ -780,6 +880,8 @@ Respond in character as ${persona.displayName} (${persona.role}) over tactical v
 
     const sc = message.serverContent;
     if (sc) {
+      this.clearReplyWatchdog();
+
       // Handle real-time barge-in interruption acknowledged by Gemini Live server
       if (sc.interrupted) {
         this.bargeInInterrupt();
@@ -787,6 +889,9 @@ Respond in character as ${persona.displayName} (${persona.role}) over tactical v
 
       if (sc.inputTranscription?.text) {
         this.appendOrMergeTranscript('COMMANDER', sc.inputTranscription.text, true);
+        if (this.status === 'standby') {
+          this.setStatus('standby', 'Voice copied — operative responding...');
+        }
       }
 
       if (sc.outputTranscription?.text) {
@@ -810,6 +915,7 @@ Respond in character as ${persona.displayName} (${persona.role}) over tactical v
 
     // Handle asynchronous non-blocking tool calls
     if (message.toolCall?.functionCalls?.length) {
+      this.clearReplyWatchdog();
       for (const fc of message.toolCall.functionCalls) {
         const fnName = fc.name || '';
         const args = (fc.args || {}) as Record<string, any>;
@@ -1010,11 +1116,11 @@ Respond in character as ${persona.displayName} (${persona.role}) over tactical v
     ai: GoogleGenAI,
     operativeId: RadioOperativeId,
     preferredModel: RadioLiveModelId
-  ): Promise<{ session: Session; negotiatedModel: string }> {
+  ): Promise<{ session: Session; negotiatedModel: string; manualActivitySignaling: boolean }> {
     const primary = buildLiveSessionConfig(operativeId, preferredModel);
     try {
       const session = await this.connectLiveSessionOnce(ai, primary.model, primary.config);
-      return { session, negotiatedModel: primary.model };
+      return { session, negotiatedModel: primary.model, manualActivitySignaling: true };
     } catch (err: any) {
       const attemptErr = err as HandshakeAttemptError;
       const errText = String(attemptErr?.message || '').toLowerCase();
@@ -1030,11 +1136,31 @@ Respond in character as ${persona.displayName} (${persona.role}) over tactical v
         throw attemptErr;
       }
 
-      const compatConfig = buildCompatibilityLiveConfig(operativeId);
+      // First try compatibility models with explicit manual PTT activity control (`automaticActivityDetection.disabled = true`)
+      const manualCompatConfig = buildCompatibilityLiveConfig(operativeId, { disableAutoVad: true });
       for (const fallbackModel of COMPATIBILITY_LIVE_MODELS) {
         try {
-          const session = await this.connectLiveSessionOnce(ai, fallbackModel, compatConfig, 6500);
-          return { session, negotiatedModel: fallbackModel };
+          const session = await this.connectLiveSessionOnce(
+            ai,
+            fallbackModel,
+            manualCompatConfig,
+            6500
+          );
+          return { session, negotiatedModel: fallbackModel, manualActivitySignaling: true };
+        } catch {}
+      }
+
+      // Secondary fallback with default server VAD if a legacy model rejects `realtimeInputConfig`
+      const autoCompatConfig = buildCompatibilityLiveConfig(operativeId, { disableAutoVad: false });
+      for (const fallbackModel of COMPATIBILITY_LIVE_MODELS) {
+        try {
+          const session = await this.connectLiveSessionOnce(
+            ai,
+            fallbackModel,
+            autoCompatConfig,
+            6500
+          );
+          return { session, negotiatedModel: fallbackModel, manualActivitySignaling: false };
         } catch {}
       }
 
@@ -1045,6 +1171,7 @@ Respond in character as ${persona.displayName} (${persona.role}) over tactical v
   private activateTacticalRelayFallback(detailMessage: string) {
     this.session = null;
     this.relayActive = true;
+    this.manualActivitySignaling = false;
     this.transportRoute = 'tactical-relay';
     this.callbacks.onTransportRoute?.('tactical-relay');
     this.setStatus('standby', detailMessage);
@@ -1119,9 +1246,14 @@ Respond in character as ${persona.displayName} (${persona.role}) over tactical v
     for (const candidate of candidates) {
       try {
         const ai = candidate.createClient();
-        const { session } = await this.negotiateLiveSessionOnClient(ai, operativeId, modelId);
+        const { session, manualActivitySignaling } = await this.negotiateLiveSessionOnClient(
+          ai,
+          operativeId,
+          modelId
+        );
         this.session = session;
         this.relayActive = false;
+        this.manualActivitySignaling = manualActivitySignaling;
         this.transportRoute = candidate.route;
         this.callbacks.onTransportRoute?.(candidate.route);
         this.setStatus('standby', `Carrier locked · ${candidate.label}`);
@@ -1148,6 +1280,59 @@ Respond in character as ${persona.displayName} (${persona.role}) over tactical v
     throw lastWsError || new Error(errDetail);
   }
 
+  private async requestMicrophoneStream(): Promise<MediaStream> {
+    const baseConstraints: MediaTrackConstraints = {
+      channelCount: 1,
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    };
+
+    if (this.preferredAudioDeviceId) {
+      try {
+        return await navigator.mediaDevices.getUserMedia({
+          audio: {
+            ...baseConstraints,
+            deviceId: { exact: this.preferredAudioDeviceId },
+          },
+        });
+      } catch {}
+    }
+
+    return await navigator.mediaDevices.getUserMedia({ audio: baseConstraints });
+  }
+
+  private cleanupMicCaptureNodes(): void {
+    try {
+      this.micWorkletNode?.port.close();
+      this.micWorkletNode?.disconnect();
+    } catch {}
+    this.micWorkletNode = null;
+
+    try {
+      this.micProcessor?.disconnect();
+      this.micSource?.disconnect();
+      this.micSilentGain?.disconnect();
+    } catch {}
+    this.micProcessor = null;
+    this.micSource = null;
+    this.micSilentGain = null;
+
+    if (this.micStream) {
+      for (const track of this.micStream.getTracks()) {
+        try {
+          track.stop();
+        } catch {}
+      }
+      this.micStream = null;
+    }
+
+    if (this.micCtx && this.micCtx.state !== 'closed') {
+      this.micCtx.close().catch(() => {});
+    }
+    this.micCtx = null;
+  }
+
   /**
    * Starts Push-To-Talk microphone transmission (immediately triggers barge-in cut of ongoing agent speech).
    */
@@ -1155,13 +1340,14 @@ Respond in character as ${persona.displayName} (${persona.role}) over tactical v
     if (!this.isCarrierActive()) {
       throw new Error('Connect radio channel first before holding Push-To-Talk.');
     }
-    if (this.isTransmittingPtt) return;
+    if (this.isTransmittingPtt || this.pttOpening) return;
 
     // Barge-in immediately so Commander cuts off ongoing operative speech
+    this.clearReplyWatchdog();
     this.bargeInInterrupt();
     this.ensurePlaybackContext();
 
-    // Branch A: Tactical Voice Relay Mode (Web Speech STT + Mic VU meter)
+    // Branch A: Tactical Voice Relay Mode (Web Speech STT; only open AudioContext meter if STT unavailable)
     if (this.relayActive && !this.session) {
       this.relaySpokenFinal = '';
       this.relaySpokenInterim = '';
@@ -1205,36 +1391,40 @@ Respond in character as ${persona.displayName} (${persona.role}) over tactical v
       }
 
       let startedMicMeter = false;
-      if (typeof navigator !== 'undefined' && navigator.mediaDevices?.getUserMedia) {
+      if (
+        !startedSpeechRec &&
+        typeof navigator !== 'undefined' &&
+        typeof navigator.mediaDevices?.getUserMedia === 'function'
+      ) {
         try {
-          this.micStream = await navigator.mediaDevices.getUserMedia({
-            audio: {
-              channelCount: 1,
-              echoCancellation: true,
-              noiseSuppression: true,
-              autoGainControl: true,
-            },
-          });
           const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-          if (AudioCtx) {
-            this.micCtx = new AudioCtx();
-            this.micSource = this.micCtx.createMediaStreamSource(this.micStream);
-            this.micProcessor = this.micCtx.createScriptProcessor(2048, 1, 1);
+          const micCtx = AudioCtx ? new AudioCtx() : null;
+          if (micCtx && micCtx.state === 'suspended') {
+            void micCtx.resume().catch(() => {});
+          }
+          this.micCtx = micCtx;
+          this.micStream = await this.requestMicrophoneStream();
+          if (micCtx) {
+            if (micCtx.state === 'suspended') {
+              await micCtx.resume().catch(() => {});
+            }
+            this.micSource = micCtx.createMediaStreamSource(this.micStream);
+            this.micSilentGain = micCtx.createGain();
+            this.micSilentGain.gain.value = 0;
+            this.micSilentGain.connect(micCtx.destination);
+            this.micProcessor = micCtx.createScriptProcessor(4096, 1, 1);
             this.micProcessor.onaudioprocess = (event: AudioProcessingEvent) => {
               if (!this.isTransmittingPtt) return;
-              const inputData = event.inputBuffer.getChannelData(0);
-              let sumSq = 0;
-              for (let i = 0; i < inputData.length; i += 8) {
-                sumSq += inputData[i] * inputData[i];
-              }
-              const rms = Math.min(1, Math.sqrt(sumSq / Math.max(1, inputData.length / 8)) * 4.0);
-              this.callbacks.onAudioLevel?.(rms);
+              const { rms } = normalizeMicChunkForSpeech(event.inputBuffer.getChannelData(0));
+              this.callbacks.onAudioLevel?.(Math.min(1, rms * 5.5));
             };
             this.micSource.connect(this.micProcessor);
-            this.micProcessor.connect(this.micCtx.destination);
+            this.micProcessor.connect(this.micSilentGain);
             startedMicMeter = true;
           }
-        } catch {}
+        } catch {
+          this.cleanupMicCaptureNodes();
+        }
       }
 
       if (!startedSpeechRec && !startedMicMeter) {
@@ -1245,48 +1435,81 @@ Respond in character as ${persona.displayName} (${persona.role}) over tactical v
       this.isTransmittingPtt = true;
       this.setStatus(
         'transmitting_ptt',
-        startedSpeechRec ? 'PTT VOICE CAPTURE — RELEASE TO DISPATCH' : 'PTT MIC LIVE (USE TX BAR IF NO STT)'
+        startedSpeechRec ? '🎙️ VOICE CAPTURE — TAP OR RELEASE TO SEND' : 'PTT MIC LIVE (USE TX BAR IF NO STT)'
       );
       return;
     }
 
-    // Branch B: Full-Duplex 16kHz PCM Streaming over Gemini Multimodal Live WebSocket
+    // Branch B: Full-Duplex PCM Streaming over Gemini Multimodal Live WebSocket
     if (!navigator?.mediaDevices?.getUserMedia) {
       throw new Error('Microphone capture is unavailable in this browser context.');
     }
 
-    this.micStream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        channelCount: 1,
-        sampleRate: 16000,
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      },
-    });
-
     const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-    this.micCtx = new AudioCtx({ sampleRate: 16000 });
-    this.micSource = this.micCtx.createMediaStreamSource(this.micStream);
-    this.micProcessor = this.micCtx.createScriptProcessor(2048, 1, 1);
+    if (!AudioCtx) {
+      throw new Error('Web Audio API is unavailable in this browser context.');
+    }
+
+    this.pttOpening = true;
+    this.pttAbortRequested = false;
+    this.pttChunksSent = 0;
+    this.pttPeakRms = 0;
+    this.pttActivityStartedOnServer = false;
+
+    // Unlock native-rate AudioContext synchronously during user gesture BEFORE awaiting getUserMedia
+    const micCtx = new AudioCtx();
+    if (micCtx.state === 'suspended') {
+      void micCtx.resume().catch(() => {});
+    }
+    this.micCtx = micCtx;
+    this.setStatus('transmitting_ptt', 'Opening microphone...');
+
+    try {
+      this.micStream = await this.requestMicrophoneStream();
+    } catch (err) {
+      this.pttOpening = false;
+      this.cleanupMicCaptureNodes();
+      this.setStatus('standby', 'Microphone permission denied — use TX bar below');
+      throw err;
+    }
+
+    // Abort cleanly if user released or disconnected while permission dialog / mic open was pending
+    if (this.pttAbortRequested || !this.session) {
+      this.pttOpening = false;
+      this.cleanupMicCaptureNodes();
+      if (this.session) {
+        this.setStatus('standby', 'PTT cancelled before audio capture started');
+      }
+      return;
+    }
+
+    if (micCtx.state === 'suspended') {
+      await micCtx.resume().catch(() => {});
+    }
+
+    if (this.manualActivitySignaling) {
+      try {
+        this.session.sendRealtimeInput({ activityStart: {} });
+        this.pttActivityStartedOnServer = true;
+      } catch {}
+    }
 
     this.isTransmittingPtt = true;
-    this.setStatus('transmitting_ptt', 'PTT TX LIVE (16kHz PCM)');
+    this.pttOpening = false;
+    this.setStatus('transmitting_ptt', '🎙️ MIC LIVE — Speak now, then tap/release to send');
 
-    this.micProcessor.onaudioprocess = (event: AudioProcessingEvent) => {
+    const processChunk = (rawInput: Float32Array) => {
       if (!this.isTransmittingPtt || !this.session) return;
-      const inputData = event.inputBuffer.getChannelData(0);
 
-      let sumSq = 0;
-      for (let i = 0; i < inputData.length; i += 8) {
-        sumSq += inputData[i] * inputData[i];
+      const { samples, rms } = normalizeMicChunkForSpeech(rawInput);
+      if (rms > this.pttPeakRms) {
+        this.pttPeakRms = rms;
       }
-      const rms = Math.min(1, Math.sqrt(sumSq / Math.max(1, inputData.length / 8)) * 4.0);
-      this.callbacks.onAudioLevel?.(rms);
+      this.callbacks.onAudioLevel?.(Math.min(1, rms * 5.5));
 
       const base64Pcm = encodeFloat32ToBase64Pcm16(
-        inputData,
-        this.micCtx?.sampleRate || 16000,
+        samples,
+        micCtx.sampleRate || 48000,
         16000
       );
 
@@ -1297,19 +1520,115 @@ Respond in character as ${persona.displayName} (${persona.role}) over tactical v
             mimeType: 'audio/pcm;rate=16000',
           },
         });
+        this.pttChunksSent++;
+        if (this.pttChunksSent === 1 || this.pttChunksSent % 6 === 0) {
+          const pct = Math.min(100, Math.round(this.pttPeakRms * 550));
+          if (this.pttPeakRms < 0.0012 && this.pttChunksSent >= 8) {
+            this.setStatus(
+              'transmitting_ptt',
+              `⚠️ Mic signal 0% (check mute/input!) · ${this.pttChunksSent} pkts`
+            );
+          } else {
+            this.setStatus(
+              'transmitting_ptt',
+              `🎙️ TX LIVE · ${this.pttChunksSent} pkts · Mic ${pct}%`
+            );
+          }
+        }
       } catch {}
     };
 
-    this.micSource.connect(this.micProcessor);
-    this.micProcessor.connect(this.micCtx.destination);
+    this.micSource = micCtx.createMediaStreamSource(this.micStream);
+    this.micSilentGain = micCtx.createGain();
+    this.micSilentGain.gain.value = 0;
+    this.micSilentGain.connect(micCtx.destination);
+
+    // Prefer glitch-free AudioWorklet off main thread; fall back cleanly to ScriptProcessorNode
+    let connectedWorklet = false;
+    if (
+      typeof AudioWorkletNode !== 'undefined' &&
+      micCtx.audioWorklet &&
+      typeof URL !== 'undefined' &&
+      typeof URL.createObjectURL === 'function' &&
+      typeof Blob !== 'undefined'
+    ) {
+      const workletCode = `
+        class PixelOpsPttProcessor extends AudioWorkletProcessor {
+          constructor() {
+            super();
+            this._buf = new Float32Array(2048);
+            this._pos = 0;
+          }
+          process(inputs) {
+            const ch = inputs[0] && inputs[0][0];
+            if (!ch) return true;
+            for (let i = 0; i < ch.length; i++) {
+              this._buf[this._pos++] = ch[i];
+              if (this._pos >= this._buf.length) {
+                this.port.postMessage(this._buf.slice(0));
+                this._pos = 0;
+              }
+            }
+            return true;
+          }
+        }
+        registerProcessor('pixelops-ptt-capture', PixelOpsPttProcessor);
+      `;
+      let blobUrl = '';
+      try {
+        blobUrl = URL.createObjectURL(new Blob([workletCode], { type: 'application/javascript' }));
+        await micCtx.audioWorklet.addModule(blobUrl);
+        URL.revokeObjectURL(blobUrl);
+        blobUrl = '';
+        if (this.isTransmittingPtt && this.micCtx === micCtx && this.micSource && this.micSilentGain) {
+          const workletNode = new AudioWorkletNode(micCtx, 'pixelops-ptt-capture');
+          workletNode.port.onmessage = (ev: MessageEvent) => {
+            if (ev.data instanceof Float32Array) {
+              processChunk(ev.data);
+            }
+          };
+          this.micSource.connect(workletNode);
+          workletNode.connect(this.micSilentGain);
+          this.micWorkletNode = workletNode;
+          connectedWorklet = true;
+        }
+      } catch {
+        if (blobUrl) {
+          try {
+            URL.revokeObjectURL(blobUrl);
+          } catch {}
+        }
+      }
+    }
+
+    if (!connectedWorklet && this.isTransmittingPtt && this.micCtx === micCtx && this.micSource && this.micSilentGain) {
+      this.micProcessor = micCtx.createScriptProcessor(4096, 1, 1);
+      this.micProcessor.onaudioprocess = (event: AudioProcessingEvent) => {
+        processChunk(new Float32Array(event.inputBuffer.getChannelData(0)));
+      };
+      this.micSource.connect(this.micProcessor);
+      this.micProcessor.connect(this.micSilentGain);
+    }
   }
 
   /**
-   * Releases Push-To-Talk and sends `{ audioStreamEnd: true }` (or dispatches spoken STT in Relay mode).
+   * Releases Push-To-Talk, sends a short trailing silence pad + explicit `activityEnd` (or `audioStreamEnd`),
+   * or dispatches captured speech in Relay mode.
    */
   public stopPushToTalk(): void {
+    if (this.pttOpening) {
+      this.pttAbortRequested = true;
+      this.isTransmittingPtt = false;
+      return;
+    }
+
     const wasTransmitting = this.isTransmittingPtt;
+    const chunksSent = this.pttChunksSent;
+    const peakRms = this.pttPeakRms;
+    const hadServerActivityStart = this.pttActivityStartedOnServer;
+
     this.isTransmittingPtt = false;
+    this.pttActivityStartedOnServer = false;
     this.callbacks.onAudioLevel?.(0);
 
     if (this.speechRecognition) {
@@ -1319,35 +1638,56 @@ Respond in character as ${persona.displayName} (${persona.role}) over tactical v
       this.speechRecognition = null;
     }
 
-    try {
-      this.micProcessor?.disconnect();
-      this.micSource?.disconnect();
-    } catch {}
-    this.micProcessor = null;
-    this.micSource = null;
-
-    if (this.micStream) {
-      for (const track of this.micStream.getTracks()) {
-        try {
-          track.stop();
-        } catch {}
-      }
-      this.micStream = null;
-    }
-
-    if (this.micCtx && this.micCtx.state !== 'closed') {
-      this.micCtx.close().catch(() => {});
-    }
-    this.micCtx = null;
+    this.cleanupMicCaptureNodes();
 
     if (!wasTransmitting) return;
 
     if (this.session) {
-      try {
-        this.session.sendRealtimeInput({ audioStreamEnd: true });
-      } catch {}
+      if (chunksSent > 0) {
+        try {
+          // Trailing 16kHz silence frame prevents the final spoken word from clipping right on release
+          const silenceFrames = this.manualActivitySignaling ? 1600 : 4800;
+          const silenceB64 = encodeFloat32ToBase64Pcm16(
+            new Float32Array(silenceFrames),
+            16000,
+            16000
+          );
+          this.session.sendRealtimeInput({
+            audio: {
+              data: silenceB64,
+              mimeType: 'audio/pcm;rate=16000',
+            },
+          });
+        } catch {}
+      }
+
+      if (this.manualActivitySignaling) {
+        if (hadServerActivityStart) {
+          try {
+            this.session.sendRealtimeInput({ activityEnd: {} });
+          } catch {}
+        }
+      } else {
+        try {
+          this.session.sendRealtimeInput({ audioStreamEnd: true });
+        } catch {}
+      }
+
       if (this.status === 'transmitting_ptt') {
-        this.setStatus('standby', 'Awaiting operative reply...');
+        if (chunksSent === 0) {
+          this.setStatus(
+            'standby',
+            '0 audio frames captured — tap PTT once, speak, then tap to send'
+          );
+        } else if (peakRms < 0.0012) {
+          this.setStatus(
+            'standby',
+            `⚠️ Sent ${chunksSent} silent pkts (0% mic) — check mic mute or input device`
+          );
+        } else {
+          this.setStatus('standby', `Sent ${chunksSent} voice pkts — awaiting operative reply...`);
+          this.startReplyWatchdog(chunksSent);
+        }
       }
       return;
     }
@@ -1360,7 +1700,7 @@ Respond in character as ${persona.displayName} (${persona.role}) over tactical v
       if (captured) {
         void this.executeRelayTurn(captured);
       } else if (this.status === 'transmitting_ptt') {
-        this.setStatus('standby', 'Hold PTT & speak clearly, or type in TX bar');
+        this.setStatus('standby', 'Tap or hold PTT & speak clearly, or type in TX bar');
       }
     }
   }
@@ -1371,11 +1711,18 @@ Respond in character as ${persona.displayName} (${persona.role}) over tactical v
   public sendTextDispatchOverRadio(text: string): void {
     const clean = text.trim();
     if (!clean || !this.isCarrierActive()) return;
+    this.clearReplyWatchdog();
     this.bargeInInterrupt();
     this.appendOrMergeTranscript('COMMANDER', clean, false);
 
     if (this.session) {
-      this.session.sendRealtimeInput({ text: clean });
+      if (this.manualActivitySignaling) {
+        this.session.sendRealtimeInput({ activityStart: {} });
+        this.session.sendRealtimeInput({ text: clean });
+        this.session.sendRealtimeInput({ activityEnd: {} });
+      } else {
+        this.session.sendRealtimeInput({ text: clean });
+      }
       return;
     }
 
@@ -1390,7 +1737,11 @@ Respond in character as ${persona.displayName} (${persona.role}) over tactical v
   }
 
   public async disconnect(): Promise<void> {
+    this.clearReplyWatchdog();
+    this.pttAbortRequested = true;
     this.stopPushToTalk();
+    this.pttOpening = false;
+    this.cleanupMicCaptureNodes();
     this.bargeInInterrupt();
     this.relayActive = false;
     this.transportRoute = null;

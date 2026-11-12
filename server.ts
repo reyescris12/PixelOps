@@ -2178,28 +2178,50 @@ async function startServer() {
 
       const rawText = await externalRes.text();
       let cleanText = rawText;
+      let pageTitle = '';
       if (contentType.includes('html') || rawText.includes('<html')) {
-        cleanText = rawText
+        const titleMatch = rawText.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i);
+        if (titleMatch) {
+          pageTitle = titleMatch[1]
+            .replace(/&quot;/g, '"')
+            .replace(/&#(?:39|8217|x27);/gi, "'")
+            .replace(/&amp;/g, '&')
+            .replace(/\s+/g, ' ')
+            .trim();
+        }
+
+        const strippedBoilerplate = rawText
           .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, ' ')
           .replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, ' ')
           .replace(/<noscript\b[^<]*(?:(?!<\/noscript>)<[^<]*)*<\/noscript>/gi, ' ')
-          .replace(/<svg\b[^<]*(?:(?!<\/svg>)<[^<]*)*<\/svg>/gi, ' ')
-          .replace(/<[^>]+>/g, ' ')
-          .replace(/&quot;/g, '"')
-          .replace(/&#39;/g, "'")
-          .replace(/&amp;/g, '&')
-          .replace(/&lt;/g, '<')
-          .replace(/&gt;/g, '>')
-          .replace(/\s+/g, ' ')
-          .trim();
+          .replace(/<svg\b[^<]*(?:(?!<\/svg>)<[^<]*)*<\/svg>/gi, ' ');
+
+        const withoutNavFooter = strippedBoilerplate
+          .replace(/<nav\b[^>]*>[\s\S]*?<\/nav>/gi, ' ')
+          .replace(/<footer\b[^>]*>[\s\S]*?<\/footer>/gi, ' ');
+
+        const decodeHtmlToText = (html: string) =>
+          html
+            .replace(/<[^>]+>/g, ' ')
+            .replace(/&quot;/g, '"')
+            .replace(/&#(?:39|8217|x27);/gi, "'")
+            .replace(/&amp;/g, '&')
+            .replace(/&lt;/g, '<')
+            .replace(/&gt;/g, '>')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+        const candidateClean = decodeHtmlToText(withoutNavFooter);
+        cleanText = candidateClean.length >= 150 ? candidateClean : decodeHtmlToText(strippedBoilerplate);
       }
 
       res.json({
         ok: externalRes.ok,
         status: externalRes.status,
         url: currentUrl,
+        title: pageTitle,
         contentType: contentType || 'text/plain',
-        text: cleanText.slice(0, 10000),
+        text: cleanText.slice(0, 18000),
         totalLength: cleanText.length,
       });
     } catch (err: any) {

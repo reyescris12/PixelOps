@@ -216,9 +216,20 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
     if (isOpen) {
       loadFiles(true, false);
       repairAllStoredReports()
-        .then((repaired) => {
+        .then(async (repaired) => {
           if (repaired > 0) {
-            loadFiles(true, true);
+            await loadFiles(true, true);
+          }
+          const intelFiles = await listWorkspaceFiles('intel');
+          const hasValidISW = intelFiles.some((f) =>
+            f.path.replace(/^\/+/, '').startsWith('intel/sources/isw_research/')
+          );
+          if (!hasValidISW) {
+            const { ingestISWResearchHeadless } = await import('../services/iswFeedService');
+            const res = await ingestISWResearchHeadless();
+            if (res.ingestedCount > 0) {
+              await loadFiles(true, true);
+            }
           }
         })
         .catch(() => {});
@@ -286,6 +297,15 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
   const handleRefresh = async () => {
     setIsRefreshing(true);
     playBeep('tap');
+    await repairAllStoredReports().catch(() => {});
+    import('../services/iswFeedService')
+      .then((m) => m.ingestISWResearchHeadless())
+      .then((res) => {
+        if (res.ingestedCount > 0) {
+          loadFiles(true, true);
+        }
+      })
+      .catch(() => {});
     await loadFiles(true);
     setTimeout(() => setIsRefreshing(false), 300);
   };

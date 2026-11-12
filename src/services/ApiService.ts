@@ -90,6 +90,8 @@ import {
   retrieveRelevantISWBriefings,
   buildAgentISWContext,
   initISWFeedIngestion,
+  fetchISWArticleByUrl,
+  isInvalidWebArticlePage,
 } from './iswFeedService';
 import { addStrategyBoardTasks } from './StrategyBoardService';
 
@@ -1779,32 +1781,75 @@ ${findings || 'No additional telemetry findings attached.'}
       // C. Live Real-Time Multi-Engine Web Search (DuckDuckGo Organic, Yahoo Organic, Jina Reader, Yahoo Finance, CoinGecko, Reddit, Google News, Wikipedia)
       const effectiveSearchTerm = (coreQuery && coreQuery.length > 2 ? coreQuery : cleanQuery) || rawQuery;
 
-      // 0. Direct URL / Domain Inspection (If operative query specifies a direct website or URL)
-      const isUrlQuery = /^https?:\/\//i.test(rawQuery.trim()) || /^[a-zA-Z0-9-]+\.(com|org|io|dev|app|net|co|gov|edu)(\/.*)?$/i.test(rawQuery.trim());
-      if (isUrlQuery) {
-        let targetUrl = rawQuery.trim();
+      // 0. Direct URL / Domain Inspection (If operative query specifies a direct website or embedded URL)
+      const embeddedUrlMatch = rawQuery.match(/https?:\/\/[^\s"'<>]+/i);
+      const isBareDomain = /^[a-zA-Z0-9-]+\.(com|org|io|dev|app|net|co|gov|edu)(\/[^\s]*)?$/i.test(rawQuery.trim());
+      if (embeddedUrlMatch || isBareDomain) {
+        let targetUrl = (embeddedUrlMatch ? embeddedUrlMatch[0] : rawQuery.trim()).replace(/[.,;!?)]+$/, '');
         if (!targetUrl.startsWith('http')) targetUrl = `https://${targetUrl}`;
         try {
-          // Attempt reading page content via /api/fetch or r.jina.ai
-          const pageData = await executeSafeOperation(
-            async (signal) => {
-              const localFetch = await fetch(`/api/fetch?url=${encodeURIComponent(targetUrl)}`, { signal }).catch(() => null);
-              if (localFetch && localFetch.ok) return await localFetch.json();
-              const rJina = await fetch(`https://r.jina.ai/${encodeURIComponent(targetUrl)}`, { headers: { Accept: 'application/json' }, signal }).catch(() => null);
-              if (rJina && rJina.ok) return await rJina.json();
-              return null;
-            },
-            { timeoutMs: 5000, maxRetries: 1, fallbackValue: null, operationName: 'direct_url_reader' }
-          );
-
-          if (pageData) {
-            const pageText = pageData.text || pageData.data?.content || pageData.data?.description || JSON.stringify(pageData.data || '');
-            if (pageText && pageText.length > 20) {
+          if (/understandingwar\.org/i.test(targetUrl)) {
+            const iswArticle = await fetchISWArticleByUrl(targetUrl);
+            if (iswArticle) {
               results.push({
-                title: pageData.data?.title || `Direct Site Telemetry: ${targetUrl}`,
-                snippet: pageText.slice(0, 350),
-                extract: pageText.slice(0, 800),
-                url: targetUrl,
+                title: iswArticle.title,
+                snippet: iswArticle.summary,
+                extract: iswArticle.content.slice(0, 3000),
+                url: iswArticle.url,
+              });
+            }
+          } else {
+            // Attempt reading page content via validated /api/fetch or unencoded r.jina.ai
+            const pageData = await executeSafeOperation(
+              async (signal) => {
+                // Prefer Jina Reader first for clean Markdown article extraction, or validated local proxy
+                const rJina = await fetch(`https://r.jina.ai/${targetUrl}`, {
+                  headers: { Accept: 'application/json' },
+                  signal,
+                }).catch(() => null);
+                if (rJina && rJina.ok) {
+                  const jJson: any = await rJina.json().catch(() => null);
+                  const jTitle = String(jJson?.data?.title || jJson?.title || '').trim();
+                  const jContent = String(jJson?.data?.content || jJson?.content || '').trim();
+                  if (
+                    !(typeof jJson?.code === 'number' && jJson.code >= 400) &&
+                    !isInvalidWebArticlePage(jTitle, jContent, jJson?.data?.status)
+                  ) {
+                    return {
+                      title: jTitle,
+                      text: jContent,
+                      url: String(jJson?.data?.finalUrl || jJson?.data?.url || targetUrl),
+                    };
+                  }
+                }
+
+                const localFetch = await fetch(`/api/fetch?url=${encodeURIComponent(targetUrl)}`, { signal }).catch(() => null);
+                if (localFetch && localFetch.ok && (localFetch.headers.get('content-type') || '').includes('application/json')) {
+                  const lJson: any = await localFetch.json().catch(() => null);
+                  const lText = String(lJson?.text || (typeof lJson?.data === 'string' ? lJson.data : '') || '').trim();
+                  if (
+                    lJson?.ok === true &&
+                    (typeof lJson.status !== 'number' || lJson.status < 400) &&
+                    !isInvalidWebArticlePage(String(lJson?.title || ''), lText, lJson.status)
+                  ) {
+                    return {
+                      title: String(lJson?.title || '').trim(),
+                      text: lText,
+                      url: String(lJson?.url || targetUrl),
+                    };
+                  }
+                }
+                return null;
+              },
+              { timeoutMs: 7500, maxRetries: 1, fallbackValue: null, operationName: 'direct_url_reader' }
+            );
+
+            if (pageData && pageData.text && pageData.text.length > 80) {
+              results.push({
+                title: pageData.title || `Direct Site Telemetry: ${targetUrl}`,
+                snippet: pageData.text.slice(0, 400).replace(/\s+/g, ' ').trim(),
+                extract: pageData.text.slice(0, 2500),
+                url: pageData.url || targetUrl,
               });
             }
           }
@@ -1817,7 +1862,9 @@ ${findings || 'No additional telemetry findings attached.'}
           const multiSearchData = await executeSafeOperation(
             async (signal) => {
               const res = await fetch(`/api/search?q=${encodeURIComponent(rawQuery)}&limit=${limit}`, { signal });
-              if (res.ok) return await res.json();
+              if (res.ok && (res.headers.get('content-type') || '').includes('application/json')) {
+                return await res.json();
+              }
               return null;
             },
             { timeoutMs: 9500, maxRetries: 1, fallbackValue: null, operationName: 'live_web_search_multi_engine' }
@@ -1828,9 +1875,18 @@ ${findings || 'No additional telemetry findings attached.'}
               if (results.length >= limit) break;
               if (!item || !item.url) continue;
               if (results.some((r) => r.url === item.url)) continue;
+              const itemTitle = String(item.title || '');
+              const itemBody = String(item.extract || item.snippet || '');
+              if (
+                /\b(page not found|404 not found)\b|oops!\s*that page can[’']t be found/i.test(
+                  `${itemTitle} ${itemBody}`
+                )
+              ) {
+                continue;
+              }
               const srcTag = item.source ? `[${item.source}] ` : '';
               results.push({
-                title: `${srcTag}${item.title}`,
+                title: `${srcTag}${itemTitle}`,
                 snippet: item.snippet,
                 extract: item.extract || item.snippet,
                 url: item.url,
@@ -2982,25 +3038,61 @@ ${findings || 'No additional telemetry findings attached.'}
       // If direct fetch was blocked by client CORS or timed out, attempt seamless universal web reader proxy
       if (!gatewayPayload.ok && method === 'GET') {
         try {
-          // Fallback 1: Local / Cloudflare proxy
-          const proxyRes = await fetch(`/api/fetch?url=${encodeURIComponent(url)}`).catch(() => null);
-          if (proxyRes && proxyRes.ok) {
-            const pData = await proxyRes.json();
-            gatewayPayload.ok = true;
-            gatewayPayload.status = pData.status || 200;
-            gatewayPayload.statusText = 'OK (Universal Proxy)';
-            gatewayPayload.data = pData.data || pData.text;
-          } else {
-            // Fallback 2: Universal Jina Reader proxy
-            const rJinaRes = await fetch(`https://r.jina.ai/${encodeURIComponent(url)}`, {
+          if (/understandingwar\.org/i.test(url)) {
+            const iswArt = await fetchISWArticleByUrl(url);
+            if (iswArt) {
+              gatewayPayload.ok = true;
+              gatewayPayload.status = 200;
+              gatewayPayload.statusText = 'OK (ISW Research Reader)';
+              gatewayPayload.data = {
+                title: iswArt.title,
+                url: iswArt.url,
+                published: iswArt.published,
+                summary: iswArt.summary,
+                keyTakeaways: iswArt.keyTakeaways,
+                content: iswArt.content,
+              };
+            }
+          }
+
+          // Fallback 1: Local / Cloudflare proxy (must report upstream ok === true and status < 400)
+          if (!gatewayPayload.ok) {
+            const proxyRes = await fetch(`/api/fetch?url=${encodeURIComponent(url)}`).catch(() => null);
+            if (proxyRes && proxyRes.ok && (proxyRes.headers.get('content-type') || '').includes('application/json')) {
+              const pData = await proxyRes.json().catch(() => null);
+              if (pData && pData.ok === true && (typeof pData.status !== 'number' || pData.status < 400)) {
+                const textPayload = typeof pData.text === 'string' ? pData.text : '';
+                if (!textPayload || !isInvalidWebArticlePage(String(pData.title || ''), textPayload, pData.status)) {
+                  gatewayPayload.ok = true;
+                  gatewayPayload.status = pData.status || 200;
+                  gatewayPayload.statusText = 'OK (Universal Proxy)';
+                  gatewayPayload.data = pData.data ?? pData.text;
+                }
+              } else if (pData && typeof pData.status === 'number') {
+                gatewayPayload.status = pData.status;
+                gatewayPayload.statusText = `Upstream HTTP ${pData.status}`;
+              }
+            }
+          }
+
+          // Fallback 2: Universal Jina Reader proxy (requires unencoded target URL path)
+          if (!gatewayPayload.ok) {
+            const rJinaRes = await fetch(`https://r.jina.ai/${url}`, {
               headers: { Accept: 'application/json' },
             }).catch(() => null);
             if (rJinaRes && rJinaRes.ok) {
               const jData: any = await rJinaRes.json().catch(() => null);
-              gatewayPayload.ok = true;
-              gatewayPayload.status = 200;
-              gatewayPayload.statusText = 'OK (Universal Web Reader)';
-              gatewayPayload.data = jData?.data?.content || jData?.data || 'Web content retrieved successfully';
+              const jTitle = String(jData?.data?.title || jData?.title || '').trim();
+              const jContent = String(jData?.data?.content || jData?.content || '').trim();
+              if (
+                !(typeof jData?.code === 'number' && jData.code >= 400) &&
+                !isInvalidWebArticlePage(jTitle, jContent, jData?.data?.status)
+              ) {
+                gatewayPayload.ok = true;
+                gatewayPayload.status = 200;
+                gatewayPayload.statusText = 'OK (Universal Web Reader)';
+                gatewayPayload.data = jContent;
+              }
             }
           }
         } catch {}
@@ -5179,7 +5271,17 @@ export async function generateLocalHeuristicCard(params: {
       const iswHits = await retrieveRelevantISWBriefings(rawPrompt, 2);
       if (iswHits.length > 0) {
         iswResearchNote = iswHits
-          .map((h, i) => `### ISW Conflict Research [${i + 1}]: ${h.title}\n- **Source:** ${h.url}\n- **Strategic Theater:** ${h.theater.toUpperCase()} (${h.coordinates.lat.toFixed(4)}, ${h.coordinates.lon.toFixed(4)})\n- **Takeaways:** ${h.summary}`)
+          .map((h, i) => {
+            const cleanExcerpt = h.content
+              .replace(/^(?:#\s+[^\n]+\n+)?(?:\*\*[^*\n]+:\*\*[^\n]*\n+)+(?:---\n+)?/, '')
+              .trim()
+              .slice(0, 1400);
+            const takeawaysBlock =
+              h.keyTakeaways && h.keyTakeaways.length > 0
+                ? `\n- **Key Takeaways:**\n${h.keyTakeaways.slice(0, 4).map((t) => `  - ${t}`).join('\n')}`
+                : '';
+            return `### ISW Conflict Research [${i + 1}]: ${h.title}\n- **Source:** ${h.url}\n- **Strategic Theater:** ${h.theater.toUpperCase()} (${h.coordinates.lat.toFixed(4)}, ${h.coordinates.lon.toFixed(4)})\n- **Summary:** ${h.summary}${takeawaysBlock}\n- **Operational Excerpt:**\n${cleanExcerpt}`;
+          })
           .join('\n\n');
       }
     } catch {}

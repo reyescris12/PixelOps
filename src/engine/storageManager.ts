@@ -427,9 +427,14 @@ export async function listWorkspaceFiles(categoryFilter?: string): Promise<Works
     }
   }
 
-  let fileList = Array.from(mergedMap.values()).filter(
-    (f) => !isWorkspaceFileDeleted(f.path, f.updatedAt)
-  );
+  let fileList = Array.from(mergedMap.values()).filter((f) => {
+    if (isWorkspaceFileDeleted(f.path, f.updatedAt)) return false;
+    if (isCorruptedScrapedWorkspaceFile(f.path, f.content || '')) {
+      purgeWorkspaceFileWithoutTombstone(f.path).catch(() => {});
+      return false;
+    }
+    return true;
+  });
 
   // Auto-sanitize all markdown reports to strip duplicate sections and correct mismatched topic tags
   for (let i = 0; i < fileList.length; i++) {
@@ -613,9 +618,117 @@ export async function readWorkspaceFile(rawPath: string): Promise<WorkspaceFileR
 }
 
 /**
+ * Detects workspace files that captured upstream HTTP 404 / "Page not found" error pages,
+ * anti-bot challenge interstitials, or raw website navigation menus instead of article text.
+ */
+export function isCorruptedScrapedWorkspaceFile(rawPath: string, content: string): boolean {
+  const norm = normalizeFilePath(rawPath);
+  if (!norm) return false;
+
+  const isScrapedDomain =
+    norm.startsWith('intel/sources/isw_research/') ||
+    norm.startsWith('intel/') ||
+    norm.startsWith('reports/');
+  if (!isScrapedDomain) return false;
+
+  const fileName = norm.split('/').pop() || norm;
+  if (
+    /page_not_found|oops_that_page|just_a_moment|404_not_found|isw_isw_research_library|isw_research_library\.md$/i.test(
+      fileName
+    )
+  ) {
+    return true;
+  }
+
+  const text = String(content || '').trim();
+  if (!text) return norm.startsWith('intel/sources/isw_research/');
+
+  // Explicit 404 / error / anti-bot interstitial signatures in headings or body
+  if (
+    /^#{1,3}\s*(?:ISW:\s*)?(?:page not found\b|404\b|oops!\s*that page can[’']t be found|nothing found\b|just a moment|attention required|access denied|research library\s*(?:[-|]|$))/im.test(
+      text
+    )
+  ) {
+    return true;
+  }
+
+  if (
+    /oops!\s*that page can[’']t be found|page not found\s*[-|]\s*institute for the study of war|enable javascript and cookies to continue|checking your browser before accessing/i.test(
+      text
+    )
+  ) {
+    return true;
+  }
+
+  // Legacy broken ISW scrape signatures (catalog index menu dumps or dead URL stubs)
+  if (norm.startsWith('intel/sources/isw_research/')) {
+    if (
+      /Recommended%20Reading%3A%20Research%20Library/i.test(text) ||
+      /Live tactical assessment ingested from understandingwar\.org research archives\./i.test(text) ||
+      (/\[Skip to content\]\(https?:\/\/(?:www\.)?understandingwar\.org/i.test(text) &&
+        !/^##\s+(?:Toplines|Key Takeaways|Executive Key Takeaways)/im.test(text))
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Purges a system-corrupted workspace file from IndexedDB, LocalStorage VFS, and memory
+ * WITHOUT recording a user deletion tombstone, allowing clean re-ingestion.
+ */
+export async function purgeWorkspaceFileWithoutTombstone(rawPath: string): Promise<boolean> {
+  const norm = normalizeFilePath(rawPath);
+  if (!norm) return false;
+  let purged = false;
+
+  try {
+    if (ledgerDb && ledgerDb.workspace_files) {
+      const existing = await ledgerDb.workspace_files.where('path').equals(norm).toArray();
+      for (const item of existing) {
+        if (item.id !== undefined) {
+          await ledgerDb.workspace_files.delete(item.id);
+          purged = true;
+        }
+      }
+    }
+  } catch {}
+
+  if (typeof localStorage !== 'undefined') {
+    try {
+      const raw = localStorage.getItem(VFS_KEY);
+      if (raw) {
+        const vfs = JSON.parse(raw);
+        let modified = false;
+        for (const k of Object.keys(vfs)) {
+          if (normalizeFilePath(k) === norm) {
+            delete vfs[k];
+            modified = true;
+            purged = true;
+          }
+        }
+        if (modified) {
+          localStorage.setItem(VFS_KEY, JSON.stringify(vfs));
+        }
+      }
+    } catch {}
+  }
+
+  if (memoryFileMap.has(norm)) {
+    memoryFileMap.delete(norm);
+    purged = true;
+  }
+
+  return purged;
+}
+
+/**
  * Automatically inspects and repairs all stored workspace reports in IndexedDB and LocalStorage VFS,
- * stripping duplicated sections, eliminating repeated paragraphs, and correcting mismatched topic tags.
- * Returns the count of repaired reports.
+ * purging corrupted 404/"Page not found" scrape artifacts, stripping duplicated sections,
+ * eliminating repeated paragraphs, and correcting mismatched topic tags.
+ * Returns the count of repaired or purged reports.
  */
 export async function repairAllStoredReports(): Promise<number> {
   let repairedCount = 0;
@@ -625,8 +738,16 @@ export async function repairAllStoredReports(): Promise<number> {
     if (ledgerDb && ledgerDb.workspace_files) {
       const dbEntries = await ledgerDb.workspace_files.toArray();
       for (const entry of dbEntries) {
-        if (!entry.content) continue;
         const norm = normalizeFilePath(entry.path);
+        if (isCorruptedScrapedWorkspaceFile(norm, entry.content || '')) {
+          if (entry.id !== undefined) {
+            await ledgerDb.workspace_files.delete(entry.id);
+            memoryFileMap.delete(norm);
+            repairedCount++;
+          }
+          continue;
+        }
+        if (!entry.content) continue;
         if (
           norm.endsWith('.md') ||
           norm.startsWith('reports/') ||
@@ -662,6 +783,13 @@ export async function repairAllStoredReports(): Promise<number> {
         for (const [rawPath, meta] of Object.entries(vfs)) {
           if (!meta || typeof (meta as any).content !== 'string') continue;
           const norm = normalizeFilePath(rawPath);
+          if (isCorruptedScrapedWorkspaceFile(norm, (meta as any).content)) {
+            delete vfs[rawPath];
+            memoryFileMap.delete(norm);
+            vfsChanged = true;
+            repairedCount++;
+            continue;
+          }
           if (
             norm.endsWith('.md') ||
             norm.startsWith('reports/') ||
@@ -689,33 +817,37 @@ export async function repairAllStoredReports(): Promise<number> {
   }
 
   // 3. Update in-memory file map and notify active listeners
-  if (repairedCount > 0) {
-    for (const [norm, rec] of memoryFileMap.entries()) {
-      if (
-        rec.content &&
-        (norm.endsWith('.md') ||
-          norm.startsWith('reports/') ||
-          norm.startsWith('intel/') ||
-          rec.format === 'markdown')
-      ) {
-        const { content: sanitized, changed } = sanitizeAndDeduplicateReportContent(
-          rec.content,
-          norm
-        );
-        if (changed) {
-          rec.content = sanitized;
-          rec.sizeBytes = sanitized.length;
-          rec.previewSnippet = sanitized.slice(0, 160).replace(/\n/g, ' ');
-          memoryFileMap.set(norm, rec);
-        }
+  for (const [norm, rec] of Array.from(memoryFileMap.entries())) {
+    if (isCorruptedScrapedWorkspaceFile(norm, rec.content || '')) {
+      memoryFileMap.delete(norm);
+      repairedCount++;
+      continue;
+    }
+    if (
+      repairedCount > 0 &&
+      rec.content &&
+      (norm.endsWith('.md') ||
+        norm.startsWith('reports/') ||
+        norm.startsWith('intel/') ||
+        rec.format === 'markdown')
+    ) {
+      const { content: sanitized, changed } = sanitizeAndDeduplicateReportContent(
+        rec.content,
+        norm
+      );
+      if (changed) {
+        rec.content = sanitized;
+        rec.sizeBytes = sanitized.length;
+        rec.previewSnippet = sanitized.slice(0, 160).replace(/\n/g, ' ');
+        memoryFileMap.set(norm, rec);
       }
     }
+  }
 
-    if (typeof window !== 'undefined') {
-      try {
-        window.dispatchEvent(new CustomEvent('pixelops:workspace_files_changed'));
-      } catch {}
-    }
+  if (repairedCount > 0 && typeof window !== 'undefined') {
+    try {
+      window.dispatchEvent(new CustomEvent('pixelops:workspace_files_changed'));
+    } catch {}
   }
 
   return repairedCount;

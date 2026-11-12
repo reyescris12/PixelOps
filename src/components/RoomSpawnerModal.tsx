@@ -44,7 +44,7 @@ import {
   toggleWorkflowInRoomDeck,
   moveWorkflowToRoomDeck,
 } from '../engine/intelligencePlaybooks';
-import { RoomId } from './SpriteCanvas';
+import { RoomId } from './spriteWorld';
 
 interface RoomSpawnerModalProps {
   isOpen: boolean;

@@ -1,5 +1,6 @@
 import { ThemeId } from '../context/ThemeContext';
-import { executeAgentDirective, AgentExecutionCard } from './ApiService';
+import { executeAgentDirective } from './agentEngineLazy';
+import { AgentExecutionCard } from './ApiCore';
 import { getAgentModelConfig } from './agentStore';
 import {
   dispatchOutboxNotification,

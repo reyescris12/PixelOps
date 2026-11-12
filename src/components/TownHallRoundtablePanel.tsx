@@ -15,13 +15,9 @@ import {
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { useCrew, SPRITE_VARIANTS } from '../context/CrewContext';
-import { AgentSpriteFigure, ROOM_METADATA, RoomId } from './SpriteCanvas';
-import {
-  RoundtableActionItem,
-  RoundtableMeetingSession,
-  RoundtableParticipantPayload,
-  isValidRealTask,
-} from '../services/ApiService';
+import { AgentSpriteFigure } from './AgentSpriteFigure';
+import { ROOM_METADATA, RoomId } from './spriteWorld';
+import { RoundtableActionItem, RoundtableMeetingSession, RoundtableParticipantPayload, isValidRealTask } from '../services/ApiCore';
 
 interface TownHallRoundtablePanelProps {
   sessions: RoundtableMeetingSession[];

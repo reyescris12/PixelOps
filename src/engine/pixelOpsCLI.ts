@@ -49,12 +49,6 @@ import {
   fetchRemoteDevices,
   DeviceInfo,
 } from '../services/AuthService';
-import {
-  syncBidirectional,
-  pushToCloud,
-  pullFromCloud,
-  getSyncStats,
-} from '../services/SyncService';
 
 export interface CLICommandContext {
   crewAgents: Array<{
@@ -960,6 +954,9 @@ export async function executeCLICommand(
   // 14. SYNC [status|push|pull]
   if (action === 'sync') {
     const sub = (args[0] || '').toLowerCase();
+    const { syncBidirectional, pushToCloud, pullFromCloud, getSyncStats } = await import(
+      '../services/SyncService'
+    );
     const stats = getSyncStats();
 
     if (sub === 'status') {

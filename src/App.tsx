@@ -16,14 +16,9 @@ import {
   CLEARANCE_RANKS,
   ServiceRibbonId,
 } from './context/CrewContext';
-import {
-  SpriteCanvas,
-  AgentSpriteFigure,
-  RoomId,
-  ROOM_ORDER,
-  ROOM_METADATA,
-  ROOM_STATIONS,
-} from './components/SpriteCanvas';
+import { SpriteCanvas } from './components/SpriteCanvas';
+import { AgentSpriteFigure } from './components/AgentSpriteFigure';
+import { RoomId, ROOM_ORDER, ROOM_METADATA, ROOM_STATIONS } from './components/spriteWorld';
 import {
   getAllRooms,
   getAllRoomIds,
@@ -42,31 +37,9 @@ import { loadLLMProviderConfig, getLLMAuthInfo } from './services/LLMProviderSer
 import { ThemeSettings } from './components/ThemeSettings';
 import { RetroErrorModal } from './components/RetroErrorModal';
 import { PWAInstallButton, OfflineBanner } from './components/PWAInstallButton';
-import {
-  AgentExecutionCard,
-  PluginConnector,
-  CommandPreferences,
-  RetroAgentError,
-  RetroErrorCode,
-  RetroErrorDescriptor,
-  RoundtableMeetingSession,
-  RoundtableParticipantPayload,
-  createRetroAgentError,
-  classifyRetroErrorCode,
-  loadExecutionCards,
-  saveExecutionCards,
-  loadPlugins,
-  savePlugins,
-  loadPreferences,
-  savePreferences,
-  loadRoundtableSessions,
-  saveRoundtableSessions,
-  executeAgentDirective,
-  executeRoundtableMeeting,
-  auditStorageHealth,
-  RoundtableActionItem,
-  isValidRealTask,
-} from './services/ApiService';
+import { AgentExecutionCard, PluginConnector, CommandPreferences, RetroAgentError, RetroErrorCode, RetroErrorDescriptor, RoundtableMeetingSession, RoundtableParticipantPayload, createRetroAgentError, classifyRetroErrorCode, loadExecutionCards, saveExecutionCards, loadPlugins, savePlugins, loadPreferences, savePreferences, loadRoundtableSessions, saveRoundtableSessions, RoundtableActionItem, isValidRealTask } from './services/ApiCore';
+import { executeAgentDirective, executeRoundtableMeeting, preloadAgentEngine } from './services/agentEngineLazy';
+import { auditStorageHealth } from './services/SafetyService';
 import {
   VaultStartupReport,
   initializeAndValidateVaultOnStartup,
@@ -96,8 +69,6 @@ import { hasProviderApiKey, SUPPORTED_VAULT_PROVIDERS } from './services/BYOKVau
 import { saveAgentModelConfig } from './services/agentStore';
 const NightShiftModal = lazy(() => import('./components/NightShiftModal').then((m) => ({ default: m.NightShiftModal })));
 import { loadNightShiftNotifications, runPendingNightShiftTasks } from './services/NightShiftService';
-import { initClassifiedFeedIngestion } from './services/ClassifiedFeedService';
-import { initISWFeedIngestion } from './services/iswFeedService';
 import { backgroundWorkerEngine } from './services/WorkerService';
 import { InboxProvider } from './context/InboxContext';
 import { CustomPluginConnector, loadCustomPlugins, saveCustomPlugins } from './services/PluginMarketplaceService';
@@ -129,12 +100,19 @@ import {
 } from './engine/intelligencePlaybooks';
 const SyncAccountModal = lazy(() => import('./components/SyncAccountModal').then((m) => ({ default: m.SyncAccountModal })));
 const FeedbackTerminal = lazy(() => import('./components/FeedbackTerminal').then((m) => ({ default: m.FeedbackTerminal })));
-import {
-  startAutoSync,
-  getSyncStats,
-  subscribeSyncStatus,
-  SyncStats,
-} from './services/SyncService';
+import type { SyncStats } from './services/SyncService';
+
+// SyncService is loaded on demand (see the auto-sync effect below) so it stays out of the
+// startup bundle. Until it resolves, the HUD shows a neutral idle snapshot.
+const INITIAL_SYNC_STATS: SyncStats = {
+  filesCount: 0,
+  routinesCount: 0,
+  memoriesCount: 0,
+  lastSyncedAt: null,
+  lastError: null,
+  status: 'idle',
+  autoSyncEnabled: true,
+};
 const PluginMarketplace = lazy(() => import('./components/PluginMarketplace').then((m) => ({ default: m.PluginMarketplace })));
 import { ComposioService } from './services/ComposioService';
 import {
@@ -246,10 +224,25 @@ const CommandCenterContent: React.FC = () => {
         console.log('[OpenRouter] Authenticated successfully via 1-Click PKCE SSO');
       }
     });
-    // Silently initialize background classified feed ingestion pipeline
-    initClassifiedFeedIngestion();
-    // Silently initialize background ISW research ingestion pipeline
-    initISWFeedIngestion();
+    // Background work that is not needed for first paint is scheduled once the browser is idle:
+    // the classified / ISW feed ingestion pipelines (and their large briefing corpora), plus a
+    // warm-up of the agent execution engine so the first directive dispatches without delay.
+    const runWhenIdle = (cb: () => void) => {
+      const ric = (window as any).requestIdleCallback as
+        | ((fn: () => void, opts?: { timeout: number }) => number)
+        | undefined;
+      if (ric) ric(cb, { timeout: 4000 });
+      else setTimeout(cb, 1500);
+    };
+    runWhenIdle(() => {
+      import('./services/ClassifiedFeedService')
+        .then((m) => m.initClassifiedFeedIngestion())
+        .catch((err) => console.warn('[Feeds] Classified feed ingestion failed to start:', err));
+      import('./services/iswFeedService')
+        .then((m) => m.initISWFeedIngestion())
+        .catch((err) => console.warn('[Feeds] ISW feed ingestion failed to start:', err));
+      preloadAgentEngine();
+    });
   }, []);
   const [currentRoom, setCurrentRoom] = useState<RoomId>(
     () => restoredSession?.currentRoom || 'war_room'
@@ -406,7 +399,7 @@ const CommandCenterContent: React.FC = () => {
   };
   const [isSyncModalOpen, setIsSyncModalOpen] = useState(false);
   const [isFeedbackOpen, setIsFeedbackOpen] = useState(false);
-  const [syncStats, setSyncStats] = useState<SyncStats>(() => getSyncStats());
+  const [syncStats, setSyncStats] = useState<SyncStats>(INITIAL_SYNC_STATS);
   const [taskBriefState, setTaskBriefState] = useState<{
     isOpen: boolean;
     brief: TaskBrief | null;
@@ -466,13 +459,23 @@ const CommandCenterContent: React.FC = () => {
 
   // SatCom Multi-Device Cloud Sync Background Service
   useEffect(() => {
-    const stopAutoSync = startAutoSync();
-    const unsub = subscribeSyncStatus((stats) => {
-      setSyncStats(stats);
-    });
+    let cancelled = false;
+    let stopAutoSync: (() => void) | null = null;
+    let unsub: (() => void) | null = null;
+    import('./services/SyncService')
+      .then((sync) => {
+        if (cancelled) return;
+        setSyncStats(sync.getSyncStats());
+        stopAutoSync = sync.startAutoSync();
+        unsub = sync.subscribeSyncStatus((stats) => {
+          setSyncStats(stats);
+        });
+      })
+      .catch((err) => console.warn('[SatCom] Sync service failed to load:', err));
     return () => {
-      stopAutoSync();
-      unsub();
+      cancelled = true;
+      stopAutoSync?.();
+      unsub?.();
     };
   }, []);
 

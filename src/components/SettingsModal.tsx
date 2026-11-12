@@ -22,7 +22,7 @@ import {
   Crosshair,
 } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
-import { CommandPreferences } from '../services/ApiService';
+import { CommandPreferences } from '../services/ApiCore';
 import {
   getOsintKey,
   setOsintKey,
@@ -37,7 +37,7 @@ import {
   ambientAudioService,
   ROOM_SOUNDSCAPE_PROFILES,
 } from '../services/AmbientAudioService';
-import { ROOM_ORDER, ROOM_METADATA, RoomId } from './SpriteCanvas';
+import { ROOM_ORDER, ROOM_METADATA, RoomId } from './spriteWorld';
 import { GuardrailsModal } from './GuardrailsModal';
 import { ThemeSettings } from './ThemeSettings';
 import {

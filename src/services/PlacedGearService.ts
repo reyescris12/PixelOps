@@ -1,4 +1,4 @@
-import type { RoomId } from '../components/SpriteCanvas';
+import type { RoomId } from '../components/spriteWorld';
 import {
   loadStationSkillBindings,
   loadRoomSkillBindings,

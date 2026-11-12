@@ -1,5 +1,5 @@
 import { createStore, get, set, del, keys } from 'idb-keyval';
-import { checkServerStatus } from './ApiService';
+import { checkServerStatus } from './ApiCore';
 import { db, ledgerDb } from './CommandLedgerDb';
 
 /**

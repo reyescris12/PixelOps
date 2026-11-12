@@ -4,13 +4,10 @@
  * files, and action items seamlessly between each other without requiring manual user re-prompting.
  */
 
-import type { RoomId } from '../components/SpriteCanvas';
+import type { RoomId } from '../components/spriteWorld';
 import type { ThemeId } from '../context/ThemeContext';
-import {
-  executeAgentDirective,
-  AgentExecutionCard,
-  ExecutedToolCall,
-} from './ApiService';
+import { executeAgentDirective } from './agentEngineLazy';
+import { AgentExecutionCard, ExecutedToolCall } from './ApiCore';
 import {
   isReportDirective,
   shouldAutoGenerateReport,

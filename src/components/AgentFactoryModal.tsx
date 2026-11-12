@@ -10,7 +10,8 @@ import {
   FUNCTIONAL_ROLE_LIST,
   FUNCTIONAL_ROLE_PROFILES,
 } from '../context/CrewContext';
-import { RoomId, ROOM_ORDER, ROOM_METADATA, AgentSpriteFigure } from './SpriteCanvas';
+import { RoomId, ROOM_ORDER, ROOM_METADATA } from './spriteWorld';
+import { AgentSpriteFigure } from './AgentSpriteFigure';
 import { SUPPORTED_VAULT_PROVIDERS } from '../services/BYOKVault';
 import {
   AgentProvider,

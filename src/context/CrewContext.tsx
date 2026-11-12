@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { useTheme } from './ThemeContext';
-import type { RoomId } from '../components/SpriteCanvas';
+import type { RoomId } from '../components/spriteWorld';
 import type { AgentProvider } from '../services/agentStore';
 import { recordAgentMemory, clearAgentMemoriesForAgent } from '../services/CommandLedgerDb';
 

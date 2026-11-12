@@ -6,7 +6,6 @@
  */
 
 import { getActiveSession } from './AuthService';
-import { pushToCloud } from './SyncService';
 
 export interface OpenRouterModelOption {
   id: string;
@@ -313,6 +312,7 @@ export async function handleOpenRouterCallback(): Promise<{ ok: boolean; key?: s
     try {
       const session = getActiveSession();
       if (session) {
+        const { pushToCloud } = await import('./SyncService');
         await pushToCloud();
       }
     } catch (syncErr) {
@@ -431,6 +431,7 @@ export async function disconnectOpenRouter(): Promise<void> {
   try {
     const session = getActiveSession();
     if (session) {
+      const { pushToCloud } = await import('./SyncService');
       await pushToCloud();
     }
   } catch {}

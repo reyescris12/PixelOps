@@ -2,12 +2,8 @@ import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useTheme } from '../context/ThemeContext';
 import { useCrew } from '../context/CrewContext';
-import { AgentSpriteFigure } from './SpriteCanvas';
-import {
-  RetroErrorCode,
-  RetroErrorDescriptor,
-  createRetroAgentError,
-} from '../services/ApiService';
+import { AgentSpriteFigure } from './AgentSpriteFigure';
+import { RetroErrorCode, RetroErrorDescriptor, createRetroAgentError } from '../services/ApiCore';
 
 interface RetroErrorModalProps {
   error: RetroErrorDescriptor | null;

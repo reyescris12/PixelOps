@@ -2,11 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { X, CheckCircle2, Sparkles, ChevronDown, ChevronUp } from 'lucide-react';
 import { useTheme } from '../context/ThemeContext';
 import { useCrew } from '../context/CrewContext';
-import {
-  AgentExecutionCard,
-  RetroErrorCode,
-  RetroErrorDescriptor,
-} from '../services/ApiService';
+import { AgentExecutionCard, RetroErrorCode, RetroErrorDescriptor } from '../services/ApiCore';
 import { loadDraftPrompt, saveDraftPrompt } from '../services/AppStatePersistence';
 
 interface TerminalWindowProps {

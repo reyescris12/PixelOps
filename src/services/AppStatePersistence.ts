@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { ThemeId } from '../context/ThemeContext';
-import { RoomId, LiveAgentState } from '../components/SpriteCanvas';
+import { RoomId, LiveAgentState } from '../components/spriteWorld';
 
 export type AppLifecycleStatus = 'active' | 'background' | 'minimized' | 'unmounted';
 

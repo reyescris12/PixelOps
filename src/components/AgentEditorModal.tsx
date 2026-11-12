@@ -11,7 +11,7 @@ import {
   FUNCTIONAL_ROLE_PROFILES,
 } from '../context/CrewContext';
 import { useTheme } from '../context/ThemeContext';
-import { AgentSpriteFigure } from './SpriteCanvas';
+import { AgentSpriteFigure } from './AgentSpriteFigure';
 import {
   SUPPORTED_VAULT_PROVIDERS,
   hasProviderApiKey,

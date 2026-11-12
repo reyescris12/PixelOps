@@ -1,5 +1,5 @@
 import React from 'react';
-import { RoomId } from './SpriteCanvas';
+import { RoomId } from './spriteWorld';
 
 export const RubyOverlay: React.FC<{ tick: number }> = () => null;
 export const PurpleOverlay: React.FC<{ tick: number }> = () => null;

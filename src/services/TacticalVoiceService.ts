@@ -20,6 +20,8 @@ import {
   Behavior,
   Type,
   ActivityHandling,
+  StartSensitivity,
+  EndSensitivity,
   type Session,
   type LiveServerMessage,
 } from '@google/genai';
@@ -165,40 +167,75 @@ export async function resolveClientGeminiKeyAsync(): Promise<string> {
 }
 
 /**
- * Computes RMS and applies clean adaptive microphone gain for quiet laptop/headset mics
- * so Push-To-Talk speech reaches Gemini Live at healthy amplitude without clipping.
+ * Computes RMS and peak headroom, applying gentle envelope-smoothed microphone gain for quiet
+ * laptop/headset mics without amplifying ambient room hiss or clipping speech consonants.
  */
-export function normalizeMicChunkForSpeech(inputSamples: Float32Array): {
+export function normalizeMicChunkForSpeech(
+  inputSamples: Float32Array,
+  previousGain?: number
+): {
   samples: Float32Array;
   rms: number;
+  appliedGain: number;
 } {
   if (inputSamples.length === 0) {
-    return { samples: inputSamples, rms: 0 };
+    return { samples: inputSamples, rms: 0, appliedGain: previousGain ?? 1.0 };
   }
 
   let sumSq = 0;
+  let peak = 0;
   for (let i = 0; i < inputSamples.length; i++) {
     const s = inputSamples[i];
     sumSq += s * s;
+    const abs = s < 0 ? -s : s;
+    if (abs > peak) peak = abs;
   }
   const rms = Math.sqrt(sumSq / inputSamples.length);
 
-  if (rms > 0.0025 && rms < 0.14) {
-    const gain = Math.min(4.0, Math.max(1.0, 0.16 / rms));
-    const boosted = new Float32Array(inputSamples.length);
-    for (let i = 0; i < inputSamples.length; i++) {
-      const scaled = inputSamples[i] * gain;
-      boosted[i] = scaled < -1 ? -1 : scaled > 1 ? 1 : scaled;
-    }
-    return { samples: boosted, rms };
+  let desiredGain = 1.0;
+  if (rms > 0.006 && rms < 0.08) {
+    desiredGain = Math.min(2.6, Math.max(1.0, 0.08 / rms));
   }
 
-  return { samples: inputSamples, rms };
+  const maxSafeGain = peak > 0.0001 ? Math.max(0.5, 0.88 / peak) : 2.6;
+
+  if (previousGain !== undefined) {
+    const smoothed = previousGain * 0.8 + desiredGain * 0.2;
+    const startGain = Math.min(previousGain, maxSafeGain);
+    const endGain = Math.min(smoothed, maxSafeGain);
+
+    if (Math.abs(startGain - 1.0) < 0.001 && Math.abs(endGain - 1.0) < 0.001) {
+      return { samples: inputSamples, rms, appliedGain: 1.0 };
+    }
+
+    const out = new Float32Array(inputSamples.length);
+    const denom = Math.max(1, inputSamples.length - 1);
+    const delta = endGain - startGain;
+    for (let i = 0; i < inputSamples.length; i++) {
+      const g = startGain + (delta * i) / denom;
+      const scaled = inputSamples[i] * g;
+      out[i] = scaled < -1 ? -1 : scaled > 1 ? 1 : scaled;
+    }
+    return { samples: out, rms, appliedGain: endGain };
+  }
+
+  const gain = Math.min(desiredGain, maxSafeGain);
+  if (Math.abs(gain - 1.0) < 0.001) {
+    return { samples: inputSamples, rms, appliedGain: 1.0 };
+  }
+
+  const adjusted = new Float32Array(inputSamples.length);
+  for (let i = 0; i < inputSamples.length; i++) {
+    const scaled = inputSamples[i] * gain;
+    adjusted[i] = scaled < -1 ? -1 : scaled > 1 ? 1 : scaled;
+  }
+  return { samples: adjusted, rms, appliedGain: gain };
 }
 
 /**
- * Converts Float32 Web Audio samples [-1, 1] downsampled to 16kHz (box-filtered to prevent
- * speech aliasing) into base64 16-bit little-endian PCM.
+ * Converts Float32 Web Audio samples [-1, 1] resampled with exact continuous-window
+ * anti-aliasing overlap (48kHz / 44.1kHz -> 16kHz, or linear interpolation for 8kHz -> 16kHz)
+ * into base64 16-bit little-endian PCM.
  */
 export function encodeFloat32ToBase64Pcm16(
   inputSamples: Float32Array,
@@ -206,23 +243,41 @@ export function encodeFloat32ToBase64Pcm16(
   targetSampleRate = 16000
 ): string {
   let samples = inputSamples;
-  if (inputSampleRate !== targetSampleRate && inputSampleRate > 0) {
+  if (inputSampleRate !== targetSampleRate && inputSampleRate > 0 && inputSamples.length > 0) {
     const ratio = inputSampleRate / targetSampleRate;
     const outLength = Math.max(1, Math.round(inputSamples.length / ratio));
-    const downsampled = new Float32Array(outLength);
-    for (let i = 0; i < outLength; i++) {
-      const startIdx = Math.min(inputSamples.length - 1, Math.floor(i * ratio));
-      const endIdx = Math.min(
-        inputSamples.length,
-        Math.max(startIdx + 1, Math.floor((i + 1) * ratio))
-      );
-      let acc = 0;
-      for (let j = startIdx; j < endIdx; j++) {
-        acc += inputSamples[j];
+    const resampled = new Float32Array(outLength);
+
+    if (ratio >= 1) {
+      for (let i = 0; i < outLength; i++) {
+        const winStart = i * ratio;
+        const winEnd = Math.min(inputSamples.length, (i + 1) * ratio);
+        const startFloor = Math.floor(winStart);
+        const endFloor = Math.floor(winEnd);
+        let acc = 0;
+        let weightSum = 0;
+
+        for (let j = startFloor; j <= endFloor && j < inputSamples.length; j++) {
+          const overlapStart = Math.max(winStart, j);
+          const overlapEnd = Math.min(winEnd, j + 1);
+          const weight = overlapEnd - overlapStart;
+          if (weight > 0) {
+            acc += inputSamples[j] * weight;
+            weightSum += weight;
+          }
+        }
+        resampled[i] = weightSum > 0 ? acc / weightSum : inputSamples[Math.min(inputSamples.length - 1, startFloor)];
       }
-      downsampled[i] = acc / (endIdx - startIdx);
+    } else {
+      for (let i = 0; i < outLength; i++) {
+        const pos = i * ratio;
+        const idx0 = Math.min(inputSamples.length - 1, Math.floor(pos));
+        const idx1 = Math.min(inputSamples.length - 1, idx0 + 1);
+        const frac = pos - idx0;
+        resampled[i] = inputSamples[idx0] * (1 - frac) + inputSamples[idx1] * frac;
+      }
     }
-    samples = downsampled;
+    samples = resampled;
   }
 
   const pcm16 = new Int16Array(samples.length);
@@ -327,6 +382,23 @@ export function buildTacticalRadioTools(options?: { omitNonBlockingBehavior?: bo
   ];
 }
 
+export function buildOperativeSystemInstruction(persona: OperativeRadioPersona): string {
+  return `${persona.systemPersona} Common PixelOps Safehouse terms the Commander may say over radio: Commander, Agent Vance, Operative Nyx, Operative Cipher, PixelOps, Safehouse, War Room, Basement Link Board, Evidence Graph, Server Vault, Comms Tower, Armory, Tripwire, SHA-256 delta, VFS dossier, OSINT, ISW, ASN, CVE, sitrep. Always listen carefully and answer directly what the Commander actually asked; if an audio transmission is genuinely unintelligible, ask briefly ("Static on the line, Commander—say again?") instead of guessing an unrelated topic.`;
+}
+
+function buildHybridVadRealtimeInputConfig() {
+  return {
+    automaticActivityDetection: {
+      disabled: false,
+      startOfSpeechSensitivity: StartSensitivity.START_SENSITIVITY_HIGH,
+      endOfSpeechSensitivity: EndSensitivity.END_SENSITIVITY_LOW,
+      prefixPaddingMs: 40,
+      silenceDurationMs: 1200,
+    },
+    activityHandling: ActivityHandling.START_OF_ACTIVITY_INTERRUPTS,
+  };
+}
+
 export function buildLiveSessionConfig(
   operativeId: RadioOperativeId,
   modelId: RadioLiveModelId
@@ -342,15 +414,10 @@ export function buildLiveSessionConfig(
         },
       },
     },
-    realtimeInputConfig: {
-      automaticActivityDetection: {
-        disabled: true,
-      },
-      activityHandling: ActivityHandling.START_OF_ACTIVITY_INTERRUPTS,
-    },
+    realtimeInputConfig: buildHybridVadRealtimeInputConfig(),
     inputAudioTranscription: {},
     outputAudioTranscription: {},
-    systemInstruction: persona.systemPersona,
+    systemInstruction: buildOperativeSystemInstruction(persona),
     tools: buildTacticalRadioTools(),
   };
 
@@ -367,7 +434,7 @@ export function buildLiveSessionConfig(
 
 function buildCompatibilityLiveConfig(
   operativeId: RadioOperativeId,
-  options?: { disableAutoVad?: boolean }
+  options?: { includeRealtimeInputConfig?: boolean }
 ): Record<string, any> {
   const persona = OPERATIVE_RADIO_CHANNELS[operativeId] || OPERATIVE_RADIO_CHANNELS.vance;
   const cfg: Record<string, any> = {
@@ -381,17 +448,12 @@ function buildCompatibilityLiveConfig(
     },
     inputAudioTranscription: {},
     outputAudioTranscription: {},
-    systemInstruction: persona.systemPersona,
+    systemInstruction: buildOperativeSystemInstruction(persona),
     tools: buildTacticalRadioTools({ omitNonBlockingBehavior: true }),
   };
 
-  if (options?.disableAutoVad !== false) {
-    cfg.realtimeInputConfig = {
-      automaticActivityDetection: {
-        disabled: true,
-      },
-      activityHandling: ActivityHandling.START_OF_ACTIVITY_INTERRUPTS,
-    };
+  if (options?.includeRealtimeInputConfig !== false) {
+    cfg.realtimeInputConfig = buildHybridVadRealtimeInputConfig();
   }
 
   return cfg;
@@ -490,13 +552,14 @@ export class TacticalRadioTransceiver {
   private micProcessor: ScriptProcessorNode | null = null;
   private micWorkletNode: AudioWorkletNode | null = null;
   private micSilentGain: GainNode | null = null;
+  private micWorkletLoaded = false;
   private isTransmittingPtt = false;
-  private manualActivitySignaling = true;
   private pttOpening = false;
   private pttAbortRequested = false;
-  private pttActivityStartedOnServer = false;
   private pttChunksSent = 0;
   private pttPeakRms = 0;
+  private pttSmoothedGain = 1.0;
+  private preRollPcmChunks: string[] = [];
   private preferredAudioDeviceId = '';
   private replyWatchdogTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -513,11 +576,23 @@ export class TacticalRadioTransceiver {
   }
 
   public setPreferredMicrophone(deviceId: string): void {
-    this.preferredAudioDeviceId = deviceId.trim();
+    const nextId = deviceId.trim();
+    if (nextId !== this.preferredAudioDeviceId) {
+      this.preferredAudioDeviceId = nextId;
+      if (!this.isTransmittingPtt && !this.pttOpening) {
+        this.releaseMicHardware();
+      }
+    }
   }
 
   public isPttActiveOrOpening(): boolean {
     return this.isTransmittingPtt || this.pttOpening;
+  }
+
+  private hasLiveMicStream(): boolean {
+    if (!this.micStream) return false;
+    const tracks = this.micStream.getTracks();
+    return tracks.length > 0 && tracks.some((t) => t.readyState !== 'ended');
   }
 
   private clearReplyWatchdog(): void {
@@ -558,10 +633,20 @@ export class TacticalRadioTransceiver {
     const clean = text;
     if (!clean) return;
 
-    const last = this.transcripts[this.transcripts.length - 1];
-    if (last && last.speaker === speaker && last.isPartial && speaker !== 'SYS_TOOL') {
-      last.text = replacePartial ? clean : last.text + clean;
-      last.isPartial = isPartial;
+    let mergeTarget: RadioTranscriptEntry | undefined;
+    if (speaker !== 'SYS_TOOL') {
+      for (let i = this.transcripts.length - 1; i >= 0; i--) {
+        const entry = this.transcripts[i];
+        if (entry.speaker === speaker && entry.isPartial) {
+          mergeTarget = entry;
+          break;
+        }
+      }
+    }
+
+    if (mergeTarget) {
+      mergeTarget.text = replacePartial ? clean : mergeTarget.text + clean;
+      mergeTarget.isPartial = isPartial;
     } else {
       this.transcripts.push({
         id: `rt_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
@@ -646,6 +731,7 @@ export class TacticalRadioTransceiver {
   }
 
   private enqueuePcm24kAudio(base64Pcm: string) {
+    if (this.isTransmittingPtt || this.pttOpening) return;
     const ctx = this.ensurePlaybackContext();
     if (!ctx) return;
 
@@ -887,6 +973,13 @@ Respond in character as ${persona.displayName} (${persona.role}) over tactical v
         this.bargeInInterrupt();
       }
 
+      if ((sc as any).interimInputTranscription?.text) {
+        this.appendOrMergeTranscript('COMMANDER', (sc as any).interimInputTranscription.text, true, true);
+        if (this.status === 'standby') {
+          this.setStatus('standby', 'Voice copied — operative responding...');
+        }
+      }
+
       if (sc.inputTranscription?.text) {
         this.appendOrMergeTranscript('COMMANDER', sc.inputTranscription.text, true);
         if (this.status === 'standby') {
@@ -1116,11 +1209,11 @@ Respond in character as ${persona.displayName} (${persona.role}) over tactical v
     ai: GoogleGenAI,
     operativeId: RadioOperativeId,
     preferredModel: RadioLiveModelId
-  ): Promise<{ session: Session; negotiatedModel: string; manualActivitySignaling: boolean }> {
+  ): Promise<{ session: Session; negotiatedModel: string }> {
     const primary = buildLiveSessionConfig(operativeId, preferredModel);
     try {
       const session = await this.connectLiveSessionOnce(ai, primary.model, primary.config);
-      return { session, negotiatedModel: primary.model, manualActivitySignaling: true };
+      return { session, negotiatedModel: primary.model };
     } catch (err: any) {
       const attemptErr = err as HandshakeAttemptError;
       const errText = String(attemptErr?.message || '').toLowerCase();
@@ -1136,31 +1229,35 @@ Respond in character as ${persona.displayName} (${persona.role}) over tactical v
         throw attemptErr;
       }
 
-      // First try compatibility models with explicit manual PTT activity control (`automaticActivityDetection.disabled = true`)
-      const manualCompatConfig = buildCompatibilityLiveConfig(operativeId, { disableAutoVad: true });
+      // First try compatibility models with Hybrid VAD `realtimeInputConfig`
+      const hybridCompatConfig = buildCompatibilityLiveConfig(operativeId, {
+        includeRealtimeInputConfig: true,
+      });
       for (const fallbackModel of COMPATIBILITY_LIVE_MODELS) {
         try {
           const session = await this.connectLiveSessionOnce(
             ai,
             fallbackModel,
-            manualCompatConfig,
+            hybridCompatConfig,
             6500
           );
-          return { session, negotiatedModel: fallbackModel, manualActivitySignaling: true };
+          return { session, negotiatedModel: fallbackModel };
         } catch {}
       }
 
-      // Secondary fallback with default server VAD if a legacy model rejects `realtimeInputConfig`
-      const autoCompatConfig = buildCompatibilityLiveConfig(operativeId, { disableAutoVad: false });
+      // Secondary fallback omitting `realtimeInputConfig` for legacy models (default server auto-VAD + audioStreamEnd)
+      const legacyCompatConfig = buildCompatibilityLiveConfig(operativeId, {
+        includeRealtimeInputConfig: false,
+      });
       for (const fallbackModel of COMPATIBILITY_LIVE_MODELS) {
         try {
           const session = await this.connectLiveSessionOnce(
             ai,
             fallbackModel,
-            autoCompatConfig,
+            legacyCompatConfig,
             6500
           );
-          return { session, negotiatedModel: fallbackModel, manualActivitySignaling: false };
+          return { session, negotiatedModel: fallbackModel };
         } catch {}
       }
 
@@ -1171,7 +1268,6 @@ Respond in character as ${persona.displayName} (${persona.role}) over tactical v
   private activateTacticalRelayFallback(detailMessage: string) {
     this.session = null;
     this.relayActive = true;
-    this.manualActivitySignaling = false;
     this.transportRoute = 'tactical-relay';
     this.callbacks.onTransportRoute?.('tactical-relay');
     this.setStatus('standby', detailMessage);
@@ -1246,14 +1342,13 @@ Respond in character as ${persona.displayName} (${persona.role}) over tactical v
     for (const candidate of candidates) {
       try {
         const ai = candidate.createClient();
-        const { session, manualActivitySignaling } = await this.negotiateLiveSessionOnClient(
+        const { session } = await this.negotiateLiveSessionOnClient(
           ai,
           operativeId,
           modelId
         );
         this.session = session;
         this.relayActive = false;
-        this.manualActivitySignaling = manualActivitySignaling;
         this.transportRoute = candidate.route;
         this.callbacks.onTransportRoute?.(candidate.route);
         this.setStatus('standby', `Carrier locked · ${candidate.label}`);
@@ -1302,12 +1397,13 @@ Respond in character as ${persona.displayName} (${persona.role}) over tactical v
     return await navigator.mediaDevices.getUserMedia({ audio: baseConstraints });
   }
 
-  private cleanupMicCaptureNodes(): void {
+  private releaseMicHardware(): void {
     try {
       this.micWorkletNode?.port.close();
       this.micWorkletNode?.disconnect();
     } catch {}
     this.micWorkletNode = null;
+    this.micWorkletLoaded = false;
 
     try {
       this.micProcessor?.disconnect();
@@ -1317,6 +1413,7 @@ Respond in character as ${persona.displayName} (${persona.role}) over tactical v
     this.micProcessor = null;
     this.micSource = null;
     this.micSilentGain = null;
+    this.preRollPcmChunks = [];
 
     if (this.micStream) {
       for (const track of this.micStream.getTracks()) {
@@ -1412,10 +1509,14 @@ Respond in character as ${persona.displayName} (${persona.role}) over tactical v
             this.micSilentGain = micCtx.createGain();
             this.micSilentGain.gain.value = 0;
             this.micSilentGain.connect(micCtx.destination);
-            this.micProcessor = micCtx.createScriptProcessor(4096, 1, 1);
+            this.micProcessor = micCtx.createScriptProcessor(2048, 1, 1);
             this.micProcessor.onaudioprocess = (event: AudioProcessingEvent) => {
               if (!this.isTransmittingPtt) return;
-              const { rms } = normalizeMicChunkForSpeech(event.inputBuffer.getChannelData(0));
+              const { rms, appliedGain } = normalizeMicChunkForSpeech(
+                event.inputBuffer.getChannelData(0),
+                this.pttSmoothedGain
+              );
+              this.pttSmoothedGain = appliedGain;
               this.callbacks.onAudioLevel?.(Math.min(1, rms * 5.5));
             };
             this.micSource.connect(this.micProcessor);
@@ -1423,7 +1524,7 @@ Respond in character as ${persona.displayName} (${persona.role}) over tactical v
             startedMicMeter = true;
           }
         } catch {
-          this.cleanupMicCaptureNodes();
+          this.releaseMicHardware();
         }
       }
 
@@ -1441,7 +1542,7 @@ Respond in character as ${persona.displayName} (${persona.role}) over tactical v
     }
 
     // Branch B: Full-Duplex PCM Streaming over Gemini Multimodal Live WebSocket
-    if (!navigator?.mediaDevices?.getUserMedia) {
+    if (typeof navigator === 'undefined' || typeof navigator.mediaDevices?.getUserMedia !== 'function') {
       throw new Error('Microphone capture is unavailable in this browser context.');
     }
 
@@ -1450,170 +1551,232 @@ Respond in character as ${persona.displayName} (${persona.role}) over tactical v
       throw new Error('Web Audio API is unavailable in this browser context.');
     }
 
-    this.pttOpening = true;
     this.pttAbortRequested = false;
     this.pttChunksSent = 0;
     this.pttPeakRms = 0;
-    this.pttActivityStartedOnServer = false;
+    this.pttSmoothedGain = 1.0;
 
-    // Unlock native-rate AudioContext synchronously during user gesture BEFORE awaiting getUserMedia
-    const micCtx = new AudioCtx();
+    // Reuse or create native-rate AudioContext synchronously during user gesture
+    let micCtx = this.micCtx;
+    if (!micCtx || micCtx.state === 'closed') {
+      micCtx = new AudioCtx();
+      this.micCtx = micCtx;
+      this.micWorkletLoaded = false;
+    }
     if (micCtx.state === 'suspended') {
       void micCtx.resume().catch(() => {});
     }
-    this.micCtx = micCtx;
-    this.setStatus('transmitting_ptt', 'Opening microphone...');
 
-    try {
-      this.micStream = await this.requestMicrophoneStream();
-    } catch (err) {
-      this.pttOpening = false;
-      this.cleanupMicCaptureNodes();
-      this.setStatus('standby', 'Microphone permission denied — use TX bar below');
-      throw err;
+    const needsPipelineInit =
+      !this.hasLiveMicStream() || (!this.micWorkletNode && !this.micProcessor);
+
+    if (needsPipelineInit) {
+      this.pttOpening = true;
+      this.setStatus('standby', 'Arming microphone...');
+
+      if (!this.hasLiveMicStream()) {
+        try {
+          this.micStream = await this.requestMicrophoneStream();
+        } catch (err) {
+          this.pttOpening = false;
+          this.releaseMicHardware();
+          this.setStatus('standby', 'Microphone permission denied — use TX bar below');
+          throw err;
+        }
+      }
+
+      if (this.pttAbortRequested || !this.session) {
+        this.pttOpening = false;
+        if (!this.session) {
+          this.releaseMicHardware();
+        } else {
+          this.setStatus('standby', 'PTT cancelled before audio capture started');
+        }
+        return;
+      }
+
+      if (micCtx.state === 'suspended') {
+        await micCtx.resume().catch(() => {});
+      }
+
+      const activeMicCtx = micCtx;
+      const onRawAudioFrame = (rawInput: Float32Array) => {
+        const { samples, rms, appliedGain } = normalizeMicChunkForSpeech(
+          rawInput,
+          this.pttSmoothedGain
+        );
+        this.pttSmoothedGain = appliedGain;
+
+        const base64Pcm = encodeFloat32ToBase64Pcm16(
+          samples,
+          activeMicCtx.sampleRate || 48000,
+          16000
+        );
+
+        if (!this.isTransmittingPtt) {
+          this.preRollPcmChunks.push(base64Pcm);
+          if (this.preRollPcmChunks.length > 4) {
+            this.preRollPcmChunks.shift();
+          }
+          return;
+        }
+
+        if (!this.session) return;
+
+        if (rms > this.pttPeakRms) {
+          this.pttPeakRms = rms;
+        }
+        this.callbacks.onAudioLevel?.(Math.min(1, rms * 5.5));
+
+        try {
+          this.session.sendRealtimeInput({
+            audio: {
+              data: base64Pcm,
+              mimeType: 'audio/pcm;rate=16000',
+            },
+          });
+          this.pttChunksSent++;
+          if (this.pttChunksSent === 1 || this.pttChunksSent % 6 === 0) {
+            const pct = Math.min(100, Math.round(this.pttPeakRms * 550));
+            if (this.pttPeakRms < 0.0012 && this.pttChunksSent >= 8) {
+              this.setStatus(
+                'transmitting_ptt',
+                `⚠️ Mic signal 0% (check mute/input!) · ${this.pttChunksSent} pkts`
+              );
+            } else {
+              this.setStatus(
+                'transmitting_ptt',
+                `🎙️ TX LIVE · ${this.pttChunksSent} pkts · Mic ${pct}%`
+              );
+            }
+          }
+        } catch {}
+      };
+
+      if (!this.micSource && this.micStream) {
+        this.micSource = activeMicCtx.createMediaStreamSource(this.micStream);
+      }
+      if (!this.micSilentGain) {
+        this.micSilentGain = activeMicCtx.createGain();
+        this.micSilentGain.gain.value = 0;
+        this.micSilentGain.connect(activeMicCtx.destination);
+      }
+
+      let connectedWorklet = Boolean(this.micWorkletNode);
+      if (
+        !connectedWorklet &&
+        typeof AudioWorkletNode !== 'undefined' &&
+        activeMicCtx.audioWorklet &&
+        typeof URL !== 'undefined' &&
+        typeof URL.createObjectURL === 'function' &&
+        typeof Blob !== 'undefined'
+      ) {
+        if (!this.micWorkletLoaded) {
+          const workletCode = `
+            class PixelOpsPttProcessor extends AudioWorkletProcessor {
+              constructor() {
+                super();
+                this._buf = new Float32Array(1920);
+                this._pos = 0;
+                this.port.onmessage = (ev) => {
+                  if (ev.data === 'flush' && this._pos > 0) {
+                    this.port.postMessage(this._buf.slice(0, this._pos));
+                    this._pos = 0;
+                  }
+                };
+              }
+              process(inputs) {
+                const ch = inputs[0] && inputs[0][0];
+                if (!ch) return true;
+                for (let i = 0; i < ch.length; i++) {
+                  this._buf[this._pos++] = ch[i];
+                  if (this._pos >= this._buf.length) {
+                    this.port.postMessage(this._buf.slice(0));
+                    this._pos = 0;
+                  }
+                }
+                return true;
+              }
+            }
+            registerProcessor('pixelops-ptt-capture', PixelOpsPttProcessor);
+          `;
+          let blobUrl = '';
+          try {
+            blobUrl = URL.createObjectURL(new Blob([workletCode], { type: 'application/javascript' }));
+            await activeMicCtx.audioWorklet.addModule(blobUrl);
+            this.micWorkletLoaded = true;
+          } catch {} finally {
+            if (blobUrl) {
+              try {
+                URL.revokeObjectURL(blobUrl);
+              } catch {}
+            }
+          }
+        }
+
+        if (this.micWorkletLoaded && this.micCtx === activeMicCtx && this.micSource && this.micSilentGain) {
+          try {
+            const workletNode = new AudioWorkletNode(activeMicCtx, 'pixelops-ptt-capture');
+            workletNode.port.onmessage = (ev: MessageEvent) => {
+              if (ev.data instanceof Float32Array) {
+                onRawAudioFrame(ev.data);
+              }
+            };
+            this.micSource.connect(workletNode);
+            workletNode.connect(this.micSilentGain);
+            this.micWorkletNode = workletNode;
+            connectedWorklet = true;
+          } catch {}
+        }
+      }
+
+      if (!connectedWorklet && !this.micProcessor && this.micCtx === activeMicCtx && this.micSource && this.micSilentGain) {
+        this.micProcessor = activeMicCtx.createScriptProcessor(2048, 1, 1);
+        this.micProcessor.onaudioprocess = (event: AudioProcessingEvent) => {
+          onRawAudioFrame(new Float32Array(event.inputBuffer.getChannelData(0)));
+        };
+        this.micSource.connect(this.micProcessor);
+        this.micProcessor.connect(this.micSilentGain);
+      }
+    } else if (micCtx.state === 'suspended') {
+      await micCtx.resume().catch(() => {});
     }
 
-    // Abort cleanly if user released or disconnected while permission dialog / mic open was pending
+    // Abort cleanly if user released or disconnected while mic setup was awaiting
     if (this.pttAbortRequested || !this.session) {
       this.pttOpening = false;
-      this.cleanupMicCaptureNodes();
-      if (this.session) {
+      if (!this.session) {
+        this.releaseMicHardware();
+      } else {
         this.setStatus('standby', 'PTT cancelled before audio capture started');
       }
       return;
     }
 
-    if (micCtx.state === 'suspended') {
-      await micCtx.resume().catch(() => {});
-    }
-
-    if (this.manualActivitySignaling) {
-      try {
-        this.session.sendRealtimeInput({ activityStart: {} });
-        this.pttActivityStartedOnServer = true;
-      } catch {}
-    }
-
-    this.isTransmittingPtt = true;
     this.pttOpening = false;
-    this.setStatus('transmitting_ptt', '🎙️ MIC LIVE — Speak now, then tap/release to send');
+    this.isTransmittingPtt = true;
+    this.setStatus('transmitting_ptt', '🎙️ SPEAK NOW — Tap or release to send');
 
-    const processChunk = (rawInput: Float32Array) => {
-      if (!this.isTransmittingPtt || !this.session) return;
-
-      const { samples, rms } = normalizeMicChunkForSpeech(rawInput);
-      if (rms > this.pttPeakRms) {
-        this.pttPeakRms = rms;
+    // Flush ~160ms pre-roll audio captured while warm mic idled so first syllables are never clipped
+    if (this.preRollPcmChunks.length > 0) {
+      const queued = this.preRollPcmChunks.splice(0, this.preRollPcmChunks.length);
+      for (const b64 of queued) {
+        try {
+          this.session.sendRealtimeInput({
+            audio: {
+              data: b64,
+              mimeType: 'audio/pcm;rate=16000',
+            },
+          });
+          this.pttChunksSent++;
+        } catch {}
       }
-      this.callbacks.onAudioLevel?.(Math.min(1, rms * 5.5));
-
-      const base64Pcm = encodeFloat32ToBase64Pcm16(
-        samples,
-        micCtx.sampleRate || 48000,
-        16000
-      );
-
-      try {
-        this.session.sendRealtimeInput({
-          audio: {
-            data: base64Pcm,
-            mimeType: 'audio/pcm;rate=16000',
-          },
-        });
-        this.pttChunksSent++;
-        if (this.pttChunksSent === 1 || this.pttChunksSent % 6 === 0) {
-          const pct = Math.min(100, Math.round(this.pttPeakRms * 550));
-          if (this.pttPeakRms < 0.0012 && this.pttChunksSent >= 8) {
-            this.setStatus(
-              'transmitting_ptt',
-              `⚠️ Mic signal 0% (check mute/input!) · ${this.pttChunksSent} pkts`
-            );
-          } else {
-            this.setStatus(
-              'transmitting_ptt',
-              `🎙️ TX LIVE · ${this.pttChunksSent} pkts · Mic ${pct}%`
-            );
-          }
-        }
-      } catch {}
-    };
-
-    this.micSource = micCtx.createMediaStreamSource(this.micStream);
-    this.micSilentGain = micCtx.createGain();
-    this.micSilentGain.gain.value = 0;
-    this.micSilentGain.connect(micCtx.destination);
-
-    // Prefer glitch-free AudioWorklet off main thread; fall back cleanly to ScriptProcessorNode
-    let connectedWorklet = false;
-    if (
-      typeof AudioWorkletNode !== 'undefined' &&
-      micCtx.audioWorklet &&
-      typeof URL !== 'undefined' &&
-      typeof URL.createObjectURL === 'function' &&
-      typeof Blob !== 'undefined'
-    ) {
-      const workletCode = `
-        class PixelOpsPttProcessor extends AudioWorkletProcessor {
-          constructor() {
-            super();
-            this._buf = new Float32Array(2048);
-            this._pos = 0;
-          }
-          process(inputs) {
-            const ch = inputs[0] && inputs[0][0];
-            if (!ch) return true;
-            for (let i = 0; i < ch.length; i++) {
-              this._buf[this._pos++] = ch[i];
-              if (this._pos >= this._buf.length) {
-                this.port.postMessage(this._buf.slice(0));
-                this._pos = 0;
-              }
-            }
-            return true;
-          }
-        }
-        registerProcessor('pixelops-ptt-capture', PixelOpsPttProcessor);
-      `;
-      let blobUrl = '';
-      try {
-        blobUrl = URL.createObjectURL(new Blob([workletCode], { type: 'application/javascript' }));
-        await micCtx.audioWorklet.addModule(blobUrl);
-        URL.revokeObjectURL(blobUrl);
-        blobUrl = '';
-        if (this.isTransmittingPtt && this.micCtx === micCtx && this.micSource && this.micSilentGain) {
-          const workletNode = new AudioWorkletNode(micCtx, 'pixelops-ptt-capture');
-          workletNode.port.onmessage = (ev: MessageEvent) => {
-            if (ev.data instanceof Float32Array) {
-              processChunk(ev.data);
-            }
-          };
-          this.micSource.connect(workletNode);
-          workletNode.connect(this.micSilentGain);
-          this.micWorkletNode = workletNode;
-          connectedWorklet = true;
-        }
-      } catch {
-        if (blobUrl) {
-          try {
-            URL.revokeObjectURL(blobUrl);
-          } catch {}
-        }
-      }
-    }
-
-    if (!connectedWorklet && this.isTransmittingPtt && this.micCtx === micCtx && this.micSource && this.micSilentGain) {
-      this.micProcessor = micCtx.createScriptProcessor(4096, 1, 1);
-      this.micProcessor.onaudioprocess = (event: AudioProcessingEvent) => {
-        processChunk(new Float32Array(event.inputBuffer.getChannelData(0)));
-      };
-      this.micSource.connect(this.micProcessor);
-      this.micProcessor.connect(this.micSilentGain);
     }
   }
 
   /**
-   * Releases Push-To-Talk, sends a short trailing silence pad + explicit `activityEnd` (or `audioStreamEnd`),
-   * or dispatches captured speech in Relay mode.
+   * Releases Push-To-Talk, flushes trailing audio + 150ms silence pad, and sends `audioStreamEnd`
+   * for Hybrid VAD turn finalization (keeping Live mic warm in standby for 0ms next PTT press).
    */
   public stopPushToTalk(): void {
     if (this.pttOpening) {
@@ -1623,32 +1786,24 @@ Respond in character as ${persona.displayName} (${persona.role}) over tactical v
     }
 
     const wasTransmitting = this.isTransmittingPtt;
-    const chunksSent = this.pttChunksSent;
-    const peakRms = this.pttPeakRms;
-    const hadServerActivityStart = this.pttActivityStartedOnServer;
-
-    this.isTransmittingPtt = false;
-    this.pttActivityStartedOnServer = false;
-    this.callbacks.onAudioLevel?.(0);
-
-    if (this.speechRecognition) {
-      try {
-        this.speechRecognition.stop();
-      } catch {}
-      this.speechRecognition = null;
-    }
-
-    this.cleanupMicCaptureNodes();
-
     if (!wasTransmitting) return;
 
     if (this.session) {
+      try {
+        this.micWorkletNode?.port.postMessage('flush');
+      } catch {}
+
+      this.isTransmittingPtt = false;
+      this.callbacks.onAudioLevel?.(0);
+
+      const chunksSent = this.pttChunksSent;
+      const peakRms = this.pttPeakRms;
+
       if (chunksSent > 0) {
         try {
-          // Trailing 16kHz silence frame prevents the final spoken word from clipping right on release
-          const silenceFrames = this.manualActivitySignaling ? 1600 : 4800;
+          // Trailing 150ms 16kHz silence pad gives server VAD clean end-of-speech margin
           const silenceB64 = encodeFloat32ToBase64Pcm16(
-            new Float32Array(silenceFrames),
+            new Float32Array(2400),
             16000,
             16000
           );
@@ -1661,17 +1816,9 @@ Respond in character as ${persona.displayName} (${persona.role}) over tactical v
         } catch {}
       }
 
-      if (this.manualActivitySignaling) {
-        if (hadServerActivityStart) {
-          try {
-            this.session.sendRealtimeInput({ activityEnd: {} });
-          } catch {}
-        }
-      } else {
-        try {
-          this.session.sendRealtimeInput({ audioStreamEnd: true });
-        } catch {}
-      }
+      try {
+        this.session.sendRealtimeInput({ audioStreamEnd: true });
+      } catch {}
 
       if (this.status === 'transmitting_ptt') {
         if (chunksSent === 0) {
@@ -1691,6 +1838,18 @@ Respond in character as ${persona.displayName} (${persona.role}) over tactical v
       }
       return;
     }
+
+    this.isTransmittingPtt = false;
+    this.callbacks.onAudioLevel?.(0);
+
+    if (this.speechRecognition) {
+      try {
+        this.speechRecognition.stop();
+      } catch {}
+      this.speechRecognition = null;
+    }
+
+    this.releaseMicHardware();
 
     if (this.relayActive) {
       this.finalizePartialTranscripts();
@@ -1716,10 +1875,13 @@ Respond in character as ${persona.displayName} (${persona.role}) over tactical v
     this.appendOrMergeTranscript('COMMANDER', clean, false);
 
     if (this.session) {
-      if (this.manualActivitySignaling) {
-        this.session.sendRealtimeInput({ activityStart: {} });
-        this.session.sendRealtimeInput({ text: clean });
-        this.session.sendRealtimeInput({ activityEnd: {} });
+      this.setStatus('standby', 'Text transmitted — awaiting operative voice reply...');
+      this.startReplyWatchdog(1);
+      if (typeof (this.session as any).sendClientContent === 'function') {
+        this.session.sendClientContent({
+          turns: [{ role: 'user', parts: [{ text: clean }] }],
+          turnComplete: true,
+        });
       } else {
         this.session.sendRealtimeInput({ text: clean });
       }
@@ -1741,7 +1903,7 @@ Respond in character as ${persona.displayName} (${persona.role}) over tactical v
     this.pttAbortRequested = true;
     this.stopPushToTalk();
     this.pttOpening = false;
-    this.cleanupMicCaptureNodes();
+    this.releaseMicHardware();
     this.bargeInInterrupt();
     this.relayActive = false;
     this.transportRoute = null;

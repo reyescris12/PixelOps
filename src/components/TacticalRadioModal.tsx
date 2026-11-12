@@ -60,6 +60,14 @@ export const TacticalRadioModal: React.FC<TacticalRadioModalProps> = ({
   onDispatchRef.current = onDispatchDirective;
   const pttPressStartMsRef = useRef<number | null>(null);
   const pttStopOnReleaseRef = useRef<boolean>(false);
+  const pttReleaseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearPendingPttReleaseTimer = () => {
+    if (pttReleaseTimerRef.current) {
+      clearTimeout(pttReleaseTimerRef.current);
+      pttReleaseTimerRef.current = null;
+    }
+  };
 
   const refreshAudioInputs = async () => {
     try {
@@ -77,6 +85,7 @@ export const TacticalRadioModal: React.FC<TacticalRadioModalProps> = ({
 
   useEffect(() => {
     if (!isOpen) {
+      clearPendingPttReleaseTimer();
       pttPressStartMsRef.current = null;
       pttStopOnReleaseRef.current = false;
       void transceiverRef.current?.disconnect();
@@ -108,6 +117,7 @@ export const TacticalRadioModal: React.FC<TacticalRadioModalProps> = ({
     });
     transceiverRef.current = tx;
     return () => {
+      clearPendingPttReleaseTimer();
       void tx.disconnect();
     };
   }, []);
@@ -119,6 +129,7 @@ export const TacticalRadioModal: React.FC<TacticalRadioModalProps> = ({
     status === 'extended_thinking';
 
   const handleToggleCarrier = async () => {
+    clearPendingPttReleaseTimer();
     playBeep('switch');
     if (isConnected || status === 'connecting') {
       await transceiverRef.current?.disconnect();
@@ -153,6 +164,15 @@ export const TacticalRadioModal: React.FC<TacticalRadioModalProps> = ({
     }
   };
 
+  const scheduleStopPushToTalk = () => {
+    clearPendingPttReleaseTimer();
+    pttReleaseTimerRef.current = setTimeout(() => {
+      pttReleaseTimerRef.current = null;
+      transceiverRef.current?.stopPushToTalk();
+      playBeep('tap');
+    }, 120);
+  };
+
   const handlePttRelease = () => {
     if (pttPressStartMsRef.current === null) {
       return;
@@ -162,8 +182,7 @@ export const TacticalRadioModal: React.FC<TacticalRadioModalProps> = ({
 
     if (heldMs >= 380 && pttStopOnReleaseRef.current) {
       pttStopOnReleaseRef.current = false;
-      playBeep('tap');
-      transceiverRef.current?.stopPushToTalk();
+      scheduleStopPushToTalk();
     } else {
       // Quick tap (<380ms): latch Tap-to-Talk open; next tap sends & closes
       pttStopOnReleaseRef.current = false;
@@ -172,19 +191,18 @@ export const TacticalRadioModal: React.FC<TacticalRadioModalProps> = ({
 
   const handlePttPointerDown = async () => {
     if (!isConnected) return;
+    clearPendingPttReleaseTimer();
 
     // If already transmitting or opening (Tap-to-Talk mode), second tap stops & sends
     if (transceiverRef.current?.isPttActiveOrOpening()) {
       pttStopOnReleaseRef.current = false;
       pttPressStartMsRef.current = null;
-      playBeep('tap');
-      transceiverRef.current?.stopPushToTalk();
+      scheduleStopPushToTalk();
       return;
     }
 
     pttPressStartMsRef.current = Date.now();
     pttStopOnReleaseRef.current = true;
-    playBeep('tap');
     try {
       await transceiverRef.current?.startPushToTalk();
       void refreshAudioInputs();

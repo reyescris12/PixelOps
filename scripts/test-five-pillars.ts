@@ -399,11 +399,38 @@ async function main() {
   );
   await secureVault.deleteSecureCredential('pixelops_gemini_api_key');
 
-  // Verify explicit Push-To-Talk manual VAD configuration & adaptive mic normalization
+  // Verify Hybrid VAD configuration, peak-safe smoothed gain, and continuous-window resampling
   assertCheck(
-    lowLat.config.realtimeInputConfig?.automaticActivityDetection?.disabled === true &&
+    lowLat.config.realtimeInputConfig?.automaticActivityDetection?.disabled === false &&
+      lowLat.config.realtimeInputConfig?.automaticActivityDetection?.startOfSpeechSensitivity ===
+        'START_SENSITIVITY_HIGH' &&
+      lowLat.config.realtimeInputConfig?.automaticActivityDetection?.endOfSpeechSensitivity ===
+        'END_SENSITIVITY_LOW' &&
       lowLat.config.realtimeInputConfig?.activityHandling === 'START_OF_ACTIVITY_INTERRUPTS',
-    'buildLiveSessionConfig disables automatic VAD for explicit PTT activityStart/activityEnd boundaries'
+    'buildLiveSessionConfig enables Hybrid VAD with high start sensitivity, low end sensitivity, and barge-in handling'
+  );
+
+  // 44.1kHz -> 16kHz and 8kHz -> 16kHz resampling accuracy checks
+  const sine44k = new Float32Array(441);
+  for (let i = 0; i < sine44k.length; i++) {
+    sine44k[i] = Math.sin((i / 441) * Math.PI * 2) * 0.5;
+  }
+  const decoded44k = voice.decodeBase64Pcm16ToFloat32(
+    voice.encodeFloat32ToBase64Pcm16(sine44k, 44100, 16000)
+  );
+  const sine8k = new Float32Array(80);
+  for (let i = 0; i < sine8k.length; i++) {
+    sine8k[i] = Math.sin((i / 80) * Math.PI * 2) * 0.4;
+  }
+  const decoded8k = voice.decodeBase64Pcm16ToFloat32(
+    voice.encodeFloat32ToBase64Pcm16(sine8k, 8000, 16000)
+  );
+  assertCheck(
+    decoded44k.length === 160 &&
+      Math.abs(decoded44k[40] - 0.5) < 0.05 &&
+      decoded8k.length === 160 &&
+      Math.abs(decoded8k[40] - 0.4) < 0.05,
+    'Continuous-window anti-aliasing resampler handles 44.1kHz -> 16kHz and 8kHz -> 16kHz cleanly'
   );
 
   const quietWave = new Float32Array(256);
@@ -413,15 +440,36 @@ async function main() {
   const boosted = voice.normalizeMicChunkForSpeech(quietWave);
   const zeroWave = new Float32Array(128);
   const unboostedZero = voice.normalizeMicChunkForSpeech(zeroWave);
+  const hissWave = new Float32Array(128);
+  for (let i = 0; i < hissWave.length; i++) {
+    hissWave[i] = Math.sin((i / 128) * Math.PI * 2) * 0.003;
+  }
+  const unboostedHiss = voice.normalizeMicChunkForSpeech(hissWave);
+  const transientWave = new Float32Array(256);
+  transientWave[32] = 0.65;
+  transientWave[33] = 0.35;
+  const peakLimited = voice.normalizeMicChunkForSpeech(transientWave);
+  let maxOut = 0;
+  for (let i = 0; i < peakLimited.samples.length; i++) {
+    const abs = Math.abs(peakLimited.samples[i]);
+    if (abs > maxOut) maxOut = abs;
+  }
   assertCheck(
-    boosted.samples[64] > quietWave[64] * 2.5 && unboostedZero.rms === 0 && unboostedZero.samples[10] === 0,
-    'normalizeMicChunkForSpeech boosts quiet speech without amplifying digital silence'
+    boosted.samples[64] > quietWave[64] * 2.0 &&
+      unboostedZero.rms === 0 &&
+      unboostedZero.appliedGain === 1 &&
+      unboostedHiss.appliedGain === 1 &&
+      maxOut <= 0.885,
+    'normalizeMicChunkForSpeech boosts quiet speech, leaves silence/room hiss unboosted, and peak-limits plosives without clipping'
   );
 
-  // Verify end-to-end PTT lifecycle: suspended native AudioContext resume, activityStart -> audio/pcm -> activityEnd
+  // Verify end-to-end warm-mic PTT lifecycle, Hybrid VAD audioStreamEnd, text sendClientContent, and transcript merging
   const sentRealtimePayloads: any[] = [];
+  const sentClientContentPayloads: any[] = [];
   let resumeCalled = false;
   let capturedProcessor: any = null;
+  let getUserMediaCount = 0;
+  let stoppedTracksCount = 0;
   const prevAudioCtx = g.AudioContext;
   const origMediaDevicesDesc = Object.getOwnPropertyDescriptor(globalThis.navigator, 'mediaDevices');
 
@@ -453,29 +501,46 @@ async function main() {
     Object.defineProperty(globalThis.navigator, 'mediaDevices', {
       configurable: true,
       value: {
-        getUserMedia: async () => ({
-          getTracks: () => [{ stop() {} }],
-        }),
+        getUserMedia: async () => {
+          getUserMediaCount++;
+          return {
+            getTracks: () => [
+              {
+                readyState: 'live',
+                stop() {
+                  stoppedTracksCount++;
+                },
+              },
+            ],
+          };
+        },
       },
     });
 
-    const pttTx = new voice.TacticalRadioTransceiver();
+    let latestTranscripts: any[] = [];
+    const pttTx = new voice.TacticalRadioTransceiver({
+      onTranscriptUpdate: (entries) => {
+        latestTranscripts = entries;
+      },
+    });
     (pttTx as any).session = {
       sendRealtimeInput: (payload: any) => {
         sentRealtimePayloads.push(payload);
       },
+      sendClientContent: (payload: any) => {
+        sentClientContentPayloads.push(payload);
+      },
       close() {},
     };
-    (pttTx as any).manualActivitySignaling = true;
     (pttTx as any).status = 'standby';
 
     await pttTx.startPushToTalk();
     assertCheck(
-      resumeCalled && Boolean(capturedProcessor?.onaudioprocess),
+      resumeCalled && Boolean(capturedProcessor?.onaudioprocess) && getUserMediaCount === 1,
       'startPushToTalk unlocks suspended AudioContext synchronously and wires mic processor'
     );
 
-    const fakeSpeechBuf = new Float32Array(4096);
+    const fakeSpeechBuf = new Float32Array(2048);
     for (let i = 0; i < fakeSpeechBuf.length; i++) {
       fakeSpeechBuf[i] = Math.sin((i / 64) * Math.PI * 2) * 0.25;
     }
@@ -485,27 +550,64 @@ async function main() {
 
     pttTx.stopPushToTalk();
 
-    const hasActivityStart = sentRealtimePayloads.some((p) => p && 'activityStart' in p);
     const hasPcmAudio = sentRealtimePayloads.some(
       (p) => p?.audio?.mimeType === 'audio/pcm;rate=16000' && typeof p?.audio?.data === 'string' && p.audio.data.length > 0
     );
-    const hasActivityEnd = sentRealtimePayloads.some((p) => p && 'activityEnd' in p);
+    const hasAudioStreamEnd = sentRealtimePayloads.some((p) => p?.audioStreamEnd === true);
     assertCheck(
-      hasActivityStart && hasPcmAudio && hasActivityEnd,
-      'Live PTT lifecycle emits activityStart -> 16kHz PCM audio chunk -> trailing pad + activityEnd'
+      hasPcmAudio && hasAudioStreamEnd && stoppedTracksCount === 0,
+      'Hybrid VAD PTT streams 16kHz PCM audio, emits audioStreamEnd on stop, and keeps mic warm in standby'
     );
 
+    // Second PTT press reuses warm mic stream without re-opening getUserMedia
     sentRealtimePayloads.length = 0;
-    pttTx.sendTextDispatchOverRadio('Sitrep');
-    const textIdx = sentRealtimePayloads.findIndex((p) => p?.text === 'Sitrep');
-    const textStartIdx = sentRealtimePayloads.findIndex((p) => p && 'activityStart' in p);
-    const textEndIdx = sentRealtimePayloads.findIndex((p) => p && 'activityEnd' in p);
+    await pttTx.startPushToTalk();
+    pttTx.stopPushToTalk();
     assertCheck(
-      textStartIdx === 0 && textIdx === 1 && textEndIdx === 2,
-      'sendTextDispatchOverRadio frames manual activityStart -> text -> activityEnd when auto-VAD is disabled'
+      getUserMediaCount === 1 && sentRealtimePayloads.some((p) => p?.audioStreamEnd === true),
+      'Subsequent PTT press reuses warm mic stream cleanly without calling getUserMedia again'
+    );
+
+    // Typed radio text uses ordered sendClientContent with role: user and turnComplete: true
+    sentClientContentPayloads.length = 0;
+    pttTx.sendTextDispatchOverRadio('Sitrep');
+    const cc = sentClientContentPayloads[0];
+    assertCheck(
+      sentClientContentPayloads.length === 1 &&
+        cc?.turns?.[0]?.role === 'user' &&
+        cc?.turns?.[0]?.parts?.[0]?.text === 'Sitrep' &&
+        cc?.turnComplete === true,
+      'sendTextDispatchOverRadio dispatches structured user turn via sendClientContent(turnComplete: true)'
+    );
+
+    // Interleaved server inputTranscription / outputTranscription events merge cleanly per speaker
+    pttTx.clearTranscripts();
+    await (pttTx as any).handleIncomingMessage({
+      serverContent: { inputTranscription: { text: 'Hello ' } },
+    });
+    await (pttTx as any).handleIncomingMessage({
+      serverContent: { outputTranscription: { text: 'Copy, ' } },
+    });
+    await (pttTx as any).handleIncomingMessage({
+      serverContent: { inputTranscription: { text: 'Vance.' } },
+    });
+    await (pttTx as any).handleIncomingMessage({
+      serverContent: { outputTranscription: { text: 'Commander.' }, turnComplete: true },
+    });
+    assertCheck(
+      latestTranscripts.length === 2 &&
+        latestTranscripts[0].speaker === 'COMMANDER' &&
+        latestTranscripts[0].text === 'Hello Vance.' &&
+        latestTranscripts[1].speaker === 'OPERATIVE' &&
+        latestTranscripts[1].text === 'Copy, Commander.',
+      'Interleaved inputTranscription and outputTranscription events merge into coherent per-speaker bubbles'
     );
 
     await pttTx.disconnect();
+    assertCheck(
+      stoppedTracksCount >= 1,
+      'disconnect releases warm MediaStream tracks cleanly'
+    );
   } finally {
     g.AudioContext = prevAudioCtx;
     if (origMediaDevicesDesc) {

@@ -177,3 +177,131 @@
     display: none !important;
   }
 }
+
+/* ==========================================================================
+   Tactical CRT Chrome: Left Slide-Out Command Drawer & Collapsible Bottom Dock
+   ========================================================================== */
+
+.tactical-scanlines {
+  background-image: linear-gradient(
+    rgba(16, 20, 28, 0) 50%,
+    rgba(0, 0, 0, 0.28) 50%
+  );
+  background-size: 100% 4px;
+}
+
+.tactical-ctrl {
+  transition: box-shadow 150ms ease-out, background-color 150ms ease-out, border-color 150ms ease-out, scale 120ms ease-out;
+}
+
+.tactical-ctrl:hover {
+  box-shadow: 0 2px 12px var(--theme-glow-soft);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .tactical-ctrl:active {
+    scale: 0.97;
+  }
+}
+
+.tactical-ctrl:focus-visible {
+  outline: 2px solid rgb(var(--theme-primary-rgb));
+  outline-offset: 3px;
+}
+
+@media (forced-colors: active) {
+  .tactical-ctrl:focus-visible {
+    outline: 2px solid CanvasText;
+  }
+  .tactical-ctrl[aria-current="page"],
+  .tactical-ctrl[aria-pressed="true"] {
+    outline: 2px solid Highlight;
+    outline-offset: -2px;
+  }
+}
+
+/* Native Top-Layer Left Slide-Out Navigation Drawer (<dialog>) */
+.command-drawer {
+  --drawer-width: min(21.5rem, 84dvw, calc(100dvw - 24px));
+  --drawer-backdrop: 0;
+  inset: 0;
+  width: auto;
+  height: auto;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  overflow: visible;
+}
+
+.command-drawer::backdrop {
+  background: #03050a;
+  opacity: calc(var(--drawer-backdrop) * 0.74);
+}
+
+.command-drawer-scroller {
+  position: relative;
+  display: grid;
+  grid-template-columns: var(--drawer-width) 100%;
+  width: 100%;
+  height: 100svh;
+  overflow-x: scroll;
+  overflow-y: hidden;
+  overscroll-behavior: none;
+  scrollbar-width: none;
+  scroll-snap-type: x mandatory;
+}
+
+.command-drawer-scroller::-webkit-scrollbar {
+  display: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .command-drawer-scroller {
+    scroll-behavior: smooth;
+  }
+}
+
+.command-drawer-scroller::after {
+  content: '';
+  scroll-snap-align: end;
+  scroll-initial-target: nearest;
+}
+
+.command-drawer-sheet {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  height: 100svh;
+  overflow-y: auto;
+  scroll-snap-align: start;
+  scrollbar-width: none;
+}
+
+.command-drawer-sheet::-webkit-scrollbar {
+  display: none;
+}
+
+@supports (animation-timeline: scroll()) {
+  @property --drawer-backdrop {
+    syntax: '<number>';
+    inherits: true;
+    initial-value: 0;
+  }
+
+  .command-drawer {
+    timeline-scope: --drawer-fade;
+    animation: fade-drawer-backdrop linear both;
+    animation-timeline: --drawer-fade;
+  }
+
+  .command-drawer-scroller {
+    scroll-timeline: --drawer-fade x;
+  }
+
+  @keyframes fade-drawer-backdrop {
+    0% { --drawer-backdrop: 1; }
+    100% { --drawer-backdrop: 0; }
+  }
+}

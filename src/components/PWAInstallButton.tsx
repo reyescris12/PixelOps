@@ -2,7 +2,11 @@ import React, { useState } from 'react';
 import { Download, Smartphone, X } from 'lucide-react';
 import { usePWAInstall, useOnlineStatus } from '../hooks/usePWAInstall';
 
-export const PWAInstallButton: React.FC = () => {
+interface PWAInstallButtonProps {
+  variant?: 'default' | 'tactical';
+}
+
+export const PWAInstallButton: React.FC<PWAInstallButtonProps> = ({ variant = 'default' }) => {
   const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
   const [showModal, setShowModal] = useState(false);
 
@@ -21,11 +25,24 @@ export const PWAInstallButton: React.FC = () => {
             setShowModal(true);
           }
         }}
-        className="min-h-[40px] px-3 py-1.5 text-xs font-medium text-slate-200 bg-slate-800/90 hover:bg-slate-700 border border-slate-700 rounded-lg flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+        className={
+          variant === 'tactical'
+            ? 'tactical-ctrl w-full min-h-[38px] px-3 py-1.5 font-mono-tabular text-xs font-bold bg-[#0c121b] hover:bg-[#131d2b] border flex items-center justify-center gap-2 whitespace-nowrap cursor-pointer uppercase tracking-wider'
+            : 'min-h-[40px] px-3 py-1.5 text-xs font-medium text-slate-200 bg-slate-800/90 hover:bg-slate-700 border border-slate-700 rounded-lg flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer'
+        }
+        style={
+          variant === 'tactical'
+            ? {
+                color: 'rgb(var(--theme-primary-rgb))',
+                borderColor: 'var(--theme-border-color)',
+                boxShadow: 'inset 0 0 12px var(--theme-glow-soft)',
+              }
+            : undefined
+        }
         title="Install PixelOps PWA"
       >
-        <Download className="w-3.5 h-3.5" />
-        <span>Install App</span>
+        <Download className="w-3.5 h-3.5" aria-hidden="true" />
+        <span>{variant === 'tactical' ? '[INSTALL STANDALONE APP]' : 'Install App'}</span>
       </button>
 
       {showModal && (

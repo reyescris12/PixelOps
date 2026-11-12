@@ -1190,18 +1190,18 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
         style={{ borderColor: 'var(--theme-border-color)' }}
       >
         {/* Left: Radar, 7-Room Zoom, and Active Sector Title */}
-        <div className="flex items-center gap-2 min-w-0">
+        <div className="flex items-center gap-2 min-w-0 shrink-0">
           <button
             type="button"
             onClick={handleToggleRadar}
-            className={`text-[10px] sm:text-[11px] flex items-center gap-1 cursor-pointer transition-colors ${
+            className={`text-[10px] sm:text-[11px] flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap shrink-0 ${
               showMinimap
                 ? 'text-[#e59838] font-bold'
                 : 'theme-text-primary theme-glow-text hover:opacity-85'
             }`}
             title="Toggle Retro Overworld Minimap Radar"
           >
-            <Radar className="w-3 h-3" />
+            <Radar className="w-3 h-3 shrink-0" />
             <span>[RADAR]</span>
           </button>
 
@@ -1211,7 +1211,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
               setIsOverviewZoom((prev) => !prev);
               playBeep('switch');
             }}
-            className={`text-[10px] sm:text-[11px] flex items-center gap-1 cursor-pointer transition-colors ${
+            className={`text-[10px] sm:text-[11px] flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap shrink-0 ${
               isOverviewZoom
                 ? 'text-[#38bdf8] font-bold'
                 : 'text-[#94a3b8] hover:text-[#f3ead8]'
@@ -1219,9 +1219,9 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
             title="Toggle 7-Sector Full Overworld Map Zoom"
           >
             {isOverviewZoom ? (
-              <Minimize2 className="w-3 h-3" />
+              <Minimize2 className="w-3 h-3 shrink-0" />
             ) : (
-              <Maximize2 className="w-3 h-3" />
+              <Maximize2 className="w-3 h-3 shrink-0" />
             )}
             <span>{isOverviewZoom ? '[1x VIEW]' : '[7-SECTOR]'}</span>
           </button>
@@ -1232,10 +1232,10 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
               setIsRoomSpawnerOpen(true);
               playBeep('tap');
             }}
-            className="text-[10px] sm:text-[11px] flex items-center gap-1 cursor-pointer transition-colors text-[#38bdf8] hover:text-[#fde047] font-bold"
+            className="text-[10px] sm:text-[11px] flex items-center gap-1 cursor-pointer transition-colors text-[#38bdf8] hover:text-[#fde047] font-bold whitespace-nowrap shrink-0"
             title="Open Dynamic Room Spawner & Modular Skill Attachment Engine"
           >
-            <Layers className="w-3 h-3" />
+            <Layers className="w-3 h-3 shrink-0" />
             <span>[+ EXPAND / SKILLS]</span>
           </button>
 

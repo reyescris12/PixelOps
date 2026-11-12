@@ -36,7 +36,9 @@ const SettingsModal = lazy(() => import('./components/SettingsModal').then((m) =
 import { loadLLMProviderConfig, getLLMAuthInfo } from './services/LLMProviderService';
 import { ThemeSettings } from './components/ThemeSettings';
 import { RetroErrorModal } from './components/RetroErrorModal';
-import { PWAInstallButton, OfflineBanner } from './components/PWAInstallButton';
+import { OfflineBanner } from './components/PWAInstallButton';
+import { CommandSideDrawer } from './components/CommandSideDrawer';
+import { CommandDock } from './components/CommandDock';
 import { AgentExecutionCard, PluginConnector, CommandPreferences, RetroAgentError, RetroErrorCode, RetroErrorDescriptor, RoundtableMeetingSession, RoundtableParticipantPayload, createRetroAgentError, classifyRetroErrorCode, loadExecutionCards, saveExecutionCards, loadPlugins, savePlugins, loadPreferences, savePreferences, loadRoundtableSessions, saveRoundtableSessions, RoundtableActionItem, isValidRealTask } from './services/ApiCore';
 import { executeAgentDirective, executeRoundtableMeeting, preloadAgentEngine } from './services/agentEngineLazy';
 import { auditStorageHealth } from './services/SafetyService';
@@ -2545,171 +2547,55 @@ const CommandCenterContent: React.FC = () => {
     >
       {/* Outer Retro Console Frame */}
       <div
-        className="w-full h-full sm:h-auto max-w-6xl rounded-none sm:rounded-2xl bg-[#11131c] border-0 sm:border-[3px] overflow-hidden flex flex-col min-h-0 sm:min-h-[92vh] max-h-full sm:max-h-[96dvh] shadow-2xl command-center-layout"
+        className="relative w-full h-full sm:h-auto max-w-6xl rounded-none sm:rounded-2xl bg-[#11131c] border-0 sm:border-[3px] overflow-hidden flex flex-col min-h-0 sm:min-h-[92vh] max-h-full sm:max-h-[96dvh] shadow-2xl command-center-layout"
         style={{
           borderColor: 'var(--theme-border-color)',
           boxShadow: '0 0 50px rgba(0,0,0,0.9), 0 0 24px var(--theme-glow-soft)',
         }}
       >
-        {/* Top Console Telemetry Bar: [⚙️] SAFEHOUSE v1.0 | v1.0 | [🔋 100%] ▶⚡ */}
-        <header
-          className="bg-[#232634] border-b-2 border-[#161822] px-2.5 sm:px-5 py-1.5 sm:py-2 flex items-center justify-between gap-2 sm:gap-4 select-none shrink-0 overflow-x-auto no-scrollbar w-full z-20"
-          style={{
-            paddingTop: 'max(6px, env(safe-area-inset-top, 6px))',
-            paddingLeft: 'max(10px, env(safe-area-inset-left, 10px))',
-            paddingRight: 'max(10px, env(safe-area-inset-right, 10px))',
-          }}
-        >
-          {/* Left Zone: [⚙️] SAFEHOUSE v1.0 + [🗺️ RADAR] Minimap Toggle */}
-          {/* Left Zone: [⚙️] SAFEHOUSE + Sector Info + Soundscape */}
-          <div className="flex items-center gap-2.5 shrink-0">
-            <button
-              type="button"
-              onClick={() => {
-                setIsSettingsOpen(true);
-                playBeep('tap');
+        {/* Left Slide-Out Command System Menu (Replaces Top Header Bar) */}
+        {(() => {
+          const activeMeta = getRoomMetadata(currentRoom);
+          const activeSound =
+            ROOM_SOUNDSCAPE_PROFILES[currentRoom] || ROOM_SOUNDSCAPE_PROFILES.war_room;
+          const authInfo = getLLMAuthInfo(loadLLMProviderConfig());
+          const activeOperativeName =
+            crewAgents.find((a) => a.id === activeAgent.id)?.customName || activeAgent.name;
+
+          return (
+            <CommandSideDrawer
+              sectorBadge={activeMeta?.shortBadge || 'SECTOR'}
+              sectorCode={activeMeta?.sectorCode || 'SEC-00'}
+              activeOperativeName={activeOperativeName}
+              soundTitle={activeSound.title}
+              soundDescription={activeSound.description}
+              soundShortTag={activeSound.shortTag}
+              onToggleSound={() => {
+                const next = !soundEnabled;
+                setSoundEnabled(next);
+                if (next) {
+                  ambientAudioService.setRoom(currentRoom, true);
+                  playBeep('tap');
+                }
               }}
-              className="font-mono-tabular text-sm sm:text-base font-bold text-[#e2e4ed] hover:text-[#4ade80] transition-colors flex items-center gap-1.5 cursor-pointer"
-              title="Open Command Telemetry & Vault Settings"
-            >
-              <span>[⚙️]</span>
-              <span className="uppercase">{theme.shortLabel} v1.0</span>
-            </button>
-
-            {(() => {
-              const activeMeta = getRoomMetadata(currentRoom);
-              const activeSound =
-                ROOM_SOUNDSCAPE_PROFILES[currentRoom] || ROOM_SOUNDSCAPE_PROFILES.war_room;
-              return (
-                <div className="hidden sm:flex items-center gap-2.5 font-mono-tabular text-xs text-[#c5c9d6] pl-2 border-l border-[#363d54]">
-                  <span>
-                    SECTOR: <strong className="text-[#e59838]">{activeMeta?.shortBadge || 'SECTOR'}</strong> ({activeMeta?.sectorCode || 'SEC-00'})
-                  </span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const next = !soundEnabled;
-                      setSoundEnabled(next);
-                      if (next) {
-                        ambientAudioService.setRoom(currentRoom, true);
-                        playBeep('tap');
-                      }
-                    }}
-                    className={`px-2 py-0.5 text-[10px] border transition-colors cursor-pointer flex items-center gap-1 ${
-                      soundEnabled
-                        ? 'bg-[#13221a] text-[#4ade80] border-[#4ade80]'
-                        : 'bg-[#1c1a17] text-[#94a3b8] border-[#383633] hover:border-[#e59838]'
-                    }`}
-                    title={`Ambient Synth Loop: ${activeSound.title} — ${activeSound.description} (Click to toggle)`}
-                  >
-                    <span>
-                      {soundEnabled
-                        ? `[🔊 SYNTH: ${activeSound.shortTag}]`
-                        : '[🔇 SYNTH: OFF]'}
-                    </span>
-                  </button>
-                </div>
-              );
-            })()}
-          </div>
-
-          {/* Center Zone: Active Meeting / Boost / Sector Playbook */}
-          <div className="hidden md:flex items-center gap-2 font-mono-tabular text-xs text-[#c5c9d6]">
-            {isMeetingActive && (
-              <span className="px-2 py-0.5 bg-[#38bdf8]/20 border border-[#38bdf8] text-[#38bdf8] font-bold animate-pulse">
-                [📣 ROUNDTABLE: WAR ROOM]
-              </span>
-            )}
-            {decryptionBoost > 0 && (
-              <span className="px-2 py-0.5 bg-[#4ade80]/20 border border-[#4ade80] text-[#4ade80] font-bold">
-                [⚡ BOOST +{decryptionBoost}%]
-              </span>
-            )}
-          </div>
-
-          {/* Right Zone: AI Subscription Plan + Night Shift + Telemetry */}
-          <div className="flex items-center gap-2 shrink-0 font-mono-tabular text-xs">
-            {/* AI Subscription / Connected Plan HUD Pill */}
-            {(() => {
-              const authInfo = getLLMAuthInfo(loadLLMProviderConfig());
-              const isGoogle = authInfo.badge.includes('GOOGLE');
-              return (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsSettingsOpen(true);
-                    playBeep('tap');
-                  }}
-                  className={`px-2 py-0.5 border font-mono-tabular text-xs flex items-center gap-1.5 cursor-pointer transition-colors ${
-                    authInfo.isConnected
-                      ? isGoogle
-                        ? 'bg-[#0b1f33] hover:bg-[#12304d] border-[#38bdf8] text-[#7dd3fc]'
-                        : 'bg-[#0f291e] hover:bg-[#163c2b] border-[#4ade80] text-[#86efac]'
-                      : 'bg-[#181926] hover:bg-[#222538] border-[#64748b] text-[#cbd5e1]'
-                  }`}
-                  title={`${authInfo.title}: ${authInfo.subtitle}. Click to configure subscription plans & sign in.`}
-                >
-                  <span
-                    className={`w-1.5 h-1.5 rounded-full ${
-                      authInfo.isConnected ? 'bg-[#4ade80] animate-pulse' : 'bg-[#94a3b8]'
-                    }`}
-                  />
-                  <span>[{authInfo.isConnected ? `💎 ${authInfo.badge}` : '💎 CONNECT AI PLAN'}]</span>
-                </button>
-              );
-            })()}
-
-            <button
-              type="button"
-              onClick={() => {
-                setIsReconOverlayOpen((prev) => !prev);
-                playBeep('tap');
-              }}
-              className={`px-2 py-0.5 border flex items-center gap-1 cursor-pointer transition-colors ${
-                isReconOverlayOpen
-                  ? 'bg-[#0c2e21] border-[#10b981] text-[#34d399] font-bold shadow-[0_0_12px_rgba(16,185,129,0.4)]'
-                  : 'bg-[#091e16] hover:bg-[#0e2d21] border-[#10b981]/60 hover:border-[#10b981] text-[#6ee7b7]'
-              }`}
-              title="Toggle Tactical Satellite Recon Monitor Overlay over the Safehouse Rooms (Keep Briefing Terminal open below to prompt agents live)"
-            >
-              <span>[🛰️ RECON MONITOR]</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setIsNightShiftOpen(true);
-                playBeep('tap');
-              }}
-              className="px-2 py-0.5 bg-[#151822] hover:bg-[#1e2330] border border-[#363d54] hover:border-[#e59838] text-[#e59838] flex items-center gap-1 cursor-pointer transition-colors"
-              title="Open Night Shift scheduler, routine briefings, and webhook connectors"
-            >
-              <span>[🌙 NIGHT SHIFT</span>
-              {nightShiftUnreadCount > 0 && (
-                <span className="text-[#4ade80] font-bold">
-                  :{nightShiftUnreadCount}
-                </span>
-              )}
-              <span>]</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setIsTelemetryOpen(true);
-                playBeep('tap');
-              }}
-              className="px-2 py-0.5 bg-[#131d19] hover:bg-[#1a2923] border border-[#2b4c3b] hover:border-[#4ade80] text-[#4ade80] flex items-center gap-1 cursor-pointer transition-colors"
-              title="Open Telemetry, Token Ledger & Cost Tracking HUD"
-            >
-              <span>[📊 TELEMETRY]</span>
-            </button>
-            <PWAInstallButton />
-          </div>
-        </header>
+              isMeetingActive={isMeetingActive}
+              decryptionBoost={decryptionBoost}
+              authInfo={authInfo}
+              isReconOverlayOpen={isReconOverlayOpen}
+              nightShiftUnreadCount={nightShiftUnreadCount}
+              onOpenSettings={() => setIsSettingsOpen(true)}
+              onToggleReconOverlay={() => setIsReconOverlayOpen((prev) => !prev)}
+              onOpenNightShift={() => setIsNightShiftOpen(true)}
+              onOpenTelemetry={() => setIsTelemetryOpen(true)}
+              onOpenThreatMonitor={() => setIsThreatMonitorOpen(true)}
+              onOpenFieldManual={() => setIsFieldManualOpen(true)}
+              onOpenThemesConsole={() => setActiveTab('themes')}
+            />
+          );
+        })()}
 
         {/* Center Dark CRT Console Canvas */}
-        <main className="flex-1 bg-[#0e1017] flex flex-col pb-3 sm:pb-5 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain">
+        <main className="flex-1 bg-[#0e1017] flex flex-col pb-16 sm:pb-20 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain">
           {/* Scrollable 7-Sector Overworld Diorama + Minimap Radar + Modular GameOverlay */}
           <SpriteCanvas
             currentRoom={currentRoom}
@@ -2997,160 +2883,28 @@ const CommandCenterContent: React.FC = () => {
           </div>
         </main>
 
-        {/* Bottom Console Navigation Footer: [🏠 HQ] [🕵️ Crew] [🔌 Plugins] [🎨 Themes] */}
-        <footer
-          className="bg-[#1b1e29] border-t-2 border-[#282c3d] px-2 py-1.5 sm:py-2 flex items-center justify-start lg:justify-center shrink-0 overflow-x-auto no-scrollbar w-full z-20 touch-pan-x overscroll-x-contain scroll-smooth"
-          style={{
-            paddingBottom: 'max(6px, env(safe-area-inset-bottom, 6px))',
-            paddingLeft: 'max(8px, env(safe-area-inset-left, 8px))',
-            paddingRight: 'max(8px, env(safe-area-inset-right, 8px))',
-            WebkitOverflowScrolling: 'touch',
-          }}
-          onWheel={(e) => {
-            if (e.deltaY !== 0 && !e.deltaX) {
-              e.currentTarget.scrollLeft += e.deltaY;
+        {/* Collapsible Tactical Command Dock / Taskbar (Hides into a Singular Button) */}
+        <CommandDock
+          activeTab={activeTab}
+          onSelectTab={(tab) => {
+            setActiveTab(tab);
+            if (tab === 'plugins') {
+              setPluginsSubTab('composio');
             }
           }}
-        >
-          <nav
-            aria-label="Console Navigation"
-            className="inline-flex flex-nowrap items-center shrink-0 bg-[#232736] border border-[#363b4e] divide-x divide-[#363b4e] min-w-max select-none"
-          >
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('hq');
-                playBeep('tap');
-              }}
-              className={`min-h-[42px] px-3.5 sm:px-6 py-1.5 font-mono-tabular text-sm sm:text-base flex items-center gap-2 sm:gap-2.5 transition-colors cursor-pointer shrink-0 whitespace-nowrap ${
-                activeTab === 'hq'
-                  ? 'bg-[#2e3346] text-[#ffffff] font-semibold'
-                  : 'text-[#d0d4e0] hover:bg-[#292d3e]'
-              }`}
-            >
-              <span className="text-base" aria-hidden="true">🏠</span>
-              <span>HQ</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('crew');
-                playBeep('tap');
-              }}
-              className={`min-h-[42px] px-3.5 sm:px-6 py-1.5 font-mono-tabular text-sm sm:text-base flex items-center gap-2 sm:gap-2.5 transition-colors cursor-pointer shrink-0 whitespace-nowrap ${
-                activeTab === 'crew'
-                  ? 'bg-[#2e3346] text-[#ffffff] font-semibold'
-                  : 'text-[#d0d4e0] hover:bg-[#292d3e]'
-              }`}
-            >
-              <span className="text-base" aria-hidden="true">🕵️</span>
-              <span>Crew</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('plugins');
-                setPluginsSubTab('composio');
-                playBeep('tap');
-              }}
-              className={`min-h-[42px] px-3.5 sm:px-6 py-1.5 font-mono-tabular text-sm sm:text-base flex items-center gap-2 sm:gap-2.5 transition-colors cursor-pointer shrink-0 whitespace-nowrap ${
-                activeTab === 'plugins'
-                  ? 'bg-[#e59838] text-[#121110] font-bold shadow-[0_0_10px_rgba(229,152,56,0.5)]'
-                  : 'text-[#d0d4e0] hover:bg-[#292d3e]'
-              }`}
-            >
-              <span className="text-base" aria-hidden="true">⚔️</span>
-              <span>Plugins & Toolkits</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTab('themes');
-                playBeep('tap');
-              }}
-              className={`min-h-[42px] px-3.5 sm:px-6 py-1.5 font-mono-tabular text-sm sm:text-base flex items-center gap-2 sm:gap-2.5 transition-colors cursor-pointer shrink-0 whitespace-nowrap ${
-                activeTab === 'themes'
-                  ? 'bg-[#2e3346] text-[#ffffff] font-semibold'
-                  : 'text-[#d0d4e0] hover:bg-[#292d3e]'
-              }`}
-            >
-              <span className="text-base" aria-hidden="true">🎨</span>
-              <span>Themes</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setIsTerminalConsoleOpen((prev) => !prev);
-                playBeep('tap');
-              }}
-              className={`min-h-[42px] px-3 sm:px-5 py-1.5 font-mono-tabular text-sm sm:text-base flex items-center gap-2 transition-colors cursor-pointer border-l border-[#363b4e] shrink-0 whitespace-nowrap ${
-                isTerminalConsoleOpen
-                  ? 'bg-[#153422] text-[#4ade80] font-semibold'
-                  : 'text-[#4ade80] hover:bg-[#1a2e23]'
-              }`}
-              title="Toggle Tactical CLI Terminal Console (~)"
-            >
-              <span className="text-base" aria-hidden="true">💻</span>
-              <span className="hidden sm:inline">CLI (~)</span>
-              <span className="sm:hidden">CLI</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setIsWorkspaceFilesOpen((prev) => !prev);
-                playBeep('tap');
-              }}
-              className={`min-h-[42px] px-3 sm:px-5 py-1.5 font-mono-tabular text-sm sm:text-base flex items-center gap-2 transition-colors cursor-pointer border-l border-[#363b4e] shrink-0 whitespace-nowrap ${
-                isWorkspaceFilesOpen
-                  ? 'bg-[#152e34] text-[#38bdf8] font-semibold'
-                  : 'text-[#38bdf8] hover:bg-[#15232e]'
-              }`}
-              title="Open Workspace File Explorer (IndexedDB Markdown Reports & Logs)"
-            >
-              <span className="text-base" aria-hidden="true">📁</span>
-              <span className="hidden sm:inline">Files</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setIsSyncModalOpen((prev) => !prev);
-                playBeep('tap');
-              }}
-              className={`min-h-[42px] px-3 sm:px-5 py-1.5 font-mono-tabular text-sm sm:text-base flex items-center gap-2 transition-colors cursor-pointer border-l border-[#363b4e] shrink-0 whitespace-nowrap ${
-                isSyncModalOpen
-                  ? 'bg-[#15342a] text-[#4ade80] font-semibold'
-                  : 'text-[#4ade80] hover:bg-[#122820]'
-              }`}
-              title="Open SatCom Multi-Device Cloud Sync"
-            >
-              <span className="text-base" aria-hidden="true">☁️</span>
-              <span className="hidden sm:inline">Sync</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setIsFeedbackOpen((prev) => !prev);
-                playBeep('tap');
-              }}
-              className={`min-h-[42px] px-3 sm:px-5 py-1.5 font-mono-tabular text-sm sm:text-base flex items-center gap-2 transition-colors cursor-pointer border-l border-[#363b4e] shrink-0 whitespace-nowrap ${
-                isFeedbackOpen
-                  ? 'bg-[#0f2416] text-[#00ff66] font-semibold'
-                  : 'text-[#00ff66] hover:bg-[#0a1a0f]'
-              }`}
-              title="Open Feedback Terminal (Relay to support@pixelops.app)"
-            >
-              <span className="text-base" aria-hidden="true">📡</span>
-              <span className="hidden sm:inline">Feedback</span>
-            </button>
-          </nav>
-        </footer>
+          queuedTasksCount={queuedTasksCount}
+          isExecuting={isExecuting}
+          crewCount={crewAgents.length}
+          connectedPluginsCount={plugins.filter((p) => p.connected).length}
+          isTerminalConsoleOpen={isTerminalConsoleOpen}
+          onToggleTerminalConsole={() => setIsTerminalConsoleOpen((prev) => !prev)}
+          isWorkspaceFilesOpen={isWorkspaceFilesOpen}
+          onToggleWorkspaceFiles={() => setIsWorkspaceFilesOpen((prev) => !prev)}
+          isSyncModalOpen={isSyncModalOpen}
+          onToggleSyncModal={() => setIsSyncModalOpen((prev) => !prev)}
+          isFeedbackOpen={isFeedbackOpen}
+          onToggleFeedback={() => setIsFeedbackOpen((prev) => !prev)}
+        />
       </div>
 
       <OfflineBanner />

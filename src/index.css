@@ -166,18 +166,6 @@
   }
 }
 
-/* Mobile Portrait Orientation Prompt Overlay */
-@media screen and (orientation: portrait) and (max-width: 900px) {
-  .portrait-orientation-guard {
-    display: flex !important;
-  }
-}
-@media screen and (orientation: landscape), (min-width: 901px) {
-  .portrait-orientation-guard {
-    display: none !important;
-  }
-}
-
 /* ==========================================================================
    Tactical CRT Chrome: Left Slide-Out Command Drawer & Collapsible Bottom Dock
    ========================================================================== */

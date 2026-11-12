@@ -278,21 +278,21 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({
 
       {/* Top Mini-Game Telemetry Header */}
       <div
-        className="relative z-10 px-3 py-1.5 bg-[#090d12]/95 border-b flex items-center justify-between gap-2"
+        className="relative z-10 px-2.5 sm:px-3 py-1 sm:py-1.5 bg-[#090d12]/95 border-b flex items-center justify-between gap-2"
         style={{ borderColor: meta.borderColor }}
       >
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 min-w-0">
           <span
-            className="font-pixel text-[10px] sm:text-xs tracking-wider font-bold"
+            className="font-pixel text-[9px] sm:text-xs tracking-wider font-bold truncate"
             style={{ color: meta.accentHex }}
           >
             {meta.title}
           </span>
         </div>
 
-        <div className="flex items-center gap-3 font-mono-tabular text-xs">
+        <div className="flex items-center gap-2 sm:gap-3 font-mono-tabular text-[10px] sm:text-xs shrink-0 whitespace-nowrap">
           <span className="text-slate-300">
-            {meta.boostLabel}:{' '}
+            <span className="hidden sm:inline">{meta.boostLabel}: </span>
             <strong style={{ color: meta.accentHex }}>+{decryptionBoost}%</strong>
           </span>
           <span className="text-slate-400">
@@ -387,7 +387,7 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({
       </div>
 
       {/* Bottom 4 Large Pixel-Art Touch Buttons (<, A, B, >) */}
-      <div className="relative z-10 w-full max-w-lg mx-auto px-2 pb-2 pt-1 grid grid-cols-4 gap-2">
+      <div className="relative z-10 w-full max-w-lg mx-auto px-2 pb-1.5 sm:pb-2 pt-1 grid grid-cols-4 gap-1.5 sm:gap-2">
         {LANE_SYMBOLS.map((symbol, idx) => {
           const isFlashing = flashLane === idx;
           return (
@@ -400,7 +400,7 @@ export const GameOverlay: React.FC<GameOverlayProps> = ({
                 backgroundColor: isFlashing ? meta.buttonActiveBg : '#0d141b',
                 color: isFlashing ? '#ffffff' : meta.accentHex,
               }}
-              className="min-h-[46px] sm:min-h-[52px] border-2 font-pixel text-sm sm:text-base font-bold flex items-center justify-center shadow-[0_3px_0_rgba(0,0,0,0.8)] active:translate-y-[1px] transition-colors cursor-pointer select-none"
+              className="min-h-[38px] sm:min-h-[52px] border-2 font-pixel text-xs sm:text-base font-bold flex items-center justify-center shadow-[0_3px_0_rgba(0,0,0,0.8)] active:translate-y-[1px] transition-colors cursor-pointer select-none"
             >
               [{symbol}]
             </button>

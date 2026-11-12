@@ -112,3 +112,27 @@ if (typeof navigator !== 'undefined' && navigator.storage && navigator.storage.p
     }
   }).catch(() => {});
 }
+
+// Keep installed standalone PWA locked to upright portrait orientation where supported
+if (typeof window !== 'undefined' && typeof screen !== 'undefined') {
+  const lockPortraitWhenInstalled = () => {
+    const isStandalone =
+      window.matchMedia?.('(display-mode: standalone)').matches ||
+      window.matchMedia?.('(display-mode: fullscreen)').matches ||
+      (window.navigator as unknown as { standalone?: boolean }).standalone === true;
+    if (!isStandalone) return;
+
+    const orientationApi = screen.orientation as ScreenOrientation & {
+      lock?: (orientation: string) => Promise<void>;
+    };
+    if (orientationApi && typeof orientationApi.lock === 'function') {
+      orientationApi.lock('portrait-primary').catch(() => {});
+    }
+  };
+
+  lockPortraitWhenInstalled();
+  window.addEventListener('appinstalled', lockPortraitWhenInstalled);
+  window
+    .matchMedia?.('(display-mode: standalone)')
+    .addEventListener?.('change', lockPortraitWhenInstalled);
+}

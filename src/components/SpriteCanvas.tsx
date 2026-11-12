@@ -1181,20 +1181,20 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
 
   return (
     <div
-      className="relative z-0 isolate w-full max-w-5xl mx-auto select-none border-b bg-[#080a0f]"
+      className="relative z-10 isolate w-full max-w-5xl mx-auto select-none border-b bg-[#080a0f]"
       style={{ borderColor: 'var(--theme-border-color)' }}
     >
       {/* Top 16-Bit Tactical Sector Bezel Strip (Integrated above the canvas, never floating over room art) */}
       <div
-        className="bg-[#0c0f16] border-b px-2.5 py-1.5 flex flex-nowrap items-center justify-between gap-2 font-mono-tabular shrink-0 overflow-x-auto no-scrollbar w-full"
+        className="bg-[#0c0f16] border-b px-2.5 py-1.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 font-mono-tabular shrink-0 w-full"
         style={{ borderColor: 'var(--theme-border-color)' }}
       >
         {/* Left: Radar, 7-Room Zoom, and Active Sector Title */}
-        <div className="flex items-center gap-2 min-w-0 shrink-0">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
           <button
             type="button"
             onClick={handleToggleRadar}
-            className={`text-[10px] sm:text-[11px] flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap shrink-0 ${
+            className={`py-0.5 text-[10px] sm:text-[11px] flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap shrink-0 ${
               showMinimap
                 ? 'text-[#e59838] font-bold'
                 : 'theme-text-primary theme-glow-text hover:opacity-85'
@@ -1211,7 +1211,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
               setIsOverviewZoom((prev) => !prev);
               playBeep('switch');
             }}
-            className={`text-[10px] sm:text-[11px] flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap shrink-0 ${
+            className={`py-0.5 text-[10px] sm:text-[11px] flex items-center gap-1 cursor-pointer transition-colors whitespace-nowrap shrink-0 ${
               isOverviewZoom
                 ? 'text-[#38bdf8] font-bold'
                 : 'text-[#94a3b8] hover:text-[#f3ead8]'
@@ -1232,7 +1232,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
               setIsRoomSpawnerOpen(true);
               playBeep('tap');
             }}
-            className="text-[10px] sm:text-[11px] flex items-center gap-1 cursor-pointer transition-colors text-[#38bdf8] hover:text-[#fde047] font-bold whitespace-nowrap shrink-0"
+            className="py-0.5 text-[10px] sm:text-[11px] flex items-center gap-1 cursor-pointer transition-colors text-[#38bdf8] hover:text-[#fde047] font-bold whitespace-nowrap shrink-0"
             title="Open Dynamic Room Spawner & Modular Skill Attachment Engine"
           >
             <Layers className="w-3 h-3 shrink-0" />
@@ -1244,7 +1244,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
           <span className="text-[10px] theme-text-primary theme-glow-text font-bold shrink-0">
             [{activeRoomMeta.sectorCode}]
           </span>
-          <span className="text-[11px] sm:text-xs font-semibold text-[#e59838] tracking-wide truncate">
+          <span className="hidden md:inline text-[11px] sm:text-xs font-semibold text-[#e59838] tracking-wide truncate">
             {formatSectorTitle(activeRoomMeta)}
           </span>
         </div>
@@ -1266,7 +1266,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
                   if (isOverviewZoom) setIsOverviewZoom(false);
                   playBeep('switch');
                 }}
-                className={`px-1.5 py-0.5 text-[9px] sm:text-[10px] transition-colors flex items-center gap-0.5 cursor-pointer whitespace-nowrap ${
+                className={`px-1.5 py-1 sm:py-0.5 text-[10px] transition-colors flex items-center gap-0.5 cursor-pointer whitespace-nowrap shrink-0 ${
                   active
                     ? 'theme-text-primary theme-glow-text font-bold underline underline-offset-4'
                     : 'text-[#64748b] hover:text-[#cbd5e1]'
@@ -1286,7 +1286,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
               <button
                 type="button"
                 onClick={onStartManualBypass}
-                className="text-[10px] theme-text-primary theme-glow-text hover:text-[#fde047] font-bold cursor-pointer whitespace-nowrap"
+                className="py-1 sm:py-0.5 text-[10px] theme-text-primary theme-glow-text hover:text-[#fde047] font-bold cursor-pointer whitespace-nowrap shrink-0"
                 title="Launch interactive Neural Bypass mini-game"
               >
                 [BYPASS]
@@ -1297,16 +1297,17 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
       </div>
 
       {/* Main Scrollable / Pannable 2D Overworld Viewport (Standardized 16:9 Aspect Ratio / 960x540 Logical Virtual Grid) */}
-      <div
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        onPointerCancel={handlePointerUp}
-        className="relative isolate w-full aspect-[16/9] max-h-[50dvh] sm:max-h-none bg-[#080a0f] overflow-hidden mx-auto cursor-grab active:cursor-grabbing touch-pan-y"
-        style={{
-          boxShadow: 'inset 0 0 28px var(--theme-glow-soft)',
-        }}
-      >
+      <div className="relative z-20 w-full aspect-[16/9] max-h-[50dvh] sm:max-h-none mx-auto">
+        <div
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerUp}
+          className="absolute inset-0 isolate bg-[#080a0f] overflow-hidden cursor-grab active:cursor-grabbing touch-pan-y"
+          style={{
+            boxShadow: 'inset 0 0 28px var(--theme-glow-soft)',
+          }}
+        >
         {/* 2D Multi-Wing Scrollable World Canvas (4 Columns x 2 Decks) with Smooth Camera Panning */}
         <motion.div
           animate={{
@@ -1379,9 +1380,41 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
               </div>
             );
           })()}
-        </motion.div>
+          </motion.div>
 
-        {/* Classified Safehouse Room Action Playbook Panel */}
+          {/* Minimal Unboxed Edge Step Chevrons */}
+          <button
+            type="button"
+            onClick={() => handleStepRoom(-1)}
+            className={`absolute left-1.5 top-1/2 -translate-y-1/2 z-30 p-1 text-[#e59838]/75 hover:text-[#fde047] transition-colors cursor-pointer ${PIXEL_TEXT_SHADOW_AMBER}`}
+            aria-label="Pan camera West"
+            title="Previous sector"
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+
+          <button
+            type="button"
+            onClick={() => handleStepRoom(1)}
+            className={`absolute right-1.5 top-1/2 -translate-y-1/2 z-30 p-1 text-[#e59838]/75 hover:text-[#fde047] transition-colors cursor-pointer ${PIXEL_TEXT_SHADOW_AMBER}`}
+            aria-label="Pan camera East"
+            title="Next sector"
+          >
+            <ChevronRight className="w-5 h-5" />
+          </button>
+
+          {/* Modular Neural Bypass / Theme-Aware Mini-Game Overlay */}
+          <GameOverlay
+            isActive={isGameActive}
+            isClosing={isGameClosing}
+            themeId={themeId}
+            onBoostChange={onGameBoostChange}
+            onSequenceComplete={(boost) => onGameSequenceComplete?.(boost)}
+            onAbort={onAbortGame}
+          />
+        </div>
+
+        {/* Classified Safehouse Room Action Playbook Panel (unclipped so portrait dropdowns never slice at 16:9 bottom edge) */}
         {!isOverviewZoom && onExecutePlaybook && (
           <RoomActionPlaybookPanel
             currentRoom={currentRoom}
@@ -1392,27 +1425,6 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
           />
         )}
 
-        {/* Minimal Unboxed Edge Step Chevrons */}
-        <button
-          type="button"
-          onClick={() => handleStepRoom(-1)}
-          className={`absolute left-1.5 top-1/2 -translate-y-1/2 z-30 p-1 text-[#e59838]/75 hover:text-[#fde047] transition-colors cursor-pointer ${PIXEL_TEXT_SHADOW_AMBER}`}
-          aria-label="Pan camera West"
-          title="Previous sector"
-        >
-          <ChevronLeft className="w-5 h-5" />
-        </button>
-
-        <button
-          type="button"
-          onClick={() => handleStepRoom(1)}
-          className={`absolute right-1.5 top-1/2 -translate-y-1/2 z-30 p-1 text-[#e59838]/75 hover:text-[#fde047] transition-colors cursor-pointer ${PIXEL_TEXT_SHADOW_AMBER}`}
-          aria-label="Pan camera East"
-          title="Next sector"
-        >
-          <ChevronRight className="w-5 h-5" />
-        </button>
-
         {/* Retro Minimap / Overview Radar Popup HUD Overlay (Only shown when explicitly toggled) */}
         <AnimatePresence>
           {showMinimap && (
@@ -1422,7 +1434,7 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: -8, scale: 0.96 }}
               transition={{ duration: 0.16 }}
-              className="absolute top-2 left-2.5 z-40 w-72 sm:w-84 bg-[#070b10]/95 border border-[#4ade80]/80 shadow-[0_0_24px_rgba(0,0,0,0.9)] p-2.5 font-mono-tabular"
+              className="absolute top-2 left-2.5 z-40 w-72 sm:w-84 max-w-[calc(100%-1.25rem)] max-h-[60dvh] overflow-y-auto bg-[#070b10]/95 border border-[#4ade80]/80 shadow-[0_0_24px_rgba(0,0,0,0.9)] p-2.5 font-mono-tabular"
             >
               <div className="flex items-center justify-between border-b border-[#1e3a2f] pb-1.5 mb-2">
                 <div className="flex items-center gap-1.5 text-[11px] font-bold text-[#4ade80]">
@@ -1568,16 +1580,6 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
             </motion.div>
           )}
         </AnimatePresence>
-
-        {/* Modular Neural Bypass / Theme-Aware Mini-Game Overlay */}
-        <GameOverlay
-          isActive={isGameActive}
-          isClosing={isGameClosing}
-          themeId={themeId}
-          onBoostChange={onGameBoostChange}
-          onSequenceComplete={(boost) => onGameSequenceComplete?.(boost)}
-          onAbort={onAbortGame}
-        />
       </div>
 
       {/* Integrated 16-Bit Tactical Bottom Screen Tray:

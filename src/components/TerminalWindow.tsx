@@ -398,7 +398,7 @@ export const TerminalWindow: React.FC<TerminalWindowProps> = ({
             placeholder="Type mission parameters..."
             aria-label="Mission prompt input"
             autoComplete="off"
-            className="w-full bg-transparent font-mono-tabular text-xs sm:text-sm text-[#f3ead8] placeholder:text-[#786c5e] focus:outline-none"
+            className="w-full bg-transparent font-mono-tabular text-base sm:text-sm text-[#f3ead8] placeholder:text-[#786c5e] focus:outline-none"
           />
         </div>
 

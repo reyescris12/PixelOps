@@ -1,11 +1,12 @@
 {
+  "id": "/",
   "name": "PixelOps Agent Command Center",
   "short_name": "PixelOps",
   "description": "Tactical 16-bit spy safehouse agent command center with autonomous pathfinding, modular skills, and local execution bridge.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",
-  "orientation": "landscape-primary",
+  "orientation": "portrait-primary",
   "background_color": "#0a0a0c",
   "theme_color": "#4ade80",
   "categories": ["utilities", "productivity", "developer"],

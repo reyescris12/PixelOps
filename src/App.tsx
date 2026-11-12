@@ -2595,7 +2595,12 @@ const CommandCenterContent: React.FC = () => {
         })()}
 
         {/* Center Dark CRT Console Canvas */}
-        <main className="flex-1 bg-[#0e1017] flex flex-col pb-16 sm:pb-20 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain">
+        <main
+          className="flex-1 bg-[#0e1017] flex flex-col min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain"
+          style={{
+            paddingBottom: 'calc(4.5rem + env(safe-area-inset-bottom, 0px))',
+          }}
+        >
           {/* Scrollable 7-Sector Overworld Diorama + Minimap Radar + Modular GameOverlay */}
           <SpriteCanvas
             currentRoom={currentRoom}
@@ -2692,7 +2697,7 @@ const CommandCenterContent: React.FC = () => {
 
                 {/* HQ Sub-Screen Switcher: [📟 BRIEFING TERMINAL] vs [🏛️ TOWN HALL] vs [📜 COMMAND LOG (50)] */}
                 <div className="w-full max-w-2xl mx-auto px-3 sm:px-0 flex flex-wrap items-center justify-between gap-2">
-                  <div className="inline-flex flex-wrap bg-[#16130f] border border-[#5e4326] p-0.5">
+                  <div className="grid grid-cols-2 sm:inline-flex sm:flex-wrap w-full sm:w-auto bg-[#16130f] border border-[#5e4326] p-0.5 gap-0.5 sm:gap-0">
                     <button
                       type="button"
                       onClick={() => {
@@ -2700,7 +2705,7 @@ const CommandCenterContent: React.FC = () => {
                         setActiveSpeakerAgentIndex(null);
                         playBeep('tap');
                       }}
-                      className={`px-3 py-1 font-mono-tabular text-xs cursor-pointer transition-colors ${
+                      className={`min-h-[34px] sm:min-h-0 px-2.5 sm:px-3 py-1 font-mono-tabular text-xs cursor-pointer transition-colors flex items-center justify-center ${
                         hqSubView === 'terminal'
                           ? 'bg-[#e59838] text-[#121110] font-bold'
                           : 'text-[#c89d66] hover:text-[#f3ead8]'
@@ -2715,7 +2720,7 @@ const CommandCenterContent: React.FC = () => {
                         setActiveSpeakerAgentIndex(null);
                         playBeep('tap');
                       }}
-                      className={`px-3 py-1 font-mono-tabular text-xs cursor-pointer transition-colors flex items-center gap-1 ${
+                      className={`min-h-[34px] sm:min-h-0 px-2.5 sm:px-3 py-1 font-mono-tabular text-xs cursor-pointer transition-colors flex items-center justify-center gap-1 ${
                         hqSubView === 'task_queue'
                           ? 'bg-[#38bdf8] text-[#0c1017] font-bold'
                           : 'text-[#38bdf8] hover:text-[#f3ead8]'
@@ -2727,7 +2732,7 @@ const CommandCenterContent: React.FC = () => {
                     <button
                       type="button"
                       onClick={() => handleCallTownHallMeeting(false)}
-                      className={`px-3 py-1 font-mono-tabular text-xs cursor-pointer transition-colors flex items-center gap-1 ${
+                      className={`min-h-[34px] sm:min-h-0 px-2.5 sm:px-3 py-1 font-mono-tabular text-xs cursor-pointer transition-colors flex items-center justify-center gap-1 ${
                         hqSubView === 'town_hall'
                           ? 'bg-[#38bdf8] text-[#0c1017] font-bold'
                           : 'text-[#38bdf8] hover:text-[#f3ead8]'
@@ -2744,7 +2749,7 @@ const CommandCenterContent: React.FC = () => {
                         refreshCommandLedger();
                         playBeep('tap');
                       }}
-                      className={`px-3 py-1 font-mono-tabular text-xs cursor-pointer transition-colors ${
+                      className={`min-h-[34px] sm:min-h-0 px-2.5 sm:px-3 py-1 font-mono-tabular text-xs cursor-pointer transition-colors flex items-center justify-center ${
                         hqSubView === 'command_log'
                           ? 'bg-[#e59838] text-[#121110] font-bold'
                           : 'text-[#c89d66] hover:text-[#f3ead8]'

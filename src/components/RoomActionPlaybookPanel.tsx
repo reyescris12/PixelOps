@@ -1086,7 +1086,7 @@ export const RoomActionPlaybookPanel: React.FC<RoomActionPlaybookPanelProps> = (
       ) : (
         <div
           style={{ borderColor: borderHex }}
-          className="bg-[#0b1017]/96 border shadow-[0_0_24px_rgba(0,0,0,0.75)] p-2 sm:p-2.5 backdrop-blur-md flex flex-col gap-1.5 w-[290px] sm:w-[340px] max-h-[48dvh] overflow-y-auto animate-in fade-in zoom-in-95 duration-150"
+          className="bg-[#0b1017]/96 border shadow-[0_0_24px_rgba(0,0,0,0.75)] p-2 sm:p-2.5 backdrop-blur-md flex flex-col gap-1.5 w-[290px] sm:w-[340px] max-w-[calc(100vw-1.25rem)] max-h-[55dvh] overflow-y-auto animate-in fade-in zoom-in-95 duration-150"
         >
           {/* Deck Header */}
           <div className="flex items-center justify-between gap-2 border-b border-[#1e2d3d] pb-1">

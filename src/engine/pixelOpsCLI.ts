@@ -1303,6 +1303,163 @@ export async function executeCLICommand(
     };
   }
 
+  // 15b. RECON (Geofenced Local Recon, High Alert Mode & Dispatch Triage)
+  if (action === 'recon') {
+    const sub = (args[0] || 'local').toLowerCase();
+    const {
+      getLocalGeofenceConfig,
+      saveLocalGeofenceConfig,
+      queryGeofencedLocalRecon,
+    } = await import('../services/OsintToolsService');
+
+    if (sub === 'geofence') {
+      const lat = Number(args[1]);
+      const lon = Number(args[2]);
+      const radiusArg = args[3] ? Number(String(args[3]).replace(/km$/i, '')) : undefined;
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        const cur = getLocalGeofenceConfig();
+        return {
+          command: trimmed,
+          output: `CURRENT GEOFENCE: (${cur.lat.toFixed(4)}, ${cur.lon.toFixed(4)}) radius=${cur.radiusKm}km [${cur.label}]\nUSAGE: pixelops recon geofence <lat> <lon> [radiusKm]`,
+          status: 'ok',
+          timestamp,
+        };
+      }
+      const updated = saveLocalGeofenceConfig({
+        lat,
+        lon,
+        ...(radiusArg && Number.isFinite(radiusArg) ? { radiusKm: radiusArg } : {}),
+      });
+      return {
+        command: trimmed,
+        output: `GEOFENCE UPDATED: (${updated.lat.toFixed(4)}, ${updated.lon.toFixed(4)}) radius=${updated.radiusKm}km`,
+        status: 'ok',
+        timestamp,
+      };
+    }
+
+    if (sub === 'alert') {
+      const modeArg = (args[1] || 'status').toLowerCase();
+      const { isHighAlertModeEnabled, setHighAlertMode } = await import(
+        '../services/NightShiftService'
+      );
+      if (modeArg === 'on' || modeArg === 'enable') {
+        setHighAlertMode(true);
+        saveLocalGeofenceConfig({ highAlertMode: true });
+        const { fetchLocalDispatchFeeds } = await import('../services/ClassifiedFeedService');
+        const pollRes = await fetchLocalDispatchFeeds({ logToLedger: true });
+        return {
+          command: trimmed,
+          output: `HIGH ALERT MODE: ARMED (60s rapid poll active)\nInitial local dispatch sweep: ${pollRes.feedsPolled} feed(s), ${pollRes.incidents.length} bounded incident(s), ${pollRes.deltasEmitted} delta(s).`,
+          status: 'ok',
+          timestamp,
+        };
+      }
+      if (modeArg === 'off' || modeArg === 'disable') {
+        setHighAlertMode(false);
+        saveLocalGeofenceConfig({ highAlertMode: false });
+        return {
+          command: trimmed,
+          output: 'HIGH ALERT MODE: STANDBY (standard 180s specialist sweep)',
+          status: 'ok',
+          timestamp,
+        };
+      }
+      return {
+        command: trimmed,
+        output: `HIGH ALERT MODE: ${isHighAlertModeEnabled() ? 'ARMED (60s rapid poll)' : 'STANDBY (180s)'}`,
+        status: 'ok',
+        timestamp,
+      };
+    }
+
+    if (sub === 'triage') {
+      const transcript = args.slice(1).join(' ').trim();
+      if (!transcript) {
+        return {
+          command: trimmed,
+          output: 'USAGE: pixelops recon triage <dispatch transcript text>',
+          status: 'warning',
+          timestamp,
+        };
+      }
+      const { analyzeDispatchSignal } = await import('../services/DispatchTriageService');
+      const triage = await analyzeDispatchSignal({
+        transcript,
+        sourceLabel: 'CLI_SCANNER_INPUT',
+        ingestIntoSwarm: true,
+      });
+      return {
+        command: trimmed,
+        output: [
+          '+------------------------------------------------------------------------------+',
+          '| DISPATCH TRIAGE ANALYZER                                                     |',
+          '+------------------------------------------------------------------------------+',
+          `  THREAT DETECTED : ${triage.threatDetected ? 'YES' : 'NO'}`,
+          `  TYPE / SEVERITY : ${triage.type} [${triage.severity}]`,
+          `  MODEL           : ${triage.modelUsed}`,
+          `  SUMMARY         : ${triage.summary}`,
+          ...(triage.packetId ? [`  PACKET ID       : ${triage.packetId}`] : []),
+          ...(triage.clusterId ? [`  CLUSTER ID      : ${triage.clusterId}`] : []),
+          '+------------------------------------------------------------------------------+',
+        ].join('\n'),
+        status: triage.threatDetected ? 'warning' : 'ok',
+        timestamp,
+      };
+    }
+
+    // Default: recon local [--radius 25km] [--lat X --lon Y]
+    let radiusOverride: number | undefined;
+    let latOverride: number | undefined;
+    let lonOverride: number | undefined;
+    for (let i = 0; i < args.length; i++) {
+      const tok = args[i];
+      if ((tok === '--radius' || tok === '-r') && args[i + 1]) {
+        const val = Number(String(args[i + 1]).replace(/km$/i, ''));
+        if (Number.isFinite(val)) radiusOverride = val;
+      } else if (tok.startsWith('--radius=')) {
+        const val = Number(tok.slice('--radius='.length).replace(/km$/i, ''));
+        if (Number.isFinite(val)) radiusOverride = val;
+      } else if (tok === '--lat' && args[i + 1]) {
+        const val = Number(args[i + 1]);
+        if (Number.isFinite(val)) latOverride = val;
+      } else if (tok === '--lon' && args[i + 1]) {
+        const val = Number(args[i + 1]);
+        if (Number.isFinite(val)) lonOverride = val;
+      }
+    }
+
+    const reconRes = await queryGeofencedLocalRecon({
+      lat: latOverride,
+      lon: lonOverride,
+      radiusKm: radiusOverride,
+    });
+
+    const lines = [
+      '+------------------------------------------------------------------------------+',
+      `| GEOFENCED LOCAL RECON // ${reconRes.geofence.label.padEnd(52).slice(0, 52)}|`,
+      '+------------------------------------------------------------------------------+',
+      `  CENTER       : ${reconRes.geofence.lat.toFixed(4)}, ${reconRes.geofence.lon.toFixed(4)}`,
+      `  RADIUS BOUND : <= ${reconRes.geofence.radiusKm} km`,
+      `  BOUNDED HITS : ${reconRes.items.length}`,
+      '--------------------------------------------------------------------------------',
+      ...(reconRes.items.length > 0
+        ? reconRes.items.map(
+            (it) =>
+              `  [${it.source}] (${it.distanceKm} km <= ${reconRes.geofence.radiusKm} km) [${it.severity}] ${it.title}`
+          )
+        : ['  No active NWS polygon alerts or seismic events inside this bounding radius.']),
+      '+------------------------------------------------------------------------------+',
+    ];
+
+    return {
+      command: trimmed,
+      output: lines.join('\n'),
+      status: 'ok',
+      timestamp,
+    };
+  }
+
   // 16. HELP
   if (action === 'help') {
     const helpText = [
@@ -1337,6 +1494,10 @@ export async function executeCLICommand(
       '  pixelops intel inspect <id>        Print full SHA-256 provenance chain for a cluster',
       '  pixelops intel nominate <id>       Approve & commit human effector nomination gate to ledger',
       '  pixelops intel selftest            Run deterministic 2-track corroboration self-test',
+      '  pixelops recon local [--radius km] Query bounded NWS/USGS alerts inside local geofence',
+      '  pixelops recon geofence lat lon km Update local geofence coordinates & radius',
+      '  pixelops recon alert <on|off>      Toggle 60s High Alert Mode rapid dispatch polling',
+      '  pixelops recon triage <text>       Run Gemini Flash emergency dispatch triage',
       '  pixelops logs                      Stream recent command telemetry records',
       '  pixelops clear                     Clear the terminal screen buffer',
       '  pixelops manual                    Open Classified Safehouse Field Manual & Command Guide',

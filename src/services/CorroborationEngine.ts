@@ -1375,6 +1375,16 @@ CRITICAL: Every claim MUST cite valid packetId values from the input list ONLY. 
     } catch {}
   }
 
+  if (typeof window !== 'undefined' && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+    try {
+      new Notification(`[PIXELOPS ${cluster.status}] ${cluster.sectorKey}`, {
+        body: chosenSynthesis.executiveAssessment.bluf.slice(0, 200),
+        icon: '/pwa-192x192.png',
+        tag: `pixelops-cluster-${cluster.clusterId}`,
+      });
+    } catch {}
+  }
+
   return { synthesis: chosenSynthesis, sitrepPath, nomination };
 }
 

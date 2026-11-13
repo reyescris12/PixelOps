@@ -401,3 +401,210 @@ const RECON_THEME_KEYWORDS: Record<string, string[]> = {
   defense_security: ['drone', 'uav', 'border', 'radar', 'defense', 'air defense', 'cve', 'security threat', 'surveillance'],
   civil_preparedness: ['preparedness', 'disaster', 'fema', 'emergency', 'evacuation', 'shelter', 'wire', 'sitrep', 'bluf', 'situation report'],
 };
+
+export interface LocalDispatchIncident {
+  id: string;
+  sourceType: 'nws_polygon' | 'county_cad' | 'pulsepoint' | 'local_rss';
+  sourceUrl: string;
+  title: string;
+  severity: string;
+  summary: string;
+  lat: number;
+  lon: number;
+  timestamp: string;
+}
+
+function stripXmlTags(input: string): string {
+  return (input || '')
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/gi, '$1')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+export function parseLocalDispatchRssOrJson(
+  rawText: string,
+  sourceUrl: string,
+  defaultLat: number,
+  defaultLon: number
+): LocalDispatchIncident[] {
+  const trimmed = (rawText || '').trim();
+  if (!trimmed) return [];
+
+  // 1. JSON CAD / PulsePoint / OpenMHz feed
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      const list = Array.isArray(parsed)
+        ? parsed
+        : Array.isArray(parsed?.incidents)
+        ? parsed.incidents
+        : Array.isArray(parsed?.features)
+        ? parsed.features
+        : Array.isArray(parsed?.items)
+        ? parsed.items
+        : [];
+      return list.slice(0, 12).map((item: any, idx: number) => {
+        const props = item?.properties || item;
+        const coords = item?.geometry?.coordinates;
+        const lat = Number(props?.lat ?? props?.latitude ?? (Array.isArray(coords) ? coords[1] : defaultLat));
+        const lon = Number(props?.lon ?? props?.lng ?? props?.longitude ?? (Array.isArray(coords) ? coords[0] : defaultLon));
+        return {
+          id: String(props?.id || props?.callId || item?.id || `cad-${idx}-${Date.now()}`),
+          sourceType: sourceUrl.toLowerCase().includes('pulsepoint') ? 'pulsepoint' : 'county_cad',
+          sourceUrl,
+          title: String(props?.title || props?.event || props?.callType || props?.headline || 'Local CAD Incident'),
+          severity: String(props?.severity || props?.priority || 'MED').toUpperCase(),
+          summary: String(props?.summary || props?.description || props?.address || props?.location || '').slice(0, 320),
+          lat: Number.isFinite(lat) ? lat : defaultLat,
+          lon: Number.isFinite(lon) ? lon : defaultLon,
+          timestamp: String(props?.timestamp || props?.receivedAt || props?.sent || new Date().toISOString()),
+        };
+      });
+    } catch {
+      return [];
+    }
+  }
+
+  // 2. RSS / Atom XML dispatch feed
+  const incidents: LocalDispatchIncident[] = [];
+  const itemMatches = trimmed.match(/<(?:item|entry)\b[\s\S]*?<\/(?:item|entry)>/gi) || [];
+  for (let i = 0; i < Math.min(12, itemMatches.length); i++) {
+    const block = itemMatches[i];
+    const title = stripXmlTags(block.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || 'Local Dispatch Alert');
+    const desc = stripXmlTags(
+      block.match(/<(?:description|summary|content)[^>]*>([\s\S]*?)<\/(?:description|summary|content)>/i)?.[1] || ''
+    );
+    const pubDate = stripXmlTags(
+      block.match(/<(?:pubDate|updated|published)[^>]*>([\s\S]*?)<\/(?:pubDate|updated|published)>/i)?.[1] || ''
+    );
+    const guid = stripXmlTags(block.match(/<(?:guid|id)[^>]*>([\s\S]*?)<\/(?:guid|id)>/i)?.[1] || '');
+    incidents.push({
+      id: guid || `rss-${i}-${title.slice(0, 24).replace(/\W+/g, '_')}`,
+      sourceType: 'local_rss',
+      sourceUrl,
+      title,
+      severity: /\b(evacuation|hazmat|active shooter|lockdown|tornado|emergency)\b/i.test(`${title} ${desc}`)
+        ? 'HIGH'
+        : 'MED',
+      summary: desc.slice(0, 320),
+      lat: defaultLat,
+      lon: defaultLon,
+      timestamp: pubDate && !isNaN(Date.parse(pubDate)) ? new Date(pubDate).toISOString() : new Date().toISOString(),
+    });
+  }
+  return incidents;
+}
+
+export async function fetchLocalDispatchFeeds(options?: {
+  extraFeedUrls?: string[];
+  logToLedger?: boolean;
+}): Promise<{
+  incidents: LocalDispatchIncident[];
+  feedsPolled: number;
+  deltasEmitted: number;
+}> {
+  const { getLocalGeofenceConfig, filterItemsWithinGeofence } = await import('./OsintToolsService');
+  const geofence = getLocalGeofenceConfig();
+  const nwsUrl = `https://api.weather.gov/alerts/active?point=${geofence.lat.toFixed(4)},${geofence.lon.toFixed(4)}`;
+  const customUrls = Array.from(
+    new Set([...(geofence.dispatchFeedUrls || []), ...(options?.extraFeedUrls || [])].filter(Boolean))
+  );
+
+  const collected: LocalDispatchIncident[] = [];
+  let feedsPolled = 0;
+
+  // 1. NWS Local Polygon Alerts
+  try {
+    feedsPolled += 1;
+    const res = await fetch(nwsUrl, {
+      headers: { Accept: 'application/geo+json', 'User-Agent': 'PixelOps-Tactical-PWA/1.0' },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (res.ok) {
+      const data: any = await res.json();
+      const features = Array.isArray(data?.features) ? data.features : [];
+      for (const f of features.slice(0, 10)) {
+        const p = f?.properties || {};
+        collected.push({
+          id: String(f.id || p.id || `nws-${Date.now()}`),
+          sourceType: 'nws_polygon',
+          sourceUrl: nwsUrl,
+          title: String(p.headline || p.event || 'NWS Local Polygon Alert'),
+          severity: String(p.severity || 'Moderate').toUpperCase(),
+          summary: String(p.description || p.instruction || p.event || '').slice(0, 320),
+          lat: geofence.lat,
+          lon: geofence.lon,
+          timestamp: String(p.sent || p.effective || new Date().toISOString()),
+        });
+      }
+    }
+  } catch {}
+
+  // 2. Custom County CAD / PulsePoint / OpenMHz RSS or JSON feeds
+  await Promise.allSettled(
+    customUrls.map(async (feedUrl) => {
+      feedsPolled += 1;
+      const res = await fetch(feedUrl, { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) return;
+      const rawText = await res.text();
+      const parsed = parseLocalDispatchRssOrJson(rawText, feedUrl, geofence.lat, geofence.lon);
+      collected.push(...parsed);
+    })
+  );
+
+  const bounded = filterItemsWithinGeofence(
+    collected,
+    (item) => ({ lat: item.lat, lon: item.lon }),
+    geofence
+  );
+
+  let deltasEmitted = 0;
+  try {
+    const { ingestPacket } = await import('./CorroborationEngine');
+    for (const inc of bounded.slice(0, 8)) {
+      const res = await ingestPacket({
+        sourceTrack: 'WRITTEN_WIRE',
+        sourceType: 'local_dispatch',
+        canonicalTargetKey: inc.id,
+        payloadTimestamp: inc.timestamp,
+        sourceEndpoint: inc.sourceUrl,
+        ingestedBy: 'nyx',
+        ttlSeconds: 600,
+        geoAnchor: {
+          lat: inc.lat,
+          lon: inc.lon,
+          radiusKm: geofence.radiusKm,
+          precision: 'EXACT',
+        },
+        sectorKey: geofence.label || 'LOCAL-SECTOR',
+        summaryHeadline: `[${inc.sourceType.toUpperCase()}] ${inc.title}`,
+        rawPayload: inc,
+      });
+      if (res.deltaEmitted) deltasEmitted += 1;
+    }
+  } catch {}
+
+  if (options?.logToLedger !== false) {
+    try {
+      const { appendCommandLedgerEntry } = await import('./CommandLedgerDb');
+      await appendCommandLedgerEntry({
+        timestamp: new Date().toISOString(),
+        command_input: `LOCAL_DISPATCH_POLL (${geofence.lat.toFixed(3)}, ${geofence.lon.toFixed(3)} r=${geofence.radiusKm}km)`,
+        involved_agent: 'rec_nyx',
+        tool_used: 'local_dispatch_feed',
+        result_summary: `Polled ${feedsPolled} local feed(s); ${bounded.length} bounded incident(s), ${deltasEmitted} new delta(s).`,
+        success_boost_achieved: deltasEmitted > 0 ? 90 : 50,
+      });
+    } catch {}
+  }
+
+  return {
+    incidents: bounded,
+    feedsPolled,
+    deltasEmitted,
+  };
+}

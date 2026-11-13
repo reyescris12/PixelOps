@@ -147,9 +147,37 @@ class BackgroundWorkerEngine {
             setTimeout(() => {
               runParallelSpecialistTracks().catch(() => {});
             }, 3500);
-            this.specialistIntervalId = setInterval(() => {
-              runParallelSpecialistTracks().catch(() => {});
-            }, 3 * 60 * 1000);
+
+            const armSpecialistInterval = async () => {
+              if (this.specialistIntervalId) {
+                clearInterval(this.specialistIntervalId);
+                this.specialistIntervalId = null;
+              }
+              let intervalMs = 3 * 60 * 1000;
+              let highAlert = false;
+              try {
+                const { getEffectiveRapidPollIntervalMs, isHighAlertModeEnabled } = await import(
+                  './NightShiftService'
+                );
+                intervalMs = getEffectiveRapidPollIntervalMs();
+                highAlert = isHighAlertModeEnabled();
+              } catch {}
+
+              this.specialistIntervalId = setInterval(async () => {
+                runParallelSpecialistTracks().catch(() => {});
+                if (highAlert) {
+                  try {
+                    const { fetchLocalDispatchFeeds } = await import('./ClassifiedFeedService');
+                    await fetchLocalDispatchFeeds({ logToLedger: true });
+                  } catch {}
+                }
+              }, intervalMs);
+            };
+
+            armSpecialistInterval().catch(() => {});
+            window.addEventListener('pixelops:high-alert-changed', () => {
+              armSpecialistInterval().catch(() => {});
+            });
           })
           .catch(() => {});
       } catch {}

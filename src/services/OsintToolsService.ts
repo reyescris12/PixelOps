@@ -495,3 +495,225 @@ export async function queryGitHubCodeLeaks(queryStr: string): Promise<any> {
     ],
   };
 }
+
+// ---------------------------------------------------------------------------
+// 9. Local Geofencing & Bounded Real-Time Signal Recon
+// ---------------------------------------------------------------------------
+export interface LocalGeofenceConfig {
+  lat: number;
+  lon: number;
+  radiusKm: number;
+  label: string;
+  highAlertMode: boolean;
+  dispatchFeedUrls: string[];
+  updatedAt: string;
+}
+
+export const LOCAL_GEOFENCE_STORAGE_KEY = 'pixelops_local_geofence_v1';
+
+export const DEFAULT_LOCAL_GEOFENCE: LocalGeofenceConfig = {
+  lat: 38.8977,
+  lon: -77.0365,
+  radiusKm: 35,
+  label: 'LOCAL TACTICAL SECTOR',
+  highAlertMode: false,
+  dispatchFeedUrls: [],
+  updatedAt: new Date(0).toISOString(),
+};
+
+export function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371;
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+export function getLocalGeofenceConfig(): LocalGeofenceConfig {
+  if (typeof localStorage === 'undefined') return { ...DEFAULT_LOCAL_GEOFENCE };
+  try {
+    const raw = localStorage.getItem(LOCAL_GEOFENCE_STORAGE_KEY);
+    if (!raw) return { ...DEFAULT_LOCAL_GEOFENCE };
+    const parsed = JSON.parse(raw);
+    const lat = Number(parsed?.lat);
+    const lon = Number(parsed?.lon);
+    const radiusKm = Number(parsed?.radiusKm);
+    return {
+      lat: Number.isFinite(lat) ? Math.max(-85, Math.min(85, lat)) : DEFAULT_LOCAL_GEOFENCE.lat,
+      lon: Number.isFinite(lon) ? Math.max(-180, Math.min(180, lon)) : DEFAULT_LOCAL_GEOFENCE.lon,
+      radiusKm: Number.isFinite(radiusKm)
+        ? Math.max(1, Math.min(500, radiusKm))
+        : DEFAULT_LOCAL_GEOFENCE.radiusKm,
+      label: typeof parsed?.label === 'string' && parsed.label.trim() ? parsed.label.trim() : DEFAULT_LOCAL_GEOFENCE.label,
+      highAlertMode: Boolean(parsed?.highAlertMode),
+      dispatchFeedUrls: Array.isArray(parsed?.dispatchFeedUrls)
+        ? parsed.dispatchFeedUrls.map((u: unknown) => String(u).trim()).filter(Boolean)
+        : [],
+      updatedAt: typeof parsed?.updatedAt === 'string' ? parsed.updatedAt : new Date().toISOString(),
+    };
+  } catch {
+    return { ...DEFAULT_LOCAL_GEOFENCE };
+  }
+}
+
+export function saveLocalGeofenceConfig(partial: Partial<LocalGeofenceConfig>): LocalGeofenceConfig {
+  const current = getLocalGeofenceConfig();
+  const next: LocalGeofenceConfig = {
+    ...current,
+    ...partial,
+    lat:
+      partial.lat !== undefined && Number.isFinite(Number(partial.lat))
+        ? Math.max(-85, Math.min(85, Number(partial.lat)))
+        : current.lat,
+    lon:
+      partial.lon !== undefined && Number.isFinite(Number(partial.lon))
+        ? Math.max(-180, Math.min(180, Number(partial.lon)))
+        : current.lon,
+    radiusKm:
+      partial.radiusKm !== undefined && Number.isFinite(Number(partial.radiusKm))
+        ? Math.max(1, Math.min(500, Number(partial.radiusKm)))
+        : current.radiusKm,
+    label:
+      typeof partial.label === 'string' && partial.label.trim()
+        ? partial.label.trim()
+        : current.label,
+    dispatchFeedUrls: Array.isArray(partial.dispatchFeedUrls)
+      ? partial.dispatchFeedUrls.map((u) => String(u).trim()).filter(Boolean)
+      : current.dispatchFeedUrls,
+    updatedAt: new Date().toISOString(),
+  };
+
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(LOCAL_GEOFENCE_STORAGE_KEY, JSON.stringify(next));
+    } catch {}
+  }
+  if (typeof window !== 'undefined' && typeof CustomEvent !== 'undefined') {
+    try {
+      window.dispatchEvent(new CustomEvent('pixelops:geofence-changed', { detail: next }));
+    } catch {}
+  }
+  return next;
+}
+
+export function filterItemsWithinGeofence<T>(
+  items: T[],
+  getCoords: (item: T) => { lat: number; lon: number } | null | undefined,
+  geofence: Pick<LocalGeofenceConfig, 'lat' | 'lon' | 'radiusKm'> = getLocalGeofenceConfig()
+): Array<T & { distanceKm: number }> {
+  const results: Array<T & { distanceKm: number }> = [];
+  for (const item of items) {
+    const c = getCoords(item);
+    if (!c || !Number.isFinite(c.lat) || !Number.isFinite(c.lon)) continue;
+    const dist = haversineKm(geofence.lat, geofence.lon, c.lat, c.lon);
+    if (dist <= geofence.radiusKm) {
+      results.push({ ...item, distanceKm: Number(dist.toFixed(2)) });
+    }
+  }
+  return results.sort((a, b) => a.distanceKm - b.distanceKm);
+}
+
+export interface LocalReconItem {
+  id: string;
+  source: 'NWS_POLYGON' | 'USGS_SEISMIC' | 'LOCAL_CAD';
+  title: string;
+  severity: string;
+  summary: string;
+  lat: number;
+  lon: number;
+  distanceKm: number;
+  timestamp: string;
+  url?: string;
+}
+
+export async function queryGeofencedLocalRecon(options?: {
+  lat?: number;
+  lon?: number;
+  radiusKm?: number;
+}): Promise<{
+  geofence: { lat: number; lon: number; radiusKm: number; label: string };
+  items: LocalReconItem[];
+  sourcesQueried: string[];
+}> {
+  const base = getLocalGeofenceConfig();
+  const lat = options?.lat !== undefined && Number.isFinite(options.lat) ? options.lat : base.lat;
+  const lon = options?.lon !== undefined && Number.isFinite(options.lon) ? options.lon : base.lon;
+  const radiusKm =
+    options?.radiusKm !== undefined && Number.isFinite(options.radiusKm)
+      ? Math.max(1, Math.min(500, options.radiusKm))
+      : base.radiusKm;
+
+  const sourcesQueried: string[] = [];
+  const rawItems: Array<Omit<LocalReconItem, 'distanceKm'>> = [];
+
+  await Promise.allSettled([
+    // 1. National Weather Service Active Polygon Alerts at exact coordinate
+    (async () => {
+      const url = `https://api.weather.gov/alerts/active?point=${lat.toFixed(4)},${lon.toFixed(4)}`;
+      sourcesQueried.push(url);
+      const res = await fetch(url, {
+        headers: { Accept: 'application/geo+json', 'User-Agent': 'PixelOps-Tactical-PWA/1.0' },
+        signal: AbortSignal.timeout(8000),
+      });
+      if (!res.ok) return;
+      const data: any = await res.json();
+      const features = Array.isArray(data?.features) ? data.features : [];
+      for (const f of features.slice(0, 10)) {
+        const p = f?.properties || {};
+        rawItems.push({
+          id: String(f.id || p.id || `nws-${Date.now()}`),
+          source: 'NWS_POLYGON',
+          title: String(p.headline || p.event || 'NWS Local Alert'),
+          severity: String(p.severity || 'Moderate').toUpperCase(),
+          summary: String(p.description || p.instruction || p.event || '').slice(0, 280),
+          lat,
+          lon,
+          timestamp: String(p.sent || p.effective || new Date().toISOString()),
+          url: typeof p['@id'] === 'string' ? p['@id'] : undefined,
+        });
+      }
+    })(),
+    // 2. USGS Real-Time Earthquakes filtered strictly to local geofence radius
+    (async () => {
+      const url = 'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_day.geojson';
+      sourcesQueried.push(url);
+      const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) return;
+      const data: any = await res.json();
+      const features = Array.isArray(data?.features) ? data.features : [];
+      for (const f of features) {
+        const coords = f?.geometry?.coordinates || [];
+        const evLon = Number(coords[0]);
+        const evLat = Number(coords[1]);
+        if (!Number.isFinite(evLat) || !Number.isFinite(evLon)) continue;
+        const p = f?.properties || {};
+        rawItems.push({
+          id: String(f.id || `usgs-${evLat}-${evLon}`),
+          source: 'USGS_SEISMIC',
+          title: String(p.title || `M${p.mag ?? '?'} Seismic Event`),
+          severity: Number(p.mag ?? 0) >= 4.5 ? 'HIGH' : Number(p.mag ?? 0) >= 3.0 ? 'MED' : 'LOW',
+          summary: String(p.place || 'Regional seismic sensor trigger'),
+          lat: evLat,
+          lon: evLon,
+          timestamp: p.time ? new Date(Number(p.time)).toISOString() : new Date().toISOString(),
+          url: typeof p.url === 'string' ? p.url : undefined,
+        });
+      }
+    })(),
+  ]);
+
+  const bounded = filterItemsWithinGeofence(
+    rawItems,
+    (item) => ({ lat: item.lat, lon: item.lon }),
+    { lat, lon, radiusKm }
+  );
+
+  return {
+    geofence: { lat, lon, radiusKm, label: base.label },
+    items: bounded,
+    sourcesQueried,
+  };
+}

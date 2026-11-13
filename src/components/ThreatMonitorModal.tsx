@@ -20,8 +20,17 @@ import {
   Anchor,
 } from 'lucide-react';
 import { writeWorkspaceFile } from '../engine/storageManager';
-import { retrieveRelevantClassifiedBriefings } from '../services/ClassifiedFeedService';
+import {
+  retrieveRelevantClassifiedBriefings,
+  fetchLocalDispatchFeeds,
+} from '../services/ClassifiedFeedService';
 import { retrieveRelevantISWBriefings } from '../services/iswFeedService';
+import {
+  getLocalGeofenceConfig,
+  saveLocalGeofenceConfig,
+  type LocalGeofenceConfig,
+} from '../services/OsintToolsService';
+import { isHighAlertModeEnabled, setHighAlertMode } from '../services/NightShiftService';
 import {
   TacticalSatelliteMonitor,
   parseReconTargetToCoords,
@@ -147,6 +156,8 @@ export const ThreatMonitorModal: React.FC<ThreatMonitorModalProps> = ({
     savedPath?: string;
     type: 'success' | 'info' | 'warning';
   } | null>(null);
+  const [geofence, setGeofence] = useState<LocalGeofenceConfig>(getLocalGeofenceConfig);
+  const [highAlert, setHighAlert] = useState<boolean>(isHighAlertModeEnabled);
 
   const buildFallbackTelemetry = useCallback((zoneId: string, customLoc: string): ThreatMatrixPayload => {
     const zoneObj = DEFAULT_ZONES.find((z) => z.id === zoneId) || DEFAULT_ZONES[0];
@@ -701,6 +712,83 @@ export const ThreatMonitorModal: React.FC<ThreatMonitorModalProps> = ({
             >
               <Radar className={`w-4 h-4 ${isRunningSweep ? 'animate-spin' : ''}`} />
               <span>{isRunningSweep ? 'Executing Recon Sweep...' : 'Run Recon Sweep'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Local Geofencing & 60s High Alert Rapid Ingest Strip */}
+        <div className="px-4 py-2 bg-slate-950/90 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2 text-[11px] font-mono shrink-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-emerald-400 font-bold uppercase tracking-wider">GEOFENCE:</span>
+            <label htmlFor="geofence-lat-input" className="text-slate-400 text-[10px]">LAT</label>
+            <input
+              id="geofence-lat-input"
+              name="geofence_lat"
+              type="number"
+              step="0.0001"
+              value={geofence.lat}
+              onChange={(e) => {
+                const next = saveLocalGeofenceConfig({ lat: Number(e.target.value) });
+                setGeofence(next);
+              }}
+              className="w-24 px-1.5 py-0.5 bg-black border border-slate-700 rounded text-emerald-300 text-[11px]"
+            />
+            <label htmlFor="geofence-lon-input" className="text-slate-400 text-[10px]">LON</label>
+            <input
+              id="geofence-lon-input"
+              name="geofence_lon"
+              type="number"
+              step="0.0001"
+              value={geofence.lon}
+              onChange={(e) => {
+                const next = saveLocalGeofenceConfig({ lon: Number(e.target.value) });
+                setGeofence(next);
+              }}
+              className="w-24 px-1.5 py-0.5 bg-black border border-slate-700 rounded text-emerald-300 text-[11px]"
+            />
+            <label htmlFor="geofence-radius-input" className="text-slate-400 text-[10px]">RADIUS(KM)</label>
+            <input
+              id="geofence-radius-input"
+              name="geofence_radius_km"
+              type="number"
+              min="1"
+              max="500"
+              value={geofence.radiusKm}
+              onChange={(e) => {
+                const next = saveLocalGeofenceConfig({ radiusKm: Number(e.target.value) });
+                setGeofence(next);
+              }}
+              className="w-16 px-1.5 py-0.5 bg-black border border-slate-700 rounded text-emerald-300 text-[11px]"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={async () => {
+                const nextVal = !highAlert;
+                setHighAlert(nextVal);
+                setHighAlertMode(nextVal);
+                setGeofence(saveLocalGeofenceConfig({ highAlertMode: nextVal }));
+                if (nextVal) {
+                  const res = await fetchLocalDispatchFeeds({ logToLedger: true });
+                  setSweepStatusBanner({
+                    message: `HIGH ALERT MODE ARMED (60s rapid poll) — polled ${res.feedsPolled} local feed(s), ${res.incidents.length} bounded incident(s).`,
+                    type: 'warning',
+                  });
+                } else {
+                  setSweepStatusBanner({
+                    message: 'High Alert Mode set to standby (180s interval).',
+                    type: 'info',
+                  });
+                }
+              }}
+              className={`px-2.5 py-1 rounded font-bold text-[10px] uppercase tracking-wider border cursor-pointer transition-colors ${
+                highAlert
+                  ? 'bg-red-950/90 text-red-300 border-red-500 animate-pulse'
+                  : 'bg-slate-900 text-slate-300 border-slate-700 hover:border-emerald-500/60'
+              }`}
+            >
+              {highAlert ? '● HIGH ALERT: 60s POLL ON' : '○ HIGH ALERT MODE (60s)'}
             </button>
           </div>
         </div>

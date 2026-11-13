@@ -10,6 +10,7 @@ import {
 import { ComposioService, getLocalConnectedAccounts } from './ComposioService';
 
 export type ScheduleFrequency =
+  | 'every_1m'
   | 'every_5m'
   | 'every_15m'
   | 'every_1h'
@@ -105,6 +106,7 @@ export const DEFAULT_NOTIFICATION_CONFIG: RoutineNotificationConfig = {
 };
 
 export const FREQUENCY_MS: Record<ScheduleFrequency, number> = {
+  every_1m: 60 * 1000,
   every_5m: 5 * 60 * 1000,
   every_15m: 15 * 60 * 1000,
   every_1h: 60 * 60 * 1000,
@@ -113,8 +115,41 @@ export const FREQUENCY_MS: Record<ScheduleFrequency, number> = {
   weekly: 7 * 24 * 60 * 60 * 1000,
 };
 
+const STORAGE_HIGH_ALERT_MODE_KEY = 'pixelops_high_alert_mode_v1';
+
+export function isHighAlertModeEnabled(): boolean {
+  if (typeof localStorage === 'undefined') return false;
+  try {
+    return localStorage.getItem(STORAGE_HIGH_ALERT_MODE_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+export function setHighAlertMode(enabled: boolean): boolean {
+  if (typeof localStorage !== 'undefined') {
+    try {
+      localStorage.setItem(STORAGE_HIGH_ALERT_MODE_KEY, String(Boolean(enabled)));
+    } catch {}
+  }
+  if (typeof window !== 'undefined' && typeof CustomEvent !== 'undefined') {
+    try {
+      window.dispatchEvent(
+        new CustomEvent('pixelops:high-alert-changed', { detail: { enabled: Boolean(enabled) } })
+      );
+    } catch {}
+  }
+  return Boolean(enabled);
+}
+
+export function getEffectiveRapidPollIntervalMs(): number {
+  return isHighAlertModeEnabled() ? 60 * 1000 : 3 * 60 * 1000;
+}
+
 export function getFrequencyLabel(frequency: ScheduleFrequency): string {
   switch (frequency) {
+    case 'every_1m':
+      return 'High Alert: Every 60s (Cron * * * * *)';
     case 'every_5m':
       return 'Every 5 Minutes (Cron */5)';
     case 'every_15m':
@@ -671,6 +706,16 @@ export async function runPendingNightShiftTasks(
       await refreshAllClusterStaleness();
     } catch (corrobErr) {
       console.warn('[NightShift] Parallel specialist corroboration track warning:', corrobErr);
+    }
+
+    // In High Alert Mode, poll local geofenced dispatch / NWS polygon / CAD feeds every 60s
+    if (isHighAlertModeEnabled()) {
+      try {
+        const { fetchLocalDispatchFeeds } = await import('./ClassifiedFeedService');
+        await fetchLocalDispatchFeeds({ logToLedger: true });
+      } catch (dispatchErr) {
+        console.warn('[NightShift] High Alert local dispatch poll warning:', dispatchErr);
+      }
     }
 
     const schedules = loadNightShiftSchedules();

@@ -1192,7 +1192,7 @@ export async function executeCLICommand(
         `  SECTOR      : ${cluster.sectorKey} @ (${cluster.geoAnchor.lat.toFixed(4)}, ${cluster.geoAnchor.lon.toFixed(4)}) ±${cluster.geoAnchor.radiusKm}km`,
         `  TRACKS      : ${cluster.independentTracks.join(' + ')}`,
         `  GATE STATUS : ${cluster.nominationStatus || 'UNNOMINATED'}`,
-        ...(cluster.sitrepPath ? [`  SITREP VFS  : ${cluster.sitrepPath}`] : []),
+        ...(cluster.sitrepPath ? [`  LEDGER REF  : ${cluster.sitrepPath}`] : []),
         '--------------------------------------------------------------------------------',
         '  CONTRIBUTING PACKETS:',
         ...packets.map((p, idx) => {
@@ -1203,7 +1203,7 @@ export async function executeCLICommand(
             `  [${idx + 1}] packetId : ${p.packetId}`,
             `      source   : ${p.sourceTrack}/${p.sourceType} (${p.ingestedBy}) -> ${p.sourceEndpoint}`,
             `      age/ttl  : ${ageSec}s / ${p.ttlSeconds}s [${staleFlag}] | weight=${weight}`,
-            `      rawVFS   : ${p.rawPayloadRef}`,
+            `      rawRef   : ${p.rawPayloadRef}`,
           ].join('\n');
         }),
         ...(synthesis
@@ -1259,7 +1259,7 @@ export async function executeCLICommand(
           '+------------------------------------------------------------------------------+',
           `  EFFECTOR     : ${res.nomination?.actionType}`,
           `  LEDGER HASH  : ${res.ledgerHash}`,
-          `  STAGED VFS   : ${res.effectorFilePath}`,
+          `  STAGED REF   : ${res.effectorFilePath}`,
           `  CITED PACKETS: ${res.nomination?.citedPacketIds.length ?? 0} verified SHA-256 packets`,
           '+------------------------------------------------------------------------------+',
         ].join('\n'),
@@ -1279,7 +1279,7 @@ export async function executeCLICommand(
         `  PROMOTION    : CANDIDATE (${report.candidateScore.toFixed(2)}) -> CORROBORATED (${report.corroboratedScore.toFixed(2)})`,
         `  PACKET 1 RAW : ${report.rawPath1}`,
         `  PACKET 2 RAW : ${report.rawPath2}`,
-        `  SITREP VFS   : ${report.sitrepPath || 'none'}`,
+        `  LEDGER REF   : ${report.sitrepPath || 'none'}`,
         `  CANVAS LINK  : ${report.canvasVisible ? 'VISIBLE_WITH_2X_PROVENANCE' : 'FAILED'}`,
         '--------------------------------------------------------------------------------',
         ...report.steps.map(

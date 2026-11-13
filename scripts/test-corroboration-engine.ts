@@ -49,13 +49,20 @@ async function main() {
     evaluateClusterConfidence,
     validateVanceSynthesisCitations,
     getClusterWithPackets,
+    getPacketRawPayloadJson,
+    extractCanonicalEntities,
     nominateClusterPackage,
     dismissClusterFalsePositive,
     runCorroborationSelfTest,
   } = await import('../src/services/CorroborationEngine');
   const { executeCLICommand } = await import('../src/engine/pixelOpsCLI');
-  const { readWorkspaceFile } = await import('../src/engine/storageManager');
-  const { getLast50Commands } = await import('../src/services/CommandLedgerDb');
+  const {
+    listWorkspaceFiles,
+    writeWorkspaceFile,
+    repairAllStoredReports,
+    isTelemetryClutterWorkspaceFile,
+  } = await import('../src/engine/storageManager');
+  const { ledgerDb, getLast50Commands } = await import('../src/services/CommandLedgerDb');
 
   console.log('=== 1. Extensionless Import Guardrail Verification ===');
   const checkedFiles = [
@@ -120,14 +127,20 @@ async function main() {
     `Score promoted from CANDIDATE (${directReport.candidateScore}) to CORROBORATED (${directReport.corroboratedScore})`
   );
 
-  const rawSnap = await readWorkspaceFile(directReport.rawPath1);
+  const rawSnapStr = await getPacketRawPayloadJson(directReport.packet1Id);
   let parsedRawSnap: any = null;
   try {
-    parsedRawSnap = rawSnap ? JSON.parse(rawSnap.content) : null;
+    parsedRawSnap = rawSnapStr ? JSON.parse(rawSnapStr) : null;
   } catch {}
   check(
     parsedRawSnap && parsedRawSnap.packetId === directReport.packet1Id,
-    `Raw JSON VFS snapshot at ${directReport.rawPath1} preserved cleanly by storageManager`
+    `Raw JSON snapshot in IndexedDB (${directReport.rawPath1}) retrieved cleanly via getPacketRawPayloadJson`
+  );
+
+  const filesAfterSelfTest = await listWorkspaceFiles();
+  check(
+    filesAfterSelfTest.length === 0,
+    `intel selftest produced zero clutter files in Workspace Files (count=${filesAfterSelfTest.length})`
   );
 
   const statusCli = await executeCLICommand('intel status', cliCtx);
@@ -148,6 +161,12 @@ async function main() {
   check(
     nominateCli.status === 'ok' && nominateCli.output.includes('LEDGER HASH'),
     'CLI "intel nominate <clusterId>" approves gate and returns immutable ledger hash'
+  );
+
+  const filesAfterNominate = await listWorkspaceFiles();
+  check(
+    filesAfterNominate.length === 0,
+    `intel nominate produced zero clutter files in Workspace Files (count=${filesAfterNominate.length})`
   );
 
   const ledgerEntries = await getLast50Commands();
@@ -263,6 +282,155 @@ async function main() {
   check(
     badCitationCheck.valid === false,
     `validateVanceSynthesisCitations rejects hallucinated packetIds (${badCitationCheck.reason})`
+  );
+
+  console.log('\n=== 7. Workspace Clutter Prevention & Auto-Purge Verification ===');
+  const reportedCisaPacketJson = JSON.stringify(
+    {
+      packetId: '5dea6e7367f147cda4338b8a72b7bf148066d18747d1e27a9e6aece77da3a855',
+      sourceTrack: 'SIGNALS_INFRA',
+      sourceType: 'doh_dns',
+      canonicalTargetKey: 'cisa.gov',
+      sourceEndpoint: 'https://dns.google/resolve?name=cisa.gov&type=A',
+      ingestedBy: 'cipher',
+      capturedAt: '2026-11-13T12:47:47.681Z',
+      ttlSeconds: 3600,
+      geoAnchor: { lat: 39.0438, lon: -77.4874, radiusKm: 35, precision: 'REGIONAL' },
+      sectorKey: 'SECTOR-01-ASHBURN',
+      entities: {
+        mmsi: [],
+        noradId: [],
+        ipAsn: ['23.40.6.12', '172.64.40.31'],
+        domains: ['cisa.gov'],
+        cves: [],
+        gridSectors: ['SECTOR-01-ASHBURN'],
+        canonicalKeys: ['ip:23.40.6.12', 'ip:172.64.40.31', 'domain:cisa.gov'],
+      },
+      structuralHash: 'c636271d34d0901b07c4b995b899b6fbaf871069828472a760b8e56d157cdca4',
+      payload: {
+        Status: 0,
+        TC: false,
+        RD: true,
+        RA: true,
+        AD: true,
+        CD: false,
+        Question: [{ name: 'cisa.gov.', type: 1 }],
+        Answer: [{ name: 'cisa.gov.', type: 1, TTL: 5, data: '23.40.6.12' }],
+        Comment: 'Response from 172.64.40.31.',
+      },
+    },
+    null,
+    2
+  );
+
+  // Verify Google DoH Comment resolver IP (172.64.40.31) is excluded from extracted entities
+  const dohEntities = extractCanonicalEntities(
+    JSON.parse(reportedCisaPacketJson).payload,
+    'DoH A-Record Watch: cisa.gov',
+    'SECTOR-01-ASHBURN'
+  );
+  check(
+    !dohEntities.ipAsn.includes('172.64.40.31') && dohEntities.ipAsn.includes('23.40.6.12'),
+    'extractCanonicalEntities excludes Google DoH Comment resolver IP while keeping Answer IP'
+  );
+
+  // Seed legacy clutter files directly into VFS + ledgerDb alongside a real user report
+  const existingVfs = (() => {
+    try {
+      return JSON.parse(g.localStorage.getItem('pixelops_vfs_files_v1') || '{}');
+    } catch {
+      return {};
+    }
+  })();
+  const nowIso = new Date().toISOString();
+  existingVfs['intel/raw/2026-11-13/5dea6e7367f147cda4338b8a72b7bf148066d18747d1e27a9e6aece77da3a855.json'] = {
+    content: reportedCisaPacketJson,
+    format: 'json',
+    updatedAt: nowIso,
+  };
+  existingVfs['reports/moved_packet_copy.json'] = {
+    content: reportedCisaPacketJson,
+    format: 'json',
+    updatedAt: nowIso,
+  };
+  existingVfs['intel/missions/sitrep-clu-test.md'] = {
+    content: '# WAR ROOM FUSED SITREP // test',
+    format: 'markdown',
+    updatedAt: nowIso,
+  };
+  existingVfs['intel/missions/effector-clu-test.json'] = {
+    content: '{"actionType":"ARCHIVE_SITREP"}',
+    format: 'json',
+    updatedAt: nowIso,
+  };
+  g.localStorage.setItem('pixelops_vfs_files_v1', JSON.stringify(existingVfs));
+
+  try {
+    await ledgerDb.workspace_files.put({
+      path: 'intel/raw/2026-11-13/5dea6e7367f147cda4338b8a72b7bf148066d18747d1e27a9e6aece77da3a855.json',
+      category: 'intel',
+      format: 'json',
+      content: reportedCisaPacketJson,
+      sizeBytes: reportedCisaPacketJson.length,
+      updatedAt: nowIso,
+    });
+  } catch {}
+
+  await writeWorkspaceFile(
+    'reports/operator_brief.md',
+    '# Operator Brief\n\nLegitimate user-facing mission brief.',
+    'markdown',
+    'reports'
+  );
+
+  check(
+    isTelemetryClutterWorkspaceFile('reports/moved_packet_copy.json', reportedCisaPacketJson) &&
+      !isTelemetryClutterWorkspaceFile('reports/operator_brief.md', '# Operator Brief'),
+    'isTelemetryClutterWorkspaceFile accurately classifies telemetry packets vs user briefs'
+  );
+
+  const visibleBeforeRepair = await listWorkspaceFiles();
+  check(
+    visibleBeforeRepair.length === 1 && visibleBeforeRepair[0].path === 'reports/operator_brief.md',
+    `listWorkspaceFiles() filtered out all 4 clutter files and preserved operator_brief.md (count=${visibleBeforeRepair.length})`
+  );
+
+  // Re-seed VFS clutter directly to test repairAllStoredReports() explicit purge count
+  const vfsForRepair = JSON.parse(g.localStorage.getItem('pixelops_vfs_files_v1') || '{}');
+  vfsForRepair['intel/raw/2026-11-13/5dea6e7367f147cda4338b8a72b7bf148066d18747d1e27a9e6aece77da3a855.json'] = {
+    content: reportedCisaPacketJson,
+    format: 'json',
+    updatedAt: nowIso,
+  };
+  vfsForRepair['reports/moved_packet_copy.json'] = {
+    content: reportedCisaPacketJson,
+    format: 'json',
+    updatedAt: nowIso,
+  };
+  vfsForRepair['intel/missions/sitrep-clu-test.md'] = {
+    content: '# WAR ROOM FUSED SITREP // test',
+    format: 'markdown',
+    updatedAt: nowIso,
+  };
+  vfsForRepair['intel/missions/effector-clu-test.json'] = {
+    content: '{"actionType":"ARCHIVE_SITREP"}',
+    format: 'json',
+    updatedAt: nowIso,
+  };
+  g.localStorage.setItem('pixelops_vfs_files_v1', JSON.stringify(vfsForRepair));
+
+  const repairedCount = await repairAllStoredReports();
+  const visibleAfterRepair = await listWorkspaceFiles();
+  const vfsKeysRemaining = Object.keys(
+    JSON.parse(g.localStorage.getItem('pixelops_vfs_files_v1') || '{}')
+  );
+  check(
+    repairedCount >= 4 &&
+      visibleAfterRepair.length === 1 &&
+      visibleAfterRepair[0].path === 'reports/operator_brief.md' &&
+      vfsKeysRemaining.length === 1 &&
+      vfsKeysRemaining[0] === 'reports/operator_brief.md',
+    `repairAllStoredReports() purged all 4 legacy telemetry files from VFS (purged=${repairedCount}, remaining=${vfsKeysRemaining.join(', ')})`
   );
 
   console.log(

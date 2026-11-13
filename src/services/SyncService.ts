@@ -15,6 +15,7 @@ import {
   normalizeFilePath,
   loadDeletedWorkspaceFiles,
   saveDeletedWorkspaceFiles,
+  isTelemetryClutterWorkspaceFile,
 } from '../engine/storageManager';
 import {
   NightShiftTaskSchedule,
@@ -183,11 +184,14 @@ function setLocalCloudCache(pkg: SyncPackage): void {
  * Collects current local device state into a synchronized data package
  */
 export async function assembleLocalSyncPackage(session: AuthSession): Promise<SyncPackage> {
-  const [workspaceFiles, agentMemories, commandLedger] = await Promise.all([
+  const [rawWorkspaceFiles, agentMemories, commandLedger] = await Promise.all([
     listWorkspaceFiles().catch(() => []),
     ledgerDb.agent_memories.toArray().catch(() => []),
     ledgerDb.command_ledger.toArray().catch(() => []),
   ]);
+  const workspaceFiles = rawWorkspaceFiles.filter(
+    (f) => !isTelemetryClutterWorkspaceFile(f.path, f.content)
+  );
 
   const routines = loadNightShiftSchedules();
   const deletedRoutineIds = loadDeletedRoutineIds();
@@ -270,6 +274,9 @@ export async function applyRemoteSyncPackage(pkg: SyncPackage): Promise<void> {
     for (const remoteFile of pkg.workspaceFiles) {
       const normPath = normalizeFilePath(remoteFile.path);
       if (!normPath) continue;
+      if (isTelemetryClutterWorkspaceFile(normPath, remoteFile.content)) {
+        continue;
+      }
 
       const deletedAtStr = mergedDeletedFiles[normPath];
       const remoteTime = new Date(remoteFile.updatedAt || 0).getTime();

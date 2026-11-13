@@ -3,7 +3,7 @@
  * (src/services/CorroborationEngine.ts)
  *
  * Implements sovereign C2 multi-source corroboration workflows:
- * - Deterministic SHA-256 packet IDs and immutable VFS snapshots (/intel/raw/{date}/{packetId}.json)
+ * - Deterministic SHA-256 packet IDs and immutable IndexedDB snapshots (idb://evidence_packets/{packetId})
  * - Stateful structural snapshot diffing before LLM invocation (zero-noise silent drop on unchanged polls)
  * - Haversine <= 75 km & canonical entity multi-track clustering with strict score caps
  * - Automatic TTL staleness decay
@@ -27,7 +27,6 @@ import {
 } from './CommandLedgerDb';
 import { recordTelemetryExecution } from './TelemetryStore';
 import { loadLLMProviderConfig, getGeminiAuthHeadersAndUrl } from './LLMProviderService';
-import { writeWorkspaceFile, readWorkspaceFile } from '../engine/storageManager';
 
 export type {
   CorroborationSourceTrack,
@@ -374,6 +373,30 @@ async function getPacketById(packetId: string): Promise<EvidencePacketDbEntry | 
   return memPackets.get(packetId) || null;
 }
 
+export async function getPacketRawPayloadJson(packetId: string): Promise<string | null> {
+  const pkt = await getPacketById(packetId);
+  if (!pkt) return null;
+  if (pkt.rawPayloadJson) return pkt.rawPayloadJson;
+  return JSON.stringify(
+    {
+      packetId: pkt.packetId,
+      sourceTrack: pkt.sourceTrack,
+      sourceType: pkt.sourceType,
+      canonicalTargetKey: pkt.canonicalTargetKey,
+      sourceEndpoint: pkt.sourceEndpoint,
+      ingestedBy: pkt.ingestedBy,
+      capturedAt: pkt.capturedAt,
+      ttlSeconds: pkt.ttlSeconds,
+      geoAnchor: pkt.geoAnchor,
+      sectorKey: pkt.sectorKey,
+      entities: pkt.entities,
+      structuralHash: pkt.structuralHash,
+    },
+    null,
+    2
+  );
+}
+
 async function getAllPackets(): Promise<EvidencePacketDbEntry[]> {
   const merged = new Map<string, EvidencePacketDbEntry>(memPackets);
   try {
@@ -493,8 +516,21 @@ export function extractCanonicalEntities(
   sectorKey = '',
   explicit?: Partial<ExtractedEntities>
 ): ExtractedEntities {
+  let payloadForExtraction = rawPayload;
+  if (
+    rawPayload &&
+    typeof rawPayload === 'object' &&
+    !Array.isArray(rawPayload) &&
+    'Comment' in rawPayload
+  ) {
+    const { Comment: _comment, ...rest } = rawPayload as Record<string, unknown>;
+    payloadForExtraction = rest;
+  }
+
   const serialized =
-    (typeof rawPayload === 'string' ? rawPayload : JSON.stringify(rawPayload ?? '')) +
+    (typeof payloadForExtraction === 'string'
+      ? payloadForExtraction
+      : JSON.stringify(payloadForExtraction ?? '')) +
     ' ' +
     textHint;
 
@@ -798,8 +834,8 @@ function evaluateDeltaThreshold(
           severityWeight: minTtl <= 60 || status !== 0 ? 1.0 : 0.85,
         };
       }
-      // Initial poll without baseline: drop silently if nominal so polling establishes quiet baseline
-      if (status === 0 && minTtl > 60) {
+      // Initial poll without baseline: drop silently if Status=0 so polling establishes quiet baseline
+      if (status === 0) {
         return { emit: false, dropReason: 'BASELINE_RECORDED', severityWeight: 0 };
       }
       return {
@@ -1230,8 +1266,8 @@ CRITICAL: Every claim MUST cite valid packetId values from the input list ONLY. 
     }
   }
 
-  // Write fused War Room SITREP to /intel/missions/sitrep-{clusterId}.md
-  const sitrepPath = `/intel/missions/sitrep-${cluster.clusterId}.md`;
+  // Persist fused War Room SITREP directly in IndexedDB cluster record (zero workspace clutter)
+  const sitrepPath = `idb://corroboration_clusters/${cluster.clusterId}`;
   const sitrepMd = [
     `# WAR ROOM FUSED SITREP // ${cluster.sectorKey} (${cluster.clusterId})`,
     `**Classification:** OMEGA-CORROBORATED // Agent Vance Master Fusion`,
@@ -1256,10 +1292,10 @@ CRITICAL: Every claim MUST cite valid packetId values from the input list ONLY. 
         )
       : ['- None reported; all active tracks aligned.']),
     '',
-    '## Provenance Chain (Immutable VFS Raw Snapshots)',
+    '## Provenance Chain (Immutable IndexedDB Raw Snapshots)',
     ...packets.map(
       (p) =>
-        `- \`${p.packetId}\` | Track: \`${p.sourceTrack}\` | Endpoint: \`${p.sourceEndpoint}\` | Captured: \`${p.capturedAt}\` (TTL ${p.ttlSeconds}s) | Raw VFS: \`${p.rawPayloadRef}\``
+        `- \`${p.packetId}\` | Track: \`${p.sourceTrack}\` | Endpoint: \`${p.sourceEndpoint}\` | Captured: \`${p.capturedAt}\` (TTL ${p.ttlSeconds}s) | Raw Ref: \`${p.rawPayloadRef}\``
     ),
     '',
     '## Recommended Effector Package (Awaiting Human Gate)',
@@ -1267,8 +1303,6 @@ CRITICAL: Every claim MUST cite valid packetId values from the input list ONLY. 
     `- **Title:** ${chosenSynthesis.recommendedEffectorPackage.title}`,
     `- **Rationale:** ${chosenSynthesis.recommendedEffectorPackage.rationale}`,
   ].join('\n');
-
-  await writeWorkspaceFile(sitrepPath, sitrepMd, 'markdown', 'intel');
 
   // Queue Human Nomination Gate package in CommandLedgerDb
   const nominationId = `nom-${cluster.clusterId}`;
@@ -1293,6 +1327,7 @@ CRITICAL: Every claim MUST cite valid packetId values from the input list ONLY. 
   await putNomination(nomination);
 
   cluster.sitrepPath = sitrepPath;
+  cluster.sitrepMarkdown = sitrepMd;
   cluster.vanceSynthesisJson = JSON.stringify(chosenSynthesis);
   cluster.nominationId = nominationId;
   if (cluster.nominationStatus !== 'NOMINATED_APPROVED') {
@@ -1369,7 +1404,6 @@ function notifyClusterUpdate(cluster: CorroborationClusterDbEntry) {
 export async function ingestPacket(input: IngestPacketInput): Promise<IngestPacketResult> {
   const nowMs = input.nowMs ?? Date.now();
   const capturedAt = input.payloadTimestamp || new Date(nowMs).toISOString();
-  const capturedDate = capturedAt.slice(0, 10);
   const ttlSeconds = input.ttlSeconds ?? DEFAULT_TTL_BY_TRACK[input.sourceTrack] ?? 1800;
 
   const packetId = await computeDeterministicPacketId(
@@ -1377,7 +1411,7 @@ export async function ingestPacket(input: IngestPacketInput): Promise<IngestPack
     input.canonicalTargetKey,
     capturedAt
   );
-  const rawPayloadRef = `/intel/raw/${capturedDate}/${packetId}.json`;
+  const rawPayloadRef = `idb://evidence_packets/${packetId}`;
 
   const { structuralObject, metrics } = canonicalizeStructuralPayload(
     input.sourceTrack,
@@ -1394,26 +1428,7 @@ export async function ingestPacket(input: IngestPacketInput): Promise<IngestPack
     input.explicitEntities
   );
 
-  const packet: EvidencePacketDbEntry = {
-    packetId,
-    sourceTrack: input.sourceTrack,
-    sourceType: input.sourceType,
-    canonicalTargetKey: input.canonicalTargetKey,
-    payloadTimestamp: capturedAt,
-    sourceEndpoint: input.sourceEndpoint,
-    ingestedBy: input.ingestedBy,
-    capturedAt,
-    ttlSeconds,
-    geoAnchor: input.geoAnchor,
-    sectorKey: input.sectorKey,
-    entities,
-    rawPayloadRef,
-    summaryHeadline: input.summaryHeadline,
-    structuralHash,
-    structuralMetrics: metrics,
-  };
-
-  // Store immutable JSON snapshot envelope in VFS before evaluating delta
+  // Build immutable JSON snapshot envelope stored inside IndexedDB evidence_packets (never workspace_files)
   const immutableSnapshotEnvelope = {
     packetId,
     sourceTrack: input.sourceTrack,
@@ -1429,23 +1444,61 @@ export async function ingestPacket(input: IngestPacketInput): Promise<IngestPack
     structuralHash,
     payload: input.rawPayload,
   };
-  await writeWorkspaceFile(
+
+  const packet: EvidencePacketDbEntry = {
+    packetId,
+    sourceTrack: input.sourceTrack,
+    sourceType: input.sourceType,
+    canonicalTargetKey: input.canonicalTargetKey,
+    payloadTimestamp: capturedAt,
+    sourceEndpoint: input.sourceEndpoint,
+    ingestedBy: input.ingestedBy,
+    capturedAt,
+    ttlSeconds,
+    geoAnchor: input.geoAnchor,
+    sectorKey: input.sectorKey,
+    entities,
     rawPayloadRef,
-    JSON.stringify(immutableSnapshotEnvelope, null, 2),
-    'json',
-    'intel'
-  );
-  await putPacket(packet);
+    rawPayloadJson: JSON.stringify(immutableSnapshotEnvelope, null, 2),
+    summaryHeadline: input.summaryHeadline,
+    structuralHash,
+    structuralMetrics: metrics,
+  };
 
   const operativeKey: 'nyx' | 'cipher' | 'vance' =
     input.ingestedBy === 'cipher' ? 'cipher' : input.ingestedBy === 'vance' ? 'vance' : 'nyx';
-  trackStatsMap[operativeKey].packetsIngested += 1;
 
-  // Stateful Snapshot Diffing
+  // Stateful Snapshot Diffing BEFORE persisting redundant packets on unchanged polls
   const snapshotKey = `${input.sourceTrack}::${input.sourceType}::${input.canonicalTargetKey}::${input.sectorKey}`;
   const prevSnapshot = await getSnapshotByKey(snapshotKey);
   const diffEval = evaluateDeltaThreshold(input, prevSnapshot, structuralHash, metrics);
 
+  if (!diffEval.emit) {
+    if (!prevSnapshot) {
+      await putPacket(packet);
+      await putSnapshot({
+        snapshotKey,
+        sourceTrack: input.sourceTrack,
+        sourceType: input.sourceType,
+        canonicalTargetKey: input.canonicalTargetKey,
+        sectorKey: input.sectorKey,
+        structuralHash,
+        structuralMetrics: metrics,
+        packetId,
+        updatedAt: capturedAt,
+      });
+    }
+    trackStatsMap[operativeKey].silentDrops += 1;
+    return {
+      packet,
+      deltaEmitted: false,
+      dropReason: diffEval.dropReason,
+      promotedToCorroborated: false,
+      vanceTriggered: false,
+    };
+  }
+
+  await putPacket(packet);
   await putSnapshot({
     snapshotKey,
     sourceTrack: input.sourceTrack,
@@ -1458,17 +1511,7 @@ export async function ingestPacket(input: IngestPacketInput): Promise<IngestPack
     updatedAt: capturedAt,
   });
 
-  if (!diffEval.emit) {
-    trackStatsMap[operativeKey].silentDrops += 1;
-    return {
-      packet,
-      deltaEmitted: false,
-      dropReason: diffEval.dropReason,
-      promotedToCorroborated: false,
-      vanceTriggered: false,
-    };
-  }
-
+  trackStatsMap[operativeKey].packetsIngested += 1;
   trackStatsMap[operativeKey].deltasEmitted += 1;
 
   // Emit DeltaEvent
@@ -1807,22 +1850,21 @@ export async function nominateClusterPackage(
     success_boost_achieved: 100,
   });
 
-  const effectorFilePath = `/intel/missions/effector-${cluster.clusterId}.json`;
-  await writeWorkspaceFile(
-    effectorFilePath,
-    JSON.stringify({ ...outboundPayload, ledgerHash: ledgerEntry.ledger_hash }, null, 2),
-    'json',
-    'intel'
-  );
+  const nominationId = cluster.nominationId || `nom-${cluster.clusterId}`;
+  const effectorFilePath = `idb://nomination_packages/${nominationId}`;
 
   const nomination: NominationPackageDbEntry = {
-    nominationId: cluster.nominationId || `nom-${cluster.clusterId}`,
+    nominationId,
     clusterId: cluster.clusterId,
     actionType,
     title,
     rationale,
     citedPacketIds: citedIds,
-    outboundPayloadJson: JSON.stringify(outboundPayload, null, 2),
+    outboundPayloadJson: JSON.stringify(
+      { ...outboundPayload, ledgerHash: ledgerEntry.ledger_hash },
+      null,
+      2
+    ),
     status: 'NOMINATED_APPROVED',
     createdAt: bundle.nomination?.createdAt || new Date(nowMs).toISOString(),
     decidedAt: new Date(nowMs).toISOString(),
@@ -2108,19 +2150,8 @@ export async function runCipherSpecialistTrack(): Promise<{ ingested: number; de
   try {
     const tasks: Array<Promise<void>> = [];
 
-    // Collect watched domains from tripwire_watches if available
-    const infraTargets: Array<{ domain: string; sectorKey: string; geoAnchor: CorroborationGeoAnchor }> = [
-      {
-        domain: 'earthquake.usgs.gov',
-        sectorKey: 'SECTOR-01-ASHBURN',
-        geoAnchor: { lat: 39.0438, lon: -77.4874, radiusKm: 35, precision: 'REGIONAL' },
-      },
-      {
-        domain: 'cisa.gov',
-        sectorKey: 'SECTOR-01-ASHBURN',
-        geoAnchor: { lat: 39.0438, lon: -77.4874, radiusKm: 35, precision: 'REGIONAL' },
-      },
-    ];
+    // Collect user-configured watched domains from tripwire_watches only (avoid polling noisy Akamai CDN edges)
+    const infraTargets: Array<{ domain: string; sectorKey: string; geoAnchor: CorroborationGeoAnchor }> = [];
 
     try {
       const watches = await ledgerDb.tripwire_watches.toArray();
@@ -2468,10 +2499,10 @@ export async function runCorroborationSelfTest(): Promise<CorroborationSelfTestR
   });
 
   const candidateScore = res1.cluster?.corroborationScore ?? 0;
-  const rawFile1 = await readWorkspaceFile(res1.packet.rawPayloadRef);
+  const rawJsonStr1 = await getPacketRawPayloadJson(res1.packet.packetId);
   let rawJson1Valid = false;
   try {
-    const parsed = rawFile1 ? JSON.parse(rawFile1.content) : null;
+    const parsed = rawJsonStr1 ? JSON.parse(rawJsonStr1) : null;
     rawJson1Valid = parsed?.packetId === res1.packet.packetId && parsed?.payload?.id === 'us7000selftest1';
   } catch {}
 
@@ -2514,10 +2545,10 @@ export async function runCorroborationSelfTest(): Promise<CorroborationSelfTestR
 
   const corroboratedScore = res2.cluster?.corroborationScore ?? 0;
   const clusterId = res2.cluster?.clusterId || res1.cluster?.clusterId || '';
-  const rawFile2 = await readWorkspaceFile(res2.packet.rawPayloadRef);
+  const rawJsonStr2 = await getPacketRawPayloadJson(res2.packet.packetId);
   let rawJson2Valid = false;
   try {
-    const parsed = rawFile2 ? JSON.parse(rawFile2.content) : null;
+    const parsed = rawJsonStr2 ? JSON.parse(rawJsonStr2) : null;
     rawJson2Valid = parsed?.packetId === res2.packet.packetId;
   } catch {}
 

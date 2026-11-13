@@ -205,6 +205,7 @@ export interface EvidencePacketDbEntry {
     canonicalKeys: string[];
   };
   rawPayloadRef: string;
+  rawPayloadJson?: string;
   summaryHeadline: string;
   structuralHash: string;
   structuralMetrics?: Record<string, string | number | boolean>;
@@ -262,6 +263,7 @@ export interface CorroborationClusterDbEntry {
   updatedAt: string;
   expiresAt: string;
   sitrepPath?: string;
+  sitrepMarkdown?: string;
   vanceSynthesisJson?: string;
   nominationId?: string;
   nominationStatus?:

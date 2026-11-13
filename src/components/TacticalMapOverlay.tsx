@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { readWorkspaceFile } from '../engine/storageManager';
 import {
+  getPacketRawPayloadJson,
   nominateClusterPackage,
   dismissClusterFalsePositive,
   type CorroborationSourceTrack,
@@ -571,16 +571,16 @@ export default function TacticalMapOverlay({
 
     setLoadingRawPacketId(pkt.packetId);
     try {
-      const rec = await readWorkspaceFile(pkt.rawPayloadRef);
+      const rawJson = await getPacketRawPayloadJson(pkt.packetId);
       setRawJsonByPacketId((prev) => ({
         ...prev,
         [pkt.packetId]:
-          rec?.content || `Raw VFS snapshot not found at ${pkt.rawPayloadRef}`,
+          rawJson || `Raw packet snapshot not found for ${pkt.packetId}`,
       }));
     } catch (err: any) {
       setRawJsonByPacketId((prev) => ({
         ...prev,
-        [pkt.packetId]: `Error loading VFS snapshot: ${err?.message || err}`,
+        [pkt.packetId]: `Error loading raw packet snapshot: ${err?.message || err}`,
       }));
     } finally {
       setLoadingRawPacketId(null);
@@ -796,7 +796,7 @@ export default function TacticalMapOverlay({
                 )}
                 {selectedPin.sitrepPath && (
                   <div className="text-[9px] text-emerald-400">
-                    SITREP VFS: {selectedPin.sitrepPath}
+                    LEDGER REF: {selectedPin.sitrepPath}
                   </div>
                 )}
               </div>
@@ -888,7 +888,7 @@ export default function TacticalMapOverlay({
               >
                 <option value="COMPOSIO_GITHUB_ISSUE">Composio GitHub Advisory Issue</option>
                 <option value="WEBHOOK_DISPATCH">Signed C2 Webhook Dispatch</option>
-                <option value="ARCHIVE_SITREP">Immutable VFS SITREP Archive</option>
+                <option value="ARCHIVE_SITREP">Immutable Ledger SITREP Archive</option>
               </select>
 
               <div className="flex flex-wrap gap-1.5">

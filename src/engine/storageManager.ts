@@ -429,7 +429,10 @@ export async function listWorkspaceFiles(categoryFilter?: string): Promise<Works
 
   let fileList = Array.from(mergedMap.values()).filter((f) => {
     if (isWorkspaceFileDeleted(f.path, f.updatedAt)) return false;
-    if (isCorruptedScrapedWorkspaceFile(f.path, f.content || '')) {
+    if (
+      isCorruptedScrapedWorkspaceFile(f.path, f.content || '') ||
+      isTelemetryClutterWorkspaceFile(f.path, f.content || '')
+    ) {
       purgeWorkspaceFileWithoutTombstone(f.path).catch(() => {});
       return false;
     }
@@ -572,6 +575,11 @@ export async function readWorkspaceFile(rawPath: string): Promise<WorkspaceFileR
 
   if (!resultRecord) return null;
 
+  if (isTelemetryClutterWorkspaceFile(norm, resultRecord.content || '')) {
+    purgeWorkspaceFileWithoutTombstone(norm).catch(() => {});
+    return null;
+  }
+
   // 4. Auto-sanitize and repair report content if it's a markdown report (preserve raw JSON untouched)
   const isRawJsonRecord =
     norm.endsWith('.json') || norm.startsWith('intel/raw/') || resultRecord.format === 'json';
@@ -682,6 +690,32 @@ export function isCorruptedScrapedWorkspaceFile(rawPath: string, content: string
 }
 
 /**
+ * Detects live-telemetry raw packet JSON envelopes and background corroboration artifacts
+ * that belong in IndexedDB corroboration tables rather than the user's Workspace Files drawer.
+ */
+export function isTelemetryClutterWorkspaceFile(rawPath: string, content?: string): boolean {
+  const norm = normalizeFilePath(rawPath).toLowerCase();
+  if (!norm) return false;
+  if (
+    norm.startsWith('intel/raw/') ||
+    norm.startsWith('intel/missions/sitrep-clu-') ||
+    norm.startsWith('intel/missions/effector-clu-')
+  ) {
+    return true;
+  }
+  if (
+    norm.endsWith('.json') &&
+    typeof content === 'string' &&
+    content.includes('"packetId"') &&
+    content.includes('"sourceTrack"') &&
+    content.includes('"structuralHash"')
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
  * Purges a system-corrupted workspace file from IndexedDB, LocalStorage VFS, and memory
  * WITHOUT recording a user deletion tombstone, allowing clean re-ingestion.
  */
@@ -745,7 +779,10 @@ export async function repairAllStoredReports(): Promise<number> {
       const dbEntries = await ledgerDb.workspace_files.toArray();
       for (const entry of dbEntries) {
         const norm = normalizeFilePath(entry.path);
-        if (isCorruptedScrapedWorkspaceFile(norm, entry.content || '')) {
+        if (
+          isCorruptedScrapedWorkspaceFile(norm, entry.content || '') ||
+          isTelemetryClutterWorkspaceFile(norm, entry.content || '')
+        ) {
           if (entry.id !== undefined) {
             await ledgerDb.workspace_files.delete(entry.id);
             memoryFileMap.delete(norm);
@@ -792,7 +829,10 @@ export async function repairAllStoredReports(): Promise<number> {
         for (const [rawPath, meta] of Object.entries(vfs)) {
           if (!meta || typeof (meta as any).content !== 'string') continue;
           const norm = normalizeFilePath(rawPath);
-          if (isCorruptedScrapedWorkspaceFile(norm, (meta as any).content)) {
+          if (
+            isCorruptedScrapedWorkspaceFile(norm, (meta as any).content) ||
+            isTelemetryClutterWorkspaceFile(norm, (meta as any).content)
+          ) {
             delete vfs[rawPath];
             memoryFileMap.delete(norm);
             vfsChanged = true;
@@ -832,7 +872,10 @@ export async function repairAllStoredReports(): Promise<number> {
 
   // 3. Update in-memory file map and notify active listeners
   for (const [norm, rec] of Array.from(memoryFileMap.entries())) {
-    if (isCorruptedScrapedWorkspaceFile(norm, rec.content || '')) {
+    if (
+      isCorruptedScrapedWorkspaceFile(norm, rec.content || '') ||
+      isTelemetryClutterWorkspaceFile(norm, rec.content || '')
+    ) {
       memoryFileMap.delete(norm);
       repairedCount++;
       continue;
@@ -884,6 +927,20 @@ export async function writeWorkspaceFile(
   const category = resolveCategoryFromPath(norm, explicitCategory);
   const format = resolveFormatFromPath(norm, explicitFormat);
   const updatedAt = new Date().toISOString();
+
+  if (isTelemetryClutterWorkspaceFile(norm, content)) {
+    purgeWorkspaceFileWithoutTombstone(norm).catch(() => {});
+    const ephemeralContent = content || '';
+    return {
+      path: norm,
+      category,
+      format,
+      content: ephemeralContent,
+      sizeBytes: ephemeralContent.length,
+      updatedAt,
+      previewSnippet: ephemeralContent.slice(0, 160).replace(/\n/g, ' '),
+    };
+  }
 
   // Auto-sanitize and deduplicate before saving any markdown report (preserve raw JSON untouched)
   const isRawJson = norm.endsWith('.json') || norm.startsWith('intel/raw/') || format === 'json';

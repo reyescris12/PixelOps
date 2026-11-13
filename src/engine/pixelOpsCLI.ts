@@ -1114,6 +1114,195 @@ export async function executeCLICommand(
     };
   }
 
+  // 15.5 INTEL [status|inspect|nominate|selftest]
+  if (action === 'intel') {
+    const sub = (args[0] || 'status').toLowerCase();
+    const {
+      getCorroborationStatusSummary,
+      getClusterWithPackets,
+      nominateClusterPackage,
+      runCorroborationSelfTest,
+    } = await import('../services/CorroborationEngine');
+
+    if (sub === 'status') {
+      const summary = await getCorroborationStatusSummary();
+      const tracks = Object.values(summary.watcherTracks);
+      const lines = [
+        '+------------------------------------------------------------------------------+',
+        '| PIXELOPS CORROBORATION ENGINE // SOVEREIGN C2 STATUS                         |',
+        '+------------------------------------------------------------------------------+',
+        `  IndexedDB Packets : ${summary.totalPackets} (WIDE=${summary.trackPacketCounts.WIDE_AREA} SIG=${summary.trackPacketCounts.SIGNALS_INFRA} WIRE=${summary.trackPacketCounts.WRITTEN_WIRE} CVE=${summary.trackPacketCounts.CYBER_CVE})`,
+        `  Delta Events      : ${summary.totalDeltas}`,
+        `  Clusters Total    : ${summary.totalClusters} [CRIT=${summary.statusCounts.CRITICAL_CONVERGENCE} CORROB=${summary.statusCounts.CORROBORATED} CAND=${summary.statusCounts.CANDIDATE} STALE=${summary.statusCounts.STALE}]`,
+        `  Pending Gate Cards: ${summary.pendingNominations} / ${summary.totalNominations} total`,
+        '--------------------------------------------------------------------------------',
+        '  SPECIALIST WATCHER TRACKS:',
+        ...tracks.map(
+          (t) =>
+            `  [${t.operative.toUpperCase().padEnd(6)}] Tracks: ${t.tracks.join(', ').padEnd(25)} | Polls=${t.pollsCompleted} | Drops=${t.silentDrops} | Deltas=${t.deltasEmitted}`
+        ),
+        ...(summary.clusters.length > 0
+          ? [
+              '--------------------------------------------------------------------------------',
+              '  RECENT CLUSTERS:',
+              ...summary.clusters
+                .slice(0, 8)
+                .map(
+                  (c) =>
+                    `  - ${c.clusterId} | ${c.status.padEnd(20)} | score=${c.corroborationScore.toFixed(2)} | src=[${c.independentTracks.join('+')}] | ${c.sectorKey}`
+                ),
+            ]
+          : []),
+        '+------------------------------------------------------------------------------+',
+      ];
+      return {
+        command: trimmed,
+        output: lines.join('\n'),
+        status: 'ok',
+        timestamp,
+      };
+    }
+
+    if (sub === 'inspect') {
+      const targetId = args[1];
+      if (!targetId) {
+        return {
+          command: trimmed,
+          output: 'USAGE: pixelops intel inspect <clusterId>',
+          status: 'warning',
+          timestamp,
+        };
+      }
+      const bundle = await getClusterWithPackets(targetId);
+      if (!bundle) {
+        return {
+          command: trimmed,
+          output: `Cluster "${targetId}" not found. Run "pixelops intel status" to list cluster IDs.`,
+          status: 'error',
+          timestamp,
+        };
+      }
+      const { cluster, packets, synthesis } = bundle;
+      const nowMs = Date.now();
+      const lines = [
+        '+------------------------------------------------------------------------------+',
+        `| EVIDENCE PROVENANCE CHAIN // ${cluster.clusterId}                              |`,
+        '+------------------------------------------------------------------------------+',
+        `  STATUS      : ${cluster.status} (SCORE: ${cluster.corroborationScore.toFixed(2)})`,
+        `  SECTOR      : ${cluster.sectorKey} @ (${cluster.geoAnchor.lat.toFixed(4)}, ${cluster.geoAnchor.lon.toFixed(4)}) ±${cluster.geoAnchor.radiusKm}km`,
+        `  TRACKS      : ${cluster.independentTracks.join(' + ')}`,
+        `  GATE STATUS : ${cluster.nominationStatus || 'UNNOMINATED'}`,
+        ...(cluster.sitrepPath ? [`  SITREP VFS  : ${cluster.sitrepPath}`] : []),
+        '--------------------------------------------------------------------------------',
+        '  CONTRIBUTING PACKETS:',
+        ...packets.map((p, idx) => {
+          const ageSec = Math.max(0, Math.round((nowMs - new Date(p.capturedAt).getTime()) / 1000));
+          const weight = (1 / Math.max(1, packets.length)).toFixed(2);
+          const staleFlag = ageSec > p.ttlSeconds ? 'EXPIRED/STALE' : `FRESH (${p.ttlSeconds - ageSec}s left)`;
+          return [
+            `  [${idx + 1}] packetId : ${p.packetId}`,
+            `      source   : ${p.sourceTrack}/${p.sourceType} (${p.ingestedBy}) -> ${p.sourceEndpoint}`,
+            `      age/ttl  : ${ageSec}s / ${p.ttlSeconds}s [${staleFlag}] | weight=${weight}`,
+            `      rawVFS   : ${p.rawPayloadRef}`,
+          ].join('\n');
+        }),
+        ...(synthesis
+          ? [
+              '--------------------------------------------------------------------------------',
+              `  VANCE BLUF  : ${synthesis.executiveAssessment.bluf}`,
+              `  CITED IDS   : ${synthesis.executiveAssessment.citedPacketIds.join(', ')}`,
+            ]
+          : []),
+        '+------------------------------------------------------------------------------+',
+      ];
+      return {
+        command: trimmed,
+        output: lines.join('\n'),
+        status: 'ok',
+        timestamp,
+      };
+    }
+
+    if (sub === 'nominate') {
+      const targetId = args[1];
+      if (!targetId) {
+        const summary = await getCorroborationStatusSummary();
+        const candidates = summary.clusters.filter(
+          (c) => c.status === 'CORROBORATED' || c.status === 'CRITICAL_CONVERGENCE'
+        );
+        return {
+          command: trimmed,
+          output:
+            candidates.length > 0
+              ? `USAGE: pixelops intel nominate <clusterId>\nPending clusters:\n${candidates
+                  .map((c) => `  - ${c.clusterId} (${c.status}, score=${c.corroborationScore.toFixed(2)}, gate=${c.nominationStatus})`)
+                  .join('\n')}`
+              : 'USAGE: pixelops intel nominate <clusterId>\nNo corroborated clusters currently awaiting nomination.',
+          status: 'warning',
+          timestamp,
+        };
+      }
+      const res = await nominateClusterPackage(targetId, { approvedBy: 'CLI_COMMANDER' });
+      if (!res.approved) {
+        return {
+          command: trimmed,
+          output: `[NOMINATION BLOCKED] ${res.reason}`,
+          status: 'error',
+          timestamp,
+        };
+      }
+      return {
+        command: trimmed,
+        output: [
+          '+------------------------------------------------------------------------------+',
+          `| HUMAN NOMINATION GATE APPROVED // ${res.cluster?.clusterId}                    |`,
+          '+------------------------------------------------------------------------------+',
+          `  EFFECTOR     : ${res.nomination?.actionType}`,
+          `  LEDGER HASH  : ${res.ledgerHash}`,
+          `  STAGED VFS   : ${res.effectorFilePath}`,
+          `  CITED PACKETS: ${res.nomination?.citedPacketIds.length ?? 0} verified SHA-256 packets`,
+          '+------------------------------------------------------------------------------+',
+        ].join('\n'),
+        status: 'ok',
+        timestamp,
+      };
+    }
+
+    if (sub === 'selftest') {
+      const report = await runCorroborationSelfTest();
+      const lines = [
+        '+------------------------------------------------------------------------------+',
+        '| PIXELOPS CORROBORATION ENGINE // DETERMINISTIC SELF-TEST                     |',
+        '+------------------------------------------------------------------------------+',
+        `  OVERALL      : ${report.passed ? 'PASS' : 'FAIL'}`,
+        `  CLUSTER ID   : ${report.clusterId}`,
+        `  PROMOTION    : CANDIDATE (${report.candidateScore.toFixed(2)}) -> CORROBORATED (${report.corroboratedScore.toFixed(2)})`,
+        `  PACKET 1 RAW : ${report.rawPath1}`,
+        `  PACKET 2 RAW : ${report.rawPath2}`,
+        `  SITREP VFS   : ${report.sitrepPath || 'none'}`,
+        `  CANVAS LINK  : ${report.canvasVisible ? 'VISIBLE_WITH_2X_PROVENANCE' : 'FAILED'}`,
+        '--------------------------------------------------------------------------------',
+        ...report.steps.map(
+          (s) => `  [${s.passed ? 'PASS' : 'FAIL'}] ${s.step}: ${s.detail}`
+        ),
+        '+------------------------------------------------------------------------------+',
+      ];
+      return {
+        command: trimmed,
+        output: lines.join('\n'),
+        status: report.passed ? 'ok' : 'error',
+        timestamp,
+      };
+    }
+
+    return {
+      command: trimmed,
+      output: 'USAGE: pixelops intel <status | inspect <clusterId> | nominate <clusterId> | selftest>',
+      status: 'warning',
+      timestamp,
+    };
+  }
+
   // 16. HELP
   if (action === 'help') {
     const helpText = [
@@ -1144,6 +1333,10 @@ export async function executeCLICommand(
       '  pixelops spawn <templateId>        Spawn sector (cyber_lab, quantum_vault, etc)',
       '  pixelops skills                    List available capability plugins & bindings',
       '  pixelops bind <room> <skill>       Mount a capability to a sector',
+      '  pixelops intel status              Show watcher tracks, IndexedDB packet & cluster counts',
+      '  pixelops intel inspect <id>        Print full SHA-256 provenance chain for a cluster',
+      '  pixelops intel nominate <id>       Approve & commit human effector nomination gate to ledger',
+      '  pixelops intel selftest            Run deterministic 2-track corroboration self-test',
       '  pixelops logs                      Stream recent command telemetry records',
       '  pixelops clear                     Clear the terminal screen buffer',
       '  pixelops manual                    Open Classified Safehouse Field Manual & Command Guide',

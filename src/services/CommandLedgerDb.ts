@@ -170,6 +170,123 @@ export interface TripwireAlertDbEntry {
   resolvedAt?: string;
 }
 
+export type CorroborationSourceTrack =
+  | 'WIDE_AREA'
+  | 'SIGNALS_INFRA'
+  | 'WRITTEN_WIRE'
+  | 'CYBER_CVE';
+
+export interface CorroborationGeoAnchor {
+  lat: number;
+  lon: number;
+  radiusKm: number;
+  precision: 'EXACT' | 'REGIONAL';
+}
+
+export interface EvidencePacketDbEntry {
+  packetId: string;
+  sourceTrack: CorroborationSourceTrack;
+  sourceType: string;
+  canonicalTargetKey: string;
+  payloadTimestamp: string;
+  sourceEndpoint: string;
+  ingestedBy: string;
+  capturedAt: string;
+  ttlSeconds: number;
+  geoAnchor: CorroborationGeoAnchor;
+  sectorKey: string;
+  entities: {
+    mmsi: string[];
+    noradId: string[];
+    ipAsn: string[];
+    domains: string[];
+    cves: string[];
+    gridSectors: string[];
+    canonicalKeys: string[];
+  };
+  rawPayloadRef: string;
+  summaryHeadline: string;
+  structuralHash: string;
+  structuralMetrics?: Record<string, string | number | boolean>;
+}
+
+export interface SnapshotBaselineDbEntry {
+  snapshotKey: string;
+  sourceTrack: CorroborationSourceTrack;
+  sourceType: string;
+  canonicalTargetKey: string;
+  sectorKey: string;
+  structuralHash: string;
+  structuralMetrics: Record<string, string | number | boolean>;
+  packetId: string;
+  updatedAt: string;
+}
+
+export interface DeltaEventDbEntry {
+  deltaId: string;
+  packetId: string;
+  sourceTrack: CorroborationSourceTrack;
+  sourceType: string;
+  sourceEndpoint: string;
+  ingestedBy: string;
+  sectorKey: string;
+  capturedAt: string;
+  ttlSeconds: number;
+  expiresAt: string;
+  geoAnchor: CorroborationGeoAnchor;
+  entities: string[];
+  thresholdReason: string;
+  severityWeight: number;
+  rawPayloadRef: string;
+}
+
+export type CorroborationClusterStatus =
+  | 'CANDIDATE'
+  | 'CORROBORATED'
+  | 'CRITICAL_CONVERGENCE'
+  | 'STALE'
+  | 'DISMISSED';
+
+export interface CorroborationClusterDbEntry {
+  clusterId: string;
+  title: string;
+  sectorKey: string;
+  geoAnchor: CorroborationGeoAnchor;
+  status: CorroborationClusterStatus;
+  corroborationScore: number;
+  independentTracks: CorroborationSourceTrack[];
+  packetIds: string[];
+  deltaIds: string[];
+  sharedEntities: string[];
+  createdAt: string;
+  updatedAt: string;
+  expiresAt: string;
+  sitrepPath?: string;
+  vanceSynthesisJson?: string;
+  nominationId?: string;
+  nominationStatus?:
+    | 'UNNOMINATED'
+    | 'PENDING_HUMAN_REVIEW'
+    | 'NOMINATED_APPROVED'
+    | 'DISMISSED_FALSE_POSITIVE';
+}
+
+export interface NominationPackageDbEntry {
+  nominationId: string;
+  clusterId: string;
+  actionType: 'COMPOSIO_GITHUB_ISSUE' | 'WEBHOOK_DISPATCH' | 'ARCHIVE_SITREP';
+  title: string;
+  rationale: string;
+  citedPacketIds: string[];
+  outboundPayloadJson: string;
+  status: 'PENDING_HUMAN_REVIEW' | 'NOMINATED_APPROVED' | 'DISMISSED';
+  createdAt: string;
+  decidedAt?: string;
+  approvedBy?: string;
+  ledgerHash?: string;
+  ledgerEntryId?: number;
+}
+
 class PixelOpsLedgerDatabase extends Dexie {
   command_ledger!: Table<CommandLedgerEntry, number>;
   agent_memories!: Table<AgentMemoryDbEntry, number>;
@@ -180,6 +297,11 @@ class PixelOpsLedgerDatabase extends Dexie {
   mcp_stations!: Table<McpStationDbEntry, string>;
   tripwire_watches!: Table<TripwireWatchDbEntry, string>;
   tripwire_alerts!: Table<TripwireAlertDbEntry, string>;
+  evidence_packets!: Table<EvidencePacketDbEntry, string>;
+  corroboration_snapshots!: Table<SnapshotBaselineDbEntry, string>;
+  delta_events!: Table<DeltaEventDbEntry, string>;
+  corroboration_clusters!: Table<CorroborationClusterDbEntry, string>;
+  nomination_packages!: Table<NominationPackageDbEntry, string>;
 
   constructor() {
     super('PixelOpsImmutableLedgerDB');
@@ -230,6 +352,37 @@ class PixelOpsLedgerDatabase extends Dexie {
         '&id, category, target, enabled, lastCheckedAt',
       tripwire_alerts:
         '&id, watchId, status, detectedAt',
+    });
+
+    this.version(6).stores({
+      command_ledger:
+        '++id, timestamp, involved_agent, tool_used, success_boost_achieved, ledger_hash',
+      agent_memories:
+        '++id, agentId, timestamp, prompt',
+      workspace_files:
+        '++id, &path, category, format, updatedAt',
+      encrypted_credentials:
+        '&key, updatedAt',
+      evidence_nodes:
+        '&id, type, value, hitCount, lastSeenAt',
+      evidence_edges:
+        '&id, sourceId, targetId, relation, filePath, updatedAt',
+      mcp_stations:
+        '&id, room, enabled, updatedAt',
+      tripwire_watches:
+        '&id, category, target, enabled, lastCheckedAt',
+      tripwire_alerts:
+        '&id, watchId, status, detectedAt',
+      evidence_packets:
+        '&packetId, sourceTrack, ingestedBy, capturedAt, sectorKey',
+      corroboration_snapshots:
+        '&snapshotKey, sourceTrack, sectorKey, updatedAt',
+      delta_events:
+        '&deltaId, packetId, sourceTrack, sectorKey, capturedAt, expiresAt',
+      corroboration_clusters:
+        '&clusterId, status, corroborationScore, sectorKey, updatedAt',
+      nomination_packages:
+        '&nominationId, clusterId, status, createdAt',
     });
 
     // Enforce append-only immutability on the command_ledger table

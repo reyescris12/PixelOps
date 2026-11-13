@@ -436,11 +436,13 @@ export async function listWorkspaceFiles(categoryFilter?: string): Promise<Works
     return true;
   });
 
-  // Auto-sanitize all markdown reports to strip duplicate sections and correct mismatched topic tags
+  // Auto-sanitize and deduplicate markdown reports (never touch raw JSON snapshots)
   for (let i = 0; i < fileList.length; i++) {
     const f = fileList[i];
+    const isRawJson = f.path.endsWith('.json') || f.path.startsWith('intel/raw/') || f.format === 'json';
     if (
       f.content &&
+      !isRawJson &&
       (f.path.endsWith('.md') ||
         f.path.startsWith('reports/') ||
         f.path.startsWith('intel/') ||
@@ -570,9 +572,12 @@ export async function readWorkspaceFile(rawPath: string): Promise<WorkspaceFileR
 
   if (!resultRecord) return null;
 
-  // 4. Auto-sanitize and repair report content if it's a markdown report
+  // 4. Auto-sanitize and repair report content if it's a markdown report (preserve raw JSON untouched)
+  const isRawJsonRecord =
+    norm.endsWith('.json') || norm.startsWith('intel/raw/') || resultRecord.format === 'json';
   if (
     resultRecord.content &&
+    !isRawJsonRecord &&
     (norm.endsWith('.md') ||
       norm.startsWith('reports/') ||
       norm.startsWith('intel/') ||
@@ -624,6 +629,7 @@ export async function readWorkspaceFile(rawPath: string): Promise<WorkspaceFileR
 export function isCorruptedScrapedWorkspaceFile(rawPath: string, content: string): boolean {
   const norm = normalizeFilePath(rawPath);
   if (!norm) return false;
+  if (norm.endsWith('.json') || norm.startsWith('intel/raw/')) return false;
 
   const isScrapedDomain =
     norm.startsWith('intel/sources/isw_research/') ||
@@ -748,11 +754,14 @@ export async function repairAllStoredReports(): Promise<number> {
           continue;
         }
         if (!entry.content) continue;
+        const isEntryRawJson =
+          norm.endsWith('.json') || norm.startsWith('intel/raw/') || entry.format === 'json';
         if (
-          norm.endsWith('.md') ||
-          norm.startsWith('reports/') ||
-          norm.startsWith('intel/') ||
-          entry.format === 'markdown'
+          !isEntryRawJson &&
+          (norm.endsWith('.md') ||
+            norm.startsWith('reports/') ||
+            norm.startsWith('intel/') ||
+            entry.format === 'markdown')
         ) {
           const { content: sanitized, changed } = sanitizeAndDeduplicateReportContent(
             entry.content,
@@ -790,11 +799,16 @@ export async function repairAllStoredReports(): Promise<number> {
             repairedCount++;
             continue;
           }
+          const isMetaRawJson =
+            norm.endsWith('.json') ||
+            norm.startsWith('intel/raw/') ||
+            (meta as any).format === 'json';
           if (
-            norm.endsWith('.md') ||
-            norm.startsWith('reports/') ||
-            norm.startsWith('intel/') ||
-            (meta as any).format === 'markdown'
+            !isMetaRawJson &&
+            (norm.endsWith('.md') ||
+              norm.startsWith('reports/') ||
+              norm.startsWith('intel/') ||
+              (meta as any).format === 'markdown')
           ) {
             const { content: sanitized, changed } = sanitizeAndDeduplicateReportContent(
               (meta as any).content,
@@ -823,9 +837,12 @@ export async function repairAllStoredReports(): Promise<number> {
       repairedCount++;
       continue;
     }
+    const isMemRawJson =
+      norm.endsWith('.json') || norm.startsWith('intel/raw/') || rec.format === 'json';
     if (
       repairedCount > 0 &&
       rec.content &&
+      !isMemRawJson &&
       (norm.endsWith('.md') ||
         norm.startsWith('reports/') ||
         norm.startsWith('intel/') ||
@@ -868,10 +885,12 @@ export async function writeWorkspaceFile(
   const format = resolveFormatFromPath(norm, explicitFormat);
   const updatedAt = new Date().toISOString();
 
-  // Auto-sanitize and deduplicate before saving any markdown report
+  // Auto-sanitize and deduplicate before saving any markdown report (preserve raw JSON untouched)
+  const isRawJson = norm.endsWith('.json') || norm.startsWith('intel/raw/') || format === 'json';
   let finalContent = content || '';
   if (
     finalContent &&
+    !isRawJson &&
     (norm.endsWith('.md') ||
       norm.startsWith('reports/') ||
       norm.startsWith('intel/') ||
@@ -944,6 +963,7 @@ export async function writeWorkspaceFile(
   // 4. Auto-extract entities (IPs, domains, ASNs, CVEs, threat actors) into the local Evidence Graph
   if (
     finalContent &&
+    !isRawJson &&
     (norm.endsWith('.md') ||
       norm.startsWith('reports/') ||
       norm.startsWith('intel/') ||

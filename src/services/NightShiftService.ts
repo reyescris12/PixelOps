@@ -662,6 +662,17 @@ export async function runPendingNightShiftTasks(
       console.warn('[NightShift] Deterministic tripwire check warning:', tripErr);
     }
 
+    // Run non-blocking parallel specialist corroboration tracks (Nyx: WIDE_AREA/WRITTEN_WIRE, Cipher: SIGNALS_INFRA/CYBER_CVE -> Vance)
+    try {
+      const { runParallelSpecialistTracks, refreshAllClusterStaleness } = await import(
+        './CorroborationEngine'
+      );
+      await runParallelSpecialistTracks();
+      await refreshAllClusterStaleness();
+    } catch (corrobErr) {
+      console.warn('[NightShift] Parallel specialist corroboration track warning:', corrobErr);
+    }
+
     const schedules = loadNightShiftSchedules();
     const dueTasks = schedules.filter(
       (s) => s.enabled && !isRoutineDeleted(s.id) && !activeCancelledTaskIds.has(s.id) && isTaskDue(s)

@@ -24,6 +24,8 @@ const STORAGE_QUEUE_KEY = 'pixelops_background_queue_v1';
 class BackgroundWorkerEngine {
   private channel: BroadcastChannel | null = null;
   private isRunning = false;
+  private specialistIntervalId: ReturnType<typeof setInterval> | null = null;
+  private unsubscribeCorroboration: (() => void) | null = null;
   private listeners: Array<(tasks: BackgroundQueueTask[]) => void> = [];
 
   constructor() {
@@ -32,6 +34,12 @@ class BackgroundWorkerEngine {
       this.channel.onmessage = (event) => {
         if (event.data && event.data.type === 'STATE_SYNC_UPDATE') {
           this.notifyListeners(this.getQueue());
+        } else if (event.data && event.data.type === 'CORROBORATION_CLUSTER_UPDATED') {
+          try {
+            window.dispatchEvent(
+              new CustomEvent('pixelops:corroboration-updated', { detail: event.data })
+            );
+          } catch {}
         }
       };
     }
@@ -86,6 +94,16 @@ class BackgroundWorkerEngine {
     return newTask;
   }
 
+  public async triggerParallelSpecialistSweep() {
+    const { runParallelSpecialistTracks } = await import('./CorroborationEngine');
+    return await runParallelSpecialistTracks();
+  }
+
+  public async getSpecialistWatcherStatus() {
+    const { getSpecialistWatcherStatus } = await import('./CorroborationEngine');
+    return getSpecialistWatcherStatus();
+  }
+
   public startBackgroundLoop() {
     if (this.isRunning) return;
     this.isRunning = true;
@@ -102,19 +120,52 @@ class BackgroundWorkerEngine {
         });
     }
 
-    // Periodic Storage Health Audit & Auto-Pruning
+    // Periodic Storage Health Audit & Non-Blocking Parallel Specialist Corroboration Sweep
     if (typeof window !== 'undefined') {
       try {
         auditStorageHealth().catch(() => {});
         setInterval(() => {
           auditStorageHealth().catch(() => {});
         }, 5 * 60 * 1000);
+
+        import('./CorroborationEngine')
+          .then(({ subscribeToClusterPromotions, runParallelSpecialistTracks }) => {
+            if (!this.unsubscribeCorroboration) {
+              this.unsubscribeCorroboration = subscribeToClusterPromotions((cluster) => {
+                if (this.channel) {
+                  try {
+                    this.channel.postMessage({
+                      type: 'CORROBORATION_CLUSTER_UPDATED',
+                      clusterId: cluster.clusterId,
+                      status: cluster.status,
+                      score: cluster.corroborationScore,
+                    });
+                  } catch {}
+                }
+              });
+            }
+            setTimeout(() => {
+              runParallelSpecialistTracks().catch(() => {});
+            }, 3500);
+            this.specialistIntervalId = setInterval(() => {
+              runParallelSpecialistTracks().catch(() => {});
+            }, 3 * 60 * 1000);
+          })
+          .catch(() => {});
       } catch {}
     }
   }
 
   public stopBackgroundLoop() {
     this.isRunning = false;
+    if (this.specialistIntervalId) {
+      clearInterval(this.specialistIntervalId);
+      this.specialistIntervalId = null;
+    }
+    if (this.unsubscribeCorroboration) {
+      this.unsubscribeCorroboration();
+      this.unsubscribeCorroboration = null;
+    }
   }
 }
 

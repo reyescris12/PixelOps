@@ -1,7 +1,37 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { readWorkspaceFile } from '../engine/storageManager';
+import {
+  nominateClusterPackage,
+  dismissClusterFalsePositive,
+  type CorroborationSourceTrack,
+  type CorroborationClusterStatus,
+  type VanceSynthesisOutput,
+  type EffectorActionType,
+} from '../services/CorroborationEngine';
+
+export type TacticalLayerFilter =
+  | 'ALL'
+  | 'CORROBORATED_ONLY'
+  | 'WIDE_AREA'
+  | 'SIGNALS'
+  | 'WIRES';
+
+export interface TacticalProvenancePacket {
+  packetId: string;
+  sourceTrack: CorroborationSourceTrack;
+  sourceType: string;
+  sourceEndpoint: string;
+  ingestedBy: string;
+  capturedAt: string;
+  ttlSeconds: number;
+  rawPayloadRef: string;
+  summaryHeadline: string;
+  confidenceWeight: number;
+}
 
 export interface TacticalIntelPin {
   id: string;
+  clusterId?: string;
   lat: number; // Geographic latitude (-85..85)
   lon: number; // Geographic longitude (-180..180)
   x?: number; // Optional fallback percentage (0..100)
@@ -10,7 +40,23 @@ export interface TacticalIntelPin {
   summary: string;
   priority: 'HIGH' | 'MEDIUM' | 'LOW';
   timestamp: string;
+  capturedAt?: string;
+  expiresAt?: string;
   category?: string;
+  corroborationScore?: number;
+  corroborationStatus?: CorroborationClusterStatus;
+  sourceTracks?: CorroborationSourceTrack[];
+  sourceCount?: number;
+  vectorAzimuthDeg?: number;
+  sitrepPath?: string;
+  nominationId?: string;
+  nominationStatus?:
+    | 'UNNOMINATED'
+    | 'PENDING_HUMAN_REVIEW'
+    | 'NOMINATED_APPROVED'
+    | 'DISMISSED_FALSE_POSITIVE';
+  vanceSynthesis?: VanceSynthesisOutput;
+  provenancePackets?: TacticalProvenancePacket[];
 }
 
 interface TacticalMapOverlayProps {
@@ -21,6 +67,7 @@ interface TacticalMapOverlayProps {
   onSelectPin?: (pin: TacticalIntelPin | null) => void;
   onFlyToPin?: (pin: TacticalIntelPin) => void;
   onDispatchPinDirective?: (pin: TacticalIntelPin) => void;
+  onClustersMutated?: () => void;
 }
 
 /**
@@ -43,8 +90,8 @@ function latLonToWorldPixels(lat: number, lon: number, zoom: number): { wx: numb
  * Projects a geographic pin (lat, lon) onto the current viewport canvas (width, height)
  * centered at (centerLat, centerLon) at the given Web Mercator zoom level.
  */
-function projectPinToCanvas(
-  pin: TacticalIntelPin,
+export function projectPinToCanvas(
+  pin: Pick<TacticalIntelPin, 'lat' | 'lon' | 'x' | 'y'>,
   centerLat: number,
   centerLon: number,
   zoom: number,
@@ -81,6 +128,57 @@ function projectPinToCanvas(
   return { px, py, isVisible: true };
 }
 
+function resolvePinVisualTier(pin: TacticalIntelPin, nowMs: number): {
+  tier: 'STALE' | 'CANDIDATE' | 'CORROBORATED' | 'CRITICAL_CONVERGENCE';
+  score: number;
+  srcCount: number;
+} {
+  const score =
+    typeof pin.corroborationScore === 'number'
+      ? pin.corroborationScore
+      : pin.priority === 'HIGH'
+      ? 0.35
+      : 0.25;
+  const srcCount = pin.sourceCount ?? pin.sourceTracks?.length ?? 1;
+  const isExpired =
+    pin.corroborationStatus === 'STALE' ||
+    (Boolean(pin.expiresAt) && nowMs > Date.parse(pin.expiresAt!));
+
+  if (isExpired) {
+    return { tier: 'STALE', score, srcCount };
+  }
+  if (pin.corroborationStatus === 'CRITICAL_CONVERGENCE' || score >= 0.85) {
+    return { tier: 'CRITICAL_CONVERGENCE', score, srcCount };
+  }
+  if (pin.corroborationStatus === 'CORROBORATED' || score >= 0.5) {
+    return { tier: 'CORROBORATED', score, srcCount };
+  }
+  return { tier: 'CANDIDATE', score, srcCount };
+}
+
+function formatRemainingTtl(expiresAt: string | undefined, nowMs: number): {
+  label: string;
+  isStale: boolean;
+} {
+  if (!expiresAt) return { label: 'LIVE VFS DOSSIER', isStale: false };
+  const diffSec = Math.floor((Date.parse(expiresAt) - nowMs) / 1000);
+  if (isNaN(diffSec)) return { label: 'UNKNOWN TTL', isStale: false };
+  if (diffSec <= 0) {
+    const overdueSec = Math.abs(diffSec);
+    const mins = Math.floor(overdueSec / 60);
+    return {
+      label: `STALE (+${mins}m ${overdueSec % 60}s past TTL)`,
+      isStale: true,
+    };
+  }
+  const mins = Math.floor(diffSec / 60);
+  const secs = diffSec % 60;
+  return {
+    label: `TTL FRESH: ${mins}m ${String(secs).padStart(2, '0')}s`,
+    isStale: false,
+  };
+}
+
 export default function TacticalMapOverlay({
   intelligencePins = [],
   centerLat,
@@ -89,18 +187,99 @@ export default function TacticalMapOverlay({
   onSelectPin,
   onFlyToPin,
   onDispatchPinDirective,
+  onClustersMutated,
 }: TacticalMapOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [selectedPin, setSelectedPin] = useState<TacticalIntelPin | null>(null);
+  const [activeLayerFilter, setActiveLayerFilter] = useState<TacticalLayerFilter>('ALL');
+  const [nowTickMs, setNowTickMs] = useState<number>(() => Date.now());
+  const [rawJsonByPacketId, setRawJsonByPacketId] = useState<Record<string, string>>({});
+  const [loadingRawPacketId, setLoadingRawPacketId] = useState<string | null>(null);
+  const [selectedEffector, setSelectedEffector] =
+    useState<EffectorActionType>('COMPOSIO_GITHUB_ISSUE');
+  const [gateActionMessage, setGateActionMessage] = useState<{
+    type: 'ok' | 'error';
+    text: string;
+  } | null>(null);
+  const [isMutatingGate, setIsMutatingGate] = useState(false);
+
+  // Live 1-second timer while Provenance Drawer is open (keeps TTL countdown live)
+  useEffect(() => {
+    if (!selectedPin) return;
+    setNowTickMs(Date.now());
+    const id = setInterval(() => setNowTickMs(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [selectedPin]);
+
+  // Escape key closes the slide-over provenance drawer
+  useEffect(() => {
+    if (!selectedPin) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        updateSelectedPin(null);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [selectedPin]);
+
+  // Sync selectedPin when intelligencePins updates (e.g., after nomination or score change)
+  useEffect(() => {
+    if (!selectedPin) return;
+    const refreshed = intelligencePins.find((p) => p.id === selectedPin.id);
+    if (refreshed) {
+      setSelectedPin(refreshed);
+      if (refreshed.vanceSynthesis?.recommendedEffectorPackage.actionType) {
+        setSelectedEffector(refreshed.vanceSynthesis.recommendedEffectorPackage.actionType);
+      }
+    }
+  }, [intelligencePins]);
 
   const updateSelectedPin = (nextPin: TacticalIntelPin | null) => {
     setSelectedPin(nextPin);
+    setGateActionMessage(null);
+    setRawJsonByPacketId({});
+    if (nextPin?.vanceSynthesis?.recommendedEffectorPackage.actionType) {
+      setSelectedEffector(nextPin.vanceSynthesis.recommendedEffectorPackage.actionType);
+    }
     if (onSelectPin) {
       onSelectPin(nextPin);
     }
   };
 
-  // Render tactical rings, crosshairs, and geographically anchored intel markers on canvas
+  const filteredPins = useMemo(() => {
+    const now = Date.now();
+    return intelligencePins.filter((pin) => {
+      if (pin.corroborationStatus === 'DISMISSED') return false;
+      const { tier } = resolvePinVisualTier(pin, now);
+      if (activeLayerFilter === 'CORROBORATED_ONLY') {
+        return tier === 'CORROBORATED' || tier === 'CRITICAL_CONVERGENCE';
+      }
+      if (activeLayerFilter === 'WIDE_AREA') {
+        return (
+          Boolean(pin.sourceTracks?.includes('WIDE_AREA')) ||
+          /seismic|maritime|recon|wide_area/i.test(pin.category || '')
+        );
+      }
+      if (activeLayerFilter === 'SIGNALS') {
+        return (
+          Boolean(
+            pin.sourceTracks?.includes('SIGNALS_INFRA') ||
+              pin.sourceTracks?.includes('CYBER_CVE')
+          ) || /infrastructure|signals|dns|cve/i.test(pin.category || '')
+        );
+      }
+      if (activeLayerFilter === 'WIRES') {
+        return (
+          Boolean(pin.sourceTracks?.includes('WRITTEN_WIRE')) ||
+          /wire|isw|sitrep/i.test(pin.category || '')
+        );
+      }
+      return true;
+    });
+  }, [intelligencePins, activeLayerFilter]);
+
+  // Render tiered corroboration pins cleanly at 60 FPS on HTML5 Canvas (zero per-pin DOM nodes)
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -130,14 +309,16 @@ export default function TacticalMapOverlay({
     window.addEventListener('resize', syncCanvasSize);
 
     let animationFrameId: number;
-    let pulseRadius = 10;
+    let pulseRadius = 11;
+    let radarSweepAngle = 0;
 
     const render = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // 1. Draw subtle tactical grid lines (Retro Safehouse HUD effect)
-      ctx.strokeStyle = 'rgba(16, 185, 129, 0.1)'; // Emerald tint
+      // 1. Subtle tactical grid lines
+      ctx.strokeStyle = 'rgba(16, 185, 129, 0.08)';
       ctx.lineWidth = 1;
+      ctx.setLineDash([]);
       const gridSize = 40;
       for (let x = 0; x < canvas.width; x += gridSize) {
         ctx.beginPath();
@@ -152,8 +333,10 @@ export default function TacticalMapOverlay({
         ctx.stroke();
       }
 
-      // 2. Render Geographically Locked Intelligence & Wire Pins
-      intelligencePins.forEach((pin) => {
+      const frameNow = Date.now();
+
+      // 2. Render Tiered Geographically Locked Intelligence Pins
+      filteredPins.forEach((pin) => {
         const { px, py, isVisible } = projectPinToCanvas(
           pin,
           centerLat,
@@ -164,70 +347,159 @@ export default function TacticalMapOverlay({
         );
 
         const isSelected = selectedPin?.id === pin.id;
+        const { tier, srcCount } = resolvePinVisualTier(pin, frameNow);
 
         if (!isVisible) {
-          // Draw subtle edge direction indicator on the screen border so user knows where off-screen pins are located
           const pad = 16;
           const clampedX = Math.max(pad, Math.min(canvas.width - pad, px));
-          const clampedY = Math.max(pad + 54, Math.min(canvas.height - pad - 48, py));
+          const clampedY = Math.max(pad + 60, Math.min(canvas.height - pad - 48, py));
 
           ctx.save();
-          ctx.fillStyle = pin.priority === 'HIGH' ? 'rgba(239, 68, 68, 0.75)' : 'rgba(56, 189, 248, 0.65)';
+          ctx.setLineDash(tier === 'STALE' ? [3, 2] : []);
+          ctx.fillStyle =
+            tier === 'CRITICAL_CONVERGENCE'
+              ? 'rgba(239, 68, 68, 0.85)'
+              : tier === 'CORROBORATED'
+              ? 'rgba(16, 185, 129, 0.85)'
+              : tier === 'STALE'
+              ? 'rgba(148, 163, 184, 0.5)'
+              : 'rgba(245, 158, 11, 0.45)';
           ctx.strokeStyle = isSelected ? '#fde047' : 'rgba(15, 23, 42, 0.9)';
           ctx.lineWidth = 1.5;
           ctx.beginPath();
-          ctx.arc(clampedX, clampedY, 4.5, 0, 2 * Math.PI);
+          ctx.arc(clampedX, clampedY, tier === 'CRITICAL_CONVERGENCE' ? 5.5 : 4.5, 0, 2 * Math.PI);
           ctx.fill();
           ctx.stroke();
           ctx.restore();
           return;
         }
 
-        // Draw pulsing outer threat ring for critical items
-        if (pin.priority === 'HIGH') {
-          ctx.strokeStyle = 'rgba(239, 68, 68, 0.85)'; // Red alert
-          ctx.lineWidth = 1.6;
+        ctx.save();
+
+        if (tier === 'STALE') {
+          // STALE: dashed grey outline, zero pulse
+          ctx.setLineDash([4, 3]);
+          ctx.strokeStyle = isSelected ? '#fde047' : 'rgba(148, 163, 184, 0.72)';
+          ctx.lineWidth = 1.4;
+          ctx.strokeRect(px - 9, py - 9, 18, 18);
+          ctx.beginPath();
+          ctx.arc(px, py, 14, 0, 2 * Math.PI);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle = 'rgba(148, 163, 184, 0.75)';
+          ctx.beginPath();
+          ctx.arc(px, py, 3.2, 0, 2 * Math.PI);
+          ctx.fill();
+        } else if (tier === 'CANDIDATE') {
+          // CANDIDATE (< 0.50): muted amber crosshair at 45% opacity, static reticle, no pulse
+          ctx.strokeStyle = isSelected ? 'rgba(253, 224, 71, 0.85)' : 'rgba(245, 158, 11, 0.45)';
+          ctx.fillStyle = isSelected ? 'rgba(253, 224, 71, 0.85)' : 'rgba(245, 158, 11, 0.45)';
+          ctx.lineWidth = 1.1;
+          ctx.beginPath();
+          ctx.moveTo(px - 10, py);
+          ctx.lineTo(px - 4, py);
+          ctx.moveTo(px + 4, py);
+          ctx.lineTo(px + 10, py);
+          ctx.moveTo(px, py - 10);
+          ctx.lineTo(px, py - 4);
+          ctx.moveTo(px, py + 4);
+          ctx.lineTo(px, py + 10);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.arc(px, py, 3, 0, 2 * Math.PI);
+          ctx.fill();
+        } else if (tier === 'CORROBORATED') {
+          // CORROBORATED (0.50 - 0.84): phosphor-green/cyan lock box, dual-source badge, slow radar sweep ring
+          ctx.strokeStyle = 'rgba(34, 211, 238, 0.45)';
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          ctx.arc(px, py, 17, 0, 2 * Math.PI);
+          ctx.stroke();
+
+          ctx.strokeStyle = 'rgba(16, 185, 129, 0.92)';
+          ctx.lineWidth = 2.0;
+          ctx.beginPath();
+          ctx.arc(px, py, 17, radarSweepAngle, radarSweepAngle + Math.PI * 0.42);
+          ctx.stroke();
+
+          ctx.strokeStyle = isSelected ? '#fde047' : '#22d3ee';
+          ctx.lineWidth = isSelected ? 2 : 1.5;
+          ctx.strokeRect(px - 9, py - 9, 18, 18);
+
+          ctx.fillStyle = '#10b981';
+          ctx.beginPath();
+          ctx.arc(px, py, 4.5, 0, 2 * Math.PI);
+          ctx.fill();
+        } else {
+          // CRITICAL_CONVERGENCE (>= 0.85): pulsing crimson threat ring, target vector leader line, priority tag
+          ctx.strokeStyle = 'rgba(239, 68, 68, 0.9)';
+          ctx.lineWidth = 1.9;
           ctx.beginPath();
           ctx.arc(px, py, pulseRadius, 0, 2 * Math.PI);
           ctx.stroke();
-        } else if (isSelected) {
-          ctx.strokeStyle = 'rgba(56, 189, 248, 0.85)'; // Cyan selection ring
+
+          ctx.strokeStyle = 'rgba(248, 113, 113, 0.5)';
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          ctx.arc(px, py, 21, 0, 2 * Math.PI);
+          ctx.stroke();
+
+          // Target vector leader line
+          const azRad = (((pin.vectorAzimuthDeg ?? 45) - 90) * Math.PI) / 180;
+          const vx = px + Math.cos(azRad) * 28;
+          const vy = py + Math.sin(azRad) * 28;
+          ctx.strokeStyle = '#ef4444';
           ctx.lineWidth = 1.5;
           ctx.beginPath();
-          ctx.arc(px, py, pulseRadius * 0.85, 0, 2 * Math.PI);
+          ctx.moveTo(px, py);
+          ctx.lineTo(vx, vy);
           ctx.stroke();
+
+          ctx.fillStyle = '#ef4444';
+          ctx.beginPath();
+          ctx.arc(px, py, 5.2, 0, 2 * Math.PI);
+          ctx.fill();
+
+          ctx.strokeStyle = isSelected ? '#fde047' : '#fca5a5';
+          ctx.lineWidth = 1.6;
+          ctx.strokeRect(px - 10, py - 10, 20, 20);
         }
 
-        // Draw core node dot
-        ctx.fillStyle = pin.priority === 'HIGH' ? '#ef4444' : '#38bdf8'; // Red or Cyan
-        ctx.beginPath();
-        ctx.arc(px, py, isSelected ? 5.5 : 4, 0, 2 * Math.PI);
-        ctx.fill();
-
-        // Draw coordinate crosshair bracket
-        ctx.strokeStyle = isSelected ? '#fde047' : '#38bdf8';
-        ctx.lineWidth = isSelected ? 1.6 : 1.1;
-        ctx.strokeRect(px - 8, py - 8, 16, 16);
-
-        // Draw compact callout label next to pin with dark backing for readability
+        // Draw compact canvas badge & callout label
         ctx.font = 'bold 10px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
-        const shortLabel = pin.title.length > 24 ? `${pin.title.slice(0, 22)}..` : pin.title;
-        const textWidth = ctx.measureText(shortLabel).width;
-        const labelX = px + 12 + textWidth > canvas.width - 10 ? px - 12 - textWidth : px + 12;
+        const shortBase = pin.title.length > 22 ? `${pin.title.slice(0, 20)}..` : pin.title;
+        const badgePrefix =
+          tier === 'CRITICAL_CONVERGENCE'
+            ? `[CRIT ${srcCount}x] `
+            : tier === 'CORROBORATED'
+            ? `[${srcCount}x SRC] `
+            : tier === 'STALE'
+            ? '[STALE] '
+            : '';
+        const label = `${badgePrefix}${shortBase}`;
+        const textWidth = ctx.measureText(label).width;
+        const labelX = px + 14 + textWidth > canvas.width - 10 ? px - 14 - textWidth : px + 14;
         const labelY = py + 3;
 
-        ctx.fillStyle = 'rgba(2, 8, 4, 0.82)';
+        ctx.fillStyle =
+          tier === 'CANDIDATE' ? 'rgba(2, 8, 4, 0.55)' : 'rgba(2, 8, 4, 0.88)';
         ctx.fillRect(labelX - 3, labelY - 10, textWidth + 6, 14);
         ctx.fillStyle = isSelected
           ? '#fde047'
-          : pin.priority === 'HIGH'
+          : tier === 'CRITICAL_CONVERGENCE'
           ? '#fca5a5'
-          : '#7dd3fc';
-        ctx.fillText(shortLabel, labelX, labelY);
+          : tier === 'CORROBORATED'
+          ? '#6ee7b7'
+          : tier === 'STALE'
+          ? '#94a3b8'
+          : 'rgba(252, 211, 77, 0.65)';
+        ctx.fillText(label, labelX, labelY);
+
+        ctx.restore();
       });
 
-      // Pulse animation loop for threat rings
-      pulseRadius = 8 + ((pulseRadius - 8 + 0.22) % 18);
+      pulseRadius = 10 + ((pulseRadius - 10 + 0.24) % 18);
+      radarSweepAngle = (radarSweepAngle + 0.025) % (Math.PI * 2);
       animationFrameId = requestAnimationFrame(render);
     };
 
@@ -238,9 +510,9 @@ export default function TacticalMapOverlay({
       window.removeEventListener('resize', syncCanvasSize);
       resizeObserver?.disconnect();
     };
-  }, [intelligencePins, selectedPin, centerLat, centerLon, zoom]);
+  }, [filteredPins, selectedPin, centerLat, centerLon, zoom]);
 
-  // Handle canvas click/tap to select nearest intelligence pin (or edge indicator)
+  // Handle canvas click/tap to select nearest visible (or off-screen edge) pin
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -250,8 +522,7 @@ export default function TacticalMapOverlay({
     const clickX = (e.clientX - rect.left) * scaleX;
     const clickY = (e.clientY - rect.top) * scaleY;
 
-    // 1. Check visible pins at their true geographic projection
-    let clickedPin = intelligencePins.find((pin) => {
+    let clickedPin = filteredPins.find((pin) => {
       const { px, py, isVisible } = projectPinToCanvas(
         pin,
         centerLat,
@@ -264,10 +535,9 @@ export default function TacticalMapOverlay({
       return Math.hypot(px - clickX, py - clickY) < 22;
     });
 
-    // 2. Also allow clicking edge indicators to select & fly to off-screen pins
     if (!clickedPin) {
       const pad = 16;
-      clickedPin = intelligencePins.find((pin) => {
+      clickedPin = filteredPins.find((pin) => {
         const { px, py, isVisible } = projectPinToCanvas(
           pin,
           centerLat,
@@ -278,7 +548,7 @@ export default function TacticalMapOverlay({
         );
         if (isVisible) return false;
         const clampedX = Math.max(pad, Math.min(canvas.width - pad, px));
-        const clampedY = Math.max(pad + 54, Math.min(canvas.height - pad - 48, py));
+        const clampedY = Math.max(pad + 60, Math.min(canvas.height - pad - 48, py));
         return Math.hypot(clampedX - clickX, clampedY - clickY) < 16;
       });
       if (clickedPin && onFlyToPin) {
@@ -289,80 +559,395 @@ export default function TacticalMapOverlay({
     updateSelectedPin(clickedPin || null);
   };
 
+  const handleToggleRawJson = async (pkt: TacticalProvenancePacket) => {
+    if (rawJsonByPacketId[pkt.packetId] !== undefined) {
+      setRawJsonByPacketId((prev) => {
+        const next = { ...prev };
+        delete next[pkt.packetId];
+        return next;
+      });
+      return;
+    }
+
+    setLoadingRawPacketId(pkt.packetId);
+    try {
+      const rec = await readWorkspaceFile(pkt.rawPayloadRef);
+      setRawJsonByPacketId((prev) => ({
+        ...prev,
+        [pkt.packetId]:
+          rec?.content || `Raw VFS snapshot not found at ${pkt.rawPayloadRef}`,
+      }));
+    } catch (err: any) {
+      setRawJsonByPacketId((prev) => ({
+        ...prev,
+        [pkt.packetId]: `Error loading VFS snapshot: ${err?.message || err}`,
+      }));
+    } finally {
+      setLoadingRawPacketId(null);
+    }
+  };
+
+  const handleNominatePackage = async () => {
+    if (!selectedPin?.clusterId) return;
+    setIsMutatingGate(true);
+    setGateActionMessage(null);
+    try {
+      const res = await nominateClusterPackage(selectedPin.clusterId, {
+        actionType: selectedEffector,
+        approvedBy: 'WAR_ROOM_COMMANDER',
+      });
+      if (res.approved) {
+        setGateActionMessage({
+          type: 'ok',
+          text: `NOMINATED [${selectedEffector}] // Ledger Hash: ${res.ledgerHash}`,
+        });
+        onClustersMutated?.();
+      } else {
+        setGateActionMessage({
+          type: 'error',
+          text: res.reason || 'Nomination rejected.',
+        });
+      }
+    } catch (err: any) {
+      setGateActionMessage({
+        type: 'error',
+        text: err?.message || 'Nomination failed.',
+      });
+    } finally {
+      setIsMutatingGate(false);
+    }
+  };
+
+  const handleDismissFalsePositive = async () => {
+    if (!selectedPin?.clusterId) return;
+    setIsMutatingGate(true);
+    setGateActionMessage(null);
+    try {
+      const res = await dismissClusterFalsePositive(selectedPin.clusterId);
+      if (res.dismissed) {
+        updateSelectedPin(null);
+        onClustersMutated?.();
+      } else {
+        setGateActionMessage({
+          type: 'error',
+          text: 'Could not dismiss cluster.',
+        });
+      }
+    } finally {
+      setIsMutatingGate(false);
+    }
+  };
+
+  const selectedTierInfo = selectedPin ? resolvePinVisualTier(selectedPin, nowTickMs) : null;
+  const selectedTtlInfo = selectedPin
+    ? formatRemainingTtl(selectedPin.expiresAt, nowTickMs)
+    : null;
+
+  const filterChips: Array<{ id: TacticalLayerFilter; label: string }> = [
+    { id: 'ALL', label: 'ALL' },
+    { id: 'CORROBORATED_ONLY', label: 'CORROBORATED ONLY' },
+    { id: 'WIDE_AREA', label: 'WIDE-AREA' },
+    { id: 'SIGNALS', label: 'SIGNALS' },
+    { id: 'WIRES', label: 'WIRES' },
+  ];
+
   return (
     <div className="relative w-full h-full overflow-hidden pointer-events-auto">
-      {/* Interactive Tactical Canvas Layer */}
+      {/* Interactive 60FPS Tactical Canvas Layer */}
       <canvas
         ref={canvasRef}
         onClick={handleCanvasClick}
         className="absolute inset-0 z-10 cursor-crosshair block w-full h-full"
       />
 
-      {/* Selected Pin Dossier Popup (Positioned cleanly above the bottom HUD bar so zero text is obstructed) */}
+      {/* Compact Single-Row Layer Filter HUD Strip (< 12% viewport height) */}
+      <div className="absolute top-1.5 left-1/2 -translate-x-1/2 z-35 flex items-center gap-1 bg-black/85 border border-emerald-500/45 rounded px-1.5 py-0.5 shadow-[0_0_16px_rgba(0,0,0,0.9)] max-w-[92%] overflow-x-auto no-scrollbar">
+        {filterChips.map((chip) => {
+          const active = activeLayerFilter === chip.id;
+          return (
+            <button
+              key={chip.id}
+              type="button"
+              onClick={() => setActiveLayerFilter(chip.id)}
+              className={`px-1.5 py-0.5 text-[9px] font-mono font-bold rounded whitespace-nowrap cursor-pointer transition-colors ${
+                active
+                  ? 'bg-emerald-500/30 text-emerald-200 border border-emerald-400'
+                  : 'bg-slate-900/90 text-slate-400 hover:text-emerald-200 border border-slate-800'
+              }`}
+            >
+              {chip.label}
+            </button>
+          );
+        })}
+        <span className="text-[9px] font-mono text-emerald-400/80 pl-1 whitespace-nowrap">
+          [{filteredPins.length}/{intelligencePins.length}]
+        </span>
+      </div>
+
+      {/* Non-Blocking Slide-Over Evidence Provenance Drawer */}
       {selectedPin && (
-        <div
+        <aside
+          role="region"
+          aria-label="Evidence Provenance Drawer"
           onClick={(e) => e.stopPropagation()}
-          className="absolute bottom-14 sm:bottom-16 left-2.5 sm:left-3 right-2.5 sm:right-3 z-40 bg-slate-950/95 border border-emerald-500/70 p-2.5 sm:p-3 rounded font-mono text-xs text-emerald-400 shadow-[0_0_28px_rgba(0,0,0,0.95)] backdrop-blur-md"
+          className="absolute top-0 right-0 bottom-0 w-full sm:w-[390px] max-w-full z-40 bg-slate-950/95 border-l-2 border-emerald-500/75 p-3 font-mono text-xs text-emerald-200 shadow-[-12px_0_32px_rgba(0,0,0,0.95)] backdrop-blur-md flex flex-col gap-2.5 overflow-y-auto"
         >
-          <div className="flex justify-between items-start gap-2 border-b border-emerald-500/30 pb-1.5 mb-1.5">
-            <div className="flex items-center gap-1.5 flex-wrap min-w-0">
-              <span
-                className={`px-1.5 py-0.5 text-[9px] font-bold rounded border ${
-                  selectedPin.priority === 'HIGH'
-                    ? 'bg-red-950/80 text-red-400 border-red-500/60'
-                    : 'bg-sky-950/80 text-sky-300 border-sky-500/50'
-                }`}
-              >
-                {selectedPin.priority} PRIORITY
-              </span>
-              {selectedPin.category && (
-                <span className="text-[9px] text-amber-400 font-bold">
-                  [{selectedPin.category}]
+          {/* Drawer Header */}
+          <div className="flex items-start justify-between gap-2 border-b border-emerald-500/35 pb-2">
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                <span
+                  className={`px-1.5 py-0.5 text-[9px] font-bold rounded border ${
+                    selectedTierInfo?.tier === 'CRITICAL_CONVERGENCE'
+                      ? 'bg-red-950/90 text-red-300 border-red-500/70'
+                      : selectedTierInfo?.tier === 'CORROBORATED'
+                      ? 'bg-emerald-950/90 text-emerald-300 border-emerald-400/70'
+                      : selectedTierInfo?.tier === 'STALE'
+                      ? 'bg-slate-900 text-slate-400 border-slate-600 border-dashed'
+                      : 'bg-amber-950/80 text-amber-300 border-amber-500/60'
+                  }`}
+                >
+                  {selectedTierInfo?.tier}
                 </span>
-              )}
-              <span className="font-bold text-amber-300 truncate">
-                TARGET: {selectedPin.title}
-              </span>
+                {selectedPin.clusterId && (
+                  <span className="text-[9px] text-cyan-300 font-bold">
+                    {selectedPin.clusterId}
+                  </span>
+                )}
+              </div>
+              <h3 className="text-xs font-bold text-amber-200 break-words">
+                {selectedPin.title}
+              </h3>
             </div>
             <button
               type="button"
               onClick={() => updateSelectedPin(null)}
-              className="text-slate-300 hover:text-white px-1.5 py-0.5 bg-slate-800/90 border border-slate-600 rounded cursor-pointer shrink-0 text-[10px]"
+              aria-label="Close Evidence Provenance Drawer"
+              className="px-2 py-0.5 text-[10px] font-bold bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-600 rounded cursor-pointer shrink-0"
             >
-              [X]
+              [✕]
             </button>
           </div>
-          <p className="text-slate-100 leading-relaxed text-[11px] sm:text-xs line-clamp-3">
-            {selectedPin.summary}
-          </p>
-          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-400">
-            <span>
-              TIMESTAMP: {selectedPin.timestamp} | GEO LOCK: [{selectedPin.lat.toFixed(4)}°, {selectedPin.lon.toFixed(4)}°]
-            </span>
-            <div className="flex items-center gap-1.5">
-              {onFlyToPin &&
-                (Math.abs(selectedPin.lat - centerLat) > 0.02 ||
-                  Math.abs(selectedPin.lon - centerLon) > 0.02) && (
-                  <button
-                    type="button"
-                    onClick={() => onFlyToPin(selectedPin)}
-                    className="px-2 py-0.5 bg-sky-950/90 hover:bg-sky-900 border border-sky-500/60 text-sky-300 font-bold rounded cursor-pointer transition-colors"
-                  >
-                    [🎯 CENTER ON PIN]
-                  </button>
-                )}
-              {onDispatchPinDirective && (
-                <button
-                  type="button"
-                  onClick={() => onDispatchPinDirective(selectedPin)}
-                  className="px-2 py-0.5 bg-emerald-950/90 hover:bg-emerald-900 border border-emerald-500/60 text-emerald-300 font-bold rounded cursor-pointer transition-colors"
-                >
-                  [⚡ DISPATCH AGENT TO PIN]
-                </button>
-              )}
+
+          {/* Confidence Score Bar & Live Staleness Timer */}
+          <div className="bg-black/60 border border-emerald-500/30 rounded p-2 space-y-1.5">
+            <div className="flex items-center justify-between text-[10px]">
+              <span className="text-slate-300 font-bold">
+                CONFIDENCE: {Math.round((selectedTierInfo?.score ?? 0) * 100)}% (
+                {(selectedTierInfo?.score ?? 0).toFixed(2)})
+              </span>
+              <span
+                className={`font-bold ${
+                  selectedTtlInfo?.isStale ? 'text-red-400' : 'text-emerald-400'
+                }`}
+              >
+                {selectedTtlInfo?.label}
+              </span>
+            </div>
+            <div className="w-full h-1.5 bg-slate-900 rounded overflow-hidden border border-slate-800">
+              <div
+                className={`h-full transition-all duration-300 ${
+                  selectedTierInfo?.tier === 'CRITICAL_CONVERGENCE'
+                    ? 'bg-red-500'
+                    : selectedTierInfo?.tier === 'CORROBORATED'
+                    ? 'bg-emerald-400'
+                    : selectedTierInfo?.tier === 'STALE'
+                    ? 'bg-slate-500'
+                    : 'bg-amber-400'
+                }`}
+                style={{ width: `${Math.min(100, Math.round((selectedTierInfo?.score ?? 0) * 100))}%` }}
+              />
+            </div>
+            <div className="text-[10px] text-slate-400 flex items-center justify-between">
+              <span>
+                GEO: {selectedPin.lat.toFixed(4)}°, {selectedPin.lon.toFixed(4)}°
+              </span>
+              <span>
+                SOURCES: {selectedPin.sourceTracks?.join(' + ') || selectedPin.category || 'SINGLE'}
+              </span>
             </div>
           </div>
-        </div>
+
+          {/* Fused Summary */}
+          <div className="text-[11px] leading-relaxed text-slate-100 bg-slate-900/60 border border-slate-800 rounded p-2">
+            {selectedPin.summary}
+          </div>
+
+          {/* Agent Vance Synthesis Details */}
+          {selectedPin.vanceSynthesis && (
+            <details className="bg-emerald-950/25 border border-emerald-500/35 rounded p-2 text-[10px]">
+              <summary className="cursor-pointer font-bold text-emerald-300 select-none">
+                WAR ROOM VANCE SYNTHESIS ({selectedPin.vanceSynthesis.agreedIndicators.length} indicators)
+              </summary>
+              <div className="mt-2 space-y-1.5 text-slate-200">
+                {selectedPin.vanceSynthesis.agreedIndicators.map((ind, idx) => (
+                  <div key={idx} className="border-l-2 border-emerald-500/60 pl-2">
+                    <div>{ind.claim}</div>
+                    <div className="text-[9px] text-cyan-300">
+                      Cites: {ind.packetIds.map((id) => id.slice(0, 12)).join(', ')}
+                    </div>
+                  </div>
+                ))}
+                {selectedPin.vanceSynthesis.conflictingGaps.length > 0 && (
+                  <div className="pt-1 border-t border-emerald-500/20 text-amber-300">
+                    <span className="font-bold">Gaps:</span>{' '}
+                    {selectedPin.vanceSynthesis.conflictingGaps.map((g) => g.gap).join(' ')}
+                  </div>
+                )}
+                {selectedPin.sitrepPath && (
+                  <div className="text-[9px] text-emerald-400">
+                    SITREP VFS: {selectedPin.sitrepPath}
+                  </div>
+                )}
+              </div>
+            </details>
+          )}
+
+          {/* Expandable Provenance Chain Tree */}
+          <details open className="bg-slate-900/70 border border-emerald-500/35 rounded p-2 text-[10px]">
+            <summary className="cursor-pointer font-bold text-cyan-300 select-none">
+              EVIDENCE PROVENANCE CHAIN ({selectedPin.provenancePackets?.length ?? 0} PACKETS)
+            </summary>
+            <div className="mt-2 space-y-2">
+              {selectedPin.provenancePackets && selectedPin.provenancePackets.length > 0 ? (
+                selectedPin.provenancePackets.map((pkt) => {
+                  const hasRaw = rawJsonByPacketId[pkt.packetId] !== undefined;
+                  return (
+                    <div
+                      key={pkt.packetId}
+                      className="bg-black/70 border border-slate-700 rounded p-2 space-y-1"
+                    >
+                      <div className="flex items-center justify-between gap-1">
+                        <span className="font-bold text-emerald-300">
+                          {pkt.sourceTrack} // {pkt.sourceType}
+                        </span>
+                        <span className="text-[9px] text-amber-300">
+                          WT {(pkt.confidenceWeight * 100).toFixed(0)}%
+                        </span>
+                      </div>
+                      <div className="text-[9px] text-slate-300 break-all">
+                        ID: {pkt.packetId}
+                      </div>
+                      <div className="text-[9px] text-slate-400 break-all">
+                        SRC: {pkt.sourceEndpoint}
+                      </div>
+                      <div className="text-[9px] text-slate-400">
+                        AT: {pkt.capturedAt} (TTL {pkt.ttlSeconds}s) • BY {pkt.ingestedBy.toUpperCase()}
+                      </div>
+                      <div className="flex items-center gap-1.5 pt-0.5">
+                        <button
+                          type="button"
+                          onClick={() => handleToggleRawJson(pkt)}
+                          className="px-1.5 py-0.5 text-[9px] font-bold rounded bg-cyan-950/90 hover:bg-cyan-900 border border-cyan-500/60 text-cyan-200 cursor-pointer"
+                        >
+                          {loadingRawPacketId === pkt.packetId
+                            ? '[LOADING...]'
+                            : hasRaw
+                            ? '[HIDE RAW JSON]'
+                            : '[VIEW RAW JSON]'}
+                        </button>
+                      </div>
+                      {hasRaw && (
+                        <pre className="mt-1 p-1.5 bg-black border border-emerald-500/30 rounded text-[9px] text-emerald-300 overflow-x-auto max-h-40 whitespace-pre-wrap break-all">
+                          {rawJsonByPacketId[pkt.packetId]}
+                        </pre>
+                      )}
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="text-slate-400">
+                  Single-source VFS intelligence record ({selectedPin.timestamp}).
+                </div>
+              )}
+            </div>
+          </details>
+
+          {/* War Room Human-in-the-Loop Nomination Gate */}
+          {selectedPin.clusterId && (
+            <div className="bg-black/75 border border-amber-500/50 rounded p-2 space-y-2">
+              <div className="flex items-center justify-between text-[10px]">
+                <span className="font-bold text-amber-300">WAR ROOM ACTION NOMINATION</span>
+                <span className="text-[9px] text-cyan-300">
+                  {selectedPin.nominationStatus || 'UNNOMINATED'}
+                </span>
+              </div>
+
+              <label
+                htmlFor="nomination-effector-select"
+                className="block text-[9px] text-slate-400"
+              >
+                OUTBOUND EFFECTOR PAYLOAD TYPE
+              </label>
+              <select
+                id="nomination-effector-select"
+                name="nomination_effector_select"
+                value={selectedEffector}
+                onChange={(e) => setSelectedEffector(e.target.value as EffectorActionType)}
+                className="w-full px-2 py-1 text-[10px] bg-slate-950 border border-emerald-500/50 rounded text-emerald-200 focus:outline-none"
+              >
+                <option value="COMPOSIO_GITHUB_ISSUE">Composio GitHub Advisory Issue</option>
+                <option value="WEBHOOK_DISPATCH">Signed C2 Webhook Dispatch</option>
+                <option value="ARCHIVE_SITREP">Immutable VFS SITREP Archive</option>
+              </select>
+
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  disabled={isMutatingGate}
+                  onClick={handleNominatePackage}
+                  className="flex-1 px-2 py-1.5 text-[10px] font-bold rounded bg-emerald-900/80 hover:bg-emerald-800 border border-emerald-400/70 text-emerald-100 cursor-pointer disabled:opacity-50"
+                >
+                  [NOMINATE PACKAGE]
+                </button>
+                <button
+                  type="button"
+                  disabled={isMutatingGate}
+                  onClick={handleDismissFalsePositive}
+                  className="px-2 py-1.5 text-[10px] font-bold rounded bg-red-950/80 hover:bg-red-900 border border-red-500/60 text-red-200 cursor-pointer disabled:opacity-50"
+                >
+                  [DISMISS FALSE POSITIVE]
+                </button>
+              </div>
+
+              {gateActionMessage && (
+                <div
+                  className={`p-1.5 rounded text-[9px] border break-all ${
+                    gateActionMessage.type === 'ok'
+                      ? 'bg-emerald-950/70 border-emerald-500/60 text-emerald-300'
+                      : 'bg-red-950/70 border-red-500/60 text-red-300'
+                  }`}
+                >
+                  {gateActionMessage.text}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Fly-to & Agent Dispatch Footer Actions */}
+          <div className="flex flex-wrap items-center gap-1.5 pt-1 mt-auto border-t border-emerald-500/25">
+            {onFlyToPin &&
+              (Math.abs(selectedPin.lat - centerLat) > 0.02 ||
+                Math.abs(selectedPin.lon - centerLon) > 0.02) && (
+                <button
+                  type="button"
+                  onClick={() => onFlyToPin(selectedPin)}
+                  className="px-2 py-1 text-[10px] bg-sky-950/90 hover:bg-sky-900 border border-sky-500/60 text-sky-300 font-bold rounded cursor-pointer"
+                >
+                  [🎯 CENTER ON PIN]
+                </button>
+              )}
+            {onDispatchPinDirective && (
+              <button
+                type="button"
+                onClick={() => onDispatchPinDirective(selectedPin)}
+                className="px-2 py-1 text-[10px] bg-emerald-950/90 hover:bg-emerald-900 border border-emerald-500/60 text-emerald-300 font-bold rounded cursor-pointer"
+              >
+                [⚡ DISPATCH AGENT]
+              </button>
+            )}
+          </div>
+        </aside>
       )}
     </div>
   );

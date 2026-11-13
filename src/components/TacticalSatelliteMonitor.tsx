@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   Crosshair,
   Compass,
@@ -8,9 +8,15 @@ import {
   ZoomOut,
   Eye,
   Maximize2,
+  RefreshCw,
 } from 'lucide-react';
 import TacticalMapOverlay, { TacticalIntelPin } from './TacticalMapOverlay';
 import { listWorkspaceFiles } from '../engine/storageManager';
+import {
+  getCorroborationClustersWithPackets,
+  clusterToTacticalPin,
+  runParallelSpecialistTracks,
+} from '../services/CorroborationEngine';
 
 export type SatelliteFeedLayerId =
   | 'esri_world_imagery'
@@ -580,180 +586,151 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
   const [wvsSnapshotError, setWvsSnapshotError] = useState<boolean>(false);
   const [showTacticalPins, setShowTacticalPins] = useState<boolean>(true);
   const [hasActivePinDossier, setHasActivePinDossier] = useState<boolean>(false);
-  const [intelligencePins, setIntelligencePins] = useState<TacticalIntelPin[]>([
-    {
-      id: 's2-suez',
-      title: 'S2 Wire // Red Sea Subsea Trunk Alert',
-      summary: 'BLUF: Elevated naval & maritime transponder anomalies detected near Bab el-Mandeb & Suez submarine fiber corridors.',
-      priority: 'HIGH',
-      category: 'S2 WIRE',
-      timestamp: '10m ago',
-      lat: 30.5852,
-      lon: 32.2654,
-    },
-    {
-      id: 'usgs-hormuz',
-      title: 'USGS Seismic // M4.8 Tectonic Event',
-      summary: 'Automated seismic sensor trigger along Hormuz / Zagros fault line; zero tsunami warning issued.',
-      priority: 'MEDIUM',
-      category: 'SEISMIC',
-      timestamp: '28m ago',
-      lat: 26.5667,
-      lon: 56.25,
-    },
-    {
-      id: 'grid-frankfurt',
-      title: 'ENTSO-E / DE-CIX Backbone Telemetry',
-      summary: 'BGP routing & synchronous grid frequency nominal; high-capacity European fiber relay under active overwatch.',
-      priority: 'MEDIUM',
-      category: 'INFRASTRUCTURE',
-      timestamp: '42m ago',
-      lat: 50.1109,
-      lon: 8.6821,
-    },
-    {
-      id: 'ixp-ashburn',
-      title: 'US-East IXP & PJM Grid Node (Ashburn)',
-      summary: 'Primary North American cloud interconnect & high-voltage transmission substation operating at nominal load.',
-      priority: 'MEDIUM',
-      category: 'INFRASTRUCTURE',
-      timestamp: '55m ago',
-      lat: 39.0438,
-      lon: -77.4874,
-    },
-    {
-      id: 'apac-malacca',
-      title: 'Malacca Strait Maritime & Subsea Chokepoint',
-      summary: 'High-density AIS vessel transit and trans-Pacific subsea cable landing station telemetry nominal.',
-      priority: 'MEDIUM',
-      category: 'MARITIME',
-      timestamp: '1h ago',
-      lat: 1.3521,
-      lon: 103.8198,
-    },
-    {
-      id: 'apac-taiwan',
-      title: 'S2 Wire // Taiwan Strait & Hsinchu Grid Overwatch',
-      summary: 'BLUF: Elevated ADIZ maritime/air patrol activity monitored near semiconductor foundry power corridor.',
-      priority: 'HIGH',
-      category: 'S2 WIRE',
-      timestamp: '1h ago',
-      lat: 24.8138,
-      lon: 120.9675,
-    },
-  ]);
+  const [isSweepingTracks, setIsSweepingTracks] = useState<boolean>(false);
+  const [intelligencePins, setIntelligencePins] = useState<TacticalIntelPin[]>([]);
 
-  // Hydrate live S2 Wire & OSINT intelligence pins from local VFS Vault with fixed geographic coordinates
-  useEffect(() => {
-    let mounted = true;
-    listWorkspaceFiles('intel')
-      .then((files) => {
-        if (!mounted || !files.length) return;
-        const getFileName = (f: { path: string }) => (f.path.split('/').pop() || f.path).toLowerCase();
-        const getFileTitle = (f: { path: string; content: string }) => {
-          const heading = f.content.match(/^#{1,3}\s+(.+)$/m)?.[1]?.trim();
-          if (heading) return heading.replace(/[*_`]/g, '').slice(0, 90);
-          return getFileName(f).replace(/\.(md|txt|json)$/i, '').replace(/[_-]+/g, ' ').trim();
+  // Hydrate pins strictly from real CorroborationEngine clusters and archived VFS dossiers (zero placeholder pins)
+  const refreshIntelligencePins = useCallback(async () => {
+    try {
+      const [bundles, files] = await Promise.all([
+        getCorroborationClustersWithPackets(),
+        listWorkspaceFiles('intel'),
+      ]);
+
+      const clusterPins: TacticalIntelPin[] = bundles
+        .filter((b) => b.cluster.status !== 'DISMISSED')
+        .map((b) => clusterToTacticalPin(b));
+
+      const getFileName = (f: { path: string }) => (f.path.split('/').pop() || f.path).toLowerCase();
+      const getFileTitle = (f: { path: string; content: string }) => {
+        const heading = f.content.match(/^#{1,3}\s+(.+)$/m)?.[1]?.trim();
+        if (heading) return heading.replace(/[*_`]/g, '').slice(0, 90);
+        return getFileName(f).replace(/\.(md|txt|json)$/i, '').replace(/[_-]+/g, ' ').trim();
+      };
+
+      const wireFiles = files
+        .filter((f) => {
+          if (f.path.startsWith('intel/raw/') || f.path.startsWith('intel/missions/')) return false;
+          const name = getFileName(f);
+          return (
+            name.startsWith('s2_wire_') ||
+            name.includes('s2-wire') ||
+            name.includes('osint') ||
+            name.startsWith('isw_') ||
+            name.includes('_isw_') ||
+            f.path.includes('isw_research')
+          );
+        })
+        .slice(0, 8);
+
+      const fixedAnchors = [
+        { lat: 48.28, lon: 37.18 },
+        { lat: 12.58, lon: 43.33 },
+        { lat: 24.81, lon: 120.96 },
+        { lat: 30.62, lon: 32.32 },
+        { lat: 50.14, lon: 8.72 },
+        { lat: 39.08, lon: -77.44 },
+      ];
+
+      const inferCoordsFromText = (text: string, index: number): { lat: number; lon: number } => {
+        const explicit = parseExplicitLatLon(text);
+        if (explicit) return explicit;
+        const lower = text.toLowerCase();
+        if (lower.includes('pokrovsk') || lower.includes('donbas') || lower.includes('kurakhove') || lower.includes('ukraine') || lower.includes('donetsk') || lower.includes('kharkiv')) {
+          return { lat: 48.2824, lon: 37.1818 };
+        }
+        if (lower.includes('kursk') || lower.includes('belgorod') || lower.includes('moscow') || lower.includes('russia')) {
+          return { lat: 51.7303, lon: 36.1927 };
+        }
+        if (lower.includes('bab al-mandab') || lower.includes('houthi') || lower.includes('yemen') || lower.includes('gulf of aden')) {
+          return { lat: 12.5833, lon: 43.3333 };
+        }
+        if (lower.includes('red sea') || lower.includes('suez') || lower.includes('cairo') || lower.includes('mediterranean')) {
+          return { lat: 30.5852, lon: 32.2654 };
+        }
+        if (lower.includes('hormuz') || lower.includes('persian gulf') || lower.includes('iran') || lower.includes('tehran')) {
+          return { lat: 26.5667, lon: 56.25 };
+        }
+        if (lower.includes('taiwan') || lower.includes('hsinchu') || lower.includes('taipei') || lower.includes('pla') || lower.includes('pacific') || lower.includes('china')) {
+          return { lat: 24.8138, lon: 120.9675 };
+        }
+        if (lower.includes('malacca') || lower.includes('singapore')) {
+          return { lat: 1.3521, lon: 103.8198 };
+        }
+        if (lower.includes('europe') || lower.includes('frankfurt') || lower.includes('germany') || lower.includes('uk') || lower.includes('london') || lower.includes('nato')) {
+          return { lat: 50.1109, lon: 8.6821 };
+        }
+        if (lower.includes('ashburn') || lower.includes('virginia') || lower.includes('pjm') || lower.includes('conus') || lower.includes('united states')) {
+          return { lat: 39.0438, lon: -77.4874 };
+        }
+        return fixedAnchors[index % fixedAnchors.length];
+      };
+
+      const vfsPins: TacticalIntelPin[] = wireFiles.map((file, idx) => {
+        const fileTitle = getFileTitle(file);
+        const isISW =
+          file.path.includes('isw_research') ||
+          file.path.includes('isw_') ||
+          fileTitle.includes('ISW') ||
+          file.content.includes('understandingwar.org');
+        const cleanBody = file.content
+          .replace(/^#+\s+.*/gm, '')
+          .replace(/\*\*.*?\*\*/g, '')
+          .replace(/[-`_>#]/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+        const summarySnippet =
+          cleanBody.slice(0, 180) + (cleanBody.length > 180 ? '...' : '');
+        const coords = inferCoordsFromText(`${fileTitle} ${file.content}`, idx);
+        return {
+          id: `vfs-pin-${file.id ?? file.path}`,
+          title: fileTitle || (isISW ? 'ISW Research Assessment' : 'S2 Wire Intelligence Dispatch'),
+          summary: summarySnippet || 'Structured conflict dossier archived in local VFS.',
+          priority: 'MEDIUM',
+          category: isISW ? 'ISW RESEARCH' : 'S2 WIRE SITREP',
+          corroborationScore: 0.35,
+          corroborationStatus: 'CANDIDATE',
+          sourceTracks: ['WRITTEN_WIRE'],
+          sourceCount: 1,
+          timestamp: new Date(file.updatedAt || Date.now()).toLocaleTimeString([], {
+            hour: '2-digit',
+            minute: '2-digit',
+          }),
+          lat: coords.lat,
+          lon: coords.lon,
         };
-        const wireFiles = files
-          .filter((f) => {
-            const name = getFileName(f);
-            return (
-              name.startsWith('s2_wire_') ||
-              name.includes('s2-wire') ||
-              name.includes('osint') ||
-              name.startsWith('isw_') ||
-              name.includes('_isw_') ||
-              f.path.includes('isw_research')
-            );
-          })
-          .slice(0, 8);
-        if (!wireFiles.length) return;
+      });
 
-        // Fixed geographic anchors for S2 Wire and ISW regional theaters so pins never drift when panning
-        const fixedAnchors = [
-          { lat: 48.28, lon: 37.18 }, // Eastern Ukraine / Pokrovsk Donbas
-          { lat: 12.58, lon: 43.33 }, // Red Sea / Bab al-Mandab
-          { lat: 24.81, lon: 120.96 }, // Taiwan Strait / Indo-Pacific
-          { lat: 30.62, lon: 32.32 }, // Suez / Eastern Med
-          { lat: 50.14, lon: 8.72 },  // Central Europe
-          { lat: 39.08, lon: -77.44 }, // US-East / DC
-        ];
-
-        const inferCoordsFromText = (text: string, index: number): { lat: number; lon: number } => {
-          const explicit = parseExplicitLatLon(text);
-          if (explicit) return explicit;
-          const lower = text.toLowerCase();
-          if (lower.includes('pokrovsk') || lower.includes('donbas') || lower.includes('kurakhove') || lower.includes('ukraine') || lower.includes('donetsk') || lower.includes('kharkiv')) {
-            return { lat: 48.2824, lon: 37.1818 };
-          }
-          if (lower.includes('kursk') || lower.includes('belgorod') || lower.includes('moscow') || lower.includes('russia')) {
-            return { lat: 51.7303, lon: 36.1927 };
-          }
-          if (lower.includes('bab al-mandab') || lower.includes('houthi') || lower.includes('yemen') || lower.includes('gulf of aden')) {
-            return { lat: 12.5833, lon: 43.3333 };
-          }
-          if (lower.includes('red sea') || lower.includes('suez') || lower.includes('cairo') || lower.includes('mediterranean')) {
-            return { lat: 30.5852, lon: 32.2654 };
-          }
-          if (lower.includes('hormuz') || lower.includes('persian gulf') || lower.includes('iran') || lower.includes('tehran')) {
-            return { lat: 26.5667, lon: 56.25 };
-          }
-          if (lower.includes('taiwan') || lower.includes('hsinchu') || lower.includes('taipei') || lower.includes('pla') || lower.includes('pacific') || lower.includes('china')) {
-            return { lat: 24.8138, lon: 120.9675 };
-          }
-          if (lower.includes('malacca') || lower.includes('singapore')) {
-            return { lat: 1.3521, lon: 103.8198 };
-          }
-          if (lower.includes('europe') || lower.includes('frankfurt') || lower.includes('germany') || lower.includes('uk') || lower.includes('london') || lower.includes('nato')) {
-            return { lat: 50.1109, lon: 8.6821 };
-          }
-          if (lower.includes('ashburn') || lower.includes('virginia') || lower.includes('pjm') || lower.includes('conus') || lower.includes('united states')) {
-            return { lat: 39.0438, lon: -77.4874 };
-          }
-          return fixedAnchors[index % fixedAnchors.length];
-        };
-
-        const dynamicPins: TacticalIntelPin[] = wireFiles.map((file, idx) => {
-          const fileTitle = getFileTitle(file);
-          const isISW = file.path.includes('isw_research') || file.path.includes('isw_') || fileTitle.includes('ISW') || file.content.includes('understandingwar.org');
-          const cleanBody = file.content
-            .replace(/^#+\s+.*/gm, '')
-            .replace(/\*\*.*?\*\*/g, '')
-            .replace(/[-`_>#]/g, ' ')
-            .replace(/\s+/g, ' ')
-            .trim();
-          const summarySnippet =
-            cleanBody.slice(0, 180) + (cleanBody.length > 180 ? '...' : '');
-          const isHigh =
-            /critical|high|alert|strike|outage|jamming|kinetic|assault|offensive|missile|sev/i.test(fileTitle + ' ' + file.content) ||
-            idx === 0;
-          const coords = inferCoordsFromText(`${fileTitle} ${file.content}`, idx);
-          return {
-            id: `vfs-pin-${file.id ?? file.path}`,
-            title: fileTitle || (isISW ? 'ISW Research Assessment' : 'S2 Wire Intelligence Dispatch'),
-            summary: summarySnippet || 'Structured conflict dossier archived in local VFS.',
-            priority: isHigh ? 'HIGH' : 'MEDIUM',
-            category: isISW ? 'ISW RESEARCH' : 'S2 WIRE SITREP',
-            timestamp: new Date(file.updatedAt || Date.now()).toLocaleTimeString([], {
-              hour: '2-digit',
-              minute: '2-digit',
-            }),
-            lat: coords.lat,
-            lon: coords.lon,
-          };
-        });
-
-        setIntelligencePins((prev) => {
-          const base = prev.filter((p) => !p.id.startsWith('vfs-pin-'));
-          return [...dynamicPins, ...base];
-        });
-      })
-      .catch(() => {});
-    return () => {
-      mounted = false;
-    };
+      setIntelligencePins((prev) => {
+        const manualTargets = prev.filter((p) => p.id.startsWith('recon-target-'));
+        return [...clusterPins, ...manualTargets, ...vfsPins];
+      });
+    } catch {}
   }, []);
+
+  useEffect(() => {
+    refreshIntelligencePins();
+    const onRefresh = () => {
+      refreshIntelligencePins();
+    };
+    window.addEventListener('pixelops:corroboration-updated', onRefresh);
+    window.addEventListener('pixelops:workspace_files_changed', onRefresh);
+    return () => {
+      window.removeEventListener('pixelops:corroboration-updated', onRefresh);
+      window.removeEventListener('pixelops:workspace_files_changed', onRefresh);
+    };
+  }, [refreshIntelligencePins]);
+
+  const handleManualSpecialistSweep = async () => {
+    if (isSweepingTracks) return;
+    setIsSweepingTracks(true);
+    try {
+      await runParallelSpecialistTracks();
+      await refreshIntelligencePins();
+    } finally {
+      setIsSweepingTracks(false);
+    }
+  };
 
   // Sync when parent props change (e.g. Operational Zone dropdown or Agent Tool Call lock)
   useEffect(() => {
@@ -980,6 +957,8 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
         {/* Feed Layer & Shader Mode Switchers */}
         <div className="flex flex-wrap items-center gap-1 sm:gap-1.5 w-full sm:w-auto justify-end">
           <select
+            id="satellite-feed-layer"
+            name="satellite_feed_layer"
             value={feedLayer}
             onChange={(e) => {
               const nextLayer = e.target.value as SatelliteFeedLayerId;
@@ -999,6 +978,8 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
           </select>
 
           <select
+            id="satellite-shader-mode"
+            name="satellite_shader_mode"
             value={shaderMode}
             onChange={(e) => setShaderMode(e.target.value as PhosphorShaderMode)}
             className="px-1.5 sm:px-2 py-1 text-[10px] sm:text-[11px] bg-[#040a07] border border-emerald-500/50 rounded text-emerald-200 focus:outline-none max-w-[135px] sm:max-w-none truncate"
@@ -1014,6 +995,8 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
             <div className="flex items-center gap-1 bg-[#040a07] border border-emerald-500/40 rounded px-1.5 py-0.5">
               <Calendar className="w-3 h-3 text-emerald-400" />
               <input
+                id="satellite-gibs-date"
+                name="satellite_gibs_date"
                 type="date"
                 value={gibsDate}
                 max={new Date().toISOString().split('T')[0]}
@@ -1026,6 +1009,17 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
               />
             </div>
           )}
+
+          <button
+            type="button"
+            disabled={isSweepingTracks}
+            onClick={handleManualSpecialistSweep}
+            className="px-2 py-1 text-[10px] font-bold rounded border bg-emerald-950/70 hover:bg-emerald-900 text-emerald-200 border-emerald-500/50 cursor-pointer whitespace-nowrap flex items-center gap-1 disabled:opacity-50"
+            title="Run Parallel Specialist Track Sweep (Nyx + Cipher -> Vance)"
+          >
+            <RefreshCw className={`w-3 h-3 ${isSweepingTracks ? 'animate-spin' : ''}`} />
+            <span>SWEEP</span>
+          </button>
 
           <button
             type="button"
@@ -1093,6 +1087,8 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
         {/* Agent Coordinate Fly-To Directive Input */}
         <form onSubmit={handleCommandLockSubmit} className="flex items-center gap-1.5 shrink-0">
           <input
+            id="satellite-command-input"
+            name="satellite_command_input"
             type="text"
             value={commandInput}
             onChange={(e) => setCommandInput(e.target.value)}
@@ -1203,6 +1199,7 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
               centerLon={lon}
               zoom={effectiveZoom}
               onSelectPin={(pin) => setHasActivePinDossier(Boolean(pin))}
+              onClustersMutated={refreshIntelligencePins}
               onFlyToPin={(pin) => {
                 setIsFlyToLocking(true);
                 setLat(pin.lat);

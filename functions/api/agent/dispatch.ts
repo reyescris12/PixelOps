@@ -316,7 +316,7 @@ DYNAMIC REAL-TIME QUERY FORMULATION & NUMERICAL EXTRACTION PROTOCOL:
       );
 
       const geminiRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(geminiApiKey)}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${encodeURIComponent(geminiApiKey)}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -525,7 +525,7 @@ In accordance with strict anti-hallucination protocols, speculative metric estim
     if (!finalDialogue) {
       try {
         const finalRes = await fetch(
-          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(geminiApiKey)}`,
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${encodeURIComponent(geminiApiKey)}`,
           {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },

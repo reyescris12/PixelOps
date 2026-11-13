@@ -3,7 +3,7 @@
  * (src/services/DispatchTriageService.ts)
  *
  * Bridges Broadcastify/OpenMHz scanner audio chunks and local CAD/RSS transcripts
- * into Gemini 2.5 Flash zero-shot triage, then routes verified threats through the
+ * into Gemini 3.1 Flash Lite zero-shot triage, then routes verified threats through the
  * Nyx -> Cipher -> Vance CorroborationEngine and CommandLedgerDb.
  */
 
@@ -168,17 +168,17 @@ export async function analyzeDispatchSignal(
               : 'LOW',
           summary: String(data.summary || ''),
           rawExcerpts: Array.isArray(data.rawExcerpts) ? data.rawExcerpts.map(String) : [],
-          modelUsed: String(data.modelUsed || 'gemini-2.5-flash'),
+          modelUsed: String(data.modelUsed || 'gemini-3.1-flash-lite'),
           analyzedAt: String(data.analyzedAt || new Date().toISOString()),
         };
       }
     } catch {}
   }
 
-  // 2. Direct client-side Gemini 2.5 Flash fallback when BYOK Gemini key is available
+  // 2. Direct client-side Gemini 3.1 Flash Lite fallback when BYOK Gemini key is available
   if (!triage && hasGeminiKey) {
     try {
-      const { url, headers } = getGeminiAuthHeadersAndUrl(cfg, 'gemini-2.5-flash');
+      const { url, headers } = getGeminiAuthHeadersAndUrl(cfg, 'gemini-3.1-flash-lite');
       const parts: Array<Record<string, unknown>> = [
         { text: buildLocalDispatchTriagePrompt(lat, lon, transcript) },
       ];
@@ -210,7 +210,7 @@ export async function analyzeDispatchSignal(
           severity: sev === 'CRITICAL' || sev === 'HIGH' || sev === 'MED' ? sev : 'LOW',
           summary: String(parsed.summary || ''),
           rawExcerpts: Array.isArray(parsed.rawExcerpts) ? parsed.rawExcerpts.map(String) : [],
-          modelUsed: 'gemini-2.5-flash',
+          modelUsed: 'gemini-3.1-flash-lite',
           analyzedAt: new Date().toISOString(),
         };
       }

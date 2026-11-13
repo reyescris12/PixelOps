@@ -50,7 +50,7 @@ function resolveActiveLLMConfig(): {
     if (ssoMode === 'puter') {
       return {
         provider: 'puter',
-        model: 'google/gemini-2.5-flash',
+        model: 'google/gemini-3.1-flash-lite',
         apiKey: 'puter_zero_key',
       };
     }

@@ -38,7 +38,7 @@ export class ModelGateway {
       return 'openrouter/free';
     }
     if (provider === 'puter') {
-      return 'google/gemini-2.5-flash';
+      return 'google/gemini-3.1-flash-lite';
     }
     return SUPPORTED_VAULT_PROVIDERS[provider as keyof typeof SUPPORTED_VAULT_PROVIDERS]?.defaultModel || 'gemini-3.8-flash';
   }
@@ -53,7 +53,7 @@ export class ModelGateway {
       return tier === 'fast' ? 'openrouter/free' : 'google/gemma-4-31b-it:free';
     }
     if (provider === 'puter') {
-      return tier === 'fast' ? 'google/gemini-2.5-flash' : 'google/gemini-2.5-flash';
+      return tier === 'fast' ? 'google/gemini-3.1-flash-lite' : 'google/gemini-3.1-flash-lite';
     }
     if (provider === 'gemini') {
       return tier === 'fast' ? 'gemini-3.1-flash-lite' : 'gemini-3.8-flash';
@@ -171,7 +171,7 @@ export class ModelGateway {
 
     // 1. Puter.js 1-Click Zero-Key SSO Routing
     if (provider === 'puter' || (ssoMode === 'puter' && !apiKey)) {
-      const targetModel = model || (tier === 'fast' ? 'google/gemini-2.5-flash' : 'google/gemini-2.5-flash');
+      const targetModel = model || (tier === 'fast' ? 'google/gemini-3.1-flash-lite' : 'google/gemini-3.1-flash-lite');
       return await this.callPuterModel(targetModel, systemPrompt, messages);
     }
 

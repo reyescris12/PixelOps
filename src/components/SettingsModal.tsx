@@ -350,7 +350,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     playBeep('tap');
     try {
       const reply = await callPuterModel(
-        'google/gemini-2.5-flash',
+        'google/gemini-3.1-flash-lite',
         'Respond with a 6-word tactical readiness confirmation.',
         [{ role: 'user', content: 'Ping' }]
       );
@@ -631,7 +631,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
 
                 <p className="text-[11px] text-slate-400">
-                  Instant browser-native multi-model execution (Gemini 2.5 Flash, DeepSeek R1, Claude).
+                  Instant browser-native multi-model execution (Gemini 3.1 Flash Lite, DeepSeek R1, Claude).
                 </p>
 
                 <div className="flex flex-col gap-1.5 pt-1">
@@ -719,7 +719,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                 </div>
 
                 <p className="text-[11px] text-slate-400">
-                  Access free tiers (Gemini 2.5 Flash, DeepSeek R1, Llama 3.3) and flagship models (Claude 3.5 Sonnet, GPT-4o).
+                  Access free tiers (Gemini 3.1 Flash Lite, DeepSeek R1, Llama 3.3) and flagship models (Claude 3.5 Sonnet, GPT-4o).
                 </p>
 
                 <div className="flex flex-col gap-1.5 pt-1">

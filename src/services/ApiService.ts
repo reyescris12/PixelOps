@@ -6593,7 +6593,7 @@ export async function executeAgentDirective(params: {
         targetProvider === 'openrouter'
           ? { name: 'OpenRouter', badge: 'OPENROUTER', storageKey: 'pixelops_openrouter_key', defaultModel: 'openrouter/free' }
           : targetProvider === 'puter'
-          ? { name: 'Puter.js', badge: 'PUTER ZERO-KEY', storageKey: 'Puter.js SDK', defaultModel: 'google/gemini-2.5-flash' }
+          ? { name: 'Puter.js', badge: 'PUTER ZERO-KEY', storageKey: 'Puter.js SDK', defaultModel: 'google/gemini-3.1-flash-lite' }
           : SUPPORTED_VAULT_PROVIDERS[targetProvider as keyof typeof SUPPORTED_VAULT_PROVIDERS] || SUPPORTED_VAULT_PROVIDERS.gemini;
 
       const targetModel: string =
@@ -6846,7 +6846,7 @@ CRITICAL MEMORY RECALL INSTRUCTION:
       // Multi-Provider Execution Gateway: Route to Puter, OpenRouter, OpenAI, Groq, or Anthropic
       if (targetProvider === 'puter' || (isPuterMode && !targetApiKey && targetProvider === 'gemini')) {
         try {
-          const puterModel = targetModel || 'google/gemini-2.5-flash';
+          const puterModel = targetModel || 'google/gemini-3.1-flash-lite';
           const puterReply = await ModelGateway.callPuterModel(
             puterModel,
             systemInstruction,

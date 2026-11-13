@@ -399,7 +399,6 @@ export function getOpenRouterSelectedModel(): string {
     const isKnown = OPENROUTER_SUPPORTED_MODELS.some((m) => m.id === stored);
     if (isKnown) return stored;
     if (
-      stored.includes('gemini-2.5-flash') ||
       stored.includes('llama-3.3-70b-instruct:free') ||
       stored.includes('deepseek-r1:free')
     ) {

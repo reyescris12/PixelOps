@@ -196,19 +196,18 @@ export function normalizeGeminiModel(modelName?: string): string {
   if (
     !m ||
     m.includes('2.0') ||
-    m.includes('1.5') ||
-    m === 'gemini-2.5-flash-lite'
+    m.includes('1.5')
   ) {
-    if (m === 'gemini-3.5-flash-lite') return 'gemini-3.5-flash-lite';
-    if (m === 'gemini-3.1-flash-lite') return 'gemini-3.1-flash-lite';
     return 'gemini-3.8-flash';
+  }
+  if (m.includes('2.5')) {
+    return 'gemini-3.1-flash-lite';
   }
   if (
     m === 'gemini-3.8-flash' ||
     m === 'gemini-3.1-flash-lite' ||
     m === 'gemini-3.6-flash' ||
-    m === 'gemini-3.5-flash-lite' ||
-    m === 'gemini-2.5-flash'
+    m === 'gemini-3.5-flash-lite'
   ) {
     return m;
   }

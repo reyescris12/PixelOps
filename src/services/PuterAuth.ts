@@ -26,8 +26,8 @@ export interface PuterModelOption {
 
 export const PUTER_SUPPORTED_MODELS: PuterModelOption[] = [
   {
-    id: 'google/gemini-2.5-flash',
-    name: 'Gemini 2.5 Flash',
+    id: 'google/gemini-3.1-flash-lite',
+    name: 'Gemini 3.1 Flash Lite',
     tag: 'ZERO_KEY',
     context: 'Fast multimodal zero-key inference',
   },
@@ -230,7 +230,7 @@ export async function callPuterModel(
   messages: any[] = []
 ): Promise<string> {
   const puter = await ensurePuterLoaded();
-  const targetModel = model || 'google/gemini-2.5-flash';
+  const targetModel = model || 'google/gemini-3.1-flash-lite';
 
   const formattedMessages: any[] = [];
   if (systemPrompt && systemPrompt.trim()) {

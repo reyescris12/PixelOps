@@ -102,7 +102,7 @@ export const OPERATIVE_RADIO_CHANNELS: Record<RadioOperativeId, OperativeRadioPe
 };
 
 const COMPATIBILITY_LIVE_MODELS = [
-  'gemini-2.5-flash-native-audio-preview-12-2025',
+  'gemini-3.1-flash-lite',
   'gemini-2.0-flash-live-001',
 ] as const;
 

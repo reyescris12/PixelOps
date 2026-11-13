@@ -89,7 +89,7 @@ export function getAvailableAgentProvidersAndModels(): AgentAvailableProviderMet
       isConnected: isPuterConnected || true, // Puter runs zero-key in browser
       statusLabel: isPuterConnected ? 'Active (Zero-Key)' : 'Ready (Zero-Key)',
       storageKey: 'Puter.js SDK',
-      defaultModel: 'google/gemini-2.5-flash',
+      defaultModel: 'google/gemini-3.1-flash-lite',
       availableModels: PUTER_SUPPORTED_MODELS.map((m) => ({
         id: m.id,
         name: m.name,
@@ -270,7 +270,7 @@ export function saveAgentModelConfig(
   let validModel = model;
   if (!validModel) {
     if (provider === 'openrouter') validModel = 'openrouter/free';
-    else if (provider === 'puter') validModel = 'google/gemini-2.5-flash';
+    else if (provider === 'puter') validModel = 'google/gemini-3.1-flash-lite';
     else validModel = SUPPORTED_VAULT_PROVIDERS[provider as keyof typeof SUPPORTED_VAULT_PROVIDERS]?.defaultModel || 'gemini-3.8-flash';
   }
 

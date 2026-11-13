@@ -3,7 +3,7 @@
  * Route: /api/dispatch-triage
  *
  * Accepts live municipal scanner audio (base64 multimodal PCM/MP3/WAV/OGG/WebM) or
- * live CAD/RSS dispatch transcripts, and runs Gemini 2.5 Flash zero-shot triage
+ * live CAD/RSS dispatch transcripts, and runs Gemini 3.1 Flash Lite zero-shot triage
  * anchored to the operator's geofence coordinates [LAT, LNG].
  */
 
@@ -100,7 +100,7 @@ export async function onRequestPost(context: { request: Request; env: Env }): Pr
       });
     }
 
-    const model = 'gemini-2.5-flash';
+    const model = 'gemini-3.1-flash-lite';
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(geminiApiKey)}`;
 
     const geminiRes = await fetch(endpoint, {

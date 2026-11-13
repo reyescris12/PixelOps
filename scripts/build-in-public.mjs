@@ -1,11 +1,14 @@
 import { execSync } from 'node:child_process';
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
-const BUFFER_ACCESS_TOKEN = process.env.BUFFER_ACCESS_TOKEN;
-const BUFFER_CHANNEL_ID = process.env.BUFFER_CHANNEL_ID;
-const BUFFER_MODE = process.env.BUFFER_MODE || 'addToQueue';
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY?.trim();
+const BUFFER_ACCESS_TOKEN = process.env.BUFFER_ACCESS_TOKEN?.trim();
+const BUFFER_CHANNEL_IDS = (process.env.BUFFER_CHANNEL_ID || '')
+  .split(',')
+  .map((id) => id.trim().replace(/^["']|["']$/g, ''))
+  .filter(Boolean);
+const BUFFER_MODE = process.env.BUFFER_MODE?.trim() || 'addToQueue';
 
-if (!GEMINI_API_KEY || !BUFFER_ACCESS_TOKEN || !BUFFER_CHANNEL_ID) {
+if (!GEMINI_API_KEY || !BUFFER_ACCESS_TOKEN || BUFFER_CHANNEL_IDS.length === 0) {
   console.error('Missing required environment secrets (GEMINI_API_KEY, BUFFER_ACCESS_TOKEN, BUFFER_CHANNEL_ID). Skipping dispatch.');
   process.exit(0);
 }
@@ -70,46 +73,56 @@ Rules:
 
   console.log('Generated Post:\n', postText);
 
-  // 3. Dispatch to Buffer GraphQL API (https://api.buffer.com)
-  const graphqlMutation = {
-    query: `mutation CreatePost($input: CreatePostInput!) {
-      createPost(input: $input) {
-        ... on PostActionSuccess {
-          post {
-            id
-            status
-            dueAt
-          }
-        }
-        ... on MutationError {
-          message
+  // 3. Dispatch to Buffer GraphQL API (https://api.buffer.com) for each channel
+  const createPostQuery = `mutation CreatePost($input: CreatePostInput!) {
+    createPost(input: $input) {
+      ... on PostActionSuccess {
+        post {
+          id
+          status
+          dueAt
         }
       }
-    }`,
-    variables: {
-      input: {
-        channelId: BUFFER_CHANNEL_ID,
-        text: postText,
-        schedulingType: 'automatic',
-        mode: BUFFER_MODE,
+      ... on MutationError {
+        message
+      }
+    }
+  }`;
+
+  let successCount = 0;
+
+  for (const channelId of BUFFER_CHANNEL_IDS) {
+    const bufferRes = await fetch('https://api.buffer.com', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${BUFFER_ACCESS_TOKEN}`,
+        'Content-Type': 'application/json',
       },
-    },
-  };
+      body: JSON.stringify({
+        query: createPostQuery,
+        variables: {
+          input: {
+            channelId,
+            text: postText,
+            schedulingType: 'automatic',
+            mode: BUFFER_MODE,
+          },
+        },
+      }),
+    });
 
-  const bufferRes = await fetch('https://api.buffer.com', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${BUFFER_ACCESS_TOKEN}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(graphqlMutation),
-  });
+    const bufferData = await bufferRes.json();
+    console.log(`Buffer API response (${channelId}):`, JSON.stringify(bufferData));
 
-  const bufferData = await bufferRes.json();
-  console.log('Buffer API response:', JSON.stringify(bufferData));
+    if (!bufferRes.ok || bufferData.errors?.length || bufferData.data?.createPost?.message) {
+      console.error(`Buffer API returned an error for channel ${channelId}.`);
+    } else {
+      successCount += 1;
+    }
+  }
 
-  if (!bufferRes.ok || bufferData.errors?.length || bufferData.data?.createPost?.message) {
-    console.error('Buffer API returned an error.');
+  if (successCount === 0) {
+    console.error('Failed to queue post on any Buffer channel.');
     process.exit(1);
   }
 }

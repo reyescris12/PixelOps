@@ -77,6 +77,8 @@ const EXTERNAL_NETWORK_SWEEP_TOOLS = new Set([
   'osint_code_leak_audit',
   'osint_spectrum_analyzer',
   'osint_satellite_recon',
+  'osint_local_premedia_sweep',
+  'osint_adsb_airspace_radar',
   'api_fetch_gateway',
   'crawl_url',
   'extract_dom_elements',
@@ -93,6 +95,7 @@ const VAULT_DECRYPTION_AND_SANDBOX_TOOLS = new Set([
 
 const EVIDENCE_FORENSICS_TOOLS = new Set([
   'query_evidence_graph',
+  'query_corroboration_clusters',
   'inspect_db_schema',
   'analyze_query_plan',
 ]);

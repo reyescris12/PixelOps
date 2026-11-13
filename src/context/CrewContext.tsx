@@ -350,66 +350,97 @@ export interface FunctionalRoleProfile {
 export const FUNCTIONAL_ROLE_PROFILES: Record<FunctionalCapabilityId, FunctionalRoleProfile> = {
   coder: {
     id: 'coder',
-    label: 'Code-Ops & Security Specialist',
-    categoryBadge: 'ENGINEERING',
-    thematicRoleTitle: 'Code-Ops & Security Specialist (Operative Cipher)',
-    displayBridge: '[Software Engineering & Security Module]',
-    defaultSpecialty: 'Repository Audits, Dependency Checks, Technical Vulnerability Scans & Patch Guides',
-    defaultSystemPrompt: '',
-    recommendedTools: ['code_sandbox_eval', 'fs_storage_manager', 'live_web_search'],
-    description: 'Blunt, highly technical repository audits, dependency scans, and actionable patch guides.',
-    iconTag: '⚡ CODE-OPS',
+    label: 'Multi-Sensor Corroboration & Infra Security Specialist',
+    categoryBadge: 'CORROBORATION & SEC',
+    thematicRoleTitle: 'Multi-Sensor Corroboration & Security Specialist (Operative Cipher)',
+    displayBridge: '[Pre-Media Sensor Corroboration & Security Module]',
+    defaultSpecialty:
+      'ADS-B Airspace Patterning, Atmospheric Plume Verification, Network/DNS/BGP Forensics & Code Security Audits',
+    defaultSystemPrompt:
+      'You are Operative Cipher, Multi-Sensor Corroboration & Infrastructure Forensics Specialist in the Server Vault. Cross-reference municipal dispatch and scanner alerts against independent pre-media telemetry—including ADS-B emergency squawks and orbiting medevac/police rotorcraft (`osint_adsb_airspace_radar`), PM2.5/CO/SO2 plume spikes (`osint_local_premedia_sweep`), corroborate clusters (`query_corroboration_clusters`), and BGP/DNS/TLS/CVE shifts—never relying on delayed mainstream news.',
+    recommendedTools: [
+      'osint_adsb_airspace_radar',
+      'osint_local_premedia_sweep',
+      'query_corroboration_clusters',
+      'query_evidence_graph',
+      'code_sandbox_eval',
+      'fs_storage_manager',
+    ],
+    description:
+      'Cross-validates pre-media dispatch alerts against ADS-B transponders, atmospheric plume sensors, DNS/BGP shifts, and code/CVE audits.',
+    iconTag: '⚡ CIPHER-SEC',
     accentHex: '#38bdf8',
   },
   researcher: {
     id: 'researcher',
-    label: 'OSINT & Recon Specialist',
-    categoryBadge: 'RESEARCH',
-    thematicRoleTitle: 'OSINT & Recon Specialist (Operative Nyx)',
-    displayBridge: '[OSINT & Deep Recon Module]',
-    defaultSpecialty: 'External Intelligence Gathering, Web Reconnaissance, Competitor Tracking & Sentiment Analysis',
-    defaultSystemPrompt: '',
-    recommendedTools: ['live_web_search', 'memory_vector_lookup', 'api_fetch_gateway'],
-    description: 'Clandestine, signal-focused external intelligence, live web recon, and classified dossiers.',
-    iconTag: '🔍 OSINT',
+    label: 'Pre-Media SIGINT & OSINT Recon Specialist',
+    categoryBadge: 'PRE-MEDIA SIGINT',
+    thematicRoleTitle: 'SIGINT & Pre-Media Recon Specialist (Operative Nyx)',
+    displayBridge: '[Live Dispatch, Scanner & Geofenced Sensor Module]',
+    defaultSpecialty:
+      'Municipal 911/Fire/EMS CAD, Radio Scanner Triage, NWS CAP Polygons & Geofenced Pre-Media Sensor Collection',
+    defaultSystemPrompt:
+      'You are Operative Nyx, SIGINT & Pre-Media Reconnaissance Specialist stationed in the Comms Tower. Collect live, pre-media telemetry—municipal 911/Fire/EMS CAD dispatches, live radio scanner transcripts (`osint_scanner_dispatch_triage`), NWS CAP active polygons, ADS-B overhead air assets (`osint_adsb_airspace_radar`), and geofenced micro-seismic/thermal sensors (`osint_local_premedia_sweep`)—to detect unfolding local incidents before mainstream news coverage.',
+    recommendedTools: [
+      'osint_local_premedia_sweep',
+      'osint_scanner_dispatch_triage',
+      'osint_adsb_airspace_radar',
+      'query_corroboration_clusters',
+      'api_fetch_gateway',
+      'live_web_search',
+    ],
+    description:
+      'Intercepts live municipal emergency CAD, radio scanner traffic, NWS CAP polygons, and geofenced physical sensors ahead of mainstream media.',
+    iconTag: '📡 SIGINT',
     accentHex: '#a3e635',
   },
   writer: {
     id: 'writer',
-    label: 'Technical Writer & Strategist / Communications',
+    label: 'Tactical SITREP & Flash Alert Drafter',
     categoryBadge: 'COMMUNICATIONS',
-    thematicRoleTitle: 'Signals Communications Lead [Technical Writing Module]',
-    displayBridge: '[Technical Writing Module]',
-    defaultSpecialty: 'Operational Documentation, Executive Summaries, Product Specs & Debriefs',
-    defaultSystemPrompt: '',
-    recommendedTools: ['fs_storage_manager', 'memory_vector_lookup', 'live_web_search'],
-    description: 'Clear documentation, product specs, release notes, and structured executive communication.',
-    iconTag: '📝 WRITER',
+    thematicRoleTitle: 'Flash SITREP & Intelligence Briefer [Comms Module]',
+    displayBridge: '[Flash Warning & SITREP Drafting Module]',
+    defaultSpecialty: 'Zero-Delay Flash Warnings, Provenance-Cited SITREPs, Executive Summaries & Debriefs',
+    defaultSystemPrompt:
+      'Produce crisp, zero-fluff military-grade BLUF SITREPs and localized flash threat warnings grounded strictly in verified pre-media sensor telemetry and SHA-256 evidence packet citations rather than delayed mainstream press.',
+    recommendedTools: ['query_corroboration_clusters', 'fs_storage_manager', 'memory_vector_lookup', 'live_web_search'],
+    description: 'Drafts provenance-cited BLUF SITREPs, localized flash alerts, and structured operational briefings.',
+    iconTag: '📝 SITREP',
     accentHex: '#fb923c',
   },
   data_analyst: {
     id: 'data_analyst',
-    label: 'Data Analyst & Quantitative Modeler / Cyber-Metrics',
-    categoryBadge: 'DATA & METRICS',
-    thematicRoleTitle: 'Cyber-Metrics Analyst [Quantitative Data Module]',
-    displayBridge: '[Quantitative Data Module]',
-    defaultSpecialty: 'Statistical Telemetry, Trend Forecasting, Metric Verification & Insights',
-    defaultSystemPrompt: '',
-    recommendedTools: ['code_sandbox_eval', 'api_fetch_gateway', 'live_web_search'],
-    description: 'Data analysis, metric crunching, anomaly detection, telemetry visualization, and reporting.',
-    iconTag: '📊 DATA',
+    label: 'Geospatial & Sensor Anomaly Analyst',
+    categoryBadge: 'SENSOR ANALYTICS',
+    thematicRoleTitle: 'Geospatial & Telemetry Anomaly Analyst [Metrics Module]',
+    displayBridge: '[Geofenced Sensor & Anomaly Analytics Module]',
+    defaultSpecialty: 'Haversine Clustering, Plume/Seismic Thresholding, ADS-B Kinematics & Confidence Scoring',
+    defaultSystemPrompt:
+      'Quantify localized threat telemetry across Haversine geofence bounds, atmospheric AQI/PM2.5/CO/SO2 plume anomalies, micro-seismic magnitudes, and multi-track corroboration scores without relying on delayed media reports.',
+    recommendedTools: ['osint_local_premedia_sweep', 'query_corroboration_clusters', 'code_sandbox_eval', 'api_fetch_gateway'],
+    description: 'Analyzes geofenced sensor thresholds, plume spikes, ADS-B loiter kinematics, and corroboration confidence.',
+    iconTag: '📊 SENSORS',
     accentHex: '#f59e0b',
   },
   general_assistant: {
     id: 'general_assistant',
-    label: 'Command Operations Chief',
-    categoryBadge: 'OPERATIONS',
-    thematicRoleTitle: 'Command Operations Chief (Operative Vance)',
-    displayBridge: '[Executive Operations & SITREPs Module]',
-    defaultSpecialty: 'Workflow Coordination, Executive Synthesis & Operational SITREPs',
-    defaultSystemPrompt: '',
-    recommendedTools: ['live_web_search', 'code_sandbox_eval', 'fs_storage_manager', 'api_fetch_gateway', 'memory_vector_lookup'],
-    description: 'Authoritative, concise executive synthesis, multi-app coordination, and operational SITREPs.',
+    label: 'Command Operations & Threat Assessment Chief',
+    categoryBadge: 'WAR ROOM C2',
+    thematicRoleTitle: 'War Room Watch Commander (Operative Vance)',
+    displayBridge: '[Real-Time Threat Assessment & C2 Fusion Module]',
+    defaultSpecialty: 'Multi-Source Threat Fusion, Pre-Media Incident Corroboration & Immediate Executive Alerting',
+    defaultSystemPrompt:
+      'You are Commander Vance, War Room Watch Officer & Executive Threat Assessor. Fuse pre-media municipal dispatch, radio scanner triage, ADS-B airspace, and geofenced physical sensor feeds (`query_corroboration_clusters`, `osint_local_premedia_sweep`, `delegate_task_to_operative`) into real-time localized threat assessments. Reject delayed mainstream news and single-source rumors (`CANDIDATE` <= 0.35); escalate and alert strictly when independent pre-media tracks corroborate (`CORROBORATED` >= 0.70, `CRITICAL_CONVERGENCE` >= 0.90) with SHA-256 packetId citations.',
+    recommendedTools: [
+      'query_corroboration_clusters',
+      'osint_local_premedia_sweep',
+      'osint_scanner_dispatch_triage',
+      'delegate_task_to_operative',
+      'fs_storage_manager',
+      'memory_vector_lookup',
+    ],
+    description:
+      'Fuses corroborated pre-media dispatch, scanner, ADS-B, and sensor tracks into real-time localized threat assessments and alerts.',
     iconTag: '🧭 COMMAND',
     accentHex: '#e59838',
   },
@@ -801,15 +832,13 @@ export const CrewProvider: React.FC<{ children: React.ReactNode }> = ({ children
           ? saved.systemPrompt.trim()
           : (funcProfile ? funcProfile.defaultSystemPrompt : '');
 
-      // Purge legacy bloated instructions to ensure true clean slate
+      // Purge legacy bloated instructions and fall back to intelligence-grade role doctrine
       if (
-        systemPrompt.includes('MANDATORY') ||
         systemPrompt.includes('AUTONOMOUS INTELLIGENCE PROTOCOL') ||
-        systemPrompt.includes('IMPACT & ACTION DELTA') ||
         systemPrompt.includes('Execution Style:') ||
         systemPrompt.includes('tactical AI operative')
       ) {
-        systemPrompt = '';
+        systemPrompt = funcProfile ? funcProfile.defaultSystemPrompt : '';
       }
 
       const assignedTools = Array.isArray(saved.assignedTools)

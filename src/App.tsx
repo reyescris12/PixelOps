@@ -345,6 +345,36 @@ const CommandCenterContent: React.FC = () => {
   const [isTripwiresOpen, setIsTripwiresOpen] = useState(false);
   const [isTacticalRadioOpen, setIsTacticalRadioOpen] = useState(false);
   const [tripwirePendingCount, setTripwirePendingCount] = useState(0);
+  const [activeTacticalThreatAlert, setActiveTacticalThreatAlert] = useState<{
+    clusterId: string;
+    status: string;
+    corroborationScore: number;
+    title: string;
+    executiveAssessment: string;
+    tracks: string[];
+    geoAnchor: { lat: number; lon: number; radiusKm: number };
+    timestamp: string;
+  } | null>(null);
+
+  useEffect(() => {
+    const onThreatAlert = (ev: Event) => {
+      const detail = (ev as CustomEvent)?.detail;
+      if (!detail || !detail.clusterId) return;
+      setActiveTacticalThreatAlert({
+        clusterId: String(detail.clusterId),
+        status: String(detail.status || 'CORROBORATED'),
+        corroborationScore: Number(detail.corroborationScore || 0.7),
+        title: String(detail.title || 'Corroborated Localized Incident'),
+        executiveAssessment: String(detail.executiveAssessment || ''),
+        tracks: Array.isArray(detail.tracks) ? detail.tracks : [],
+        geoAnchor: detail.geoAnchor || { lat: 0, lon: 0, radiusKm: 25 },
+        timestamp: String(detail.timestamp || new Date().toISOString()),
+      });
+      playBeep('error');
+    };
+    window.addEventListener('pixelops:tactical-threat-alert', onThreatAlert);
+    return () => window.removeEventListener('pixelops:tactical-threat-alert', onThreatAlert);
+  }, []);
 
   useEffect(() => {
     const syncTripwireBadge = () => {
@@ -3399,6 +3429,49 @@ const CommandCenterContent: React.FC = () => {
           />
         </Suspense>
       </DeferredMount>
+
+      {activeTacticalThreatAlert && (
+        <div
+          role="alert"
+          className="fixed top-14 right-4 z-50 max-w-md w-[calc(100vw-2rem)] rounded border-2 border-red-500/90 bg-[#12090b]/95 text-red-100 shadow-2xl p-3 font-mono text-xs backdrop-blur-md"
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div className="font-bold text-[11px] uppercase tracking-wider text-red-300">
+              ⚠ PRE-MEDIA {activeTacticalThreatAlert.status} ({Math.round(activeTacticalThreatAlert.corroborationScore * 100)}%)
+            </div>
+            <button
+              type="button"
+              onClick={() => setActiveTacticalThreatAlert(null)}
+              className="text-red-300 hover:text-white px-1 cursor-pointer"
+              aria-label="Dismiss tactical threat alert"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="mt-1 font-semibold text-amber-200">{activeTacticalThreatAlert.title}</div>
+          {activeTacticalThreatAlert.executiveAssessment && (
+            <p className="mt-1 text-[11px] text-slate-200 leading-snug line-clamp-3">
+              {activeTacticalThreatAlert.executiveAssessment}
+            </p>
+          )}
+          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-400">
+            <span>
+              Tracks: {activeTacticalThreatAlert.tracks.join(' + ') || 'MULTI-SENSOR'} · (
+              {activeTacticalThreatAlert.geoAnchor.lat.toFixed(3)}, {activeTacticalThreatAlert.geoAnchor.lon.toFixed(3)})
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                setActiveTacticalThreatAlert(null);
+                setIsThreatMonitorOpen(true);
+              }}
+              className="px-2 py-0.5 rounded bg-red-600/30 hover:bg-red-600/50 border border-red-400/60 text-red-100 font-bold uppercase cursor-pointer"
+            >
+              OPEN THREAT MONITOR
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

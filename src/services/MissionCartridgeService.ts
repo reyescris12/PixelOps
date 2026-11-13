@@ -100,6 +100,89 @@ const ACTIVE_CARTRIDGE_ID_KEY = 'pixelops_active_cartridge_id_v1';
 export const BUILTIN_ARMORY_CARTRIDGES: MissionCartridgeV1[] = [
   {
     schema: 'pixelops.cartridge.v1',
+    id: 'cartridge_premedia_local_sigint',
+    name: 'Pre-Media Local SIGINT & Dispatch Overwatch',
+    tagline: 'Real-time 911 CAD, scanner triage, ADS-B emergency/medevac orbits & plume corroboration',
+    description:
+      'Configures the swarm for zero-delayed-news localized threat detection: Nyx collects Municipal 911/Fire/EMS CAD, NWS CAP polygons & radio scanner transcripts; Cipher cross-checks overhead ADS-B transponders & atmospheric smoke/chemical plume spikes; Vance alerts strictly on multi-track corroboration (>= 0.70).',
+    author: 'PixelOps Pre-Media SIGINT Core',
+    version: '1.0.0',
+    category: 'threat_hunting',
+    difficulty: 'Instant Onboarding',
+    tags: ['Pre-Media SIGINT', '911 CAD', 'Radio Scanner', 'ADS-B', 'Plume Sensor', 'Corroboration'],
+    createdAt: '2026-11-13T00:00:00.000Z',
+    starterDirective:
+      'Execute a live geofenced Pre-Media Signal Sweep across our local sector: poll Municipal 911 CAD & NWS CAP polygons, sweep overhead ADS-B transponders for emergency squawks or orbiting medevac/police rotorcraft, check atmospheric smoke/chemical plume sensors, and report corroborated threat clusters with SHA-256 packetId provenance.',
+    starterRoom: 'comms_tower',
+    starterAgentId: 'nyx',
+    crewLoadouts: [
+      {
+        agentId: 'vance',
+        room: 'war_room',
+        systemPrompt:
+          'You are Commander Vance, Pre-Media Threat Assessment Lead. Never rely on delayed mainstream news. Synthesize corroborated alerts strictly when independent pre-media tracks converge (>= 0.70 CORROBORATED or >= 0.90 CRITICAL_CONVERGENCE), citing exact SHA-256 packetIds.',
+        assignedTools: [
+          'query_corroboration_clusters',
+          'osint_local_premedia_sweep',
+          'delegate_task_to_operative',
+          'query_evidence_graph',
+        ],
+      },
+      {
+        agentId: 'nyx',
+        room: 'comms_tower',
+        systemPrompt:
+          'You are Operative Nyx in the Comms Tower. Collect real-time pre-media telemetry—Municipal 911/Fire/EMS CAD dispatches, NWS CAP active warning polygons, live scanner transcripts, and USGS/NASA geofenced hazard feeds—before mainstream media coverage.',
+        assignedTools: [
+          'osint_local_premedia_sweep',
+          'osint_scanner_dispatch_triage',
+          'osint_adsb_airspace_radar',
+          'osint_hazard_tracker',
+        ],
+      },
+      {
+        agentId: 'cipher',
+        room: 'server_vault',
+        systemPrompt:
+          'You are Analyst Cipher in the Server Vault. Cross-corroborate Nyx CAD/scanner alerts against overhead ADS-B emergency/medevac transponders, Open-Meteo smoke/chemical plume anomalies, and DNS/BGP infrastructure shifts.',
+        assignedTools: [
+          'osint_adsb_airspace_radar',
+          'osint_local_premedia_sweep',
+          'query_corroboration_clusters',
+          'osint_bgp_route_lookup',
+        ],
+      },
+    ],
+    roomSkillBindings: {
+      comms_tower: ['premedia_sigint_plugin', 'osint_adversarial_recon', 'osint_spectrum_plugin'],
+      server_vault: ['premedia_sigint_plugin', 'crypto_vault', 'memory_lookup_plugin'],
+      war_room: ['premedia_sigint_plugin', 'osint_hazard_plugin'],
+    },
+    tripwireWatches: [
+      {
+        id: 'tw_cart_premedia_usgs_blast',
+        label: 'Pre-Media USGS Kinetic & Seismic Sensor Tripwire',
+        category: 'usgs_seismic',
+        target: 'local geofence',
+        assignedRoom: 'comms_tower',
+        assignedAgentId: 'nyx',
+        intervalMinutes: 5,
+        requireHumanApproval: true,
+      },
+      {
+        id: 'tw_cart_premedia_nws_dns',
+        label: 'NWS CAP Emergency Dispatch Gateway DNS Watch',
+        category: 'dns',
+        target: 'api.weather.gov',
+        assignedRoom: 'server_vault',
+        assignedAgentId: 'cipher',
+        intervalMinutes: 15,
+        requireHumanApproval: true,
+      },
+    ],
+  },
+  {
+    schema: 'pixelops.cartridge.v1',
     id: 'cartridge_domain_footprint_audit',
     name: 'Domain Footprint & CT Attack-Surface Audit',
     tagline: 'Instant subdomain CT log enumeration, DNS/ASN mapping & Basement Link Board indexing',

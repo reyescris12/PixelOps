@@ -30,6 +30,8 @@ import { loadLLMProviderConfig } from './LLMProviderService';
 import { getSecureCredential } from './SecureVaultService';
 import { queryEntityNeighborhood, getEvidenceGraphSnapshot } from './EvidenceGraphService';
 import { listTripwireAlerts, listTripwireWatches } from './TripwireDiffService';
+import { runPreMediaLocalizedThreatSweep } from './PreMediaSignalService';
+import { getCorroborationStatusSummary } from './CorroborationEngine';
 import { executeAgentDirective } from './agentEngineLazy';
 
 export type RadioOperativeId = 'vance' | 'nyx' | 'cipher';
@@ -75,29 +77,29 @@ export const OPERATIVE_RADIO_CHANNELS: Record<RadioOperativeId, OperativeRadioPe
     voiceName: 'Charon',
     accentHex: '#4ade80',
     systemPersona:
-      'You are Agent Vance, Lead Strategist of the PixelOps Safehouse Command Center. Speak over tactical encrypted radio: concise, composed, authoritative, 1 to 3 crisp sentences unless asked for deep detail. Address the user as Commander. You can query the Evidence Graph, check Tripwire Watch alerts, or dispatch full Safehouse directives using your non-blocking tools.',
+      'You are Agent Vance, Lead Strategist and Pre-Media Threat Assessment Commander of the PixelOps Safehouse. Speak over tactical encrypted radio: concise, composed, authoritative, 1 to 3 crisp sentences unless asked for deep detail. Address the user as Commander. Never rely on delayed mainstream news; ground active threat assessments in corroborated pre-media telemetry (Municipal 911 CAD, radio scanner triage, overhead ADS-B transponders, atmospheric plume sensors, and SHA-256 CorroborationEngine clusters).',
   },
   nyx: {
     id: 'nyx',
     callsign: 'RECON-2 // NYX',
     displayName: 'Operative Nyx',
-    role: 'OSINT Recon & Threat Intelligence',
+    role: 'SIGINT & Pre-Media Recon Specialist',
     frequencyMhz: '152.875 MHz',
     voiceName: 'Kore',
     accentHex: '#38bdf8',
     systemPersona:
-      'You are Operative Nyx, OSINT Recon & Threat Hunter stationed at the Comms Tower. Speak over tactical radio with sharp, analytical situational awareness—1 to 3 sentences by default. Cite concrete domains, ASNs, CVEs, and tripwire deltas when available via your tools.',
+      'You are Operative Nyx, SIGINT & Pre-Media Recon Specialist stationed at the Comms Tower. Speak over tactical radio with sharp, analytical situational awareness—1 to 3 sentences by default. Intercept live Municipal 911/Fire/EMS CAD dispatches, NWS CAP warning polygons, scanner transcripts, and geofenced hazard sensors before mainstream media reports.',
   },
   cipher: {
     id: 'cipher',
     callsign: 'VAULT-3 // CIPHER',
     displayName: 'Operative Cipher',
-    role: 'Server Vault Cryptographer & Forensics',
+    role: 'Multi-Sensor Corroboration & Cryptographer',
     frequencyMhz: '164.225 MHz',
     voiceName: 'Puck',
     accentHex: '#f59e0b',
     systemPersona:
-      'You are Operative Cipher, Chief Cryptographer and Server Vault Systems Engineer in the PixelOps Safehouse. Speak with precise, technical tactical clarity (1 to 3 concise sentences). Reference SHA-256 tripwire hashes, VFS dossiers, and cross-investigation graph bridges accurately.',
+      'You are Operative Cipher, Multi-Sensor Corroboration Engineer and Chief Cryptographer in the Server Vault. Speak with precise, technical tactical clarity (1 to 3 concise sentences). Cross-verify Nyx dispatches against ADS-B emergency/medevac transponders, atmospheric smoke/chemical plume spikes, DNS/BGP telemetry, and SHA-256 CorroborationEngine scores.',
   },
 };
 
@@ -377,13 +379,38 @@ export function buildTacticalRadioTools(options?: { omitNonBlockingBehavior?: bo
             },
           },
         },
+        {
+          name: 'run_local_premedia_sweep',
+          description:
+            'Executes a live geofenced Pre-Media Signal Sweep across Municipal 911 CAD, NWS CAP polygons, overhead ADS-B tactical/medevac transponders, atmospheric plume sensors, and USGS/NASA hazard feeds.',
+          ...(includeBehavior ? { behavior: Behavior.NON_BLOCKING } : {}),
+          parameters: {
+            type: Type.OBJECT,
+            properties: {
+              radiusKm: {
+                type: Type.NUMBER,
+                description: 'Optional sweep radius in kilometers (defaults to active operator geofence radius).',
+              },
+            },
+          },
+        },
+        {
+          name: 'check_corroborated_threats',
+          description:
+            'Queries active multi-source threat clusters and corroboration scores (CANDIDATE, CORROBORATED, CRITICAL_CONVERGENCE) in IndexedDB.',
+          ...(includeBehavior ? { behavior: Behavior.NON_BLOCKING } : {}),
+          parameters: {
+            type: Type.OBJECT,
+            properties: {},
+          },
+        },
       ],
     },
   ];
 }
 
 export function buildOperativeSystemInstruction(persona: OperativeRadioPersona): string {
-  return `${persona.systemPersona} Common PixelOps Safehouse terms the Commander may say over radio: Commander, Agent Vance, Operative Nyx, Operative Cipher, PixelOps, Safehouse, War Room, Basement Link Board, Evidence Graph, Server Vault, Comms Tower, Armory, Tripwire, SHA-256 delta, VFS dossier, OSINT, ISW, ASN, CVE, sitrep. Always listen carefully and answer directly what the Commander actually asked; if an audio transmission is genuinely unintelligible, ask briefly ("Static on the line, Commander—say again?") instead of guessing an unrelated topic.`;
+  return `${persona.systemPersona} Common PixelOps Safehouse terms the Commander may say over radio: Commander, Agent Vance, Operative Nyx, Operative Cipher, PixelOps, Safehouse, War Room, Basement Link Board, Evidence Graph, Server Vault, Comms Tower, Armory, Tripwire, SHA-256 delta, VFS dossier, OSINT, pre-media, CAD dispatch, scanner, ADS-B, squawk 7700, medevac, plume, geofence, corroboration, sitrep. Always listen carefully and answer directly what the Commander actually asked; if an audio transmission is genuinely unintelligible, ask briefly ("Static on the line, Commander—say again?") instead of guessing an unrelated topic.`;
 }
 
 function buildHybridVadRealtimeInputConfig() {
@@ -910,6 +937,20 @@ export class TacticalRadioTransceiver {
       }
     } catch {}
 
+    try {
+      if (/\b(local|threat|dispatch|scanner|cad|adsb|airspace|plume|emergency|sweep|corroborat|geofence|incident)\b/i.test(lower)) {
+        const sweep = await runPreMediaLocalizedThreatSweep({ ingestIntoCorroboration: true });
+        contextSnippets.push(
+          `Pre-Media Geofence [${sweep.geofence.label} <= ${sweep.geofence.radiusKm}km]: ${sweep.municipalDispatches.length} CAD/NWS dispatches, ${sweep.adsbTacticalContacts.length}/${sweep.adsbTotalAircraft} tactical ADS-B aircraft, Plume=${sweep.plumeReading?.anomalyDetected ? sweep.plumeReading.summary : 'Nominal'}, ${sweep.corroboration.activeCorroboratedCount} corroborated cluster(s).`
+        );
+        this.appendOrMergeTranscript(
+          'SYS_TOOL',
+          `[PRE-MEDIA SWEEP] CAD=${sweep.municipalDispatches.length} | ADS-B=${sweep.adsbTacticalContacts.length} | CORROBORATED=${sweep.corroboration.activeCorroboratedCount}`,
+          false
+        );
+      }
+    } catch {}
+
     const radioPrompt = `[TACTICAL VOICE RADIO TRANSMISSION FROM COMMANDER]
 Commander said: "${trimmed}"
 ${contextSnippets.length > 0 ? `\nLive Safehouse Telemetry:\n${contextSnippets.join('\n')}\n` : ''}
@@ -1086,6 +1127,51 @@ Respond in character as ${persona.displayName} (${persona.role}) over tactical v
             this.appendOrMergeTranscript(
               'SYS_TOOL',
               `[TRIPWIRE CHECK] ${resultPayload.pendingAlertCount} pending SHA-256 delta alert(s)`,
+              false
+            );
+          } else if (fnName === 'run_local_premedia_sweep') {
+            const radiusKm =
+              typeof args.radiusKm === 'number' && Number.isFinite(args.radiusKm)
+                ? args.radiusKm
+                : undefined;
+            const sweep = await runPreMediaLocalizedThreatSweep({
+              radiusKm,
+              ingestIntoCorroboration: true,
+            });
+            resultPayload = {
+              geofence: sweep.geofence,
+              municipalDispatches: sweep.municipalDispatches.slice(0, 5),
+              adsbTotalAircraft: sweep.adsbTotalAircraft,
+              adsbTacticalContacts: sweep.adsbTacticalContacts.slice(0, 5),
+              plumeReading: sweep.plumeReading,
+              geoHazardSignals: sweep.geoHazardSignals.slice(0, 5),
+              corroboration: sweep.corroboration,
+            };
+            this.appendOrMergeTranscript(
+              'SYS_TOOL',
+              `[PRE-MEDIA SWEEP] CAD=${sweep.municipalDispatches.length} | ADS-B=${sweep.adsbTacticalContacts.length} | CORROBORATED=${sweep.corroboration.activeCorroboratedCount}`,
+              false
+            );
+          } else if (fnName === 'check_corroborated_threats') {
+            const snap = await getCorroborationStatusSummary();
+            resultPayload = {
+              totalPackets: snap.totalPackets,
+              statusCounts: snap.statusCounts,
+              clusters: (snap.clusters || [])
+                .filter((c) => c.status !== 'DISMISSED')
+                .slice(0, 6)
+                .map((c) => ({
+                  clusterId: c.clusterId,
+                  status: c.status,
+                  score: c.corroborationScore,
+                  tracks: c.independentTracks,
+                  title: c.title,
+                  geoAnchor: c.geoAnchor,
+                })),
+            };
+            this.appendOrMergeTranscript(
+              'SYS_TOOL',
+              `[CORROBORATION CHECK] ${(snap.statusCounts.CRITICAL_CONVERGENCE || 0) + (snap.statusCounts.CORROBORATED || 0)} corroborated cluster(s)`,
               false
             );
           }

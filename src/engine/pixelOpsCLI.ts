@@ -1408,6 +1408,82 @@ export async function executeCLICommand(
       };
     }
 
+    if (sub === 'premedia' || sub === 'sweep') {
+      let radiusOverride: number | undefined;
+      for (let i = 1; i < args.length; i++) {
+        const tok = args[i];
+        if ((tok === '--radius' || tok === '-r') && args[i + 1]) {
+          const val = Number(String(args[i + 1]).replace(/km$/i, ''));
+          if (Number.isFinite(val)) radiusOverride = val;
+        } else if (tok.startsWith('--radius=')) {
+          const val = Number(tok.slice('--radius='.length).replace(/km$/i, ''));
+          if (Number.isFinite(val)) radiusOverride = val;
+        }
+      }
+      const { runPreMediaLocalizedThreatSweep } = await import('../services/PreMediaSignalService');
+      const sweep = await runPreMediaLocalizedThreatSweep({
+        radiusKm: radiusOverride,
+        ingestIntoCorroboration: true,
+      });
+      const out = [
+        '+------------------------------------------------------------------------------+',
+        `| PRE-MEDIA LOCALIZED THREAT SWEEP // ${sweep.geofence.label.padEnd(40).slice(0, 40)}|`,
+        '+------------------------------------------------------------------------------+',
+        `  GEOFENCE     : ${sweep.geofence.lat.toFixed(4)}, ${sweep.geofence.lon.toFixed(4)} (<= ${sweep.geofence.radiusKm} km)`,
+        `  911/NWS CAD  : ${sweep.municipalDispatches.length} bounded dispatch(es)`,
+        `  ADS-B RADAR  : ${sweep.adsbTacticalContacts.length} tactical / ${sweep.adsbTotalAircraft} overhead aircraft`,
+        `  PLUME SENSOR : ${sweep.plumeReading ? sweep.plumeReading.summary : 'Sensor unavailable'}`,
+        `  GEO HAZARDS  : ${sweep.geoHazardSignals.length} micro-seismic / blast / thermal signal(s)`,
+        `  CORROBORATED : ${sweep.corroboration.activeCorroboratedCount} active cluster(s) | ${sweep.corroboration.packetsIngested} packets ingested`,
+        '--------------------------------------------------------------------------------',
+        ...sweep.municipalDispatches.slice(0, 4).map(
+          (d) => `  [CAD/${d.sourceType.toUpperCase()}] (${d.distanceKm} km) [${d.severity}] ${d.title}`
+        ),
+        ...sweep.adsbTacticalContacts.slice(0, 4).map(
+          (a) => `  [ADS-B/${a.tacticalFlag}] (${a.distanceKm} km) [${a.severity}] ${a.summary}`
+        ),
+        '+------------------------------------------------------------------------------+',
+      ];
+      return {
+        command: trimmed,
+        output: out.join('\n'),
+        status: sweep.corroboration.activeCorroboratedCount > 0 ? 'warning' : 'ok',
+        timestamp,
+      };
+    }
+
+    if (sub === 'adsb') {
+      let radiusOverride: number | undefined;
+      for (let i = 1; i < args.length; i++) {
+        const tok = args[i];
+        if ((tok === '--radius' || tok === '-r') && args[i + 1]) {
+          const val = Number(String(args[i + 1]).replace(/km$/i, ''));
+          if (Number.isFinite(val)) radiusOverride = val;
+        }
+      }
+      const { queryGeofencedAdsbAirspace } = await import('../services/PreMediaSignalService');
+      const adsb = await queryGeofencedAdsbAirspace({ radiusKm: radiusOverride });
+      const out = [
+        '+------------------------------------------------------------------------------+',
+        '| GEOFENCED ADS-B TRANSPONDER OVERWATCH                                        |',
+        '+------------------------------------------------------------------------------+',
+        `  ENDPOINT          : ${adsb.endpointUsed}`,
+        `  OVERHEAD AIRCRAFT : ${adsb.totalAircraft}`,
+        `  TACTICAL CONTACTS : ${adsb.tacticalContacts.length}`,
+        '--------------------------------------------------------------------------------',
+        ...(adsb.tacticalContacts.length > 0
+          ? adsb.tacticalContacts.slice(0, 8).map((c) => `  [${c.severity}] ${c.summary}`)
+          : ['  No emergency squawks or low-altitude tactical/medevac orbits detected.']),
+        '+------------------------------------------------------------------------------+',
+      ];
+      return {
+        command: trimmed,
+        output: out.join('\n'),
+        status: adsb.tacticalContacts.length > 0 ? 'warning' : 'ok',
+        timestamp,
+      };
+    }
+
     // Default: recon local [--radius 25km] [--lat X --lon Y]
     let radiusOverride: number | undefined;
     let latOverride: number | undefined;
@@ -1495,6 +1571,8 @@ export async function executeCLICommand(
       '  pixelops intel nominate <id>       Approve & commit human effector nomination gate to ledger',
       '  pixelops intel selftest            Run deterministic 2-track corroboration self-test',
       '  pixelops recon local [--radius km] Query bounded NWS/USGS alerts inside local geofence',
+      '  pixelops recon premedia            Run full pre-media CAD + ADS-B + Plume + Hazard sweep',
+      '  pixelops recon adsb [--radius km]  Sweep overhead ADS-B emergency/medevac transponders',
       '  pixelops recon geofence lat lon km Update local geofence coordinates & radius',
       '  pixelops recon alert <on|off>      Toggle 60s High Alert Mode rapid dispatch polling',
       '  pixelops recon triage <text>       Run Gemini Flash emergency dispatch triage',

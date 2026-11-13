@@ -169,6 +169,7 @@ const updateSubscribers = new Set<(cluster: CorroborationClusterDbEntry) => void
 const promotionSubscribers = new Set<
   (cluster: CorroborationClusterDbEntry, synthesis: VanceSynthesisOutput) => void
 >();
+const alertedClusterStatusMap = new Map<string, CorroborationClusterStatus>();
 
 const trackStatsMap: Record<'nyx' | 'cipher' | 'vance', SpecialistTrackRuntimeStats> = {
   nyx: {
@@ -719,6 +720,74 @@ function canonicalizeStructuralPayload(
     };
   }
 
+  if (sourceType === 'adsb_airspace') {
+    const icaoHex = String(payload.icaoHex || canonicalTargetKey).toUpperCase();
+    const callsign = String(payload.callsign || '').toUpperCase();
+    const tacticalFlag = String(payload.tacticalFlag || 'ROUTINE_TRAFFIC');
+    const squawk = String(payload.squawk || '');
+    const severity = String(payload.severity || 'MED');
+    const isEmergencySquawk = Boolean(payload.isEmergencySquawk);
+    return {
+      structuralObject: {
+        sourceType: 'adsb_airspace',
+        target: canonicalTargetKey,
+        icaoHex,
+        callsign,
+        tacticalFlag,
+        squawk,
+        severity,
+      },
+      metrics: {
+        icaoHex,
+        tacticalFlag,
+        squawk,
+        severity,
+        isEmergencySquawk,
+      },
+    };
+  }
+
+  if (sourceType === 'air_plume_sensor') {
+    const anomalyType = String(payload.anomalyType || 'NONE');
+    const severity = String(payload.severity || 'LOW');
+    const usAqiBand = Math.floor(Number(payload.usAqi ?? 0) / 25) * 25;
+    return {
+      structuralObject: {
+        sourceType: 'air_plume_sensor',
+        target: canonicalTargetKey,
+        anomalyType,
+        severity,
+        usAqiBand,
+      },
+      metrics: {
+        anomalyType,
+        severity,
+        usAqiBand,
+      },
+    };
+  }
+
+  if (
+    sourceType === 'usgs_microseismic' ||
+    sourceType === 'usgs_kinetic_blast' ||
+    sourceType === 'nasa_eonet_thermal'
+  ) {
+    const evId = String(payload?.id || canonicalTargetKey);
+    const magBand = Math.round(Number(payload?.properties?.mag ?? 0) * 5) / 5;
+    return {
+      structuralObject: {
+        sourceType,
+        target: canonicalTargetKey,
+        evId,
+        magBand,
+      },
+      metrics: {
+        evId,
+        magBand,
+      },
+    };
+  }
+
   if (sourceType === 'cisa_kev' || sourceTrack === 'CYBER_CVE') {
     const cveId = String(payload.cveID || payload.cveId || payload.id || canonicalTargetKey).toUpperCase();
     const vendorProject = String(payload.vendorProject || payload.vendor || '');
@@ -860,6 +929,22 @@ function evaluateDeltaThreshold(
         emit: true,
         thresholdReason: `Newly observed Certificate Transparency entry (${metrics.latestSerial || input.canonicalTargetKey})`,
         severityWeight: 0.85,
+      };
+    }
+
+    if (input.sourceType === 'adsb_airspace') {
+      return {
+        emit: true,
+        thresholdReason: `ADS-B airspace tactical indicator (${metrics.tacticalFlag || 'TACTICAL'}): ${input.summaryHeadline}`,
+        severityWeight: metrics.isEmergencySquawk ? 1.0 : 0.9,
+      };
+    }
+
+    if (input.sourceType === 'air_plume_sensor') {
+      return {
+        emit: true,
+        thresholdReason: `Atmospheric plume sensor anomaly (${metrics.anomalyType || 'PLUME'}): ${input.summaryHeadline}`,
+        severityWeight: metrics.severity === 'CRITICAL' ? 1.0 : 0.88,
       };
     }
   }
@@ -1375,14 +1460,59 @@ CRITICAL: Every claim MUST cite valid packetId values from the input list ONLY. 
     } catch {}
   }
 
-  if (typeof window !== 'undefined' && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
-    try {
-      new Notification(`[PIXELOPS ${cluster.status}] ${cluster.sectorKey}`, {
-        body: chosenSynthesis.executiveAssessment.bluf.slice(0, 200),
-        icon: '/pwa-192x192.png',
-        tag: `pixelops-cluster-${cluster.clusterId}`,
-      });
-    } catch {}
+  const isSelfTestCluster =
+    cluster.sectorKey.includes('SELFTEST') ||
+    packets.some((p) => p.canonicalTargetKey.startsWith('selftest::'));
+
+  if (
+    !isSelfTestCluster &&
+    (cluster.status === 'CORROBORATED' || cluster.status === 'CRITICAL_CONVERGENCE') &&
+    alertedClusterStatusMap.get(cluster.clusterId) !== cluster.status
+  ) {
+    alertedClusterStatusMap.set(cluster.clusterId, cluster.status);
+
+    if (typeof window !== 'undefined' && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+      try {
+        new Notification(`[PIXELOPS ${cluster.status}] ${cluster.sectorKey}`, {
+          body: chosenSynthesis.executiveAssessment.bluf.slice(0, 200),
+          icon: '/pwa-192x192.png',
+          tag: `pixelops-cluster-${cluster.clusterId}`,
+        });
+      } catch {}
+    }
+
+    if (typeof window !== 'undefined' && typeof CustomEvent !== 'undefined') {
+      try {
+        window.dispatchEvent(
+          new CustomEvent('pixelops:tactical-threat-alert', {
+            detail: {
+              clusterId: cluster.clusterId,
+              sectorKey: cluster.sectorKey,
+              title: cluster.title,
+              status: cluster.status,
+              corroborationScore: cluster.corroborationScore,
+              independentTracks: cluster.independentTracks,
+              bluf: chosenSynthesis.executiveAssessment.bluf,
+              lat: cluster.geoAnchor.lat,
+              lon: cluster.geoAnchor.lon,
+              packetCount: packets.length,
+              timestamp: chosenSynthesis.generatedAt,
+            },
+          })
+        );
+      } catch {}
+    }
+
+    import('./NotificationOutboxService')
+      .then(({ dispatchOutboxNotification }) => {
+        dispatchOutboxNotification({
+          title: `[${cluster.status}] ${cluster.title}`,
+          body: chosenSynthesis.executiveAssessment.bluf,
+          type: 'human_approval_required',
+          agentName: 'Agent Vance',
+        }).catch(() => {});
+      })
+      .catch(() => {});
   }
 
   return { synthesis: chosenSynthesis, sitrepPath, nomination };
@@ -2133,6 +2263,58 @@ export async function runNyxSpecialistTrack(): Promise<{ ingested: number; delta
       );
     }
 
+    // 4. PRE-MEDIA LOCALIZED CAD, NWS CAP POLYGONS, MICRO-SEISMIC/BLAST & EONET THERMAL (Geofenced)
+    tasks.push(
+      (async () => {
+        const { getLocalGeofenceConfig } = await import('./OsintToolsService');
+        const { queryPreMediaGeoHazardsAndCad } = await import('./PreMediaSignalService');
+        const gf = getLocalGeofenceConfig();
+        const localRes = await queryPreMediaGeoHazardsAndCad({
+          lat: gf.lat,
+          lon: gf.lon,
+          radiusKm: gf.radiusKm,
+        });
+        const sectorKey = gf.label || 'LOCAL-SECTOR';
+
+        for (const inc of localRes.municipalDispatches.slice(0, 6)) {
+          const result = await ingestPacket({
+            sourceTrack: 'WRITTEN_WIRE',
+            sourceType: 'local_dispatch',
+            canonicalTargetKey: inc.id,
+            payloadTimestamp: inc.timestamp,
+            sourceEndpoint: inc.sourceUrl,
+            ingestedBy: 'nyx',
+            ttlSeconds: 900,
+            geoAnchor: { lat: inc.lat, lon: inc.lon, radiusKm: Math.min(gf.radiusKm, 35), precision: 'EXACT' },
+            sectorKey,
+            summaryHeadline: `[${inc.sourceType.toUpperCase()}] ${inc.title}`,
+            rawPayload: inc,
+          });
+          ingested += 1;
+          if (result.deltaEmitted) deltas += 1;
+        }
+
+        for (const haz of localRes.geoHazardSignals.slice(0, 6)) {
+          if (haz.source === 'NWS_CAP_POLYGON') continue;
+          const result = await ingestPacket({
+            sourceTrack: 'WIDE_AREA',
+            sourceType: haz.source.toLowerCase(),
+            canonicalTargetKey: haz.id,
+            payloadTimestamp: haz.timestamp,
+            sourceEndpoint: haz.sourceEndpoint,
+            ingestedBy: 'nyx',
+            ttlSeconds: 600,
+            geoAnchor: { lat: haz.lat, lon: haz.lon, radiusKm: Math.min(gf.radiusKm, 35), precision: 'EXACT' },
+            sectorKey,
+            summaryHeadline: haz.title,
+            rawPayload: haz.rawPayload,
+          });
+          ingested += 1;
+          if (result.deltaEmitted) deltas += 1;
+        }
+      })()
+    );
+
     const settled = await Promise.allSettled(tasks);
     const errors = settled
       .filter((s): s is PromiseRejectedResult => s.status === 'rejected')
@@ -2229,6 +2411,59 @@ export async function runCipherSpecialistTrack(): Promise<{ ingested: number; de
             sectorKey: 'SECTOR-01-ASHBURN',
             summaryHeadline: `CISA KEV Advisory ${cveId}: ${v.vendorProject || ''} ${v.product || ''} — ${v.vulnerabilityName || ''}`.trim(),
             rawPayload: v,
+          });
+          ingested += 1;
+          if (result.deltaEmitted) deltas += 1;
+        }
+      })()
+    );
+
+    // 3. SIGNALS_INFRA: Geofenced ADS-B Tactical/Emergency Airspace & Atmospheric Plume Sensors
+    tasks.push(
+      (async () => {
+        const { getLocalGeofenceConfig } = await import('./OsintToolsService');
+        const { queryGeofencedAdsbAirspace, queryGeofencedPlumeAndEnvSensors } = await import(
+          './PreMediaSignalService'
+        );
+        const gf = getLocalGeofenceConfig();
+        const sectorKey = gf.label || 'LOCAL-SECTOR';
+
+        const [adsbRes, plumeRes] = await Promise.all([
+          queryGeofencedAdsbAirspace({ lat: gf.lat, lon: gf.lon, radiusKm: gf.radiusKm }),
+          queryGeofencedPlumeAndEnvSensors({ lat: gf.lat, lon: gf.lon }),
+        ]);
+
+        for (const ac of adsbRes.tacticalContacts.slice(0, 5)) {
+          const result = await ingestPacket({
+            sourceTrack: 'SIGNALS_INFRA',
+            sourceType: 'adsb_airspace',
+            canonicalTargetKey: `adsb:${ac.icaoHex}:${ac.tacticalFlag}`,
+            payloadTimestamp: ac.capturedAt,
+            sourceEndpoint: adsbRes.endpointUsed,
+            ingestedBy: 'cipher',
+            ttlSeconds: 300,
+            geoAnchor: { lat: ac.lat, lon: ac.lon, radiusKm: 20, precision: 'EXACT' },
+            sectorKey,
+            summaryHeadline: `[ADS-B ${ac.tacticalFlag}] ${ac.summary}`,
+            rawPayload: ac,
+          });
+          ingested += 1;
+          if (result.deltaEmitted) deltas += 1;
+        }
+
+        if (plumeRes && plumeRes.anomalyDetected) {
+          const result = await ingestPacket({
+            sourceTrack: 'SIGNALS_INFRA',
+            sourceType: 'air_plume_sensor',
+            canonicalTargetKey: `plume:${gf.lat.toFixed(2)},${gf.lon.toFixed(2)}:${plumeRes.anomalyType}`,
+            payloadTimestamp: plumeRes.capturedAt,
+            sourceEndpoint: plumeRes.sourceEndpoint,
+            ingestedBy: 'cipher',
+            ttlSeconds: 600,
+            geoAnchor: { lat: gf.lat, lon: gf.lon, radiusKm: 20, precision: 'EXACT' },
+            sectorKey,
+            summaryHeadline: `[PLUME SENSOR] ${plumeRes.summary}`,
+            rawPayload: plumeRes,
           });
           ingested += 1;
           if (result.deltaEmitted) deltas += 1;

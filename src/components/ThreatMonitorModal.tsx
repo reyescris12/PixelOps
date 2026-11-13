@@ -32,6 +32,11 @@ import {
 } from '../services/OsintToolsService';
 import { isHighAlertModeEnabled, setHighAlertMode } from '../services/NightShiftService';
 import {
+  runPreMediaLocalizedThreatSweep,
+  type PreMediaSweepReport,
+} from '../services/PreMediaSignalService';
+import { analyzeDispatchSignal } from '../services/DispatchTriageService';
+import {
   TacticalSatelliteMonitor,
   parseReconTargetToCoords,
   resolveReconLocationAsync,
@@ -158,6 +163,11 @@ export const ThreatMonitorModal: React.FC<ThreatMonitorModalProps> = ({
   } | null>(null);
   const [geofence, setGeofence] = useState<LocalGeofenceConfig>(getLocalGeofenceConfig);
   const [highAlert, setHighAlert] = useState<boolean>(isHighAlertModeEnabled);
+  const [isRunningPreMedia, setIsRunningPreMedia] = useState<boolean>(false);
+  const [preMediaReport, setPreMediaReport] = useState<PreMediaSweepReport | null>(null);
+  const [customCadFeedInput, setCustomCadFeedInput] = useState<string>('');
+  const [scannerTranscriptInput, setScannerTranscriptInput] = useState<string>('');
+  const [isTriagingScanner, setIsTriagingScanner] = useState<boolean>(false);
 
   const buildFallbackTelemetry = useCallback((zoneId: string, customLoc: string): ThreatMatrixPayload => {
     const zoneObj = DEFAULT_ZONES.find((z) => z.id === zoneId) || DEFAULT_ZONES[0];
@@ -790,7 +800,138 @@ export const ThreatMonitorModal: React.FC<ThreatMonitorModalProps> = ({
             >
               {highAlert ? '● HIGH ALERT: 60s POLL ON' : '○ HIGH ALERT MODE (60s)'}
             </button>
+            <button
+              type="button"
+              disabled={isRunningPreMedia}
+              onClick={async () => {
+                setIsRunningPreMedia(true);
+                try {
+                  const report = await runPreMediaLocalizedThreatSweep({
+                    lat: geofence.lat,
+                    lon: geofence.lon,
+                    radiusKm: geofence.radiusKm,
+                    ingestIntoCorroboration: true,
+                  });
+                  setPreMediaReport(report);
+                  setSweepStatusBanner({
+                    message: `PRE-MEDIA SWEEP COMPLETE — CAD/NWS: ${report.municipalDispatches.length} | ADS-B Tactical: ${report.adsbTacticalContacts.length}/${report.adsbTotalAircraft} | Plume: ${report.plumeReading?.anomalyDetected ? report.plumeReading.anomalyType : 'NOMINAL'} | Corroborated: ${report.corroboration.activeCorroboratedCount}`,
+                    type: report.corroboration.activeCorroboratedCount > 0 ? 'warning' : 'success',
+                  });
+                } finally {
+                  setIsRunningPreMedia(false);
+                }
+              }}
+              className="px-2.5 py-1 rounded font-bold text-[10px] uppercase tracking-wider border cursor-pointer transition-colors bg-cyan-950/80 text-cyan-200 border-cyan-500/60 hover:bg-cyan-900/70 disabled:opacity-50"
+            >
+              {isRunningPreMedia ? '⟳ SWEEPING PRE-MEDIA...' : '⚡ PRE-MEDIA SWEEP (CAD + ADS-B + PLUME)'}
+            </button>
           </div>
+        </div>
+
+        {/* Live Pre-Media Scanner Triage & Custom County CAD/OpenMHz Ingress Strip */}
+        <div className="px-4 py-2 bg-[#070b11] border-b border-slate-800/80 flex flex-col gap-2 text-[11px] font-mono">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-cyan-400 font-bold uppercase tracking-wider text-[10px]">
+              SCANNER / 911 CAD TRIAGE:
+            </span>
+            <input
+              id="scanner-transcript-input"
+              name="scanner_transcript"
+              type="text"
+              value={scannerTranscriptInput}
+              onChange={(e) => setScannerTranscriptInput(e.target.value)}
+              placeholder="Paste live scanner / OpenMHz / Broadcastify dispatch transcript for instant Gemini 3.1 Flash Lite triage..."
+              className="flex-1 min-w-[220px] px-2 py-1 bg-black border border-slate-700 rounded text-slate-200 text-[11px]"
+            />
+            <button
+              type="button"
+              disabled={isTriagingScanner || !scannerTranscriptInput.trim()}
+              onClick={async () => {
+                if (!scannerTranscriptInput.trim()) return;
+                setIsTriagingScanner(true);
+                try {
+                  const triage = await analyzeDispatchSignal({
+                    transcript: scannerTranscriptInput.trim(),
+                    lat: geofence.lat,
+                    lon: geofence.lon,
+                    sectorKey: geofence.label,
+                    sourceLabel: 'OPERATOR_SCANNER_INTERCEPT',
+                    ingestIntoSwarm: true,
+                  });
+                  setSweepStatusBanner({
+                    message: `SCANNER TRIAGE [${triage.severity} // ${triage.type}]: ${triage.summary}${triage.packetId ? ` (packet ${triage.packetId.slice(0, 10)}…)` : ''}`,
+                    type: triage.threatDetected ? 'warning' : 'info',
+                  });
+                  setScannerTranscriptInput('');
+                } finally {
+                  setIsTriagingScanner(false);
+                }
+              }}
+              className="px-2.5 py-1 rounded bg-amber-950/80 hover:bg-amber-900/70 border border-amber-500/60 text-amber-200 font-bold text-[10px] uppercase cursor-pointer disabled:opacity-40"
+            >
+              {isTriagingScanner ? 'TRIAGING...' : 'TRIAGE & INGEST'}
+            </button>
+
+            <input
+              id="custom-cad-url-input"
+              name="custom_cad_url"
+              type="url"
+              value={customCadFeedInput}
+              onChange={(e) => setCustomCadFeedInput(e.target.value)}
+              placeholder="Add County CAD / PulsePoint / OpenMHz RSS or JSON URL..."
+              className="w-64 px-2 py-1 bg-black border border-slate-700 rounded text-slate-200 text-[11px]"
+            />
+            <button
+              type="button"
+              disabled={!customCadFeedInput.trim()}
+              onClick={() => {
+                const url = customCadFeedInput.trim();
+                if (!url) return;
+                const nextUrls = Array.from(new Set([...(geofence.dispatchFeedUrls || []), url]));
+                const updated = saveLocalGeofenceConfig({ dispatchFeedUrls: nextUrls });
+                setGeofence(updated);
+                setCustomCadFeedInput('');
+                setSweepStatusBanner({
+                  message: `Registered live municipal CAD/scanner feed (${nextUrls.length} active custom endpoint(s)).`,
+                  type: 'success',
+                });
+              }}
+              className="px-2 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-emerald-300 font-bold text-[10px] uppercase cursor-pointer disabled:opacity-40"
+            >
+              + ADD CAD FEED ({geofence.dispatchFeedUrls?.length || 0})
+            </button>
+          </div>
+
+          {preMediaReport && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pt-1 text-[10px]">
+              <div className="p-1.5 rounded bg-slate-950/90 border border-slate-800">
+                <div className="text-slate-400">911 CAD & NWS CAP</div>
+                <div className="text-emerald-300 font-bold">
+                  {preMediaReport.municipalDispatches.length} bounded alert(s)
+                </div>
+              </div>
+              <div className="p-1.5 rounded bg-slate-950/90 border border-slate-800">
+                <div className="text-slate-400">ADS-B AIRSPACE</div>
+                <div className="text-cyan-300 font-bold">
+                  {preMediaReport.adsbTacticalContacts.length} tactical / {preMediaReport.adsbTotalAircraft} total
+                </div>
+              </div>
+              <div className="p-1.5 rounded bg-slate-950/90 border border-slate-800">
+                <div className="text-slate-400">PLUME / AIR SENSOR</div>
+                <div className={preMediaReport.plumeReading?.anomalyDetected ? 'text-red-300 font-bold' : 'text-emerald-300 font-bold'}>
+                  {preMediaReport.plumeReading
+                    ? `${preMediaReport.plumeReading.anomalyType === 'NONE' ? 'NOMINAL' : preMediaReport.plumeReading.anomalyType}${preMediaReport.plumeReading.usAqi !== null ? ` (AQI ${preMediaReport.plumeReading.usAqi})` : ''}`
+                    : 'OFFLINE'}
+                </div>
+              </div>
+              <div className="p-1.5 rounded bg-slate-950/90 border border-slate-800">
+                <div className="text-slate-400">SWARM CORROBORATION</div>
+                <div className="text-amber-300 font-bold">
+                  {preMediaReport.corroboration.activeCorroboratedCount} corroborated ({preMediaReport.corroboration.packetsIngested} pkts)
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Status / Vault Save Banner */}

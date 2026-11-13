@@ -227,6 +227,24 @@ export const AVAILABLE_SKILLS: SkillModuleDef[] = [
     recommendedRoom: 'cyber_lab',
     iconName: 'Shield',
   },
+  {
+    id: 'premedia_sigint_plugin',
+    name: 'Pre-Media Dispatch, Scanner & Sensor SIGINT',
+    shortCode: 'PREMEDIA_SIGINT',
+    category: 'research',
+    description:
+      'Real-time pre-media localized threat collection: municipal 911/Fire/EMS CAD feeds, Gemini 3.1 Flash Lite radio scanner triage, ADS-B tactical rotorcraft/squawk radar, atmospheric smoke/chemical plume sensors, and multi-track swarm corroboration.',
+    systemPromptModifier:
+      'Prioritize pre-media telemetry (`osint_local_premedia_sweep`, `osint_scanner_dispatch_triage`, `osint_adsb_airspace_radar`, `query_corroboration_clusters`) over delayed mainstream news. Elevate threat ratings strictly when independent sensor tracks corroborate within <= 75 km.',
+    providedTools: [
+      'osint_local_premedia_sweep',
+      'osint_scanner_dispatch_triage',
+      'osint_adsb_airspace_radar',
+      'query_corroboration_clusters',
+    ],
+    recommendedRoom: 'comms_tower',
+    iconName: 'Radar',
+  },
 ];
 
 const ROOM_BINDINGS_STORAGE_KEY = 'pixelops_room_skill_bindings_v1';
@@ -234,9 +252,9 @@ const STATION_BINDINGS_STORAGE_KEY = 'pixelops_station_skill_bindings_v1';
 
 // Default initial bindings bridging rooms to capabilities
 const DEFAULT_ROOM_BINDINGS: Record<string, string[]> = {
-  comms_tower: ['api_gateway_plugin', 'web_search_plugin', 'osint_spectrum_plugin', 'osint_satellite_plugin'],
-  war_room: ['code_sandbox_plugin', 'api_gateway_plugin', 'osint_hazard_plugin'],
-  server_vault: ['code_sandbox_plugin', 'memory_lookup_plugin', 'osint_maritime_plugin'],
+  comms_tower: ['premedia_sigint_plugin', 'api_gateway_plugin', 'web_search_plugin', 'osint_spectrum_plugin', 'osint_satellite_plugin'],
+  war_room: ['premedia_sigint_plugin', 'code_sandbox_plugin', 'api_gateway_plugin', 'osint_hazard_plugin'],
+  server_vault: ['premedia_sigint_plugin', 'code_sandbox_plugin', 'memory_lookup_plugin', 'osint_maritime_plugin'],
   armory: ['code_sandbox_plugin'],
   briefing_lounge: ['memory_lookup_plugin'],
   library: ['web_search_plugin', 'deep_research'],

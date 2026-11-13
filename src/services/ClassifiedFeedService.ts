@@ -442,26 +442,80 @@ export function parseLocalDispatchRssOrJson(
         ? parsed
         : Array.isArray(parsed?.incidents)
         ? parsed.incidents
+        : Array.isArray(parsed?.calls)
+        ? parsed.calls
         : Array.isArray(parsed?.features)
         ? parsed.features
         : Array.isArray(parsed?.items)
         ? parsed.items
         : [];
-      return list.slice(0, 12).map((item: any, idx: number) => {
+      return list.slice(0, 15).map((item: any, idx: number) => {
         const props = item?.properties || item;
-        const coords = item?.geometry?.coordinates;
-        const lat = Number(props?.lat ?? props?.latitude ?? (Array.isArray(coords) ? coords[1] : defaultLat));
-        const lon = Number(props?.lon ?? props?.lng ?? props?.longitude ?? (Array.isArray(coords) ? coords[0] : defaultLon));
+        const coords = item?.geometry?.coordinates || props?.report_location?.coordinates;
+        const lat = Number(
+          props?.lat ??
+            props?.latitude ??
+            (Array.isArray(coords) ? coords[1] : defaultLat)
+        );
+        const lon = Number(
+          props?.lon ??
+            props?.lng ??
+            props?.longitude ??
+            (Array.isArray(coords) ? coords[0] : defaultLon)
+        );
+        const rawTitle = String(
+          props?.title ||
+            props?.event ||
+            props?.callType ||
+            props?.type ||
+            props?.issue_reported ||
+            props?.headline ||
+            props?.talkgroupTag ||
+            'Local CAD Incident'
+        );
+        const rawSummary = String(
+          props?.summary ||
+            props?.transcript ||
+            props?.description ||
+            props?.address ||
+            props?.location ||
+            ''
+        ).slice(0, 320);
+        const inferredHigh = /\b(active shooter|shots fired|hazmat|chemical|evacuation|lockdown|structure fire|working fire|multi-alarm|explosion|medevac|barricaded|swat)\b/i.test(
+          `${rawTitle} ${rawSummary}`
+        );
         return {
-          id: String(props?.id || props?.callId || item?.id || `cad-${idx}-${Date.now()}`),
-          sourceType: sourceUrl.toLowerCase().includes('pulsepoint') ? 'pulsepoint' : 'county_cad',
+          id: String(
+            props?.id ||
+              props?.incident_number ||
+              props?.traffic_report_id ||
+              props?.callId ||
+              props?._id ||
+              item?.id ||
+              `cad-${idx}-${rawTitle.slice(0, 16).replace(/\W+/g, '_')}`
+          ),
+          sourceType: sourceUrl.toLowerCase().includes('pulsepoint')
+            ? 'pulsepoint'
+            : sourceUrl.toLowerCase().includes('openmhz')
+            ? 'openmhz_scanner'
+            : 'county_cad',
           sourceUrl,
-          title: String(props?.title || props?.event || props?.callType || props?.headline || 'Local CAD Incident'),
-          severity: String(props?.severity || props?.priority || 'MED').toUpperCase(),
-          summary: String(props?.summary || props?.description || props?.address || props?.location || '').slice(0, 320),
+          title: rawTitle,
+          severity: inferredHigh
+            ? 'HIGH'
+            : String(props?.severity || props?.priority || 'MED').toUpperCase(),
+          summary: rawSummary,
           lat: Number.isFinite(lat) ? lat : defaultLat,
           lon: Number.isFinite(lon) ? lon : defaultLon,
-          timestamp: String(props?.timestamp || props?.receivedAt || props?.sent || new Date().toISOString()),
+          timestamp: String(
+            props?.timestamp ||
+              props?.datetime ||
+              props?.published_date ||
+              props?.time ||
+              props?.receivedAt ||
+              props?.sent ||
+              new Date().toISOString()
+          ),
         };
       });
     } catch {

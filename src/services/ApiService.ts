@@ -69,6 +69,17 @@ import {
   queryGitHubCodeLeaks,
 } from './OsintToolsService';
 import {
+  runPreMediaLocalizedThreatSweep,
+  queryGeofencedAdsbAirspace,
+  getOperativePreMediaSystemPrompt,
+  buildLivePreMediaAgentContext,
+} from './PreMediaSignalService';
+import { analyzeDispatchSignal } from './DispatchTriageService';
+import {
+  getCorroborationStatusSummary,
+  getClusterWithPackets,
+} from './CorroborationEngine';
+import {
   isReportDirective,
   shouldAutoGenerateReport,
   extractReportFilePath,
@@ -668,6 +679,106 @@ export const GEMINI_TOOL_DECLARATIONS: Record<string, GeminiFunctionDeclarationS
       required: [],
     },
   },
+  osint_local_premedia_sweep: {
+    name: 'osint_local_premedia_sweep',
+    description:
+      'Execute an intelligence-grade, geofenced Pre-Media Signal Sweep across Municipal 911/Fire/EMS CAD dispatches, NWS CAP emergency polygons, overhead ADS-B tactical/medevac transponders, Open-Meteo smoke/chemical plume sensors, and USGS/NASA micro-seismic & thermal sensors—detecting and corroborating active local incidents BEFORE mainstream news.',
+    parameters: {
+      type: 'OBJECT',
+      description: 'Geofenced pre-media telemetry sweep parameters',
+      properties: {
+        lat: {
+          type: 'NUMBER',
+          description: 'Optional center latitude (defaults to active operator geofence latitude).',
+        },
+        lon: {
+          type: 'NUMBER',
+          description: 'Optional center longitude (defaults to active operator geofence longitude).',
+        },
+        radiusKm: {
+          type: 'NUMBER',
+          description: 'Optional operational radius in kilometers (1–500, defaults to active geofence radius).',
+        },
+        scannerTranscript: {
+          type: 'STRING',
+          description: 'Optional live radio scanner or municipal CAD dispatch transcript excerpt to triage alongside sensor feeds.',
+        },
+      },
+      required: [],
+    },
+  },
+  osint_scanner_dispatch_triage: {
+    name: 'osint_scanner_dispatch_triage',
+    description:
+      'Run structured real-time triage on a municipal police/fire/EMS radio scanner or 911 CAD dispatch transcript (Broadcastify, OpenMHz, PulsePoint, County Sheriff CAD) to detect active violent threats, perimeter lockdowns, evacuations, or HAZMAT releases and ingest verified alerts into the CorroborationEngine.',
+    parameters: {
+      type: 'OBJECT',
+      description: 'Scanner or CAD dispatch triage parameters',
+      properties: {
+        transcript: {
+          type: 'STRING',
+          description: 'Raw municipal radio scanner transcript or 911 CAD incident dispatch log text.',
+        },
+        lat: {
+          type: 'NUMBER',
+          description: 'Optional incident latitude (defaults to active operator geofence latitude).',
+        },
+        lon: {
+          type: 'NUMBER',
+          description: 'Optional incident longitude (defaults to active operator geofence longitude).',
+        },
+        sourceLabel: {
+          type: 'STRING',
+          description: 'Optional feed identifier (e.g., "OPENMHZ_METRO_FIRE", "COUNTY_SHERIFF_CAD").',
+        },
+      },
+      required: ['transcript'],
+    },
+  },
+  osint_adsb_airspace_radar: {
+    name: 'osint_adsb_airspace_radar',
+    description:
+      'Query real-time geofenced ADS-B aircraft transponders overhead to detect emergency squawks (7700/7600/7500), orbiting police/medevac/fire rotorcraft, and low-altitude military/ISR loitering over active incident zones.',
+    parameters: {
+      type: 'OBJECT',
+      description: 'Geofenced ADS-B transponder radar parameters',
+      properties: {
+        lat: {
+          type: 'NUMBER',
+          description: 'Optional center latitude (defaults to active operator geofence latitude).',
+        },
+        lon: {
+          type: 'NUMBER',
+          description: 'Optional center longitude (defaults to active operator geofence longitude).',
+        },
+        radiusKm: {
+          type: 'NUMBER',
+          description: 'Optional airspace sweep radius in kilometers (defaults to active geofence radius).',
+        },
+      },
+      required: [],
+    },
+  },
+  query_corroboration_clusters: {
+    name: 'query_corroboration_clusters',
+    description:
+      'Inspect multi-source threat clusters and immutable SHA-256 evidence packets in the IndexedDB CorroborationEngine (CANDIDATE <= 0.35, CORROBORATED >= 0.70, CRITICAL_CONVERGENCE >= 0.90) to verify cross-track agreement before issuing threat alerts.',
+    parameters: {
+      type: 'OBJECT',
+      description: 'Corroboration cluster inspection parameters',
+      properties: {
+        clusterId: {
+          type: 'STRING',
+          description: 'Optional specific clusterId to retrieve full underlying raw evidence packets and provenance hashes.',
+        },
+        statusFilter: {
+          type: 'STRING',
+          description: 'Optional status filter: CANDIDATE, CORROBORATED, or CRITICAL_CONVERGENCE.',
+        },
+      },
+      required: [],
+    },
+  },
 };
 
 /**
@@ -697,6 +808,10 @@ export function buildDynamicToolDeclarations(
     GEMINI_TOOL_DECLARATIONS.osint_virustotal_threat_check,
     GEMINI_TOOL_DECLARATIONS.osint_code_leak_audit,
     GEMINI_TOOL_DECLARATIONS.query_evidence_graph,
+    GEMINI_TOOL_DECLARATIONS.osint_local_premedia_sweep,
+    GEMINI_TOOL_DECLARATIONS.osint_scanner_dispatch_triage,
+    GEMINI_TOOL_DECLARATIONS.osint_adsb_airspace_radar,
+    GEMINI_TOOL_DECLARATIONS.query_corroboration_clusters,
   ];
 
   const pluginMap: Record<string, GeminiFunctionDeclarationSchema[]> = {
@@ -710,7 +825,23 @@ export function buildDynamicToolDeclarations(
     github: [GEMINI_TOOL_DECLARATIONS.github_create_issue, GEMINI_TOOL_DECLARATIONS.github_list_issues, GEMINI_TOOL_DECLARATIONS.github_get_repository],
     vault: [GEMINI_TOOL_DECLARATIONS.vault_query_intel],
     gmail: [GEMINI_TOOL_DECLARATIONS.gmail_list_messages],
+    premedia_sigint: [
+      GEMINI_TOOL_DECLARATIONS.osint_local_premedia_sweep,
+      GEMINI_TOOL_DECLARATIONS.osint_scanner_dispatch_triage,
+      GEMINI_TOOL_DECLARATIONS.osint_adsb_airspace_radar,
+      GEMINI_TOOL_DECLARATIONS.query_corroboration_clusters,
+    ],
+    premedia_sigint_plugin: [
+      GEMINI_TOOL_DECLARATIONS.osint_local_premedia_sweep,
+      GEMINI_TOOL_DECLARATIONS.osint_scanner_dispatch_triage,
+      GEMINI_TOOL_DECLARATIONS.osint_adsb_airspace_radar,
+      GEMINI_TOOL_DECLARATIONS.query_corroboration_clusters,
+    ],
     osint: [
+      GEMINI_TOOL_DECLARATIONS.osint_local_premedia_sweep,
+      GEMINI_TOOL_DECLARATIONS.osint_scanner_dispatch_triage,
+      GEMINI_TOOL_DECLARATIONS.osint_adsb_airspace_radar,
+      GEMINI_TOOL_DECLARATIONS.query_corroboration_clusters,
       GEMINI_TOOL_DECLARATIONS.osint_maritime_tracker,
       GEMINI_TOOL_DECLARATIONS.osint_hazard_tracker,
       GEMINI_TOOL_DECLARATIONS.osint_satellite_recon,
@@ -1108,6 +1239,34 @@ export function resolveToolWorkflowDestination(toolName: string): {
         targetStationId: 'basement_microfiche',
         taskTag: 'LINK BOARD',
       };
+    case 'osint_local_premedia_sweep':
+      return {
+        pluginId: 'premedia_sigint',
+        targetRoom: 'comms_tower',
+        targetStationId: 'comms_dish_console',
+        taskTag: 'PREMEDIA SWEEP',
+      };
+    case 'osint_scanner_dispatch_triage':
+      return {
+        pluginId: 'premedia_sigint',
+        targetRoom: 'comms_tower',
+        targetStationId: 'comms_cipher_rig',
+        taskTag: 'SCANNER TRIAGE',
+      };
+    case 'osint_adsb_airspace_radar':
+      return {
+        pluginId: 'premedia_sigint',
+        targetRoom: 'comms_tower',
+        targetStationId: 'comms_radar_scope',
+        taskTag: 'ADSB RADAR',
+      };
+    case 'query_corroboration_clusters':
+      return {
+        pluginId: 'premedia_sigint',
+        targetRoom: 'war_room',
+        targetStationId: 'war_center_desk',
+        taskTag: 'CORROBORATION',
+      };
     default:
       if (toolName.startsWith('mcp__')) {
         return {
@@ -1498,6 +1657,191 @@ export async function executeFunctionCallHandler(fc: {
         },
       };
     }
+
+    if (name === 'osint_local_premedia_sweep') {
+      const lat = typeof args.lat === 'number' && Number.isFinite(args.lat) ? args.lat : undefined;
+      const lon = typeof args.lon === 'number' && Number.isFinite(args.lon) ? args.lon : undefined;
+      const radiusKm =
+        typeof args.radiusKm === 'number' && Number.isFinite(args.radiusKm) ? args.radiusKm : undefined;
+      const scannerTranscript =
+        typeof args.scannerTranscript === 'string' && args.scannerTranscript.trim()
+          ? args.scannerTranscript.trim()
+          : undefined;
+
+      const report = await runPreMediaLocalizedThreatSweep({
+        lat,
+        lon,
+        radiusKm,
+        scannerTranscript,
+        ingestIntoCorroboration: true,
+      });
+
+      const summary = `Pre-Media Sweep [${report.geofence.label} <= ${report.geofence.radiusKm}km]: CAD=${report.municipalDispatches.length}, ADS-B Tactical=${report.adsbTacticalContacts.length}/${report.adsbTotalAircraft}, Plume=${report.plumeReading?.anomalyDetected ? report.plumeReading.anomalyType : 'NOMINAL'}, Hazards=${report.geoHazardSignals.length}, Corroborated=${report.corroboration.activeCorroboratedCount}`;
+      const payload = {
+        successful: true,
+        ...report,
+      };
+      return {
+        id: fc.id,
+        name,
+        response: payload,
+        executedToolMeta: {
+          pluginId: 'premedia_sigint',
+          toolName: name,
+          args,
+          resultSummary: summary,
+          livePayload: payload,
+          targetRoom: 'comms_tower',
+          targetStationId: 'comms_dish_console',
+        },
+      };
+    }
+
+    if (name === 'osint_scanner_dispatch_triage') {
+      const transcript = String(args.transcript || '').trim();
+      if (!transcript) {
+        return {
+          id: fc.id,
+          name,
+          response: { successful: false, error: 'Missing required "transcript" parameter for dispatch triage.' },
+          executedToolMeta: {
+            pluginId: 'premedia_sigint',
+            toolName: name,
+            args,
+            resultSummary: 'Scanner Dispatch Triage Error: Missing transcript',
+            livePayload: { error: 'Missing transcript' },
+            targetRoom: 'comms_tower',
+            targetStationId: 'comms_cipher_rig',
+          },
+        };
+      }
+      const lat = typeof args.lat === 'number' && Number.isFinite(args.lat) ? args.lat : undefined;
+      const lon = typeof args.lon === 'number' && Number.isFinite(args.lon) ? args.lon : undefined;
+      const sourceLabel = typeof args.sourceLabel === 'string' ? args.sourceLabel.trim() : 'LIVE_SCANNER_INTERCEPT';
+
+      const triage = await analyzeDispatchSignal({
+        transcript,
+        lat,
+        lon,
+        sourceLabel,
+        ingestIntoSwarm: true,
+      });
+
+      const summary = `Scanner Dispatch Triage [${triage.severity}]: ${triage.threatDetected ? triage.type : 'ROUTINE'} — ${triage.summary.slice(0, 90)}`;
+      const payload = {
+        successful: true,
+        ...triage,
+      };
+      return {
+        id: fc.id,
+        name,
+        response: payload,
+        executedToolMeta: {
+          pluginId: 'premedia_sigint',
+          toolName: name,
+          args,
+          resultSummary: summary,
+          livePayload: payload,
+          targetRoom: 'comms_tower',
+          targetStationId: 'comms_cipher_rig',
+        },
+      };
+    }
+
+    if (name === 'osint_adsb_airspace_radar') {
+      const lat = typeof args.lat === 'number' && Number.isFinite(args.lat) ? args.lat : undefined;
+      const lon = typeof args.lon === 'number' && Number.isFinite(args.lon) ? args.lon : undefined;
+      const radiusKm =
+        typeof args.radiusKm === 'number' && Number.isFinite(args.radiusKm) ? args.radiusKm : undefined;
+
+      const adsb = await queryGeofencedAdsbAirspace({ lat, lon, radiusKm });
+      const summary = `ADS-B Airspace Radar: ${adsb.tacticalContacts.length} tactical/emergency airframes out of ${adsb.totalAircraft} overhead contacts`;
+      const payload = {
+        successful: true,
+        ...adsb,
+      };
+      return {
+        id: fc.id,
+        name,
+        response: payload,
+        executedToolMeta: {
+          pluginId: 'premedia_sigint',
+          toolName: name,
+          args,
+          resultSummary: summary,
+          livePayload: payload,
+          targetRoom: 'comms_tower',
+          targetStationId: 'comms_radar_scope',
+        },
+      };
+    }
+
+    if (name === 'query_corroboration_clusters') {
+      const clusterId = typeof args.clusterId === 'string' ? args.clusterId.trim() : '';
+      const statusFilter = typeof args.statusFilter === 'string' ? args.statusFilter.trim().toUpperCase() : '';
+
+      if (clusterId) {
+        const detail = await getClusterWithPackets(clusterId);
+        const payload = detail
+          ? {
+              successful: true,
+              cluster: detail.cluster,
+              packetCount: detail.packets.length,
+              packets: detail.packets.map((p) => ({
+                packetId: p.packetId,
+                sourceTrack: p.sourceTrack,
+                sourceType: p.sourceType,
+                ingestedBy: p.ingestedBy,
+                capturedAt: p.capturedAt,
+                geoAnchor: p.geoAnchor,
+                summaryHeadline: p.summaryHeadline,
+                sourceEndpoint: p.sourceEndpoint,
+              })),
+            }
+          : { successful: false, error: `No corroboration cluster found for clusterId="${clusterId}"` };
+        return {
+          id: fc.id,
+          name,
+          response: payload,
+          executedToolMeta: {
+            pluginId: 'premedia_sigint',
+            toolName: name,
+            args,
+            resultSummary: detail
+              ? `Corroboration Cluster [${detail.cluster.status} | ${detail.cluster.corroborationScore.toFixed(2)}]: ${detail.cluster.title} (${detail.packets.length} packets)`
+              : `Corroboration Cluster Lookup: ${clusterId} not found`,
+            livePayload: payload,
+            targetRoom: 'war_room',
+            targetStationId: 'war_center_desk',
+          },
+        };
+      }
+
+      const statusSnap = await getCorroborationStatusSummary();
+      const clusters = (statusSnap.clusters || []).filter((c) =>
+        statusFilter ? c.status === statusFilter : c.status !== 'DISMISSED'
+      );
+      const payload = {
+        successful: true,
+        totalPackets: statusSnap.totalPackets,
+        statusCounts: statusSnap.statusCounts,
+        clusters: clusters.slice(0, 15),
+      };
+      return {
+        id: fc.id,
+        name,
+        response: payload,
+        executedToolMeta: {
+          pluginId: 'premedia_sigint',
+          toolName: name,
+          args,
+          resultSummary: `Corroboration Engine: ${statusSnap.statusCounts.CRITICAL_CONVERGENCE || 0} CRITICAL, ${statusSnap.statusCounts.CORROBORATED || 0} CORROBORATED, ${statusSnap.statusCounts.CANDIDATE || 0} CANDIDATE (${statusSnap.totalPackets} raw packets)`,
+          livePayload: payload,
+          targetRoom: 'war_room',
+          targetStationId: 'war_center_desk',
+        },
+      };
+    }
     // Debug logging for tool invocations
     console.log(
       `[AGENT EXECUTION ROUTER] Invoking Tool Slug: "${name}" | Destination: [${dest.targetRoom}/${dest.targetStationId}] | Parameters:`,
@@ -1743,8 +2087,22 @@ ${findings || 'No additional telemetry findings attached.'}
 
       let results: Array<{ title: string; snippet: string; extract?: string; url: string }> = [];
 
-      // Operatives have unrestricted access to all sites across the web, especially Google
-      const activeExcludedDomains: string[] = [];
+      // For active localized tactical/emergency incident queries, suppress static encyclopedias and delayed tabloid/entertainment aggregators so primary agency/sensor nodes rank first
+      const isActivePreMediaIncidentQuery =
+        /\b(active shooter|hazmat|evacuation|lockdown|dispatch|scanner|911|plume|explosion|wildfire|emergency|perimeter|shelter in place|chemical leak|derailment|medevac|squawk 7700)\b/i.test(
+          rawQuery
+        );
+      const activeExcludedDomains: string[] = isActivePreMediaIncidentQuery
+        ? [
+            'wikipedia.org',
+            'britannica.com',
+            'fandom.com',
+            'tmz.com',
+            'buzzfeed.com',
+            'people.com',
+            'dailymail.co.uk',
+          ]
+        : [];
 
       // A. Real-Time Financial & Ticker Query Interception via Binance / Coinbase / CoinGecko Oracles
       if (isFinancialOrMarket) {
@@ -2250,8 +2608,8 @@ ${findings || 'No additional telemetry findings attached.'}
         } catch {}
       }
 
-      // 3. Wikipedia Open Search & REST API (Authoritative encyclopedia knowledge fallback)
-      if (results.length < limit && !shouldExcludeEncyclopedia) {
+      // 3. Wikipedia Open Search & REST API (Authoritative encyclopedia knowledge fallback — bypassed on active pre-media tactical incident queries)
+      if (results.length < limit && !shouldExcludeEncyclopedia && !isActivePreMediaIncidentQuery) {
         try {
           const wikiTerm = coreQuery && coreQuery.length > 2 ? coreQuery : cleanQuery;
           const wikiData = await executeSafeOperation(
@@ -6708,13 +7066,17 @@ export async function executeAgentDirective(params: {
         console.warn('[AGENT DISPATCH] Could not augment Spatial MCP tools:', mcpErr);
       }
 
-      // Guarantee core capabilities (live_web_search, fs_storage_manager, code_sandbox_eval, memory_vector_lookup, and OSINT threat toolkit) are always available
+      // Guarantee core capabilities (live_web_search, fs_storage_manager, code_sandbox_eval, memory_vector_lookup, pre-media SIGINT & OSINT threat toolkit) are always available
       const CORE_AGENT_TOOLS = new Set([
         'live_web_search',
         'fs_storage_manager',
         'code_sandbox_eval',
         'memory_vector_lookup',
         'query_evidence_graph',
+        'osint_local_premedia_sweep',
+        'osint_scanner_dispatch_triage',
+        'osint_adsb_airspace_radar',
+        'query_corroboration_clusters',
         'osint_maritime_tracker',
         'osint_hazard_tracker',
         'osint_satellite_recon',
@@ -6784,14 +7146,24 @@ CRITICAL MEMORY RECALL INSTRUCTION:
 - NEVER say you don't have memory or cannot recall past interactions.`
           : '';
 
-      // Clean-slate system instruction: Purged of all restrictive protocols, conflicting rules, and bloated constraints
+      // Intelligence-grade Pre-Media Signal & Localized Threat Assessment persona + operator overrides
       const customAgentPrompt = (params.agentSystemPrompt || '').trim();
       let systemInstruction = customAgentPrompt
         ? customAgentPrompt
-        : `You are ${params.activeAgentName || 'Agent'}, an AI assistant. Help the user complete their directives and tasks directly, clearly, and effectively using your available tools.`;
+        : getOperativePreMediaSystemPrompt(
+            params.activeAgentName || 'Agent',
+            params.activeAgentRole
+          );
+
+      try {
+        const preMediaContext = await buildLivePreMediaAgentContext();
+        if (preMediaContext) {
+          systemInstruction += `\n\n${preMediaContext}`;
+        }
+      } catch {}
 
       if (declaredToolNames) {
-        systemInstruction += `\n\n### Available Tools & Integrations:\n${declaredToolNames}\nWhen executing external or connected tool operations (e.g. GitHub, Slack, Gmail, Google Calendar, Notion, Linear, web search, code sandbox, file storage), you can invoke them directly or emit a structured action tag in your response:\n[AGENT_ACTION: <tool_name>] { "param": "value" } [/AGENT_ACTION]\n\n### Workspace File System Operations (fs_storage_manager):\nYou have full read/write/edit/delete/organize/audit/consolidate power over the local workspace files in IndexedDB:\n- "write" / "create": Save or upload markdown reports, briefs, configs, or dossiers.\n- "read": Inspect existing file content by path.\n- "edit" / "append": Update or add to existing workspace files.\n- "delete": Permanently remove obsolete files or test artifacts.\n- "organize": Move files into folders (e.g. "reports", "intel", "archive", "logs").\n- "audit": Inspect the entire workspace for integrity, size, stale items, and duplicate content.\n- "consolidate": Merge multiple related files into a single unified dossier without duplicating intel, and delete the superseded source files so only the new unified master dossier remains.\n- "list": Inspect all workspace files.\n\n### Critical Consolidation Rule:\nWhen the user asks to consolidate, combine, or merge files, or says "gather all intel from similar files into one and delete the old ones":\n1. ALWAYS read and combine all content from the source files into a single authoritative master dossier.\n2. ALWAYS delete the superseded individual source files from the workspace.\n3. NEVER simply write a message saying you did it—actually invoke fs_storage_manager action "consolidate" with deleteSources: true!\n\n### Report Writing & Non-Redundancy Standards:\nWhen compiling multi-part reports or executing investigative workflows:\n- Write crisp, distinct intelligence without repeating identical findings, preambles, or citations in part 1 and part 2.\n- Always synthesize and consolidate field signals into clear, actionable sections (Executive Summary, Findings, Telemetry Matrix, Recommendations).\n- STRICT ZERO-REPETITION MANDATE: Never repeat or copy-paste text between Section 1 (Executive Summary) and Section 2 (Tactical Findings). Section 1 is strictly for the high-level BLUF, while Section 2 provides distinct, granular technical metrics, anomaly tables, and tactical breakdown.\n- Ensure topic tags accurately reflect the subject (e.g. FININT/MARKET_RECON for financial markets, CYBER_SEC for vulnerabilities, GEO_HAZARDS for earthquakes/tsunamis).\n\n### Calendar Tool Parameter Rules:\nWhen invoking composio_googlecalendar_create_event or scheduling calendar events, strictly enforce clean JSON parameters:\n- Required keys: "summary", "start_time", "end_time", "time_zone".\n- Datetime format: ISO 8601 local wall-clock string without trailing Z offset (e.g. "2026-11-09T16:21:19").\n- Summary: Clean title only without conversational filler, prefix narratives, or debug blocks.\n\n### Specialized OSINT & Adversarial Tool Capabilities:\nYou have native access to professional-grade OSINT and threat intelligence tools:\n- "osint_shodan_host_lookup": Query open ports, exposed services, SSL certificates, OS banners, and CVE vulnerabilities for target IPs.\n- "osint_crtsh_subdomain_discovery": Query Certificate Transparency logs to discover subdomains, internal staging environments, and wildcard certificates for target domains.\n- "osint_bgp_route_lookup": Query BGPView and RIR registries for Autonomous System Numbers (ASNs), routing prefixes, and network topology.\n- "osint_ip_reputation_audit": Cross-examine AbuseIPDB and IPinfo for malicious confidence scores, brute-force history, geolocation, and ISP classification.\n- "osint_virustotal_threat_check": Query VirusTotal & AlienVault OTX for malware consensus, threat tags, and OTX threat Pulses.\n- "osint_code_leak_audit": Search public repositories for leaked API secrets, hardcoded credentials, and exposed .env files.`;
+        systemInstruction += `\n\n### Available Tools & Integrations:\n${declaredToolNames}\nWhen executing external or connected tool operations (e.g. GitHub, Slack, Gmail, Google Calendar, Notion, Linear, web search, code sandbox, file storage), you can invoke them directly or emit a structured action tag in your response:\n[AGENT_ACTION: <tool_name>] { "param": "value" } [/AGENT_ACTION]\n\n### Workspace File System Operations (fs_storage_manager):\nYou have full read/write/edit/delete/organize/audit/consolidate power over the local workspace files in IndexedDB:\n- "write" / "create": Save or upload markdown reports, briefs, configs, or dossiers.\n- "read": Inspect existing file content by path.\n- "edit" / "append": Update or add to existing workspace files.\n- "delete": Permanently remove obsolete files or test artifacts.\n- "organize": Move files into folders (e.g. "reports", "intel", "archive", "logs").\n- "audit": Inspect the entire workspace for integrity, size, stale items, and duplicate content.\n- "consolidate": Merge multiple related files into a single unified dossier without duplicating intel, and delete the superseded source files so only the new unified master dossier remains.\n- "list": Inspect all workspace files.\n\n### Critical Consolidation Rule:\nWhen the user asks to consolidate, combine, or merge files, or says "gather all intel from similar files into one and delete the old ones":\n1. ALWAYS read and combine all content from the source files into a single authoritative master dossier.\n2. ALWAYS delete the superseded individual source files from the workspace.\n3. NEVER simply write a message saying you did it—actually invoke fs_storage_manager action "consolidate" with deleteSources: true!\n\n### Report Writing & Non-Redundancy Standards:\nWhen compiling multi-part reports or executing investigative workflows:\n- Write crisp, distinct intelligence without repeating identical findings, preambles, or citations in part 1 and part 2.\n- Always synthesize and consolidate field signals into clear, actionable sections (Executive Summary, Findings, Telemetry Matrix, Recommendations).\n- STRICT ZERO-REPETITION MANDATE: Never repeat or copy-paste text between Section 1 (Executive Summary) and Section 2 (Tactical Findings). Section 1 is strictly for the high-level BLUF, while Section 2 provides distinct, granular technical metrics, anomaly tables, and tactical breakdown.\n- Ensure topic tags accurately reflect the subject (e.g. FININT/MARKET_RECON for financial markets, CYBER_SEC for vulnerabilities, GEO_HAZARDS for earthquakes/tsunamis).\n\n### Calendar Tool Parameter Rules:\nWhen invoking composio_googlecalendar_create_event or scheduling calendar events, strictly enforce clean JSON parameters:\n- Required keys: "summary", "start_time", "end_time", "time_zone".\n- Datetime format: ISO 8601 local wall-clock string without trailing Z offset (e.g. "2026-11-09T16:21:19").\n- Summary: Clean title only without conversational filler, prefix narratives, or debug blocks.\n\n### Pre-Media Signal Collection & Localized Threat Assessment Tools:\n- "osint_local_premedia_sweep": Execute a geofenced multi-sensor sweep across Municipal 911/Fire/EMS CAD feeds, NWS CAP emergency polygons, overhead ADS-B tactical/medevac transponders, Open-Meteo smoke/chemical plume sensors, and USGS/NASA micro-seismic & thermal sensors.\n- "osint_scanner_dispatch_triage": Triage raw police/fire/EMS scanner or 911 CAD dispatch transcripts via Gemini 3.1 Flash Lite and ingest verified alerts into the CorroborationEngine.\n- "osint_adsb_airspace_radar": Sweep overhead ADS-B transponders for 7700/7600/7500 emergency squawks, orbiting medevac/police rotorcraft, and low-altitude ISR assets.\n- "query_corroboration_clusters": Inspect multi-source threat clusters (CANDIDATE <= 0.35, CORROBORATED >= 0.70, CRITICAL_CONVERGENCE >= 0.90) and cite SHA-256 packetIds.\n\n### Specialized OSINT & Adversarial Tool Capabilities:\nYou have native access to professional-grade OSINT and threat intelligence tools:\n- "osint_shodan_host_lookup": Query open ports, exposed services, SSL certificates, OS banners, and CVE vulnerabilities for target IPs.\n- "osint_crtsh_subdomain_discovery": Query Certificate Transparency logs to discover subdomains, internal staging environments, and wildcard certificates for target domains.\n- "osint_bgp_route_lookup": Query BGPView and RIR registries for Autonomous System Numbers (ASNs), routing prefixes, and network topology.\n- "osint_ip_reputation_audit": Cross-examine AbuseIPDB and IPinfo for malicious confidence scores, brute-force history, geolocation, and ISP classification.\n- "osint_virustotal_threat_check": Query VirusTotal & AlienVault OTX for malware consensus, threat tags, and OTX threat Pulses.\n- "osint_code_leak_audit": Search public repositories for leaked API secrets, hardcoded credentials, and exposed .env files.`;
       }
 
       if (memoryContextStr) {

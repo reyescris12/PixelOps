@@ -483,10 +483,10 @@ export async function decomposeObjectiveWithSupervisor(
 Your responsibility is to act as an autonomous task router.
 Decompose the following user high-level command into 2 to 4 sequential, specialized sub-tasks for our safehouse operative team.
 
-Operative Roster:
-- nyx: Cyber & Signal Specialist (Sector: comms_tower or library). Handles: live web searches, financial/crypto APIs, signals intel, wiretaps, notifications.
-- cipher: Cryptographic Recon & Systems Engineer (Sector: server_vault or library). Handles: code sandbox execution, script patching, security auditing, safehouse files, report synthesis.
-- vance: Lead Strategist & Chief of Operations (Sector: war_room). Handles: strategy formulation, executive synthesis, command dossiers, final review.
+Operative Roster (Intelligence-Grade Pre-Media Signal Collection & Threat Assessment):
+- nyx: Pre-Media SIGINT & Recon Specialist (Sector: comms_tower). Handles: municipal 911/Fire/EMS CAD collection, live radio scanner triage (osint_scanner_dispatch_triage), NWS CAP warning polygons, and geofenced sensor sweeps (osint_local_premedia_sweep) BEFORE mainstream news coverage.
+- cipher: Multi-Sensor Corroboration & Infrastructure Forensics Specialist (Sector: server_vault). Handles: cross-referencing dispatch alerts against overhead ADS-B emergency squawks & medevac/police rotorcraft (osint_adsb_airspace_radar), PM2.5/CO/SO2 smoke/chemical plume spikes, DNS/BGP/TLS mutations, and SHA-256 corroboration scoring (query_corroboration_clusters).
+- vance: War Room Watch Commander & Executive Threat Assessor (Sector: war_room). Handles: fusing multi-track corroborated clusters (score >= 0.70), rejecting single-source unverified chatter, stamping provenance-cited BLUF SITREPs, and issuing immediate localized threat alerts.
 
 Output format rule:
 Return ONLY a valid JSON array of objects. Do not include markdown code block backticks, explanatory text, or conversational preambles.

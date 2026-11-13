@@ -20,15 +20,31 @@ const createStore = () => {
   };
 };
 
+const eventListeners = new Map<string, Set<(ev: any) => void>>();
 const g = globalThis as any;
 g.localStorage ??= createStore();
 g.sessionStorage ??= createStore();
 g.window ??= g;
-g.dispatchEvent ??= () => true;
-g.addEventListener ??= () => {};
-g.removeEventListener ??= () => {};
 g.CustomEvent ??= class {
-  constructor(public type: string, public detail?: any) {}
+  constructor(public type: string, public detail?: any) {
+    if (detail && typeof detail === 'object' && 'detail' in detail) {
+      this.detail = detail.detail;
+    }
+  }
+};
+g.addEventListener = (type: string, cb: (ev: any) => void) => {
+  if (!eventListeners.has(type)) eventListeners.set(type, new Set());
+  eventListeners.get(type)!.add(cb);
+};
+g.removeEventListener = (type: string, cb: (ev: any) => void) => {
+  eventListeners.get(type)?.delete(cb);
+};
+g.dispatchEvent = (ev: any) => {
+  const listeners = eventListeners.get(ev?.type);
+  if (listeners) {
+    for (const cb of listeners) cb(ev);
+  }
+  return true;
 };
 
 let failures = 0;
@@ -68,8 +84,15 @@ async function main() {
     'src/services/NightShiftService.ts',
     'src/services/WorkerService.ts',
     'src/services/DispatchTriageService.ts',
+    'src/services/PreMediaSignalService.ts',
+    'src/services/CorroborationEngine.ts',
+    'src/services/ApiService.ts',
+    'src/services/TacticalVoiceService.ts',
+    'src/services/MissionCartridgeService.ts',
+    'src/context/CrewContext.tsx',
     'src/engine/pixelOpsCLI.ts',
     'src/components/ThreatMonitorModal.tsx',
+    'functions/api/osint/premedia-sweep.ts',
   ];
   const extImportRe = /(?:from\s+|import\s*\()\s*['"](\.[^'"]+\.(?:ts|tsx|js|jsx))['"]/g;
   for (const rel of files) {
@@ -165,6 +188,178 @@ async function main() {
 
   const summary = await getCorroborationStatusSummary();
   check(summary.totalPackets > 0 && summary.totalClusters > 0, 'CorroborationEngine registered triaged dispatch cluster');
+
+  console.log('\n=== 5. Pre-Media ADS-B Transponder, Plume Sensor & Socrata/OpenMHz CAD Verification ===');
+  const {
+    classifyAdsbAircraftSignal,
+    evaluateAtmosphericPlumeAnomaly,
+    PRE_MEDIA_COLLECTION_DOCTRINE,
+    getOperativePreMediaSystemPrompt,
+  } = await import('../src/services/PreMediaSignalService');
+  const { ingestPacket } = await import('../src/services/CorroborationEngine');
+  const { FUNCTIONAL_ROLE_PROFILES } = await import('../src/context/CrewContext');
+  const { GEMINI_TOOL_DECLARATIONS, buildDynamicToolDeclarations } = await import('../src/services/ApiService');
+  const { BUILTIN_ARMORY_CARTRIDGES } = await import('../src/services/MissionCartridgeService');
+
+  const nowIso = new Date().toISOString();
+  const sq7700 = classifyAdsbAircraftSignal(
+    { hex: 'A1B2C3', flight: 'N911PD  ', t: 'EC35', lat: 38.901, lon: -77.039, alt_baro: 1200, gs: 55, squawk: '7700' },
+    38.8977,
+    -77.0365,
+    nowIso
+  );
+  check(
+    sq7700?.tacticalFlag === 'EMERGENCY_SQUAWK' && sq7700.severity === 'CRITICAL',
+    'classifyAdsbAircraftSignal flags squawk 7700 as EMERGENCY_SQUAWK [CRITICAL]'
+  );
+
+  const medevac = classifyAdsbAircraftSignal(
+    { hex: 'A99MED', flight: 'LIFE1   ', t: 'EC45', lat: 38.902, lon: -77.038, alt_baro: 1450, gs: 62, squawk: '1200' },
+    38.8977,
+    -77.0365,
+    nowIso
+  );
+  check(
+    medevac?.tacticalFlag === 'MEDEVAC_POLICE_ROTORCRAFT' && medevac.severity === 'HIGH',
+    'classifyAdsbAircraftSignal flags low-altitude orbiting medevac helicopter as MEDEVAC_POLICE_ROTORCRAFT [HIGH]'
+  );
+
+  const airliner = classifyAdsbAircraftSignal(
+    { hex: 'AC8890', flight: 'UAL412  ', t: 'B738', lat: 38.91, lon: -77.05, alt_baro: 34000, gs: 455, squawk: '3421' },
+    38.8977,
+    -77.0365,
+    nowIso
+  );
+  check(
+    airliner?.tacticalFlag === 'ROUTINE_TRAFFIC' && airliner.severity === 'LOW',
+    'classifyAdsbAircraftSignal ignores cruising commercial airliner (ROUTINE_TRAFFIC)'
+  );
+
+  const smokePlume = evaluateAtmosphericPlumeAnomaly({
+    lat: 38.8977,
+    lon: -77.0365,
+    sourceEndpoint: 'https://air-quality-api.open-meteo.com/v1/air-quality',
+    current: { us_aqi: 162, pm2_5: 68.4, pm10: 145, carbon_monoxide: 980, sulphur_dioxide: 12 },
+  });
+  check(
+    smokePlume.anomalyDetected === true &&
+      smokePlume.anomalyType === 'SMOKE_PARTICULATE_SURGE' &&
+      smokePlume.severity === 'HIGH',
+    'evaluateAtmosphericPlumeAnomaly detects hazardous structure/wildfire smoke plume surge'
+  );
+
+  const cleanAir = evaluateAtmosphericPlumeAnomaly({
+    lat: 38.8977,
+    lon: -77.0365,
+    sourceEndpoint: 'https://air-quality-api.open-meteo.com/v1/air-quality',
+    current: { us_aqi: 28, pm2_5: 6.1, pm10: 14, carbon_monoxide: 210, sulphur_dioxide: 2 },
+  });
+  check(cleanAir.anomalyDetected === false && cleanAir.anomalyType === 'NONE', 'Nominal air reading stays quiet');
+
+  const socrata911Sample = JSON.stringify([
+    {
+      incident_number: 'F260099123',
+      type: 'Hazmat Reduced / Chemical Odor Perimeter',
+      address: '800 5th Ave',
+      latitude: '47.6050',
+      longitude: '-122.3308',
+      datetime: '2026-11-13T20:15:00.000Z',
+    },
+  ]);
+  const socrataParsed = parseLocalDispatchRssOrJson(
+    socrata911Sample,
+    'https://data.seattle.gov/resource/kzjm-xkqj.json',
+    47.6062,
+    -122.3321
+  );
+  check(
+    socrataParsed.length === 1 && socrataParsed[0].severity === 'HIGH' && socrataParsed[0].lat === 47.605,
+    'parseLocalDispatchRssOrJson parses municipal Socrata 911 CAD stream with exact coordinates & HIGH priority'
+  );
+
+  console.log('\n=== 6. Multi-Track Pre-Media Corroboration & Real-Time Tactical Threat Alert ===');
+  let capturedAlertDetail: any = null;
+  g.addEventListener('pixelops:tactical-threat-alert', (ev: any) => {
+    capturedAlertDetail = ev.detail;
+  });
+
+  // Track 1 (Nyx - WRITTEN_WIRE): Municipal 911 CAD incident at isolated test sector (Seattle Pier)
+  const cadIngest = await ingestPacket({
+    sourceTrack: 'WRITTEN_WIRE',
+    sourceType: 'local_dispatch',
+    canonicalTargetKey: 'cad-seattle-hazmat-99123',
+    payloadTimestamp: nowIso,
+    sourceEndpoint: 'https://data.seattle.gov/resource/kzjm-xkqj.json',
+    ingestedBy: 'nyx',
+    ttlSeconds: 900,
+    geoAnchor: { lat: 47.605, lon: -122.3308, radiusKm: 15, precision: 'EXACT' },
+    sectorKey: 'SEATTLE-METRO',
+    summaryHeadline: '[CAD] Hazmat Chemical Release Perimeter at 800 5th Ave',
+    rawPayload: socrataParsed[0],
+  });
+  check(
+    cadIngest.cluster?.status === 'CANDIDATE' && (cadIngest.cluster?.corroborationScore ?? 1) <= 0.35,
+    `Single pre-media track (Nyx CAD) capped at CANDIDATE <= 0.35 (score=${cadIngest.cluster?.corroborationScore})`
+  );
+
+  // Track 2 (Cipher - SIGNALS_INFRA): Orbiting Medevac / Police Rotorcraft on ADS-B 0.8 km away
+  const adsbContact = classifyAdsbAircraftSignal(
+    { hex: 'A44PD1', flight: 'GUARDIAN1', t: 'B407', lat: 47.609, lon: -122.334, alt_baro: 1100, gs: 48, squawk: '1200' },
+    47.605,
+    -122.3308,
+    nowIso
+  )!;
+  const adsbIngest = await ingestPacket({
+    sourceTrack: 'SIGNALS_INFRA',
+    sourceType: 'adsb_airspace',
+    canonicalTargetKey: `adsb:${adsbContact.icaoHex}:${adsbContact.tacticalFlag}`,
+    payloadTimestamp: nowIso,
+    sourceEndpoint: 'https://api.adsb.lol/v2/point/47.6050/-122.3308/15',
+    ingestedBy: 'cipher',
+    ttlSeconds: 300,
+    geoAnchor: { lat: adsbContact.lat, lon: adsbContact.lon, radiusKm: 15, precision: 'EXACT' },
+    sectorKey: 'SEATTLE-METRO',
+    summaryHeadline: `[ADS-B ${adsbContact.tacticalFlag}] ${adsbContact.summary}`,
+    rawPayload: adsbContact,
+  });
+  check(
+    adsbIngest.promotedToCorroborated === true &&
+      adsbIngest.cluster?.status === 'CORROBORATED' &&
+      (adsbIngest.cluster?.corroborationScore ?? 0) >= 0.7,
+    `Converging CAD + ADS-B tracks promoted cluster to CORROBORATED (score=${adsbIngest.cluster?.corroborationScore})`
+  );
+  check(
+    Boolean(capturedAlertDetail && capturedAlertDetail.clusterId === adsbIngest.cluster?.clusterId),
+    'Vance synthesis automatically fired real-time "pixelops:tactical-threat-alert" UI event on corroboration'
+  );
+
+  console.log('\n=== 7. Agent Swarm Pre-Media Configuration & Anti-Delayed-News Doctrine ===');
+  check(
+    PRE_MEDIA_COLLECTION_DOCTRINE.includes('Do NOT rely on delayed mainstream news') &&
+      getOperativePreMediaSystemPrompt('nyx').includes('osint_local_premedia_sweep') &&
+      getOperativePreMediaSystemPrompt('cipher').includes('osint_adsb_airspace_radar') &&
+      getOperativePreMediaSystemPrompt('vance').includes('CORROBORATED'),
+    'Pre-media collection & anti-delayed-news doctrine configured for Nyx, Cipher, and Vance'
+  );
+  check(
+    FUNCTIONAL_ROLE_PROFILES.researcher.recommendedTools.includes('osint_local_premedia_sweep') &&
+      FUNCTIONAL_ROLE_PROFILES.coder.recommendedTools.includes('osint_adsb_airspace_radar') &&
+      FUNCTIONAL_ROLE_PROFILES.general_assistant.recommendedTools.includes('query_corroboration_clusters'),
+    'CrewContext functional role profiles expose pre-media SIGINT & corroboration tools'
+  );
+  const dynamicDecls = buildDynamicToolDeclarations([]).map((d) => d.name);
+  check(
+    Boolean(GEMINI_TOOL_DECLARATIONS.osint_local_premedia_sweep) &&
+      dynamicDecls.includes('osint_local_premedia_sweep') &&
+      dynamicDecls.includes('osint_scanner_dispatch_triage') &&
+      dynamicDecls.includes('osint_adsb_airspace_radar') &&
+      dynamicDecls.includes('query_corroboration_clusters'),
+    'ApiService registers all 4 pre-media signal & corroboration function declarations'
+  );
+  check(
+    BUILTIN_ARMORY_CARTRIDGES.some((c) => c.id === 'cartridge_premedia_local_sigint'),
+    'MissionCartridgeService includes built-in Pre-Media Local SIGINT & Dispatch Overwatch cartridge'
+  );
 
   console.log(failures === 0 ? '\nALL LOCAL SIGNAL INGRESS CHECKS PASSED' : `\n${failures} CHECK(S) FAILED`);
   process.exit(failures === 0 ? 0 : 1);

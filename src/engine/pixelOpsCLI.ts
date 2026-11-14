@@ -1295,10 +1295,161 @@ export async function executeCLICommand(
       };
     }
 
+    if (sub === 'sensors') {
+      const {
+        getSensorAdapterHealthList,
+        getPrimaryNaiZone,
+        resolveNaiJurisdiction,
+        isRadioScannerDisabledForNai,
+        sweepLocalSensorBusNow,
+        UK_WTA_2006_SAFE_MODE_LABEL,
+      } = await import('../services/LocalSensorBus');
+
+      let adapters = getSensorAdapterHealthList();
+      if (adapters.every((a) => a.status === 'IDLE')) {
+        const initialReport = await sweepLocalSensorBusNow();
+        adapters = initialReport.adapterHealth;
+      }
+      const primaryNai = await getPrimaryNaiZone();
+      const resolvedJur = resolveNaiJurisdiction(primaryNai);
+      const scannerLocked = isRadioScannerDisabledForNai(primaryNai);
+
+      const rows = adapters.map((a) => {
+        const badge =
+          a.badgeText ||
+          (a.status === 'OPTIONAL_KEY_MISSING' ? 'FIRMS: KEY OPTIONAL' : a.status);
+        const httpStr = a.httpStatus > 0 ? String(a.httpStatus) : '---';
+        const latStr = a.latencyMs > 0 ? `${a.latencyMs}ms` : '0ms';
+        return `  ${a.adapterId.padEnd(15)} | ${badge.padEnd(21).slice(0, 21)} | HTTP ${httpStr.padEnd(3)} | ${latStr.padStart(7)} | obs=${a.observationCount}`;
+      });
+
+      const lines = [
+        '+------------------------------------------------------------------------------+',
+        '| PIXELOPS LIVE PRE-MEDIA SENSOR BUS // 5-ADAPTER HEALTH MATRIX                |',
+        '+------------------------------------------------------------------------------+',
+        `  ACTIVE NAI   : ${primaryNai.label} @ (${primaryNai.lat.toFixed(4)}, ${primaryNai.lon.toFixed(4)}) r=${primaryNai.radiusKm}km`,
+        `  JURISDICTION : ${resolvedJur} (configured: ${primaryNai.jurisdiction})`,
+        ...(scannerLocked ? [`  LEGAL GUARD  : ${UK_WTA_2006_SAFE_MODE_LABEL}`] : []),
+        '--------------------------------------------------------------------------------',
+        '  ADAPTER         | STATUS / BADGE        | HTTP     | LATENCY | COUNT',
+        '--------------------------------------------------------------------------------',
+        ...rows,
+        '+------------------------------------------------------------------------------+',
+      ];
+
+      return {
+        command: trimmed,
+        output: lines.join('\n'),
+        status: 'ok',
+        timestamp,
+      };
+    }
+
     return {
       command: trimmed,
-      output: 'USAGE: pixelops intel <status | inspect <clusterId> | nominate <clusterId> | selftest>',
+      output: 'USAGE: pixelops intel <status | sensors | inspect <clusterId> | nominate <clusterId> | selftest>',
       status: 'warning',
+      timestamp,
+    };
+  }
+
+  // 15a-2. NAI (Named Area of Interest Geofenced Watch Zone & Immediate Sector Sweep)
+  if (action === 'nai') {
+    const sub = (args[0] || 'status').toLowerCase();
+    const {
+      listNaiZones,
+      getPrimaryNaiZone,
+      setPrimaryNaiZone,
+      sweepLocalSensorBusNow,
+      resolveNaiJurisdiction,
+      isRadioScannerDisabledForNai,
+      UK_WTA_2006_SAFE_MODE_LABEL,
+    } = await import('../services/LocalSensorBus');
+
+    if (sub === 'set') {
+      const lat = Number(args[1]);
+      const lon = Number(args[2]);
+      const radiusArg = args[3] ? Number(String(args[3]).replace(/km$/i, '')) : undefined;
+      if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        return {
+          command: trimmed,
+          output: 'USAGE: pixelops nai set <lat> <lon> [radiusKm]\nExample: pixelops nai set 51.5074 -0.1278 35',
+          status: 'warning',
+          timestamp,
+        };
+      }
+
+      try {
+        const updated = await setPrimaryNaiZone({
+          lat,
+          lon,
+          ...(radiusArg !== undefined && Number.isFinite(radiusArg) ? { radiusKm: radiusArg } : {}),
+        });
+        const sweep = await sweepLocalSensorBusNow();
+        const lines = [
+          '+------------------------------------------------------------------------------+',
+          '| NAI WATCH ZONE LOCKED // IMMEDIATE LIVE SENSOR SWEEP                         |',
+          '+------------------------------------------------------------------------------+',
+          `  NAI ZONE     : ${updated.label} [${updated.id}]`,
+          `  COORDINATES  : ${updated.lat.toFixed(4)}, ${updated.lon.toFixed(4)} (radius=${updated.radiusKm}km)`,
+          `  JURISDICTION : ${sweep.resolvedJurisdiction} (mode=${updated.jurisdiction})`,
+          ...(sweep.scannerHardDisabled
+            ? [`  SAFE MODE    : ${sweep.scannerSafeModeNotice || UK_WTA_2006_SAFE_MODE_LABEL}`]
+            : ['  SCANNER MODE : Permitted (Active Municipal CAD/Triage Available)']),
+          `  SWEEP STATS  : ${sweep.observations.length} observation(s) | ${sweep.materialChangesEmitted} delta(s) | ${sweep.unchangedPollsDropped} unchanged dropped`,
+          '--------------------------------------------------------------------------------',
+          ...sweep.adapterHealth.map((a) => {
+            const badge =
+              a.badgeText ||
+              (a.status === 'OPTIONAL_KEY_MISSING' ? 'FIRMS: KEY OPTIONAL' : a.status);
+            return `  [${a.adapterId.padEnd(14)}] ${badge.padEnd(20)} (${a.latencyMs}ms, obs=${a.observationCount})`;
+          }),
+          ...(sweep.observations.length > 0
+            ? [
+                '--------------------------------------------------------------------------------',
+                '  LIVE OBSERVATIONS (TOP 6):',
+                ...sweep.observations.slice(0, 6).map(
+                  (o) =>
+                    `  - [${o.admiraltyGrade}] [${o.corroborationStatus}] ${o.headline} (${o.distanceKm}km, obs=${o.observationTime})`
+                ),
+              ]
+            : []),
+          '+------------------------------------------------------------------------------+',
+        ];
+        return {
+          command: trimmed,
+          output: lines.join('\n'),
+          status: 'ok',
+          timestamp,
+        };
+      } catch (err: any) {
+        return {
+          command: trimmed,
+          output: `NAI ERROR: ${err?.message || err}`,
+          status: 'error',
+          timestamp,
+        };
+      }
+    }
+
+    const zones = await listNaiZones();
+    const primary = await getPrimaryNaiZone();
+    const lines = [
+      '+------------------------------------------------------------------------------+',
+      `| ACTIVE NAI WATCH ZONES (${zones.length})                                                  |`,
+      '+------------------------------------------------------------------------------+',
+      ...zones.map((z) => {
+        const jur = resolveNaiJurisdiction(z);
+        const lock = isRadioScannerDisabledForNai(z) ? ` [${UK_WTA_2006_SAFE_MODE_LABEL}]` : '';
+        return `  ${z.isPrimary ? '★' : '○'} ${z.label} @ (${z.lat.toFixed(4)}, ${z.lon.toFixed(4)}) r=${z.radiusKm}km [${jur}]${lock}`;
+      }),
+      `  PRIMARY ID: ${primary.id}`,
+      '+------------------------------------------------------------------------------+',
+    ];
+    return {
+      command: trimmed,
+      output: lines.join('\n'),
+      status: 'ok',
       timestamp,
     };
   }
@@ -1567,9 +1718,11 @@ export async function executeCLICommand(
       '  pixelops skills                    List available capability plugins & bindings',
       '  pixelops bind <room> <skill>       Mount a capability to a sector',
       '  pixelops intel status              Show watcher tracks, IndexedDB packet & cluster counts',
+      '  pixelops intel sensors             Print live health, latency & count for all 5 sensor adapters',
       '  pixelops intel inspect <id>        Print full SHA-256 provenance chain for a cluster',
       '  pixelops intel nominate <id>       Approve & commit human effector nomination gate to ledger',
       '  pixelops intel selftest            Run deterministic 2-track corroboration self-test',
+      '  pixelops nai set <lat> <lon> [km]  Lock active NAI watch zone & run immediate sensor sweep',
       '  pixelops recon local [--radius km] Query bounded NWS/USGS alerts inside local geofence',
       '  pixelops recon premedia            Run full pre-media CAD + ADS-B + Plume + Hazard sweep',
       '  pixelops recon adsb [--radius km]  Sweep overhead ADS-B emergency/medevac transponders',

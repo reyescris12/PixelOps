@@ -1009,19 +1009,9 @@ export function buildAgentISWContext(articles: ISWArticle[]): string {
 }
 
 /**
- * Initializes automated headless ISW research ingestion on startup and periodic interval
+ * Automatic startup ISW HTML scraping is intentionally disabled (Slice 2 Pre-Media Directive).
+ * ISW briefings remain strictly on-demand via explicit CLI / tool / playbook invocation.
  */
 export function initISWFeedIngestion(): void {
-  if (hasISWInitialized || typeof window === 'undefined') return;
   hasISWInitialized = true;
-
-  setTimeout(() => {
-    ingestISWResearchHeadless().catch((err) => {
-      console.warn('[ISW INGEST] Startup ingestion failed silently:', err);
-    });
-  }, 2000);
-
-  setInterval(() => {
-    ingestISWResearchHeadless().catch(() => {});
-  }, 45 * 60 * 1000);
 }

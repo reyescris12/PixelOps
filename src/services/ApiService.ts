@@ -5791,26 +5791,28 @@ export async function generateLocalHeuristicCard(params: {
       }
     } catch {}
 
-    // Cross-reference Institute for the Study of War (ISW) research dossiers (understandingwar.org/research/)
+    // On-demand only: Cross-reference ISW dossiers ONLY when explicitly requested in the directive
     let iswResearchNote = '';
-    try {
-      const iswHits = await retrieveRelevantISWBriefings(rawPrompt, 2);
-      if (iswHits.length > 0) {
-        iswResearchNote = iswHits
-          .map((h, i) => {
-            const cleanExcerpt = h.content
-              .replace(/^(?:#\s+[^\n]+\n+)?(?:\*\*[^*\n]+:\*\*[^\n]*\n+)+(?:---\n+)?/, '')
-              .trim()
-              .slice(0, 1400);
-            const takeawaysBlock =
-              h.keyTakeaways && h.keyTakeaways.length > 0
-                ? `\n- **Key Takeaways:**\n${h.keyTakeaways.slice(0, 4).map((t) => `  - ${t}`).join('\n')}`
-                : '';
-            return `### ISW Conflict Research [${i + 1}]: ${h.title}\n- **Source:** ${h.url}\n- **Strategic Theater:** ${h.theater.toUpperCase()} (${h.coordinates.lat.toFixed(4)}, ${h.coordinates.lon.toFixed(4)})\n- **Summary:** ${h.summary}${takeawaysBlock}\n- **Operational Excerpt:**\n${cleanExcerpt}`;
-          })
-          .join('\n\n');
-      }
-    } catch {}
+    if (/\b(isw|understandingwar|study of war|campaign assessment)\b/i.test(rawPrompt)) {
+      try {
+        const iswHits = await retrieveRelevantISWBriefings(rawPrompt, 2);
+        if (iswHits.length > 0) {
+          iswResearchNote = iswHits
+            .map((h, i) => {
+              const cleanExcerpt = h.content
+                .replace(/^(?:#\s+[^\n]+\n+)?(?:\*\*[^*\n]+:\*\*[^\n]*\n+)+(?:---\n+)?/, '')
+                .trim()
+                .slice(0, 1400);
+              const takeawaysBlock =
+                h.keyTakeaways && h.keyTakeaways.length > 0
+                  ? `\n- **Key Takeaways:**\n${h.keyTakeaways.slice(0, 4).map((t) => `  - ${t}`).join('\n')}`
+                  : '';
+              return `### ISW Conflict Research [${i + 1}]: ${h.title}\n- **Source:** ${h.url}\n- **Strategic Theater:** ${h.theater.toUpperCase()} (${h.coordinates.lat.toFixed(4)}, ${h.coordinates.lon.toFixed(4)})\n- **Summary:** ${h.summary}${takeawaysBlock}\n- **Operational Excerpt:**\n${cleanExcerpt}`;
+            })
+            .join('\n\n');
+        }
+      } catch {}
+    }
 
     const combinedPrecedingIntel = [liveTelemetryNote, iswResearchNote].filter(Boolean).join('\n\n');
 
@@ -7200,15 +7202,17 @@ CRITICAL MEMORY RECALL INSTRUCTION:
         systemInstruction += `\n${classifiedContextStr}`;
       }
 
-      // Autonomous ISW (Institute for the Study of War) Research Ingestion & Correlation (/intel/sources/isw_research/)
+      // On-demand ISW Correlation: Only invoke when operator explicitly asks for ISW briefings
       let iswContextStr = '';
-      try {
-        const relevantISW = await retrieveRelevantISWBriefings(params.prompt, 3);
-        if (relevantISW.length > 0) {
-          iswContextStr = buildAgentISWContext(relevantISW);
+      if (/\b(isw|understandingwar|study of war|campaign assessment)\b/i.test(params.prompt || '')) {
+        try {
+          const relevantISW = await retrieveRelevantISWBriefings(params.prompt, 3);
+          if (relevantISW.length > 0) {
+            iswContextStr = buildAgentISWContext(relevantISW);
+          }
+        } catch (iswErr) {
+          console.warn('[ISW INTEL ROUTER] Error evaluating ISW research dossiers:', iswErr);
         }
-      } catch (iswErr) {
-        console.warn('[ISW INTEL ROUTER] Error evaluating ISW research dossiers:', iswErr);
       }
 
       if (iswContextStr) {
@@ -7618,7 +7622,6 @@ CRITICAL MEMORY RECALL INSTRUCTION:
                     'Content-Type': 'application/json',
                     'x-api-key': targetApiKey,
                     'anthropic-version': '2023-06-01',
-                    'anthropic-dangerous-direct-browser-access': 'true',
                   },
                   body: JSON.stringify({
                     model: targetModel,
@@ -7682,7 +7685,6 @@ CRITICAL MEMORY RECALL INSTRUCTION:
                         'Content-Type': 'application/json',
                         'x-api-key': targetApiKey,
                         'anthropic-version': '2023-06-01',
-                        'anthropic-dangerous-direct-browser-access': 'true',
                       },
                       body: JSON.stringify({
                         model: targetModel,

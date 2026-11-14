@@ -288,7 +288,6 @@ export class ModelGateway {
         'Content-Type': 'application/json',
         'x-api-key': apiKey,
         'anthropic-version': '2023-06-01',
-        'anthropic-dangerous-direct-browser-access': 'true', // Required for client-side PWAs
       },
       body: JSON.stringify({
         model: targetModel,

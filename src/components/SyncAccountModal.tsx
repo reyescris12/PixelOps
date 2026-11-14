@@ -57,6 +57,7 @@ import {
   SyncStats,
 } from '../services/SyncService';
 import { useTheme } from '../context/ThemeContext';
+import { TierGate, useSubscriptionTier } from './TierGate';
 
 interface SyncAccountModalProps {
   isOpen: boolean;
@@ -71,6 +72,7 @@ export const SyncAccountModal: React.FC<SyncAccountModalProps> = ({
   onClose,
 }) => {
   const { playBeep } = useTheme();
+  const activeTier = useSubscriptionTier();
   const [activeTab, setActiveTab] = useState<TabType>('sync');
   const [session, setSession] = useState<AuthSession | null>(getActiveSession());
   const [syncStats, setSyncStats] = useState<SyncStats>(getSyncStats());
@@ -574,8 +576,11 @@ export const SyncAccountModal: React.FC<SyncAccountModalProps> = ({
                   <div className="flex items-center gap-2.5">
                     <div className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse" />
                     <div>
-                      <p className="text-xs font-semibold text-emerald-300">
-                        Active Uplink: {session.user.callsign}
+                      <p className="text-xs font-semibold text-emerald-300 flex items-center gap-2">
+                        <span>Active Uplink: {session.user.callsign}</span>
+                        <span className="px-1.5 py-0.5 text-[9px] uppercase border border-emerald-500/40 bg-emerald-950/70 text-emerald-200">
+                          TIER: {activeTier}
+                        </span>
                       </p>
                       <p className="text-[10px] text-zinc-400">
                         Device: {session.device.deviceName} ({session.device.deviceType})
@@ -607,18 +612,23 @@ export const SyncAccountModal: React.FC<SyncAccountModalProps> = ({
                       Merges Dexie IndexedDB dossiers, Night Shift cron schedules, and agent reflexes.
                     </p>
                   </div>
-                  <button
-                    onClick={handleManualSync}
-                    disabled={isSyncing}
-                    className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-bold text-xs shadow-lg transition-all cursor-pointer ${
-                      isSyncing
-                        ? 'bg-zinc-800 text-zinc-400 cursor-not-allowed'
-                        : 'bg-emerald-500 hover:bg-emerald-400 text-zinc-950 hover:shadow-emerald-500/25 active:scale-95'
-                    }`}
+                  <TierGate
+                    min="pro"
+                    featureName="Cross-Device E2EE Cloudflare D1 State Sync"
                   >
-                    <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
-                    <span>{isSyncing ? 'SYNCING...' : '⚡ SYNC NOW'}</span>
-                  </button>
+                    <button
+                      onClick={handleManualSync}
+                      disabled={isSyncing}
+                      className={`flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg font-bold text-xs shadow-lg transition-all cursor-pointer ${
+                        isSyncing
+                          ? 'bg-zinc-800 text-zinc-400 cursor-not-allowed'
+                          : 'bg-emerald-500 hover:bg-emerald-400 text-zinc-950 hover:shadow-emerald-500/25 active:scale-95'
+                      }`}
+                    >
+                      <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
+                      <span>{isSyncing ? 'SYNCING...' : '⚡ SYNC NOW'}</span>
+                    </button>
+                  </TierGate>
                 </div>
 
                 {syncFeedback && (

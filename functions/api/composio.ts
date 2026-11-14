@@ -24,6 +24,43 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'Content-Type, x-composio-api-key, x-entity-id',
 };
 
+export const COMPOSIO_CIRCUIT_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
+
+interface ComposioEdgeCircuitRecord {
+  status: 401 | 429;
+  trippedAt: number;
+  reason: string;
+}
+
+const composioEdgeCircuitMap = new Map<string, ComposioEdgeCircuitRecord>();
+
+export function resetComposioEdgeCircuitBreaker(): void {
+  composioEdgeCircuitMap.clear();
+}
+
+function getEdgeCircuitKey(entityId: string, apiKey: string): string {
+  const keyTail = apiKey ? apiKey.slice(-8) : 'nokey';
+  return `${(entityId || 'anon').trim().toLowerCase()}::${keyTail}`;
+}
+
+function checkEdgeCircuitBreaker(circuitKey: string): ComposioEdgeCircuitRecord | null {
+  const existing = composioEdgeCircuitMap.get(circuitKey);
+  if (!existing) return null;
+  if (Date.now() - existing.trippedAt > COMPOSIO_CIRCUIT_COOLDOWN_MS) {
+    composioEdgeCircuitMap.delete(circuitKey);
+    return null;
+  }
+  return existing;
+}
+
+function tripEdgeCircuitBreaker(circuitKey: string, status: 401 | 429, reason: string): void {
+  composioEdgeCircuitMap.set(circuitKey, {
+    status,
+    trippedAt: Date.now(),
+    reason,
+  });
+}
+
 export const onRequestOptions = async () => {
   return new Response(null, {
     status: 204,
@@ -102,6 +139,31 @@ export const onRequest = async (context: {
       );
     }
 
+    const circuitKey = getEdgeCircuitKey(entityId, apiKey);
+    const activeCircuit = checkEdgeCircuitBreaker(circuitKey);
+    if (activeCircuit) {
+      const retryAfterSec = Math.max(
+        1,
+        Math.ceil((COMPOSIO_CIRCUIT_COOLDOWN_MS - (Date.now() - activeCircuit.trippedAt)) / 1000)
+      );
+      return new Response(
+        JSON.stringify({
+          error: 'COMPOSIO_CIRCUIT_BREAKER_OPEN',
+          circuitOpen: true,
+          message: `Composio upstream returned HTTP ${activeCircuit.status}. Automatic retries halted for 5 minutes (${retryAfterSec}s remaining).`,
+          retryAfterSeconds: retryAfterSec,
+        }),
+        {
+          status: activeCircuit.status,
+          headers: {
+            'Content-Type': 'application/json',
+            'Retry-After': String(retryAfterSec),
+            ...CORS_HEADERS,
+          },
+        }
+      );
+    }
+
     // Build target URL
     let cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
     // Strip leading /api/v2 or /api/v3 if present in endpoint
@@ -122,8 +184,24 @@ export const onRequest = async (context: {
               'Content-Type': 'application/json',
               Accept: 'application/json',
             },
+            signal: AbortSignal.timeout(10000),
           }
         );
+
+        if (connRes.status === 401 || connRes.status === 429) {
+          tripEdgeCircuitBreaker(
+            circuitKey,
+            connRes.status as 401 | 429,
+            `Upstream dynamicTools returned HTTP ${connRes.status}`
+          );
+          return new Response(
+            JSON.stringify({
+              error: 'COMPOSIO_CIRCUIT_BREAKER_OPEN',
+              message: `Composio upstream returned HTTP ${connRes.status}; background retries halted for 5 minutes.`,
+            }),
+            { status: connRes.status, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+          );
+        }
 
         let activeAccounts: any[] = [];
         if (connRes.ok) {
@@ -300,6 +378,14 @@ export const onRequest = async (context: {
     }
 
     const responseData = await composioResponse.text();
+
+    if (composioResponse.status === 401 || composioResponse.status === 429) {
+      tripEdgeCircuitBreaker(
+        circuitKey,
+        composioResponse.status as 401 | 429,
+        `Upstream Composio returned HTTP ${composioResponse.status}`
+      );
+    }
 
     return new Response(responseData, {
       status: composioResponse.status,

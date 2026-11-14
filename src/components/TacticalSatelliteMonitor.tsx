@@ -17,6 +17,13 @@ import {
   clusterToTacticalPin,
   runParallelSpecialistTracks,
 } from '../services/CorroborationEngine';
+import {
+  getActiveSensorObservations,
+  sweepLocalSensorBusNow,
+  getPrimaryNaiZone,
+  getPrimaryNaiZoneSync,
+  type NaiZoneConfig,
+} from '../services/LocalSensorBus';
 
 export type SatelliteFeedLayerId =
   | 'esri_world_imagery'
@@ -588,18 +595,95 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
   const [hasActivePinDossier, setHasActivePinDossier] = useState<boolean>(false);
   const [isSweepingTracks, setIsSweepingTracks] = useState<boolean>(false);
   const [intelligencePins, setIntelligencePins] = useState<TacticalIntelPin[]>([]);
+  const [activeNai, setActiveNai] = useState<NaiZoneConfig | null>(() => getPrimaryNaiZoneSync());
 
-  // Hydrate pins strictly from real CorroborationEngine clusters and archived VFS dossiers (zero placeholder pins)
+  // Hydrate pins strictly from live LocalSensorBus observations, CorroborationEngine clusters, and explicit-coordinate VFS dossiers (zero mock/fabricated anchors)
   const refreshIntelligencePins = useCallback(async () => {
     try {
-      const [bundles, files] = await Promise.all([
+      const [bundles, files, primaryNai] = await Promise.all([
         getCorroborationClustersWithPackets(),
         listWorkspaceFiles('intel'),
+        getPrimaryNaiZone().catch(() => null),
       ]);
+      if (primaryNai) {
+        setActiveNai(primaryNai);
+      }
 
+      const sensorObservations = getActiveSensorObservations();
+      const obsByPacketId = new Map<string, (typeof sensorObservations)[number]>();
+      for (const obs of sensorObservations) {
+        if (obs.packetId) {
+          obsByPacketId.set(obs.packetId, obs);
+        }
+      }
+
+      const coveredPacketIds = new Set<string>();
       const clusterPins: TacticalIntelPin[] = bundles
         .filter((b) => b.cluster.status !== 'DISMISSED')
-        .map((b) => clusterToTacticalPin(b));
+        .map((b) => {
+          const basePin = clusterToTacticalPin(b);
+          const matchedObs = b.cluster.packetIds
+            .map((pid) => obsByPacketId.get(pid))
+            .find(Boolean);
+          for (const pid of b.cluster.packetIds) {
+            coveredPacketIds.add(pid);
+          }
+          if (matchedObs) {
+            return {
+              ...basePin,
+              admiraltyGrade: matchedObs.admiraltyGrade,
+              adapterId: matchedObs.adapterId,
+              observationTime: matchedObs.observationTime,
+              firstIngestedAt: matchedObs.firstIngestedAt,
+              lastMaterialChangeAt: matchedObs.lastMaterialChangeAt,
+              isKineticNonTectonic: matchedObs.isKineticNonTectonic,
+              seismicTypeVerbatim: matchedObs.seismicTypeVerbatim,
+              isLifeSafetyA1: matchedObs.isLifeSafetyA1,
+              spotlightedSummary: matchedObs.spotlightedSummary,
+              corroborationStatus:
+                matchedObs.isLifeSafetyA1 && basePin.corroborationStatus === 'CANDIDATE'
+                  ? 'CORROBORATED'
+                  : basePin.corroborationStatus,
+            };
+          }
+          return basePin;
+        });
+
+      const directSensorPins: TacticalIntelPin[] = sensorObservations
+        .filter((obs) => !obs.packetId || !coveredPacketIds.has(obs.packetId))
+        .map((obs) => ({
+          id: `sensor-obs-${obs.id}`,
+          lat: obs.lat,
+          lon: obs.lon,
+          title: obs.headline,
+          summary: `${obs.headline} • Distance: ${obs.distanceKm} km from NAI`,
+          priority:
+            obs.severity === 'CRITICAL' || obs.severity === 'HIGH'
+              ? 'HIGH'
+              : obs.severity === 'MEDIUM'
+              ? 'MEDIUM'
+              : 'LOW',
+          timestamp: obs.observationTime,
+          capturedAt: obs.firstIngestedAt,
+          expiresAt: new Date(
+            Date.parse(obs.lastMaterialChangeAt || obs.firstIngestedAt) +
+              (obs.adapterId === 'GEOINT_AIR' ? 300_000 : 1_800_000)
+          ).toISOString(),
+          category: obs.adapterId,
+          corroborationScore: obs.corroborationScore,
+          corroborationStatus: obs.corroborationStatus,
+          sourceTracks: obs.sourceTracks,
+          sourceCount: obs.sourceTracks.length,
+          admiraltyGrade: obs.admiraltyGrade,
+          adapterId: obs.adapterId,
+          observationTime: obs.observationTime,
+          firstIngestedAt: obs.firstIngestedAt,
+          lastMaterialChangeAt: obs.lastMaterialChangeAt,
+          isKineticNonTectonic: obs.isKineticNonTectonic,
+          seismicTypeVerbatim: obs.seismicTypeVerbatim,
+          isLifeSafetyA1: obs.isLifeSafetyA1,
+          spotlightedSummary: obs.spotlightedSummary,
+        }));
 
       const getFileName = (f: { path: string }) => (f.path.split('/').pop() || f.path).toLowerCase();
       const getFileTitle = (f: { path: string; content: string }) => {
@@ -623,51 +707,13 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
         })
         .slice(0, 8);
 
-      const fixedAnchors = [
-        { lat: 48.28, lon: 37.18 },
-        { lat: 12.58, lon: 43.33 },
-        { lat: 24.81, lon: 120.96 },
-        { lat: 30.62, lon: 32.32 },
-        { lat: 50.14, lon: 8.72 },
-        { lat: 39.08, lon: -77.44 },
-      ];
-
-      const inferCoordsFromText = (text: string, index: number): { lat: number; lon: number } => {
-        const explicit = parseExplicitLatLon(text);
-        if (explicit) return explicit;
-        const lower = text.toLowerCase();
-        if (lower.includes('pokrovsk') || lower.includes('donbas') || lower.includes('kurakhove') || lower.includes('ukraine') || lower.includes('donetsk') || lower.includes('kharkiv')) {
-          return { lat: 48.2824, lon: 37.1818 };
-        }
-        if (lower.includes('kursk') || lower.includes('belgorod') || lower.includes('moscow') || lower.includes('russia')) {
-          return { lat: 51.7303, lon: 36.1927 };
-        }
-        if (lower.includes('bab al-mandab') || lower.includes('houthi') || lower.includes('yemen') || lower.includes('gulf of aden')) {
-          return { lat: 12.5833, lon: 43.3333 };
-        }
-        if (lower.includes('red sea') || lower.includes('suez') || lower.includes('cairo') || lower.includes('mediterranean')) {
-          return { lat: 30.5852, lon: 32.2654 };
-        }
-        if (lower.includes('hormuz') || lower.includes('persian gulf') || lower.includes('iran') || lower.includes('tehran')) {
-          return { lat: 26.5667, lon: 56.25 };
-        }
-        if (lower.includes('taiwan') || lower.includes('hsinchu') || lower.includes('taipei') || lower.includes('pla') || lower.includes('pacific') || lower.includes('china')) {
-          return { lat: 24.8138, lon: 120.9675 };
-        }
-        if (lower.includes('malacca') || lower.includes('singapore')) {
-          return { lat: 1.3521, lon: 103.8198 };
-        }
-        if (lower.includes('europe') || lower.includes('frankfurt') || lower.includes('germany') || lower.includes('uk') || lower.includes('london') || lower.includes('nato')) {
-          return { lat: 50.1109, lon: 8.6821 };
-        }
-        if (lower.includes('ashburn') || lower.includes('virginia') || lower.includes('pjm') || lower.includes('conus') || lower.includes('united states')) {
-          return { lat: 39.0438, lon: -77.4874 };
-        }
-        return fixedAnchors[index % fixedAnchors.length];
-      };
-
-      const vfsPins: TacticalIntelPin[] = wireFiles.map((file, idx) => {
+      // Zero fabricated anchors: only plot VFS files that contain verifiable explicit coordinates
+      const vfsPins: TacticalIntelPin[] = [];
+      for (const file of wireFiles) {
         const fileTitle = getFileTitle(file);
+        const explicitCoords = parseExplicitLatLon(`${fileTitle}\n${file.content}`);
+        if (!explicitCoords) continue;
+
         const isISW =
           file.path.includes('isw_research') ||
           file.path.includes('isw_') ||
@@ -681,11 +727,11 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
           .trim();
         const summarySnippet =
           cleanBody.slice(0, 180) + (cleanBody.length > 180 ? '...' : '');
-        const coords = inferCoordsFromText(`${fileTitle} ${file.content}`, idx);
-        return {
+
+        vfsPins.push({
           id: `vfs-pin-${file.id ?? file.path}`,
           title: fileTitle || (isISW ? 'ISW Research Assessment' : 'S2 Wire Intelligence Dispatch'),
-          summary: summarySnippet || 'Structured conflict dossier archived in local VFS.',
+          summary: summarySnippet || 'Structured dossier archived in local VFS.',
           priority: 'MEDIUM',
           category: isISW ? 'ISW RESEARCH' : 'S2 WIRE SITREP',
           corroborationScore: 0.35,
@@ -696,14 +742,14 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
             hour: '2-digit',
             minute: '2-digit',
           }),
-          lat: coords.lat,
-          lon: coords.lon,
-        };
-      });
+          lat: explicitCoords.lat,
+          lon: explicitCoords.lon,
+        });
+      }
 
       setIntelligencePins((prev) => {
         const manualTargets = prev.filter((p) => p.id.startsWith('recon-target-'));
-        return [...clusterPins, ...manualTargets, ...vfsPins];
+        return [...clusterPins, ...directSensorPins, ...manualTargets, ...vfsPins];
       });
     } catch {}
   }, []);
@@ -713,10 +759,21 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
     const onRefresh = () => {
       refreshIntelligencePins();
     };
+    const onNaiChanged = (ev: Event) => {
+      const custom = ev as CustomEvent<NaiZoneConfig | undefined>;
+      if (custom?.detail) {
+        setActiveNai(custom.detail);
+      }
+      refreshIntelligencePins();
+    };
     window.addEventListener('pixelops:corroboration-updated', onRefresh);
+    window.addEventListener('pixelops:sensor-bus-updated', onRefresh);
+    window.addEventListener('pixelops:nai-updated', onNaiChanged);
     window.addEventListener('pixelops:workspace_files_changed', onRefresh);
     return () => {
       window.removeEventListener('pixelops:corroboration-updated', onRefresh);
+      window.removeEventListener('pixelops:sensor-bus-updated', onRefresh);
+      window.removeEventListener('pixelops:nai-updated', onNaiChanged);
       window.removeEventListener('pixelops:workspace_files_changed', onRefresh);
     };
   }, [refreshIntelligencePins]);
@@ -725,7 +782,10 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
     if (isSweepingTracks) return;
     setIsSweepingTracks(true);
     try {
-      await runParallelSpecialistTracks();
+      await Promise.allSettled([
+        sweepLocalSensorBusNow(),
+        runParallelSpecialistTracks(),
+      ]);
       await refreshIntelligencePins();
     } finally {
       setIsSweepingTracks(false);
@@ -1015,10 +1075,10 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
             disabled={isSweepingTracks}
             onClick={handleManualSpecialistSweep}
             className="px-2 py-1 text-[10px] font-bold rounded border bg-emerald-950/70 hover:bg-emerald-900 text-emerald-200 border-emerald-500/50 cursor-pointer whitespace-nowrap flex items-center gap-1 disabled:opacity-50"
-            title="Run Parallel Specialist Track Sweep (Nyx + Cipher -> Vance)"
+            title="Sweep Active NAI Pre-Media Sensor Bus + Specialist Corroboration Tracks"
           >
             <RefreshCw className={`w-3 h-3 ${isSweepingTracks ? 'animate-spin' : ''}`} />
-            <span>SWEEP</span>
+            <span>⚡ SWEEP SECTOR NOW</span>
           </button>
 
           <button
@@ -1195,6 +1255,7 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
           <div className="absolute inset-0 z-20">
             <TacticalMapOverlay
               intelligencePins={intelligencePins}
+              activeNai={activeNai}
               centerLat={lat}
               centerLon={lon}
               zoom={effectiveZoom}

@@ -5,6 +5,8 @@
  * with Cloudflare D1 SQL & KV support.
  */
 
+import { ensureD1EntitlementColumns, normalizeTier } from './_entitlements';
+
 interface Env {
   DB?: any;
   SYNC_KV?: any;
@@ -349,6 +351,8 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
         passwordHash,
         recoveryKeyHash: recoveryHash,
         securityClearance: 'COMMANDER',
+        subscription_tier: 'operative' as const,
+        sweeps_remaining: 0,
         composioEntityId: incomingEntityId || undefined,
         composioApiKey: incomingApiKey || undefined,
         createdAt: now,
@@ -360,10 +364,18 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
       const expiresAt = new Date(Date.now() + SESSION_LIFETIME_MS).toISOString();
 
       if (d1) {
-        await d1.prepare(`
-          INSERT INTO users (id, username, email, callsign, password_hash, salt, recovery_key, security_clearance, created_at, last_login_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, 'COMMANDER', ?, ?)
-        `).bind(userId, cleanUser, cleanEmail, operativeCallsign, passwordHash, salt, recoveryHash, now, now).run();
+        try {
+          await d1.prepare(`
+            INSERT INTO users (id, username, email, callsign, password_hash, salt, recovery_key, security_clearance, subscription_tier, sweeps_remaining, created_at, last_login_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'COMMANDER', 'operative', 0, ?, ?)
+          `).bind(userId, cleanUser, cleanEmail, operativeCallsign, passwordHash, salt, recoveryHash, now, now).run();
+        } catch {
+          await ensureD1EntitlementColumns(d1);
+          await d1.prepare(`
+            INSERT INTO users (id, username, email, callsign, password_hash, salt, recovery_key, security_clearance, subscription_tier, sweeps_remaining, created_at, last_login_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'COMMANDER', 'operative', 0, ?, ?)
+          `).bind(userId, cleanUser, cleanEmail, operativeCallsign, passwordHash, salt, recoveryHash, now, now).run();
+        }
 
         await d1.prepare('INSERT INTO sessions (token, user_id, device_id, created_at, expires_at) VALUES (?, ?, ?, ?, ?)').bind(token, userId, device?.deviceId || null, now, expiresAt).run();
 
@@ -442,6 +454,8 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
           email: userRecord.email,
           callsign: userRecord.callsign,
           securityClearance: userRecord.securityClearance,
+          subscription_tier: userRecord.subscription_tier,
+          sweeps_remaining: userRecord.sweeps_remaining,
           composioEntityId: incomingEntityId || undefined,
           composioApiKey: incomingApiKey || undefined,
           createdAt: now,
@@ -453,6 +467,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
 
       return new Response(JSON.stringify({
         ok: true,
+        user: session.user,
         session,
         composioEntityId: incomingEntityId || null,
         composioApiKey: incomingApiKey || null,
@@ -489,11 +504,20 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
       let userRecord: any = null;
 
       if (d1) {
-        userRecord = await d1.prepare(`
-          SELECT id, username, email, callsign, password_hash as passwordHash, salt, recovery_key as recoveryKeyHash, security_clearance as securityClearance, created_at as createdAt, last_login_at as lastLoginAt
-          FROM users
-          WHERE username = ? OR email = ? OR callsign = ?
-        `).bind(cleanQuery, cleanQuery, cleanQuery).first();
+        try {
+          userRecord = await d1.prepare(`
+            SELECT id, username, email, callsign, password_hash as passwordHash, salt, recovery_key as recoveryKeyHash, security_clearance as securityClearance, subscription_tier, sweeps_remaining, created_at as createdAt, last_login_at as lastLoginAt
+            FROM users
+            WHERE username = ? OR email = ? OR callsign = ?
+          `).bind(cleanQuery, cleanQuery, cleanQuery).first();
+        } catch {
+          await ensureD1EntitlementColumns(d1);
+          userRecord = await d1.prepare(`
+            SELECT id, username, email, callsign, password_hash as passwordHash, salt, recovery_key as recoveryKeyHash, security_clearance as securityClearance, subscription_tier, sweeps_remaining, created_at as createdAt, last_login_at as lastLoginAt
+            FROM users
+            WHERE username = ? OR email = ? OR callsign = ?
+          `).bind(cleanQuery, cleanQuery, cleanQuery).first();
+        }
       }
 
       if (!userRecord && kv) {
@@ -684,6 +708,8 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
       }
 
       // Security: Do NOT expose recoveryKey in persistent session payload
+      const resolvedLoginTier = normalizeTier(userRecord.subscription_tier);
+      const resolvedLoginSweeps = Number(userRecord.sweeps_remaining || 0) || 0;
       const session = {
         token,
         user: {
@@ -692,6 +718,8 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
           email: userRecord.email,
           callsign: userRecord.callsign,
           securityClearance: userRecord.securityClearance || 'COMMANDER',
+          subscription_tier: resolvedLoginTier,
+          sweeps_remaining: resolvedLoginSweeps,
           composioEntityId: userEntityId || undefined,
           composioApiKey: userApiKey || undefined,
           createdAt: userRecord.createdAt,
@@ -703,6 +731,7 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
 
       return new Response(JSON.stringify({
         ok: true,
+        user: session.user,
         session,
         composioEntityId: userEntityId || null,
         composioApiKey: userApiKey || null,
@@ -733,12 +762,23 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
       }
 
       if (d1) {
-        const sessionRow = await d1.prepare(`
-          SELECT s.token, s.expires_at, u.id, u.username, u.email, u.callsign, u.security_clearance, u.created_at, u.last_login_at
-          FROM sessions s
-          JOIN users u ON s.user_id = u.id
-          WHERE s.token = ?
-        `).bind(token).first();
+        let sessionRow: any = null;
+        try {
+          sessionRow = await d1.prepare(`
+            SELECT s.token, s.expires_at, u.id, u.username, u.email, u.callsign, u.security_clearance, u.subscription_tier, u.sweeps_remaining, u.created_at, u.last_login_at
+            FROM sessions s
+            JOIN users u ON s.user_id = u.id
+            WHERE s.token = ?
+          `).bind(token).first();
+        } catch {
+          await ensureD1EntitlementColumns(d1);
+          sessionRow = await d1.prepare(`
+            SELECT s.token, s.expires_at, u.id, u.username, u.email, u.callsign, u.security_clearance, u.subscription_tier, u.sweeps_remaining, u.created_at, u.last_login_at
+            FROM sessions s
+            JOIN users u ON s.user_id = u.id
+            WHERE s.token = ?
+          `).bind(token).first();
+        }
 
         if (sessionRow && new Date(sessionRow.expires_at).getTime() > Date.now()) {
           const devs = await d1.prepare('SELECT device_id as deviceId, device_name as deviceName, device_type as deviceType, last_active as lastActive FROM devices WHERE user_id = ?').bind(sessionRow.id).all();
@@ -782,6 +822,8 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
               email: sessionRow.email,
               callsign: sessionRow.callsign,
               securityClearance: sessionRow.security_clearance,
+              subscription_tier: normalizeTier(sessionRow.subscription_tier),
+              sweeps_remaining: Number(sessionRow.sweeps_remaining || 0) || 0,
               composioEntityId: userEntityId || undefined,
               composioApiKey: userApiKey || undefined,
               createdAt: sessionRow.created_at,
@@ -815,6 +857,8 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
                     email: user.email,
                     callsign: user.callsign,
                     securityClearance: user.securityClearance,
+                    subscription_tier: normalizeTier(user.subscription_tier),
+                    sweeps_remaining: Number(user.sweeps_remaining || 0) || 0,
                     createdAt: user.createdAt,
                     lastLoginAt: user.lastLoginAt,
                   },
@@ -843,6 +887,8 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
                 email: user.email,
                 callsign: user.callsign,
                 securityClearance: user.securityClearance,
+                subscription_tier: normalizeTier(user.subscription_tier),
+                sweeps_remaining: Number(user.sweeps_remaining || 0) || 0,
                 createdAt: user.createdAt,
                 lastLoginAt: user.lastLoginAt,
               },

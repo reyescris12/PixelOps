@@ -37,6 +37,10 @@ import {
 } from '../services/PreMediaSignalService';
 import { analyzeDispatchSignal } from '../services/DispatchTriageService';
 import {
+  isRadioScannerDisabledForNai,
+  UK_WTA_2006_SAFE_MODE_LABEL,
+} from '../services/LocalSensorBus';
+import {
   TacticalSatelliteMonitor,
   parseReconTargetToCoords,
   resolveReconLocationAsync,
@@ -329,8 +333,12 @@ export const ThreatMonitorModal: React.FC<ThreatMonitorModalProps> = ({
 
   useEffect(() => {
     if (isOpen) {
+      setGeofence(getLocalGeofenceConfig());
       fetchThreatMatrix(selectedZone, customLocation);
     }
+    const onNaiUpdated = () => setGeofence(getLocalGeofenceConfig());
+    window.addEventListener('pixelops:nai-updated', onNaiUpdated);
+    return () => window.removeEventListener('pixelops:nai-updated', onNaiUpdated);
   }, [isOpen, selectedZone, fetchThreatMatrix]);
 
   if (!isOpen) return null;
@@ -834,43 +842,59 @@ export const ThreatMonitorModal: React.FC<ThreatMonitorModalProps> = ({
             <span className="text-cyan-400 font-bold uppercase tracking-wider text-[10px]">
               SCANNER / 911 CAD TRIAGE:
             </span>
-            <input
-              id="scanner-transcript-input"
-              name="scanner_transcript"
-              type="text"
-              value={scannerTranscriptInput}
-              onChange={(e) => setScannerTranscriptInput(e.target.value)}
-              placeholder="Paste live scanner / OpenMHz / Broadcastify dispatch transcript for instant Gemini 3.1 Flash Lite triage..."
-              className="flex-1 min-w-[220px] px-2 py-1 bg-black border border-slate-700 rounded text-slate-200 text-[11px]"
-            />
-            <button
-              type="button"
-              disabled={isTriagingScanner || !scannerTranscriptInput.trim()}
-              onClick={async () => {
-                if (!scannerTranscriptInput.trim()) return;
-                setIsTriagingScanner(true);
-                try {
-                  const triage = await analyzeDispatchSignal({
-                    transcript: scannerTranscriptInput.trim(),
-                    lat: geofence.lat,
-                    lon: geofence.lon,
-                    sectorKey: geofence.label,
-                    sourceLabel: 'OPERATOR_SCANNER_INTERCEPT',
-                    ingestIntoSwarm: true,
-                  });
-                  setSweepStatusBanner({
-                    message: `SCANNER TRIAGE [${triage.severity} // ${triage.type}]: ${triage.summary}${triage.packetId ? ` (packet ${triage.packetId.slice(0, 10)}…)` : ''}`,
-                    type: triage.threatDetected ? 'warning' : 'info',
-                  });
-                  setScannerTranscriptInput('');
-                } finally {
-                  setIsTriagingScanner(false);
-                }
-              }}
-              className="px-2.5 py-1 rounded bg-amber-950/80 hover:bg-amber-900/70 border border-amber-500/60 text-amber-200 font-bold text-[10px] uppercase cursor-pointer disabled:opacity-40"
-            >
-              {isTriagingScanner ? 'TRIAGING...' : 'TRIAGE & INGEST'}
-            </button>
+            {isRadioScannerDisabledForNai({
+              lat: geofence.lat,
+              lon: geofence.lon,
+              jurisdiction: 'AUTO',
+            }) ? (
+              <div className="flex-1 min-w-[240px] px-2.5 py-1 rounded bg-emerald-950/60 border border-emerald-500/50 text-emerald-300 text-[10px] font-bold flex items-center gap-2">
+                <Lock size={12} className="text-emerald-400 shrink-0" />
+                <span>{UK_WTA_2006_SAFE_MODE_LABEL}</span>
+                <span className="text-emerald-400/70 font-normal hidden sm:inline">
+                  (Private VHF/UHF radio scanner modules hard-disabled; UK EA Floods, TfL &amp; WebTRIS active)
+                </span>
+              </div>
+            ) : (
+              <>
+                <input
+                  id="scanner-transcript-input"
+                  name="scanner_transcript"
+                  type="text"
+                  value={scannerTranscriptInput}
+                  onChange={(e) => setScannerTranscriptInput(e.target.value)}
+                  placeholder="Paste live scanner / OpenMHz / Broadcastify dispatch transcript for instant Gemini 3.1 Flash Lite triage..."
+                  className="flex-1 min-w-[220px] px-2 py-1 bg-black border border-slate-700 rounded text-slate-200 text-[11px]"
+                />
+                <button
+                  type="button"
+                  disabled={isTriagingScanner || !scannerTranscriptInput.trim()}
+                  onClick={async () => {
+                    if (!scannerTranscriptInput.trim()) return;
+                    setIsTriagingScanner(true);
+                    try {
+                      const triage = await analyzeDispatchSignal({
+                        transcript: scannerTranscriptInput.trim(),
+                        lat: geofence.lat,
+                        lon: geofence.lon,
+                        sectorKey: geofence.label,
+                        sourceLabel: 'OPERATOR_SCANNER_INTERCEPT',
+                        ingestIntoSwarm: true,
+                      });
+                      setSweepStatusBanner({
+                        message: `SCANNER TRIAGE [${triage.severity} // ${triage.type}]: ${triage.summary}${triage.packetId ? ` (packet ${triage.packetId.slice(0, 10)}…)` : ''}`,
+                        type: triage.threatDetected ? 'warning' : 'info',
+                      });
+                      setScannerTranscriptInput('');
+                    } finally {
+                      setIsTriagingScanner(false);
+                    }
+                  }}
+                  className="px-2.5 py-1 rounded bg-amber-950/80 hover:bg-amber-900/70 border border-amber-500/60 text-amber-200 font-bold text-[10px] uppercase cursor-pointer disabled:opacity-40"
+                >
+                  {isTriagingScanner ? 'TRIAGING...' : 'TRIAGE & INGEST'}
+                </button>
+              </>
+            )}
 
             <input
               id="custom-cad-url-input"

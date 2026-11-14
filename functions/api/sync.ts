@@ -4,6 +4,8 @@
  * with full Cloudflare D1 SQL, Cloudflare KV, and memory fallback support.
  */
 
+import { requireTier } from './_entitlements';
+
 interface Env {
   DB?: any;
   SYNC_KV?: any;
@@ -102,6 +104,20 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
       (path.endsWith('/push') || actionParam === 'push' || path.endsWith('/sync'));
 
     if (isPush) {
+      // Enforce Pro+ entitlement so free 'operative' accounts remain 100% local-first at $0 server storage cost
+      const tierGuard = await requireTier(request, env, 'pro');
+      if (!tierGuard.ok) {
+        return new Response(
+          JSON.stringify({
+            error: 'UPGRADE_REQUIRED',
+            requiredTier: 'pro',
+          }),
+          { status: 403, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+        );
+      }
+      if (tierGuard.user?.username) {
+        userKey = tierGuard.user.username.toLowerCase().trim();
+      }
       const syncPackage = await request.json().catch(() => null) as any;
       if (!syncPackage) {
         return new Response(
@@ -257,6 +273,20 @@ export const onRequest = async (context: { request: Request; env: Env }): Promis
       (path.endsWith('/pull') || actionParam === 'pull' || (path.endsWith('/sync') && actionParam !== 'devices'));
 
     if (isPull) {
+      // Enforce Pro+ entitlement on GET cloud state sync
+      const tierGuard = await requireTier(request, env, 'pro');
+      if (!tierGuard.ok) {
+        return new Response(
+          JSON.stringify({
+            error: 'UPGRADE_REQUIRED',
+            requiredTier: 'pro',
+          }),
+          { status: 403, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+        );
+      }
+      if (tierGuard.user?.username) {
+        userKey = tierGuard.user.username.toLowerCase().trim();
+      }
       let pkg: any = null;
       let resolvedEntityId: string | null = null;
       let resolvedApiKey: string | null = null;

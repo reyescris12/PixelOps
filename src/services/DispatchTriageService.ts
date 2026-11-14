@@ -10,6 +10,11 @@
 import { appendCommandLedgerEntry } from './CommandLedgerDb';
 import { getLocalGeofenceConfig } from './OsintToolsService';
 import { loadLLMProviderConfig, getGeminiAuthHeadersAndUrl } from './LLMProviderService';
+import {
+  isRadioScannerDisabledForNai,
+  getPrimaryNaiZoneSync,
+  UK_WTA_2006_SAFE_MODE_LABEL,
+} from './LocalSensorBus';
 
 export interface DispatchTriageInput {
   transcript?: string;
@@ -128,6 +133,33 @@ export async function analyzeDispatchSignal(
   const lon = input.lon ?? geofence.lon;
   const transcript = (input.transcript || '').trim();
   const audioBase64 = (input.audioBase64 || '').trim();
+
+  // Strict Legal Guardrail (UK Wireless Telegraphy Act 2006 s.48):
+  // Hard-disable private VHF/UHF radio voice scanner modules when jurisdiction resolves to UK_EU.
+  const primaryNai = getPrimaryNaiZoneSync();
+  const scannerLockedUkEu = isRadioScannerDisabledForNai({
+    lat,
+    lon,
+    jurisdiction:
+      primaryNai && primaryNai.jurisdiction !== 'AUTO' ? primaryNai.jurisdiction : 'AUTO',
+  });
+  const isVoiceOrScannerSource =
+    Boolean(audioBase64) ||
+    !input.sourceLabel ||
+    /scanner|radio|vhf|uhf|openmhz|broadcastify/i.test(input.sourceLabel) ||
+    /openmhz|broadcastify/i.test(input.sourceUrl || '');
+
+  if (scannerLockedUkEu && isVoiceOrScannerSource) {
+    return {
+      threatDetected: false,
+      type: 'SCANNER_JURISDICTION_LOCKED',
+      severity: 'LOW',
+      summary: UK_WTA_2006_SAFE_MODE_LABEL,
+      rawExcerpts: [],
+      modelUsed: 'wta-2006-s48-guardrail',
+      analyzedAt: new Date().toISOString(),
+    };
+  }
 
   if (!transcript && !audioBase64) {
     throw new Error('Dispatch triage requires either transcript text or base64 audio.');

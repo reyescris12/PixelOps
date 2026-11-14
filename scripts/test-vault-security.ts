@@ -92,11 +92,11 @@ async function runTests() {
 
   const testCases = [
     { host: 'understandingwar.org', expected: true },
-    { host: 'api.anthropic.com', expected: true },
-    { host: 'generativelanguage.googleapis.com', expected: true },
-    { host: 'feeds.buzzsprout.com', expected: true },
-    { host: 'api.openai.com', expected: true },
-    { host: 'sub.understandingwar.org', expected: true },
+    { host: 'www.understandingwar.org', expected: true },
+    { host: 'api.adsb.lol', expected: true },
+    { host: 'environment.data.gov.uk', expected: true },
+    { host: 'earthquake.usgs.gov', expected: true },
+    { host: 'api.weather.gov', expected: true },
     { host: 'example.com', expected: false },
     { host: '169.254.169.254', expected: false },
     { host: 'localhost', expected: false },
@@ -120,11 +120,11 @@ async function runTests() {
   console.log('Forbidden Request Status:', forbiddenRes.status);
   console.log('Forbidden Response Body:', forbiddenBody);
 
-  if (forbiddenRes.status !== 403 || !forbiddenBody.error.includes('Forbidden')) {
-    console.error('FAIL: Expected 403 Forbidden on unwhitelisted domain!');
+  if (forbiddenRes.status !== 403 || forbiddenBody.error !== 'Host not in OSINT sensor allowlist') {
+    console.error('FAIL: Expected 403 { error: "Host not in OSINT sensor allowlist" } on unwhitelisted domain!');
     process.exit(1);
   } else {
-    console.log('PASS: Unwhitelisted domain rejected immediately with 403 Forbidden!');
+    console.log('PASS: Unwhitelisted domain rejected immediately with 403 { error: "Host not in OSINT sensor allowlist" }!');
   }
 
   console.log('\n=== TEST 3B: SSRF Private IP & Cloud Metadata Blocking ===');
@@ -168,8 +168,9 @@ async function runTests() {
     { url: 'file:///etc/passwd', expectedValid: false, desc: 'forbidden file: protocol' },
     { url: 'gopher://127.0.0.1:70', expectedValid: false, desc: 'forbidden gopher: protocol' },
     { url: 'https://admin:secret@understandingwar.org', expectedValid: false, desc: 'forbidden userinfo in URL' },
+    { url: 'http://api.adsb.lol/v2/point/51.5/-0.1/20', expectedValid: false, desc: 'non-HTTPS http: protocol blocked' },
     { url: 'https://understandingwar.org/report', expectedValid: true, desc: 'valid HTTPS on allowed host' },
-    { url: 'https://feeds.buzzsprout.com/123.xml', expectedValid: true, desc: 'valid HTTPS on allowed podcast feed' },
+    { url: 'https://environment.data.gov.uk/flood-monitoring/id/floods', expectedValid: true, desc: 'valid HTTPS on UK civic sensor host' },
   ];
 
   for (const tc of urlTestCases) {

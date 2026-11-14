@@ -289,6 +289,21 @@ export interface NominationPackageDbEntry {
   ledgerEntryId?: number;
 }
 
+export type NaiJurisdiction = 'AUTO' | 'UK_EU' | 'US_NA' | 'GLOBAL';
+
+export interface NaiZoneDbEntry {
+  id: string;
+  label: string;
+  lat: number;
+  lon: number;
+  radiusKm: number;
+  jurisdiction: NaiJurisdiction;
+  enabled: boolean;
+  isPrimary?: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 class PixelOpsLedgerDatabase extends Dexie {
   command_ledger!: Table<CommandLedgerEntry, number>;
   agent_memories!: Table<AgentMemoryDbEntry, number>;
@@ -304,6 +319,7 @@ class PixelOpsLedgerDatabase extends Dexie {
   delta_events!: Table<DeltaEventDbEntry, string>;
   corroboration_clusters!: Table<CorroborationClusterDbEntry, string>;
   nomination_packages!: Table<NominationPackageDbEntry, string>;
+  nai_zones!: Table<NaiZoneDbEntry, string>;
 
   constructor() {
     super('PixelOpsImmutableLedgerDB');
@@ -385,6 +401,39 @@ class PixelOpsLedgerDatabase extends Dexie {
         '&clusterId, status, corroborationScore, sectorKey, updatedAt',
       nomination_packages:
         '&nominationId, clusterId, status, createdAt',
+    });
+
+    this.version(7).stores({
+      command_ledger:
+        '++id, timestamp, involved_agent, tool_used, success_boost_achieved, ledger_hash',
+      agent_memories:
+        '++id, agentId, timestamp, prompt',
+      workspace_files:
+        '++id, &path, category, format, updatedAt',
+      encrypted_credentials:
+        '&key, updatedAt',
+      evidence_nodes:
+        '&id, type, value, hitCount, lastSeenAt',
+      evidence_edges:
+        '&id, sourceId, targetId, relation, filePath, updatedAt',
+      mcp_stations:
+        '&id, room, enabled, updatedAt',
+      tripwire_watches:
+        '&id, category, target, enabled, lastCheckedAt',
+      tripwire_alerts:
+        '&id, watchId, status, detectedAt',
+      evidence_packets:
+        '&packetId, sourceTrack, ingestedBy, capturedAt, sectorKey',
+      corroboration_snapshots:
+        '&snapshotKey, sourceTrack, sectorKey, updatedAt',
+      delta_events:
+        '&deltaId, packetId, sourceTrack, sectorKey, capturedAt, expiresAt',
+      corroboration_clusters:
+        '&clusterId, status, corroborationScore, sectorKey, updatedAt',
+      nomination_packages:
+        '&nominationId, clusterId, status, createdAt',
+      nai_zones:
+        '&id, enabled, updatedAt',
     });
 
     // Enforce append-only immutability on the command_ledger table

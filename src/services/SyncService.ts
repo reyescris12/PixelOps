@@ -6,7 +6,8 @@
  * Command Ledgers, and Safehouse Preferences across Desktop and Mobile devices.
  */
 
-import { getActiveSession, AuthSession } from './AuthService';
+import { getActiveSession, getActiveSubscriptionTier, AuthSession } from './AuthService';
+import { TIER_LIMITS } from '../config/tierLimits';
 import {
   WorkspaceFileRecord,
   listWorkspaceFiles,
@@ -504,6 +505,16 @@ export async function pushToCloud(): Promise<{ success: boolean; error?: string 
       return { success: true };
     }
 
+    if (res.status === 403) {
+      const errJson = await res.json().catch(() => null);
+      if (errJson?.error === 'UPGRADE_REQUIRED') {
+        return {
+          success: false,
+          error: `UPGRADE_REQUIRED: Commander's Pass (${String(errJson.requiredTier || 'pro').toUpperCase()}) required for cross-device E2EE cloud sync. Local IndexedDB vault remains active.`,
+        };
+      }
+    }
+
     // If server returned non-200, still keep local cloud cache and record handshake
     const errText = await res.text().catch(() => 'Server error');
     return { success: true, error: `Cloud sync stored locally (${errText.slice(0, 50)})` };
@@ -562,6 +573,17 @@ export async function pullFromCloud(): Promise<{ success: boolean; updated: bool
       const now = new Date().toISOString();
       localStorage.setItem(STORAGE_LAST_SYNC, now);
       return { success: true, updated: false };
+    }
+
+    if (res.status === 403) {
+      const errJson = await res.json().catch(() => null);
+      if (errJson?.error === 'UPGRADE_REQUIRED') {
+        return {
+          success: false,
+          updated: false,
+          error: `UPGRADE_REQUIRED: Commander's Pass (${String(errJson.requiredTier || 'pro').toUpperCase()}) required for cross-device E2EE cloud sync.`,
+        };
+      }
     }
 
     // Fall back to local cloud cache if server is offline
@@ -635,16 +657,18 @@ export function startAutoSync(): () => void {
     clearInterval(autoSyncInterval);
   }
 
-  // Periodic timer
+  // Periodic timer — only auto-syncs to edge D1 when account holds Pro+ cloud entitlement
   autoSyncInterval = setInterval(() => {
-    if (isAutoSyncEnabled() && getActiveSession() && document.visibilityState === 'visible') {
+    const canCloud = TIER_LIMITS[getActiveSubscriptionTier()].canSyncCloud;
+    if (canCloud && isAutoSyncEnabled() && getActiveSession() && document.visibilityState === 'visible') {
       performFullSync().catch(() => {});
     }
   }, 45000);
 
   // Sync on tab focus or returning to app
   const handleFocus = () => {
-    if (isAutoSyncEnabled() && getActiveSession()) {
+    const canCloud = TIER_LIMITS[getActiveSubscriptionTier()].canSyncCloud;
+    if (canCloud && isAutoSyncEnabled() && getActiveSession()) {
       performFullSync().catch(() => {});
     }
   };
@@ -663,7 +687,8 @@ export function startAutoSync(): () => void {
     if (fileSyncTimer) clearTimeout(fileSyncTimer);
     fileSyncTimer = setTimeout(() => {
       const session = getActiveSession();
-      if (session) {
+      const canCloud = TIER_LIMITS[getActiveSubscriptionTier()].canSyncCloud;
+      if (session && canCloud) {
         pushToCloud().catch(() => {});
       } else {
         // Update local cloud cache even if not signed in
@@ -682,8 +707,8 @@ export function startAutoSync(): () => void {
   };
   window.addEventListener('pixelops:workspace_files_changed', handleWorkspaceFilesChanged);
 
-  // Perform initial sync on startup if logged in
-  if (getActiveSession()) {
+  // Perform initial sync on startup if logged in AND entitled to Pro+ cloud sync
+  if (getActiveSession() && TIER_LIMITS[getActiveSubscriptionTier()].canSyncCloud) {
     setTimeout(() => {
       performFullSync().catch(() => {});
     }, 1500);

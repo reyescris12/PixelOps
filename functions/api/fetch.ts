@@ -1,46 +1,76 @@
 /**
- * Cloudflare Pages Function: Safehouse Web Crawler & Fetch Proxy
+ * Cloudflare Pages Function: Hardened OSINT Sensor Fetch Proxy
  * Route: /api/fetch
- * 
- * Enforces strict domain allowlisting and private IP blocking (SSRF Mitigation)
- * to prevent proxy abuse while securely proxying authorized intelligence feeds, models, and OSINT APIs.
+ *
+ * Enforces:
+ * - GET / HEAD only (unless matching an explicit allowlisted POST endpoint)
+ * - HTTPS-only target URLs (http: and non-standard ports rejected with 403)
+ * - Private, loopback, link-local, and cloud metadata IP blocking (127.0.0.0/8, 10.0.0.0/8,
+ *   172.16.0.0/12, 192.168.0.0/16, 169.254.169.254, ::1, localhost)
+ * - Strict ALLOWED_SENSOR_HOSTS hostname allowlist (returns 403 { error: "Host not in OSINT sensor allowlist" }
+ *   unless caller holds a valid D1 `station_chief` session)
+ * - 8,000 ms AbortSignal.timeout per upstream hop
+ * - 2 MB (2,097,152 bytes) max response payload guard
  */
+
+import { requireTier } from './_entitlements';
 
 const CORS_HEADERS = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+  'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-target-url',
 };
 
+export const PROXY_TIMEOUT_MS = 8000;
+export const MAX_RESPONSE_BYTES = 2 * 1024 * 1024; // 2 MB
+
 /**
- * Cloudflare Worker SSRF Whitelist Enforcement
- * Restricts external fetch proxy to verified safehouse domains and API hosts.
+ * Strict OSINT & Pre-Media Sensor Hostname Allowlist
  */
-export const ALLOWED_DOMAINS = [
-  'understandingwar.org', 
-  'api.anthropic.com', 
-  'generativelanguage.googleapis.com',
-  'openrouter.ai',
-  'api.openai.com',
-  'api.groq.com',
-  'feeds.buzzsprout.com',
-  'api.github.com',
-  'gitlab.com',
-  'api.shodan.io',
-  'api.securitytrails.com',
-  'api.abuseipdb.com',
-  'crt.sh',
-  'api.bgpview.io',
-  'ipinfo.io',
-  'otx.alienvault.com',
-  'www.virustotal.com',
+export const ALLOWED_SENSOR_HOSTS: readonly string[] = [
+  // Airspace
+  'api.adsb.lol',
+  'api.airplanes.live',
+  'opensky-network.org',
+  // Seismic & Thermal
   'earthquake.usgs.gov',
-  'services.swpc.noaa.gov',
-  'en.wikipedia.org',
-  'hn.algolia.com',
-  'api.duckduckgo.com',
-  'news.google.com',
+  'www.seismicportal.eu',
+  'firms.modaps.eosdis.nasa.gov',
+  // UK/EU Civic
+  'environment.data.gov.uk',
+  'webtris.highwaysengland.co.uk',
+  'api.tfl.gov.uk',
+  'data.police.uk',
+  // US Civic
+  'api.weather.gov',
+  // Infra & Cyber
+  'api.ioda.inetintel.cc.gatech.edu',
+  'www.cisa.gov',
+  'urlhaus-api.abuse.ch',
+  'internetdb.shodan.io',
+  'crt.sh',
+  'cloudflare-dns.com',
+  // Background Briefings (on-demand only)
+  'www.understandingwar.org',
+  'understandingwar.org',
+  'api.gdeltproject.org',
 ];
+
+// Backward-compatible alias for security verification suites
+export const ALLOWED_DOMAINS = ALLOWED_SENSOR_HOSTS;
+
+/**
+ * Explicit allowlist of sensor endpoints that require HTTP POST (e.g. URLhaus v1 lookup API).
+ * All other proxy traffic is strictly restricted to GET and HEAD.
+ */
+const ALLOWED_POST_URL_PREFIXES: readonly string[] = [
+  'https://urlhaus-api.abuse.ch/v1/',
+];
+
+export function isExplicitlyAllowedPostUrl(urlStr: string): boolean {
+  const clean = (urlStr || '').trim().toLowerCase();
+  return ALLOWED_POST_URL_PREFIXES.some((prefix) => clean.startsWith(prefix));
+}
 
 /**
  * Evaluates whether an IP address belongs to RFC 1918, RFC 3927 (link-local/cloud metadata),
@@ -59,6 +89,8 @@ export function isPrivateOrReservedIP(ipStr: string): boolean {
   if (
     ip === '::1' ||
     ip === '::' ||
+    ip === '0:0:0:0:0:0:0:1' ||
+    ip === '0:0:0:0:0:0:0:0' ||
     ip.startsWith('fe80:') ||
     ip.startsWith('fe9') ||
     ip.startsWith('fea') ||
@@ -77,7 +109,7 @@ export function isPrivateOrReservedIP(ipStr: string): boolean {
 
   // Pure integer / hex decimal representations (e.g. 2130706433 or 0x7f000001)
   if (/^(?:0x[0-9a-f]+|\d+)$/i.test(ip)) {
-    return true; // Block raw numeric IP notations
+    return true;
   }
 
   // Parse standard IPv4
@@ -85,9 +117,9 @@ export function isPrivateOrReservedIP(ipStr: string): boolean {
   const match = ip.match(ipv4Regex);
   if (match) {
     const [_, o1, o2, o3, o4] = match.map(Number);
-    if (o1 > 255 || o2 > 255 || o3 > 255 || o4 > 255) return true; // Invalid IP -> block
+    if (o1 > 255 || o2 > 255 || o3 > 255 || o4 > 255) return true;
 
-    // 0.0.0.0/8 (Current network)
+    // 0.0.0.0/8
     if (o1 === 0) return true;
     // 10.0.0.0/8 (RFC 1918 Private)
     if (o1 === 10) return true;
@@ -99,24 +131,16 @@ export function isPrivateOrReservedIP(ipStr: string): boolean {
     if (o1 === 169 && o2 === 254) return true;
     // 172.16.0.0/12 (RFC 1918 Private)
     if (o1 === 172 && o2 >= 16 && o2 <= 31) return true;
-    // 192.0.0.0/24 (IETF Protocol Assignments)
-    if (o1 === 192 && o2 === 0 && o3 === 0) return true;
-    // 192.0.2.0/24 (TEST-NET-1)
-    if (o1 === 192 && o2 === 0 && o3 === 2) return true;
+    // 192.0.0.0/24 & 192.0.2.0/24
+    if (o1 === 192 && o2 === 0 && (o3 === 0 || o3 === 2)) return true;
     // 192.168.0.0/16 (RFC 1918 Private)
     if (o1 === 192 && o2 === 168) return true;
-    // 198.18.0.0/15 (Benchmarking)
-    if (o1 === 198 && (o2 === 18 || o2 === 19)) return true;
-    // 198.51.100.0/24 (TEST-NET-2)
-    if (o1 === 198 && o2 === 51 && o3 === 100) return true;
-    // 203.0.113.0/24 (TEST-NET-3)
+    // 198.18.0.0/15 & 198.51.100.0/24
+    if (o1 === 198 && (o2 === 18 || o2 === 19 || (o2 === 51 && o3 === 100))) return true;
+    // 203.0.113.0/24
     if (o1 === 203 && o2 === 0 && o3 === 113) return true;
-    // 224.0.0.0/4 (Multicast)
-    if (o1 >= 224 && o1 <= 239) return true;
-    // 240.0.0.0/4 (Reserved / Future Use)
-    if (o1 >= 240) return true;
-    // 255.255.255.255 (Broadcast)
-    if (o1 === 255 && o2 === 255 && o3 === 255 && o4 === 255) return true;
+    // 224.0.0.0/4 (Multicast) & 240.0.0.0/4 (Reserved / Broadcast)
+    if (o1 >= 224) return true;
   }
 
   return false;
@@ -124,38 +148,53 @@ export function isPrivateOrReservedIP(ipStr: string): boolean {
 
 export function isAllowedDomain(hostname: string): boolean {
   const host = (hostname || '').toLowerCase().trim();
-  return ALLOWED_DOMAINS.some(
-    (allowed) => host === allowed || host.endsWith('.' + allowed)
-  );
+  return ALLOWED_SENSOR_HOSTS.includes(host);
+}
+
+export interface TargetUrlValidationResult {
+  valid: boolean;
+  code?: 'PROTOCOL_FORBIDDEN' | 'PORT_FORBIDDEN' | 'USERINFO_FORBIDDEN' | 'PRIVATE_HOST' | 'UNLISTED_HOST';
+  reason?: string;
 }
 
 /**
  * Validates a target URL against SSRF attack vectors:
- * - Protocol must be http: or https: (blocks file:, gopher:, dict:, ftp:)
- * - Port must be default 80 or 443 (blocks internal port scanning on 8080, 22, 6379, etc.)
- * - Userinfo (credentials) forbidden in URL
- * - Localhost and private/reserved IPs strictly forbidden (RFC 1918, RFC 3927 link-local metadata)
- * - Hostname must be in ALLOWED_DOMAINS allowlist
+ * - HTTPS-only (`https:` strictly required)
+ * - Default port 443 only
+ * - No embedded credentials
+ * - Rejects localhost, loopback, private, link-local, and cloud metadata IPs
+ * - Checks strict `ALLOWED_SENSOR_HOSTS` allowlist (unless `allowStationChiefBypass` is true)
  */
-export function validateTargetUrl(targetUrl: URL): { valid: boolean; reason?: string } {
-  // 1. Enforce safe protocol
-  if (targetUrl.protocol !== 'http:' && targetUrl.protocol !== 'https:') {
-    return { valid: false, reason: `Protocol "${targetUrl.protocol}" is forbidden. Only HTTP/HTTPS permitted.` };
+export function validateTargetUrl(
+  targetUrl: URL,
+  options?: { allowStationChiefBypass?: boolean }
+): TargetUrlValidationResult {
+  if (targetUrl.protocol !== 'https:') {
+    return {
+      valid: false,
+      code: 'PROTOCOL_FORBIDDEN',
+      reason: `Protocol "${targetUrl.protocol}" is forbidden. Only HTTPS target URLs are permitted.`,
+    };
   }
 
-  // 2. Enforce standard ports (block port scanning e.g. :8080, :22, :6379)
-  if (targetUrl.port && targetUrl.port !== '80' && targetUrl.port !== '443') {
-    return { valid: false, reason: `Port "${targetUrl.port}" is forbidden. Only ports 80 and 443 are permitted.` };
+  if (targetUrl.port && targetUrl.port !== '443') {
+    return {
+      valid: false,
+      code: 'PORT_FORBIDDEN',
+      reason: `Port "${targetUrl.port}" is forbidden. Only standard HTTPS port 443 is permitted.`,
+    };
   }
 
-  // 3. Reject credentials in URL
   if (targetUrl.username || targetUrl.password) {
-    return { valid: false, reason: 'Embedded user credentials in target URL are prohibited.' };
+    return {
+      valid: false,
+      code: 'USERINFO_FORBIDDEN',
+      reason: 'Embedded user credentials in target URL are prohibited.',
+    };
   }
 
   const hostname = targetUrl.hostname.toLowerCase().trim();
 
-  // 4. Block local, loopback, and metadata hostnames
   if (
     hostname === 'localhost' ||
     hostname.endsWith('.localhost') ||
@@ -163,33 +202,94 @@ export function validateTargetUrl(targetUrl: URL): { valid: boolean; reason?: st
     hostname.endsWith('.local') ||
     hostname === 'broadcasthost'
   ) {
-    return { valid: false, reason: 'Access to localhost and local network hostnames is prohibited.' };
+    return {
+      valid: false,
+      code: 'PRIVATE_HOST',
+      reason: 'Access to localhost and local network hostnames is prohibited.',
+    };
   }
 
-  // 5. Block private and reserved IP addresses (RFC 1918, 169.254.169.254, loopback)
   if (isPrivateOrReservedIP(hostname)) {
-    return { valid: false, reason: `Target IP "${hostname}" is private or reserved. SSRF access blocked.` };
+    return {
+      valid: false,
+      code: 'PRIVATE_HOST',
+      reason: `Target IP "${hostname}" is private, loopback, link-local, or cloud metadata. SSRF blocked.`,
+    };
   }
 
-  // 6. Verify against authorized domain allowlist
-  if (!isAllowedDomain(hostname)) {
-    return { valid: false, reason: `Domain "${hostname}" is not authorized in safehouse allowlist.` };
+  if (!options?.allowStationChiefBypass && !isAllowedDomain(hostname)) {
+    return {
+      valid: false,
+      code: 'UNLISTED_HOST',
+      reason: 'Host not in OSINT sensor allowlist',
+    };
   }
 
   return { valid: true };
 }
 
 /**
- * Executes a fetch request with manual redirect handling to prevent redirect-based SSRF.
- * Each redirect hop is explicitly re-validated against validateTargetUrl before following.
+ * Reads a Response body into UTF-8 text while enforcing a strict max-byte ceiling (2 MB).
+ * Aborts immediately if Content-Length or streamed byte count exceeds `maxBytes`.
+ */
+export async function readBodyTextWithLimit(
+  response: Response,
+  maxBytes = MAX_RESPONSE_BYTES
+): Promise<string> {
+  const declaredLen = Number(response.headers.get('content-length') || 0);
+  if (Number.isFinite(declaredLen) && declaredLen > maxBytes) {
+    throw new Error(`PAYLOAD_TOO_LARGE: Upstream Content-Length (${declaredLen} bytes) exceeds 2 MB limit.`);
+  }
+
+  if (!response.body) {
+    return '';
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) {
+        totalBytes += value.byteLength;
+        if (totalBytes > maxBytes) {
+          try {
+            await reader.cancel('Response exceeded 2 MB sensor payload limit');
+          } catch {}
+          throw new Error(`PAYLOAD_TOO_LARGE: Streamed payload exceeded ${maxBytes} bytes (2 MB limit).`);
+        }
+        chunks.push(value);
+      }
+    }
+  } finally {
+    try {
+      reader.releaseLock();
+    } catch {}
+  }
+
+  const combined = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    combined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder('utf-8').decode(combined);
+}
+
+/**
+ * Executes a fetch request with 8,000 ms timeout and manual redirect validation on every hop.
  */
 export async function executeSafeFetch(
   rawUrl: string,
-  options: RequestInit = {},
+  options: RequestInit & { allowStationChiefBypass?: boolean } = {},
   maxRedirects = 3
 ): Promise<Response> {
   let currentUrl = rawUrl;
   let remainingRedirects = maxRedirects;
+  const { allowStationChiefBypass, ...requestInit } = options;
 
   while (true) {
     let parsed: URL;
@@ -199,20 +299,24 @@ export async function executeSafeFetch(
       throw new Error(`Malformed URL during safe fetch: ${currentUrl}`);
     }
 
-    const validation = validateTargetUrl(parsed);
+    const validation = validateTargetUrl(parsed, { allowStationChiefBypass });
     if (!validation.valid) {
       throw new Error(`SSRF Blocked: ${validation.reason}`);
     }
 
-    // Force redirect: 'manual' to intercept any redirect hops
-    const fetchOptions: RequestInit = {
-      ...options,
+    const timeoutSignal = AbortSignal.timeout(PROXY_TIMEOUT_MS);
+    const signal = requestInit.signal
+      ? typeof (AbortSignal as any).any === 'function'
+        ? (AbortSignal as any).any([requestInit.signal, timeoutSignal])
+        : timeoutSignal
+      : timeoutSignal;
+
+    const response = await fetch(currentUrl, {
+      ...requestInit,
       redirect: 'manual',
-    };
+      signal,
+    });
 
-    const response = await fetch(currentUrl, fetchOptions);
-
-    // Check if response is a redirect (301, 302, 303, 307, 308)
     if ([301, 302, 303, 307, 308].includes(response.status)) {
       if (remainingRedirects <= 0) {
         throw new Error('Maximum redirect limit (3 hops) exceeded during proxy fetch.');
@@ -220,12 +324,10 @@ export async function executeSafeFetch(
 
       const location = response.headers.get('location');
       if (!location) {
-        return response; // No location header, return redirect response as-is
+        return response;
       }
 
-      // Resolve relative redirect against current URL
-      const redirectUrl = new URL(location, currentUrl).toString();
-      currentUrl = redirectUrl;
+      currentUrl = new URL(location, currentUrl).toString();
       remainingRedirects--;
       continue;
     }
@@ -241,10 +343,27 @@ export const onRequestOptions = async () => {
   });
 };
 
+function normalizeIncomingUrl(rawParam: string): string {
+  const trimmed = (rawParam || '').trim();
+  if (!trimmed) return '';
+  // Preserve any explicit scheme (http://, file://, gopher://, https://) so non-HTTPS schemes are rejected
+  if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) {
+    return trimmed;
+  }
+  return `https://${trimmed}`;
+}
+
 /**
- * Cloudflare Worker SSRF whitelist enforcement handler
+ * Direct Worker SSRF & allowlist enforcement handler (used by edge tests & direct proxy callers)
  */
-export async function handleFetchProxy(request: Request): Promise<Response> {
+export async function handleFetchProxy(request: Request, env?: any): Promise<Response> {
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    return new Response(
+      JSON.stringify({ error: 'Method not allowed: /api/fetch permits GET and HEAD only' }),
+      { status: 405, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+    );
+  }
+
   const urlParam = new URL(request.url).searchParams.get('url');
   if (!urlParam) {
     return new Response(JSON.stringify({ error: 'Missing target URL' }), {
@@ -253,10 +372,7 @@ export async function handleFetchProxy(request: Request): Promise<Response> {
     });
   }
 
-  const normalizedUrl = urlParam.startsWith('http://') || urlParam.startsWith('https://')
-    ? urlParam
-    : `https://${urlParam}`;
-
+  const normalizedUrl = normalizeIncomingUrl(urlParam);
   let parsed: URL;
   try {
     parsed = new URL(normalizedUrl);
@@ -267,19 +383,66 @@ export async function handleFetchProxy(request: Request): Promise<Response> {
     });
   }
 
-  const validation = validateTargetUrl(parsed);
+  let allowStationChiefBypass = false;
+  let validation = validateTargetUrl(parsed);
+
+  if (!validation.valid && validation.code === 'UNLISTED_HOST' && env) {
+    const tierGuard = await requireTier(request, env, 'station_chief');
+    if (tierGuard.ok) {
+      allowStationChiefBypass = true;
+      validation = validateTargetUrl(parsed, { allowStationChiefBypass: true });
+    }
+  }
+
   if (!validation.valid) {
+    if (validation.code === 'UNLISTED_HOST') {
+      return new Response(
+        JSON.stringify({ error: 'Host not in OSINT sensor allowlist' }),
+        { status: 403, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+      );
+    }
     return new Response(
-      JSON.stringify({ error: 'Forbidden: Target URL blocked by SSRF policy', reason: validation.reason }),
+      JSON.stringify({
+        error: 'Forbidden: Target URL blocked by SSRF policy',
+        reason: validation.reason,
+      }),
       { status: 403, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
     );
   }
 
   try {
-    return await executeSafeFetch(normalizedUrl);
+    const upstreamRes = await executeSafeFetch(
+      normalizedUrl,
+      { method: request.method, allowStationChiefBypass },
+      3
+    );
+    if (request.method === 'HEAD') {
+      return new Response(null, {
+        status: upstreamRes.status,
+        headers: {
+          'Content-Type': upstreamRes.headers.get('content-type') || 'text/plain',
+          ...CORS_HEADERS,
+        },
+      });
+    }
+    const bodyText = await readBodyTextWithLimit(upstreamRes, MAX_RESPONSE_BYTES);
+    return new Response(bodyText, {
+      status: upstreamRes.status,
+      headers: {
+        'Content-Type': upstreamRes.headers.get('content-type') || 'text/plain',
+        ...CORS_HEADERS,
+      },
+    });
   } catch (err: any) {
+    const msg = String(err?.message || 'Safe fetch execution failed');
+    if (msg.includes('PAYLOAD_TOO_LARGE')) {
+      return new Response(
+        JSON.stringify({ error: 'PAYLOAD_TOO_LARGE', message: msg }),
+        { status: 413, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+      );
+    }
     return new Response(
-      JSON.stringify({ error: 'FETCH_FAILED', message: err?.message || 'Safe fetch execution failed' }),
+      JSON.stringify({ error: 'FETCH_FAILED', message: msg }),
       { status: 502, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
     );
   }
@@ -287,43 +450,65 @@ export async function handleFetchProxy(request: Request): Promise<Response> {
 
 export const onRequest = async (context: {
   request: Request;
+  env?: any;
 }): Promise<Response> => {
-  const { request } = context;
+  const { request, env } = context;
 
   if (request.method === 'OPTIONS') {
     return onRequestOptions();
   }
 
-  let targetUrl = '';
-  let method = 'GET';
+  let rawTargetUrl = '';
+  let upstreamMethod = request.method.toUpperCase();
   let customHeaders: Record<string, string> = {};
   let bodyData: any = null;
 
-  if (request.method === 'GET') {
+  if (request.method === 'GET' || request.method === 'HEAD') {
     const url = new URL(request.url);
-    targetUrl = (url.searchParams.get('url') || url.searchParams.get('u') || '').trim();
+    rawTargetUrl = (url.searchParams.get('url') || url.searchParams.get('u') || '').trim();
   } else if (request.method === 'POST') {
     try {
       const json: any = await request.json();
-      targetUrl = (json.url || json.targetUrl || '').trim();
-      method = (json.method || 'GET').toUpperCase();
+      rawTargetUrl = (json.url || json.targetUrl || '').trim();
+      upstreamMethod = String(json.method || 'POST').toUpperCase();
       customHeaders = json.headers || {};
       bodyData = json.body;
     } catch {
-      // Ignore
+      return new Response(
+        JSON.stringify({ error: 'Method not allowed: /api/fetch permits GET and HEAD only' }),
+        { status: 405, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+      );
     }
+  } else {
+    return new Response(
+      JSON.stringify({ error: 'Method not allowed: /api/fetch permits GET and HEAD only' }),
+      { status: 405, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+    );
   }
 
-  if (!targetUrl) {
+  if (!rawTargetUrl) {
     return new Response(
       JSON.stringify({ error: 'MISSING_URL', message: 'A target "url" parameter is required.' }),
       { status: 400, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
     );
   }
 
-  // Ensure protocol is present
-  if (!targetUrl.startsWith('http://') && !targetUrl.startsWith('https://')) {
-    targetUrl = `https://${targetUrl}`;
+  const targetUrl = normalizeIncomingUrl(rawTargetUrl);
+
+  // Enforce GET / HEAD only unless the target matches an explicit allowlisted POST endpoint
+  const isPermittedMethod =
+    (request.method === 'GET' || request.method === 'HEAD') &&
+    (upstreamMethod === 'GET' || upstreamMethod === 'HEAD');
+  const isPermittedExplicitPost =
+    request.method === 'POST' &&
+    upstreamMethod === 'POST' &&
+    isExplicitlyAllowedPostUrl(targetUrl);
+
+  if (!isPermittedMethod && !isPermittedExplicitPost) {
+    return new Response(
+      JSON.stringify({ error: 'Method not allowed: /api/fetch permits GET and HEAD only' }),
+      { status: 405, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+    );
   }
 
   let parsedTarget: URL;
@@ -336,9 +521,24 @@ export const onRequest = async (context: {
     );
   }
 
-  // SSRF Mitigation: Validate protocol, port, userinfo, IP ranges, and domain allowlist
-  const validation = validateTargetUrl(parsedTarget);
+  let allowStationChiefBypass = false;
+  let validation = validateTargetUrl(parsedTarget);
+
+  if (!validation.valid && validation.code === 'UNLISTED_HOST' && env) {
+    const tierGuard = await requireTier(request, env, 'station_chief');
+    if (tierGuard.ok) {
+      allowStationChiefBypass = true;
+      validation = validateTargetUrl(parsedTarget, { allowStationChiefBypass: true });
+    }
+  }
+
   if (!validation.valid) {
+    if (validation.code === 'UNLISTED_HOST') {
+      return new Response(
+        JSON.stringify({ error: 'Host not in OSINT sensor allowlist' }),
+        { status: 403, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+      );
+    }
     return new Response(
       JSON.stringify({
         error: 'Forbidden: Target URL blocked by SSRF policy',
@@ -349,40 +549,64 @@ export const onRequest = async (context: {
   }
 
   try {
+    // Sanitize forwarded headers so caller cannot smuggle host/cookie/authorization overrides
+    const safeCustomHeaders: Record<string, string> = {};
+    for (const [hk, hv] of Object.entries(customHeaders || {})) {
+      const lowerKey = hk.toLowerCase();
+      if (['accept', 'accept-language', 'content-type'].includes(lowerKey) && typeof hv === 'string') {
+        safeCustomHeaders[hk] = hv;
+      }
+    }
+
     const fetchHeaders: Record<string, string> = {
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36 PixelOps-Intelligence/2.0',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,application/json,*/*;q=0.8',
-      ...customHeaders,
+      'User-Agent': 'PixelOps-SensorBus/2.1 (+https://pixelops.app; OSINT Pre-Media Collector)',
+      Accept: 'application/json, application/geo+json, text/csv, text/xml, text/html;q=0.8, */*;q=0.5',
+      ...safeCustomHeaders,
     };
 
-    const fetchOptions: RequestInit = {
-      method,
+    const fetchOptions: RequestInit & { allowStationChiefBypass?: boolean } = {
+      method: upstreamMethod,
       headers: fetchHeaders,
+      allowStationChiefBypass,
     };
 
-    if (method !== 'GET' && method !== 'HEAD' && bodyData) {
+    if (isPermittedExplicitPost && bodyData) {
       fetchOptions.body = typeof bodyData === 'string' ? bodyData : JSON.stringify(bodyData);
     }
 
     const res = await executeSafeFetch(targetUrl, fetchOptions, 3);
     const contentType = res.headers.get('content-type') || '';
 
-    if (contentType.includes('application/json')) {
-      const json = await res.json();
-      return new Response(
-        JSON.stringify({
-          ok: res.ok,
-          status: res.status,
-          url: targetUrl,
-          contentType: 'application/json',
-          data: json,
-        }),
-        { status: 200, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
-      );
+    if (upstreamMethod === 'HEAD') {
+      return new Response(null, {
+        status: res.status,
+        headers: {
+          'Content-Type': contentType || 'application/json',
+          ...CORS_HEADERS,
+        },
+      });
     }
 
-    // HTML / Plaintext handling: Extract readable text and clean up scripts/styles/navigation chrome
-    const rawText = await res.text();
+    const rawText = await readBodyTextWithLimit(res, MAX_RESPONSE_BYTES);
+
+    if (contentType.includes('json')) {
+      try {
+        const json = JSON.parse(rawText);
+        return new Response(
+          JSON.stringify({
+            ok: res.ok,
+            status: res.status,
+            url: targetUrl,
+            contentType: contentType || 'application/json',
+            data: json,
+          }),
+          { status: 200, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+        );
+      } catch {
+        // Fall through to text handling if upstream mislabeled content-type
+      }
+    }
+
     let cleanText = rawText;
     let pageTitle = '';
 
@@ -429,19 +653,46 @@ export const onRequest = async (context: {
         url: res.url || targetUrl,
         title: pageTitle,
         contentType: contentType || 'text/plain',
-        text: cleanText.slice(0, 18000),
+        text: cleanText.slice(0, 48000),
         totalLength: cleanText.length,
       }),
       { status: 200, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
     );
   } catch (err: any) {
+    const msg = String(err?.message || 'Failed to fetch external sensor endpoint.');
+    if (msg.includes('PAYLOAD_TOO_LARGE')) {
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          status: 413,
+          error: 'PAYLOAD_TOO_LARGE',
+          url: targetUrl,
+          message: msg,
+        }),
+        { status: 413, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+      );
+    }
+    if (msg.includes('SSRF Blocked')) {
+      return new Response(
+        JSON.stringify({
+          ok: false,
+          status: 403,
+          error: msg.includes('Host not in OSINT sensor allowlist')
+            ? 'Host not in OSINT sensor allowlist'
+            : 'Forbidden: Target URL blocked by SSRF policy',
+          url: targetUrl,
+          message: msg,
+        }),
+        { status: 403, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+      );
+    }
     return new Response(
       JSON.stringify({
         ok: false,
         status: 502,
         error: 'FETCH_FAILED',
         url: targetUrl,
-        message: err?.message || 'Failed to fetch external website.',
+        message: msg,
       }),
       { status: 502, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
     );

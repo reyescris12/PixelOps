@@ -8,6 +8,14 @@
  */
 
 import { storeSecureCredential, getSecureCredential } from './SecureVaultService';
+import {
+  type SubscriptionTier,
+  TIER_LIMITS,
+  normalizeSubscriptionTier,
+  hasMinimumTier,
+} from '../config/tierLimits';
+
+export type { SubscriptionTier };
 
 export interface UserAccount {
   id: string;
@@ -15,6 +23,8 @@ export interface UserAccount {
   email: string;
   callsign: string;
   securityClearance: 'OPERATIVE' | 'COMMANDER' | 'DIRECTOR';
+  subscription_tier?: SubscriptionTier;
+  sweeps_remaining?: number;
   composioEntityId?: string;
   composioApiKey?: string;
   createdAt: string;
@@ -45,6 +55,8 @@ export interface CachedUserProfile {
   email: string;
   callsign: string;
   securityClearance: 'OPERATIVE' | 'COMMANDER' | 'DIRECTOR';
+  subscription_tier?: SubscriptionTier;
+  sweeps_remaining?: number;
   composioEntityId?: string;
   composioApiKey?: string;
   createdAt: string;
@@ -311,7 +323,7 @@ export function getCurrentDeviceInfo(): DeviceInfo {
  * Retrieves the currently active user session from local client storage
  */
 export function getActiveSession(): AuthSession | null {
-  if (typeof window === 'undefined') return null;
+  if (typeof localStorage === 'undefined') return null;
   try {
     const raw = localStorage.getItem(STORAGE_AUTH_SESSION);
     if (!raw) return null;
@@ -320,10 +332,67 @@ export function getActiveSession(): AuthSession | null {
       clearActiveSession();
       return null;
     }
+    if (session.user) {
+      session.user.subscription_tier = normalizeSubscriptionTier(session.user.subscription_tier);
+      session.user.sweeps_remaining = Number(session.user.sweeps_remaining || 0) || 0;
+    }
     return session;
   } catch {
     return null;
   }
+}
+
+/**
+ * Returns the active user's subscription_tier (defaults to 'operative' for local guests)
+ */
+export function getActiveSubscriptionTier(): SubscriptionTier {
+  const session = getActiveSession();
+  return normalizeSubscriptionTier(session?.user?.subscription_tier);
+}
+
+/**
+ * Returns the active user's TIER_LIMITS record
+ */
+export function getActiveTierLimits() {
+  return TIER_LIMITS[getActiveSubscriptionTier()];
+}
+
+/**
+ * Checks whether the active user/guest meets `minTier`
+ */
+export function canAccessTier(minTier: SubscriptionTier): boolean {
+  return hasMinimumTier(getActiveSubscriptionTier(), minTier);
+}
+
+/**
+ * Refreshes session entitlements (`subscription_tier`, `sweeps_remaining`) from `/api/me` when authenticated
+ */
+export async function syncEntitlementsFromEdge(): Promise<SubscriptionTier> {
+  const session = getActiveSession();
+  if (!session?.token) return 'operative';
+  try {
+    const res = await fetch('/api/me', {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${session.token}` },
+      credentials: 'include',
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data?.ok && data?.user) {
+        const updatedSession: AuthSession = {
+          ...session,
+          user: {
+            ...session.user,
+            subscription_tier: normalizeSubscriptionTier(data.user.subscription_tier),
+            sweeps_remaining: Number(data.user.sweeps_remaining || 0) || 0,
+          },
+        };
+        setActiveSession(updatedSession);
+        return updatedSession.user.subscription_tier || 'operative';
+      }
+    }
+  } catch {}
+  return getActiveSubscriptionTier();
 }
 
 /**
@@ -491,6 +560,8 @@ export async function registerAccount(params: {
           email: data.session.user.email,
           callsign: data.session.user.callsign,
           securityClearance: data.session.user.securityClearance,
+          subscription_tier: normalizeSubscriptionTier(data.session.user.subscription_tier),
+          sweeps_remaining: Number(data.session.user.sweeps_remaining || 0) || 0,
           createdAt: data.session.user.createdAt,
           lastLoginAt: data.session.user.lastLoginAt,
           devices: fleetDevices,
@@ -664,6 +735,8 @@ export async function loginAccount(params: {
           email: data.session.user.email,
           callsign: data.session.user.callsign,
           securityClearance: data.session.user.securityClearance,
+          subscription_tier: normalizeSubscriptionTier(data.session.user.subscription_tier),
+          sweeps_remaining: Number(data.session.user.sweeps_remaining || 0) || 0,
           composioEntityId: remoteEntityId || undefined,
           composioApiKey: remoteApiKey || undefined,
           createdAt: data.session.user.createdAt,

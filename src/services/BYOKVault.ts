@@ -424,3 +424,59 @@ export function getProviderDisplayName(provider: string): string {
   return SUPPORTED_VAULT_PROVIDERS[provider as keyof typeof SUPPORTED_VAULT_PROVIDERS]?.name || provider;
 }
 
+// --- Optional NASA FIRMS Orbital Thermal Map Key (Encrypted inside BYOKVault) ---
+export const NASA_FIRMS_VAULT_KEY = 'byok::nasa_firms_map_key';
+
+/**
+ * Encrypts and stores an optional NASA_FIRMS_MAP_KEY inside SecureVaultService
+ * while scrubbing any plaintext localStorage remnants.
+ */
+export async function saveNasaFirmsMapKey(mapKey: string): Promise<void> {
+  const clean = (mapKey || '').trim();
+  try {
+    if (clean) {
+      await storeSecureCredential(NASA_FIRMS_VAULT_KEY, clean);
+    } else {
+      await deleteSecureCredential(NASA_FIRMS_VAULT_KEY);
+    }
+  } catch (err) {
+    console.warn('[BYOKVault] Failed to persist NASA_FIRMS_MAP_KEY in encrypted vault:', err);
+  }
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('NASA_FIRMS_MAP_KEY');
+      localStorage.removeItem('pixelops_nasa_firms_map_key');
+    }
+  } catch {}
+}
+
+/**
+ * Synchronously reads NASA_FIRMS_MAP_KEY from the session-decrypted vault cache (or Vite env).
+ */
+export function getNasaFirmsMapKeySync(): string {
+  try {
+    const cached = getCachedDecryptedCredential(NASA_FIRMS_VAULT_KEY);
+    if (cached && cached.trim()) return cached.trim();
+    const envVal =
+      (typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_NASA_FIRMS_MAP_KEY) ||
+      '';
+    return String(envVal || '').trim();
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Asynchronously reads NASA_FIRMS_MAP_KEY from encrypted IndexedDB (`encrypted_credentials`).
+ */
+export async function getNasaFirmsMapKeyAsync(): Promise<string> {
+  const syncVal = getNasaFirmsMapKeySync();
+  if (syncVal) return syncVal;
+  try {
+    const decrypted = await getSecureCredential(NASA_FIRMS_VAULT_KEY);
+    if (decrypted && decrypted.trim()) return decrypted.trim();
+  } catch {}
+  return '';
+}
+
+

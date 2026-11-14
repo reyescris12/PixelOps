@@ -770,8 +770,6 @@ export async function testLLMProviderConnection(
           'x-api-key': key.trim(),
           'anthropic-version': '2023-06-01',
           'Content-Type': 'application/json',
-          'anthropic-dangerous-direct-browser-access': 'true',
-          'dangerously-allow-browser': 'true',
         },
         body: JSON.stringify({
           model,

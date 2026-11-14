@@ -57,10 +57,25 @@ export interface TacticalIntelPin {
     | 'DISMISSED_FALSE_POSITIVE';
   vanceSynthesis?: VanceSynthesisOutput;
   provenancePackets?: TacticalProvenancePacket[];
+  admiraltyGrade?: string;
+  adapterId?: string;
+  observationTime?: string;
+  firstIngestedAt?: string;
+  lastMaterialChangeAt?: string;
+  isKineticNonTectonic?: boolean;
+  seismicTypeVerbatim?: string;
+  isLifeSafetyA1?: boolean;
+  spotlightedSummary?: string;
 }
 
 interface TacticalMapOverlayProps {
   intelligencePins?: TacticalIntelPin[];
+  activeNai?: {
+    label: string;
+    lat: number;
+    lon: number;
+    radiusKm: number;
+  } | null;
   centerLat: number;
   centerLon: number;
   zoom: number;
@@ -150,10 +165,26 @@ function resolvePinVisualTier(pin: TacticalIntelPin, nowMs: number): {
   if (pin.corroborationStatus === 'CRITICAL_CONVERGENCE' || score >= 0.85) {
     return { tier: 'CRITICAL_CONVERGENCE', score, srcCount };
   }
-  if (pin.corroborationStatus === 'CORROBORATED' || score >= 0.5) {
-    return { tier: 'CORROBORATED', score, srcCount };
+  if (
+    pin.corroborationStatus === 'CORROBORATED' ||
+    pin.isLifeSafetyA1 ||
+    srcCount >= 2 ||
+    score >= 0.5
+  ) {
+    return { tier: 'CORROBORATED', score: Math.max(score, 0.55), srcCount };
   }
   return { tier: 'CANDIDATE', score, srcCount };
+}
+
+function formatObservationAge(iso: string | undefined, nowMs: number): string | null {
+  if (!iso) return null;
+  const parsed = Date.parse(iso);
+  if (isNaN(parsed)) return null;
+  const diffSec = Math.max(0, Math.floor((nowMs - parsed) / 1000));
+  if (diffSec < 60) return `${diffSec}s`;
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m`;
+  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h`;
+  return `${Math.floor(diffSec / 86400)}d`;
 }
 
 function formatRemainingTtl(expiresAt: string | undefined, nowMs: number): {
@@ -181,6 +212,7 @@ function formatRemainingTtl(expiresAt: string | undefined, nowMs: number): {
 
 export default function TacticalMapOverlay({
   intelligencePins = [],
+  activeNai = null,
   centerLat,
   centerLon,
   zoom,
@@ -335,6 +367,52 @@ export default function TacticalMapOverlay({
 
       const frameNow = Date.now();
 
+      // 1b. Render Active NAI Center Reticle & Geofence Sector Perimeter
+      if (activeNai && Number.isFinite(activeNai.lat) && Number.isFinite(activeNai.lon)) {
+        const naiProj = projectPinToCanvas(
+          { lat: activeNai.lat, lon: activeNai.lon },
+          centerLat,
+          centerLon,
+          zoom,
+          canvas.width,
+          canvas.height
+        );
+        const zClamped = Math.max(1, Math.min(17, Math.round(zoom)));
+        const metersPerPx =
+          (156543.03392 * Math.max(0.15, Math.cos((activeNai.lat * Math.PI) / 180))) /
+          Math.pow(2, zClamped);
+        const radiusPx = Math.max(16, (activeNai.radiusKm * 1000) / Math.max(0.1, metersPerPx));
+
+        ctx.save();
+        ctx.setLineDash([6, 4]);
+        ctx.strokeStyle = 'rgba(34, 211, 238, 0.42)';
+        ctx.lineWidth = 1.3;
+        ctx.beginPath();
+        ctx.arc(naiProj.px, naiProj.py, Math.min(radiusPx, 1800), 0, 2 * Math.PI);
+        ctx.stroke();
+
+        ctx.setLineDash([]);
+        ctx.strokeStyle = 'rgba(16, 185, 129, 0.75)';
+        ctx.lineWidth = 1.4;
+        ctx.beginPath();
+        ctx.moveTo(naiProj.px - 9, naiProj.py);
+        ctx.lineTo(naiProj.px + 9, naiProj.py);
+        ctx.moveTo(naiProj.px, naiProj.py - 9);
+        ctx.lineTo(naiProj.px, naiProj.py + 9);
+        ctx.stroke();
+
+        if (naiProj.isVisible) {
+          ctx.font = 'bold 9px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
+          const naiTag = `[NAI: ${activeNai.label.slice(0, 22)} • ${activeNai.radiusKm}km]`;
+          const tw = ctx.measureText(naiTag).width;
+          ctx.fillStyle = 'rgba(2, 12, 8, 0.78)';
+          ctx.fillRect(naiProj.px - tw / 2 - 3, naiProj.py + 11, tw + 6, 12);
+          ctx.fillStyle = '#67e8f9';
+          ctx.fillText(naiTag, naiProj.px - tw / 2, naiProj.py + 20);
+        }
+        ctx.restore();
+      }
+
       // 2. Render Tiered Geographically Locked Intelligence Pins
       filteredPins.forEach((pin) => {
         const { px, py, isVisible } = projectPinToCanvas(
@@ -391,10 +469,11 @@ export default function TacticalMapOverlay({
           ctx.arc(px, py, 3.2, 0, 2 * Math.PI);
           ctx.fill();
         } else if (tier === 'CANDIDATE') {
-          // CANDIDATE (< 0.50): muted amber crosshair at 45% opacity, static reticle, no pulse
-          ctx.strokeStyle = isSelected ? 'rgba(253, 224, 71, 0.85)' : 'rgba(245, 158, 11, 0.45)';
-          ctx.fillStyle = isSelected ? 'rgba(253, 224, 71, 0.85)' : 'rgba(245, 158, 11, 0.45)';
-          ctx.lineWidth = 1.1;
+          // CANDIDATE (< 0.50): single-source reticle at 45% opacity, static crosshair, no pulse
+          ctx.globalAlpha = isSelected ? 0.9 : 0.45;
+          ctx.strokeStyle = isSelected ? '#fde047' : '#f59e0b';
+          ctx.fillStyle = isSelected ? '#fde047' : '#f59e0b';
+          ctx.lineWidth = 1.15;
           ctx.beginPath();
           ctx.moveTo(px - 10, py);
           ctx.lineTo(px - 4, py);
@@ -465,34 +544,42 @@ export default function TacticalMapOverlay({
           ctx.strokeRect(px - 10, py - 10, 20, 20);
         }
 
-        // Draw compact canvas badge & callout label
+        // Draw compact canvas badge & callout label (Admiralty grade, kinetic tag, source track, live age)
         ctx.font = 'bold 10px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
-        const shortBase = pin.title.length > 22 ? `${pin.title.slice(0, 20)}..` : pin.title;
+        const shortBase = pin.title.length > 20 ? `${pin.title.slice(0, 18)}..` : pin.title;
+        const admiraltyPart = pin.admiraltyGrade ? `[${pin.admiraltyGrade}] ` : '';
+        const kineticPart = pin.isKineticNonTectonic ? '[KINETIC/NON-TECTONIC] ' : '';
+        const trackTag = pin.adapterId
+          ? pin.adapterId.replace('GEOINT_', '').replace('MASINT_', '').replace('IMINT_', '').replace('SIGINT_', '').replace('CIVIC_', '')
+          : pin.sourceTracks?.[0] || '';
+        const ageLabel = formatObservationAge(pin.observationTime || pin.capturedAt, frameNow);
         const badgePrefix =
           tier === 'CRITICAL_CONVERGENCE'
-            ? `[CRIT ${srcCount}x] `
+            ? `${admiraltyPart}[CRIT ${srcCount}x] ${kineticPart}`
             : tier === 'CORROBORATED'
-            ? `[${srcCount}x SRC] `
+            ? `${admiraltyPart}[${pin.isLifeSafetyA1 && srcCount < 2 ? 'LIFE-SAFETY' : `${srcCount}x SRC`}] ${kineticPart}`
             : tier === 'STALE'
             ? '[STALE] '
-            : '';
-        const label = `${badgePrefix}${shortBase}`;
+            : `${admiraltyPart}${trackTag ? `[${trackTag}] ` : ''}${kineticPart}`;
+        const label = `${badgePrefix}${shortBase}${ageLabel ? ` • ${ageLabel}` : ''}`;
         const textWidth = ctx.measureText(label).width;
         const labelX = px + 14 + textWidth > canvas.width - 10 ? px - 14 - textWidth : px + 14;
         const labelY = py + 3;
 
         ctx.fillStyle =
-          tier === 'CANDIDATE' ? 'rgba(2, 8, 4, 0.55)' : 'rgba(2, 8, 4, 0.88)';
+          tier === 'CANDIDATE' ? 'rgba(2, 8, 4, 0.72)' : 'rgba(2, 8, 4, 0.9)';
         ctx.fillRect(labelX - 3, labelY - 10, textWidth + 6, 14);
         ctx.fillStyle = isSelected
           ? '#fde047'
+          : pin.isKineticNonTectonic
+          ? '#fb923c'
           : tier === 'CRITICAL_CONVERGENCE'
           ? '#fca5a5'
           : tier === 'CORROBORATED'
           ? '#6ee7b7'
           : tier === 'STALE'
           ? '#94a3b8'
-          : 'rgba(252, 211, 77, 0.65)';
+          : '#fcd34d';
         ctx.fillText(label, labelX, labelY);
 
         ctx.restore();
@@ -510,7 +597,7 @@ export default function TacticalMapOverlay({
       window.removeEventListener('resize', syncCanvasSize);
       resizeObserver?.disconnect();
     };
-  }, [filteredPins, selectedPin, centerLat, centerLon, zoom]);
+  }, [filteredPins, selectedPin, activeNai, centerLat, centerLon, zoom]);
 
   // Handle canvas click/tap to select nearest visible (or off-screen edge) pin
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
@@ -709,6 +796,21 @@ export default function TacticalMapOverlay({
                 >
                   {selectedTierInfo?.tier}
                 </span>
+                {selectedPin.admiraltyGrade && (
+                  <span className="px-1.5 py-0.5 text-[9px] font-bold rounded bg-cyan-950/90 text-cyan-200 border border-cyan-500/70">
+                    NATO [{selectedPin.admiraltyGrade}]
+                  </span>
+                )}
+                {selectedPin.isKineticNonTectonic && (
+                  <span className="px-1.5 py-0.5 text-[9px] font-bold rounded bg-orange-950/90 text-orange-300 border border-orange-500/80">
+                    [KINETIC/NON-TECTONIC{selectedPin.seismicTypeVerbatim ? `: ${selectedPin.seismicTypeVerbatim}` : ''}]
+                  </span>
+                )}
+                {selectedPin.isLifeSafetyA1 && (
+                  <span className="px-1.5 py-0.5 text-[9px] font-bold rounded bg-red-950/90 text-red-200 border border-red-400/80">
+                    A1 LIFE-SAFETY
+                  </span>
+                )}
                 {selectedPin.clusterId && (
                   <span className="text-[9px] text-cyan-300 font-bold">
                     {selectedPin.clusterId}
@@ -763,15 +865,47 @@ export default function TacticalMapOverlay({
                 GEO: {selectedPin.lat.toFixed(4)}°, {selectedPin.lon.toFixed(4)}°
               </span>
               <span>
-                SOURCES: {selectedPin.sourceTracks?.join(' + ') || selectedPin.category || 'SINGLE'}
+                SOURCES: {selectedPin.adapterId || selectedPin.sourceTracks?.join(' + ') || selectedPin.category || 'SINGLE'}
               </span>
             </div>
+            {(selectedPin.observationTime || selectedPin.firstIngestedAt || selectedPin.lastMaterialChangeAt) && (
+              <div className="pt-1.5 border-t border-slate-800 text-[9px] text-slate-300 space-y-0.5">
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">OBSERVED AT:</span>
+                  <span className="text-cyan-200 font-bold">
+                    {selectedPin.observationTime || 'N/A'}
+                    {selectedPin.observationTime
+                      ? ` (${formatObservationAge(selectedPin.observationTime, nowTickMs) || '0s'} ago)`
+                      : ''}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">FIRST INGESTED:</span>
+                  <span>{selectedPin.firstIngestedAt || 'N/A'}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-slate-400">LAST DELTA:</span>
+                  <span className="text-emerald-300">{selectedPin.lastMaterialChangeAt || 'N/A'}</span>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Fused Summary */}
           <div className="text-[11px] leading-relaxed text-slate-100 bg-slate-900/60 border border-slate-800 rounded p-2">
             {selectedPin.summary}
           </div>
+
+          {selectedPin.spotlightedSummary && (
+            <details className="bg-slate-900/80 border border-cyan-500/35 rounded p-2 text-[9px]">
+              <summary className="cursor-pointer font-bold text-cyan-300 select-none">
+                SPOTLIGHTING ENVELOPE (DEFANGED UNTRUSTED PAYLOAD)
+              </summary>
+              <pre className="mt-1.5 p-1.5 bg-black border border-slate-800 rounded text-emerald-300 whitespace-pre-wrap break-all max-h-32 overflow-y-auto">
+                {selectedPin.spotlightedSummary}
+              </pre>
+            </details>
+          )}
 
           {/* Agent Vance Synthesis Details */}
           {selectedPin.vanceSynthesis && (

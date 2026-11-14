@@ -232,8 +232,9 @@ const CommandCenterContent: React.FC = () => {
       }
     });
     // Background work that is not needed for first paint is scheduled once the browser is idle:
-    // the classified / ISW feed ingestion pipelines (and their large briefing corpora), plus a
-    // warm-up of the agent execution engine so the first directive dispatches without delay.
+    // the live geofenced pre-media sensor bus + classified feeds, plus a warm-up of the agent
+    // execution engine so the first directive dispatches without delay. (ISW static scraping is
+    // strictly on-demand only.)
     const runWhenIdle = (cb: () => void) => {
       const ric = (window as any).requestIdleCallback as
         | ((fn: () => void, opts?: { timeout: number }) => number)
@@ -245,9 +246,9 @@ const CommandCenterContent: React.FC = () => {
       import('./services/ClassifiedFeedService')
         .then((m) => m.initClassifiedFeedIngestion())
         .catch((err) => console.warn('[Feeds] Classified feed ingestion failed to start:', err));
-      import('./services/iswFeedService')
-        .then((m) => m.initISWFeedIngestion())
-        .catch((err) => console.warn('[Feeds] ISW feed ingestion failed to start:', err));
+      import('./services/LocalSensorBus')
+        .then((m) => m.initLocalSensorBus())
+        .catch((err) => console.warn('[SensorBus] Live local sensor bus warning:', err));
       import('./services/TripwireDiffService')
         .then((m) => m.initTripwireBackgroundScheduler())
         .catch((err) => console.warn('[Tripwire] Background scheduler warning:', err));

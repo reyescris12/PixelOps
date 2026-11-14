@@ -59,12 +59,16 @@ export interface WorkspaceFileViewerProps {
   isOpen: boolean;
   onClose: () => void;
   initialFilePath?: string;
+  inlineMode?: boolean;
+  onSwitchToLinkBoard?: () => void;
 }
 
 export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
   isOpen,
   onClose,
   initialFilePath,
+  inlineMode = false,
+  onSwitchToLinkBoard,
 }) => {
   const { themeId, playBeep } = useTheme();
 
@@ -640,21 +644,33 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
   return (
     <AnimatePresence>
       <div
-        className="fixed inset-0 z-[120] flex items-center justify-center p-0 sm:p-3 md:p-4 bg-black/90 backdrop-blur-md overflow-hidden"
-        style={{
-          paddingTop: 'max(0px, env(safe-area-inset-top, 0px))',
-          paddingBottom: 'max(0px, env(safe-area-inset-bottom, 0px))',
-          paddingLeft: 'max(0px, env(safe-area-inset-left, 0px))',
-          paddingRight: 'max(0px, env(safe-area-inset-right, 0px))',
-        }}
+        className={
+          inlineMode
+            ? 'w-full h-full flex flex-col overflow-hidden'
+            : 'fixed inset-0 z-[120] flex items-center justify-center p-0 sm:p-3 md:p-4 bg-black/90 backdrop-blur-md overflow-hidden'
+        }
+        style={
+          inlineMode
+            ? undefined
+            : {
+                paddingTop: 'max(0px, env(safe-area-inset-top, 0px))',
+                paddingBottom: 'max(0px, env(safe-area-inset-bottom, 0px))',
+                paddingLeft: 'max(0px, env(safe-area-inset-left, 0px))',
+                paddingRight: 'max(0px, env(safe-area-inset-right, 0px))',
+              }
+        }
       >
         <motion.div
-          initial={{ opacity: 0, scale: 0.95, y: 15 }}
+          initial={inlineMode ? false : { opacity: 0, scale: 0.95, y: 15 }}
           animate={{ opacity: 1, scale: 1, y: 0 }}
-          exit={{ opacity: 0, scale: 0.95, y: 15 }}
+          exit={inlineMode ? undefined : { opacity: 0, scale: 0.95, y: 15 }}
           transition={{ duration: 0.2 }}
-          className="relative w-full max-w-6xl h-full sm:h-[92vh] max-h-none sm:max-h-[880px] flex flex-col bg-[#0a0c0e] border-0 sm:border-2 rounded-none sm:rounded-lg shadow-2xl overflow-hidden font-mono text-xs sm:text-sm text-[#e2e8f0]"
-          style={{ borderColor: themeColors.accent }}
+          className={
+            inlineMode
+              ? 'relative w-full h-full flex flex-col bg-[#0a0c0e] border border-slate-800 rounded-lg overflow-hidden font-mono text-xs sm:text-sm text-[#e2e8f0]'
+              : 'relative w-full max-w-6xl h-full sm:h-[92vh] max-h-none sm:max-h-[880px] flex flex-col bg-[#0a0c0e] border-0 sm:border-2 rounded-none sm:rounded-lg shadow-2xl overflow-hidden font-mono text-xs sm:text-sm text-[#e2e8f0]'
+          }
+          style={inlineMode ? undefined : { borderColor: themeColors.accent }}
         >
           {/* Top Terminal Header Bar */}
           <div
@@ -730,9 +746,13 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
                 type="button"
                 onClick={() => {
                   playBeep('tap');
-                  window.dispatchEvent(
-                    new CustomEvent('pixelops:open_modal', { detail: { modal: 'link_board' } })
-                  );
+                  if (onSwitchToLinkBoard) {
+                    onSwitchToLinkBoard();
+                  } else {
+                    window.dispatchEvent(
+                      new CustomEvent('pixelops:open_modal', { detail: { modal: 'link_board' } })
+                    );
+                  }
                 }}
                 className="flex items-center gap-1 px-2 sm:px-2.5 py-1 rounded bg-[#23153c] hover:bg-[#311d54] text-[#e9d5ff] border border-[#7e22ce] transition-colors text-xs font-semibold cursor-pointer"
                 title="Open Basement Evidence Link Board (Cross-Dossier Entity Graph)"
@@ -761,14 +781,16 @@ export const WorkspaceFileViewer: React.FC<WorkspaceFileViewerProps> = ({
                 <span className="hidden xs:inline">New File</span>
               </button>
 
-              <button
-                type="button"
-                onClick={onClose}
-                className="p-1.5 hover:bg-red-500/20 text-slate-400 hover:text-red-400 rounded transition-colors ml-0.5"
-                title="Close Explorer (Esc)"
-              >
-                <X className="w-4 h-4" />
-              </button>
+              {!inlineMode && (
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="p-1.5 hover:bg-red-500/20 text-slate-400 hover:text-red-400 rounded transition-colors ml-0.5"
+                  title="Close Explorer (Esc)"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
             </div>
           </div>
 

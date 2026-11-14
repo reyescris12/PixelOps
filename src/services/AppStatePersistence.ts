@@ -25,6 +25,7 @@ export interface PersistedAppSessionState {
   agentRooms: Record<string, RoomId>;
   liveAgentsSnapshot?: Record<number, LiveAgentState>;
   autoRoam?: boolean;
+  workspaceMode?: 'recon' | 'safehouse' | 'vault';
   activeTab: 'hq' | 'crew' | 'plugins' | 'themes';
   hqSubView: 'terminal' | 'command_log' | 'town_hall' | 'task_queue' | 'recon_monitor';
   dialogueText: string;
@@ -153,6 +154,7 @@ export function useAppStatePersistence(
     currentState.activeAgentId,
     currentState.currentRoom,
     currentState.agentRooms,
+    currentState.workspaceMode,
     currentState.activeTab,
     currentState.hqSubView,
     currentState.dialogueText,

@@ -119,6 +119,8 @@ interface TacticalMapOverlayProps {
   onLockNaiAtCoords?: (coords: { lat: number; lon: number }) => void;
   onDispatchPinDirective?: (pin: TacticalIntelPin) => void;
   onClustersMutated?: () => void;
+  suppressInlineDossier?: boolean;
+  hideInternalFilterStrip?: boolean;
 }
 
 /**
@@ -259,6 +261,8 @@ export default function TacticalMapOverlay({
   onLockNaiAtCoords,
   onDispatchPinDirective,
   onClustersMutated,
+  suppressInlineDossier = false,
+  hideInternalFilterStrip = false,
 }: TacticalMapOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [selectedPin, setSelectedPin] = useState<TacticalIntelPin | null>(null);
@@ -1370,31 +1374,33 @@ export default function TacticalMapOverlay({
       />
 
       {/* Compact Single-Row Layer Filter HUD Strip */}
-      <div
-        data-no-map-drag="true"
-        className="absolute top-1.5 left-1/2 -translate-x-1/2 z-35 flex items-center gap-1 bg-black/85 border border-emerald-500/45 rounded px-1.5 py-0.5 shadow-[0_0_16px_rgba(0,0,0,0.9)] max-w-[94%] overflow-x-auto no-scrollbar"
-      >
-        {filterChips.map((chip) => {
-          const active = activeLayerFilter === chip.id;
-          return (
-            <button
-              key={chip.id}
-              type="button"
-              onClick={() => setActiveLayerFilter(chip.id)}
-              className={`px-1.5 py-0.5 text-[9px] font-mono font-bold rounded whitespace-nowrap cursor-pointer transition-colors ${
-                active
-                  ? 'bg-emerald-500/30 text-emerald-200 border border-emerald-400'
-                  : 'bg-slate-900/90 text-slate-400 hover:text-emerald-200 border border-slate-800'
-              }`}
-            >
-              {chip.label}
-            </button>
-          );
-        })}
-        <span className="text-[9px] font-mono text-emerald-400/80 pl-1 whitespace-nowrap">
-          [{filteredPins.length} PINS • {visibleAirspaceTracks.length} AIR • {cctvCameras.length} CAM]
-        </span>
-      </div>
+      {!hideInternalFilterStrip && (
+        <div
+          data-no-map-drag="true"
+          className="absolute top-1.5 left-1/2 -translate-x-1/2 z-35 flex items-center gap-1 bg-black/85 border border-emerald-500/45 rounded px-1.5 py-0.5 shadow-[0_0_16px_rgba(0,0,0,0.9)] max-w-[94%] overflow-x-auto no-scrollbar"
+        >
+          {filterChips.map((chip) => {
+            const active = activeLayerFilter === chip.id;
+            return (
+              <button
+                key={chip.id}
+                type="button"
+                onClick={() => setActiveLayerFilter(chip.id)}
+                className={`px-1.5 py-0.5 text-[9px] font-mono font-bold rounded whitespace-nowrap cursor-pointer transition-colors ${
+                  active
+                    ? 'bg-emerald-500/30 text-emerald-200 border border-emerald-400'
+                    : 'bg-slate-900/90 text-slate-400 hover:text-emerald-200 border border-slate-800'
+                }`}
+              >
+                {chip.label}
+              </button>
+            );
+          })}
+          <span className="text-[9px] font-mono text-emerald-400/80 pl-1 whitespace-nowrap">
+            [{filteredPins.length} PINS • {visibleAirspaceTracks.length} AIR • {cctvCameras.length} CAM]
+          </span>
+        </div>
+      )}
 
       {/* Live ADS-B Aircraft Track Quick-Inspector */}
       {selectedAircraft && !selectedPin && (
@@ -1604,7 +1610,7 @@ export default function TacticalMapOverlay({
       )}
 
       {/* Non-Blocking Slide-Over Evidence Provenance Drawer */}
-      {selectedPin && (
+      {selectedPin && !suppressInlineDossier && (
         <aside
           role="region"
           aria-label="Evidence Provenance Drawer"

@@ -647,6 +647,11 @@ export interface TacticalSatelliteMonitorProps {
   overlayMode?: boolean;
   onCloseOverlay?: () => void;
   onOpenThreatMatrixModal?: () => void;
+  calmWorkspaceMode?: boolean;
+  hideRoutineSignals?: boolean;
+  hiddenRoutineCount?: number;
+  onToggleRoutineSignals?: () => void;
+  onInspectPinInDrawer?: (pin: TacticalIntelPin) => void;
 }
 
 export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> = ({
@@ -662,6 +667,11 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
   overlayMode = false,
   onCloseOverlay,
   onOpenThreatMatrixModal,
+  calmWorkspaceMode = false,
+  hideRoutineSignals = false,
+  hiddenRoutineCount = 0,
+  onToggleRoutineSignals,
+  onInspectPinInDrawer,
 }) => {
   const [lat, setLat] = useState<number>(initialLat);
   const [lon, setLon] = useState<number>(initialLon);
@@ -1276,6 +1286,32 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
       : cctvSweep.globalHubShowcase.slice(0, 8);
   }, [cctvSweep]);
 
+  // Layer 0 Calm Baseline: hide uncorroborated single-sensor clutter on map by default when hideRoutineSignals is active
+  const mapVisiblePins = useMemo(() => {
+    if (!hideRoutineSignals) return intelligencePins;
+    return intelligencePins.filter((pin) => {
+      if (pin.id.startsWith('recon-target-')) return true;
+      if (pin.isLifeSafetyA1) return true;
+      if (
+        pin.corroborationStatus === 'CORROBORATED' ||
+        pin.corroborationStatus === 'CRITICAL_CONVERGENCE'
+      ) {
+        return true;
+      }
+      if ((pin.sourceCount ?? pin.sourceTracks?.length ?? 1) >= 2) return true;
+      if (pin.admiraltyGrade === 'A1' && pin.priority === 'HIGH') return true;
+      return false;
+    });
+  }, [intelligencePins, hideRoutineSignals]);
+
+  const effectiveOverlayVisibility = useMemo<TacticalOverlayVisibility>(() => {
+    if (!calmWorkspaceMode || !hideRoutineSignals) return overlayVisibility;
+    return {
+      ...overlayVisibility,
+      adsbTacticalOnly: true,
+    };
+  }, [calmWorkspaceMode, hideRoutineSignals, overlayVisibility]);
+
   const shaderClass =
     shaderMode === 'amber_crt'
       ? 'phosphor-amber'
@@ -1299,6 +1335,165 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
       </div>
 
       {/* Top Recon Monitor Control Header */}
+      {calmWorkspaceMode ? (
+        <div className="px-3 py-2 bg-[#070e13] border-b border-slate-800/90 flex flex-wrap items-center justify-between gap-2 shrink-0 font-sans">
+          <form
+            onSubmit={handleCommandLockSubmit}
+            className="flex items-center gap-1.5 flex-1 min-w-[210px] max-w-md"
+          >
+            <input
+              id="satellite-command-input"
+              name="satellite_command_input"
+              type="text"
+              value={commandInput}
+              onChange={(e) => setCommandInput(e.target.value)}
+              placeholder="Search street, postcode, city, or lat, lon..."
+              className="w-full px-2.5 py-1 text-xs bg-slate-950 border border-slate-700/90 rounded text-slate-100 placeholder-slate-400 focus:outline-none focus:border-emerald-400"
+            />
+            <button
+              type="submit"
+              disabled={isGeocoding}
+              className="px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-emerald-300 text-xs font-semibold flex items-center gap-1 shrink-0 cursor-pointer disabled:opacity-50"
+            >
+              <Crosshair className={`w-3.5 h-3.5 ${isGeocoding ? 'animate-spin' : ''}`} />
+              <span>{isGeocoding ? 'Locating' : 'Go'}</span>
+            </button>
+          </form>
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            <select
+              id="satellite-feed-layer"
+              name="satellite_feed_layer"
+              value={feedLayer}
+              onChange={(e) => {
+                const nextLayer = e.target.value as SatelliteFeedLayerId;
+                setFeedLayer(nextLayer);
+                setWvsSnapshotError(false);
+                if (
+                  (nextLayer === 'nasa_gibs_modis_terra' || nextLayer === 'nasa_gibs_viirs_snpp') &&
+                  zoom > 9
+                ) {
+                  setZoom(7);
+                }
+              }}
+              className="px-2 py-1 text-xs bg-slate-950 border border-slate-700 rounded text-slate-200 focus:outline-none"
+              title="Map Imagery Layer"
+            >
+              <option value="esri_world_imagery">Satellite Street (Z:18)</option>
+              <option value="carto_dark_tactical">Dark Vector Map</option>
+              <option value="nasa_gibs_wvs_composite">NASA Daily Orbital</option>
+              <option value="nasa_gibs_modis_terra">NASA MODIS Plumes</option>
+              <option value="nasa_gibs_viirs_snpp">NASA VIIRS Thermal</option>
+            </select>
+
+            <select
+              id="satellite-shader-mode"
+              name="satellite_shader_mode"
+              value={shaderMode}
+              onChange={(e) => setShaderMode(e.target.value as PhosphorShaderMode)}
+              className="px-2 py-1 text-xs bg-slate-950 border border-slate-700 rounded text-slate-200 focus:outline-none"
+              title="Optical Filter"
+            >
+              <option value="true_color">True Color</option>
+              <option value="green_nvg">Night Vision</option>
+              <option value="amber_crt">Amber CRT</option>
+              <option value="thermal_flir">Thermal Contrast</option>
+            </select>
+
+            <button
+              type="button"
+              onClick={() => setShowCctvDock((d) => !d)}
+              className={`px-2.5 py-1 rounded border text-xs font-semibold flex items-center gap-1 cursor-pointer ${
+                showCctvDock
+                  ? 'bg-emerald-950 text-emerald-200 border-emerald-400/70'
+                  : 'bg-slate-900 text-slate-200 border-slate-700 hover:border-slate-500'
+              }`}
+            >
+              <Video className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Cameras ({cctvSweep.inSectorCameras.length || mapCctvNodes.length})</span>
+            </button>
+
+            <details className="relative">
+              <summary className="list-none px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-semibold text-slate-200 cursor-pointer select-none">
+                Map Layers ▾
+              </summary>
+              <div className="absolute right-0 mt-1.5 z-50 w-64 rounded-lg bg-slate-950 border border-slate-700 shadow-2xl p-2.5 space-y-2 text-xs">
+                <div className="font-semibold text-slate-300 border-b border-slate-800 pb-1">
+                  Map Overlays
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setShowHybridLabels((v) => !v)}
+                    className={`px-2 py-1 rounded border cursor-pointer ${
+                      showHybridLabels
+                        ? 'bg-emerald-950 text-emerald-200 border-emerald-500/60'
+                        : 'bg-slate-900 text-slate-400 border-slate-800'
+                    }`}
+                  >
+                    Street Labels: {showHybridLabels ? 'On' : 'Off'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setOverlayVisibility((v) => ({ ...v, adsbAirspace: !v.adsbAirspace }))
+                    }
+                    className={`px-2 py-1 rounded border cursor-pointer ${
+                      overlayVisibility.adsbAirspace
+                        ? 'bg-sky-950 text-sky-200 border-sky-500/60'
+                        : 'bg-slate-900 text-slate-400 border-slate-800'
+                    }`}
+                  >
+                    Airspace ({airspaceData.totalCount})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setOverlayVisibility((v) => ({ ...v, cctvNodes: !v.cctvNodes }))
+                    }
+                    className={`px-2 py-1 rounded border cursor-pointer ${
+                      overlayVisibility.cctvNodes
+                        ? 'bg-teal-950 text-teal-200 border-teal-500/60'
+                        : 'bg-slate-900 text-slate-400 border-slate-800'
+                    }`}
+                  >
+                    CCTV Pins
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setOverlayVisibility((v) => ({ ...v, globalHazards: !v.globalHazards }))
+                    }
+                    className={`px-2 py-1 rounded border cursor-pointer ${
+                      overlayVisibility.globalHazards
+                        ? 'bg-amber-950 text-amber-200 border-amber-500/60'
+                        : 'bg-slate-900 text-slate-400 border-slate-800'
+                    }`}
+                  >
+                    Global Hazards
+                  </button>
+                </div>
+                <div className="font-semibold text-slate-300 border-b border-slate-800 pb-1 pt-1">
+                  Quick Hubs
+                </div>
+                <div className="flex flex-wrap gap-1 max-h-32 overflow-y-auto">
+                  {TACTICAL_SECTOR_PRESETS.map((preset) => (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      onClick={() => handleSelectPreset(preset)}
+                      className="px-2 py-0.5 rounded bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800 text-[11px] cursor-pointer"
+                    >
+                      {preset.label.split(' (')[0].slice(0, 22)}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </details>
+          </div>
+        </div>
+      ) : (
+      <>
       <div className="px-2.5 py-1.5 sm:px-3.5 sm:py-2 bg-gradient-to-r from-[#06120e] via-[#0b1f17] to-[#06120e] border-b border-emerald-500/40 flex flex-wrap items-center justify-between gap-2 shrink-0">
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <div className="p-1.5 rounded bg-emerald-500/20 border border-emerald-400/60 text-emerald-300 shrink-0">
@@ -1638,6 +1833,8 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
           </button>
         </form>
       </div>
+      </>
+      )}
 
       {geocodeStatusMsg && (
         <div className="px-3.5 py-1 bg-emerald-950/70 border-b border-emerald-500/40 text-[10px] text-emerald-200 flex items-center justify-between shrink-0">
@@ -1766,11 +1963,11 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
         {showTacticalPins && (
           <div className="absolute inset-0 z-20">
             <TacticalMapOverlay
-              intelligencePins={intelligencePins}
+              intelligencePins={mapVisiblePins}
               airspaceTracks={airspaceData.tracks}
               cctvCameras={mapCctvNodes}
               globalHazards={globalMacro?.hazards || []}
-              overlayVisibility={overlayVisibility}
+              overlayVisibility={effectiveOverlayVisibility}
               pinpointMode={pinpointMode}
               pinpointTarget={pinpointTarget}
               activeNai={activeNai}
@@ -1778,7 +1975,14 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
               centerLon={lon}
               zoom={effectiveZoom}
               maxZoom={18}
-              onSelectPin={(pin) => setHasActivePinDossier(Boolean(pin))}
+              suppressInlineDossier={Boolean(onInspectPinInDrawer)}
+              hideInternalFilterStrip={calmWorkspaceMode}
+              onSelectPin={(pin) => {
+                setHasActivePinDossier(Boolean(pin) && !onInspectPinInDrawer);
+                if (pin && onInspectPinInDrawer) {
+                  onInspectPinInDrawer(pin);
+                }
+              }}
               onSelectCctv={(cam) => handleOpenCameraInPip(cam)}
               onClustersMutated={refreshIntelligencePins}
               onCursorTelemetryChange={setCursorTelemetry}
@@ -2060,12 +2264,28 @@ export const TacticalSatelliteMonitor: React.FC<TacticalSatelliteMonitorProps> =
               </div>
             </div>
 
-            <div className="bg-black/80 border border-amber-500/60 px-2 py-1 rounded text-[9px] sm:text-[10px] text-amber-300 text-right shadow-[0_0_15px_rgba(0,0,0,0.85)]">
-              <div className="font-bold uppercase truncate max-w-[155px] sm:max-w-none">
-                {threatBadgeText}
+            {calmWorkspaceMode ? (
+              onToggleRoutineSignals && (hiddenRoutineCount > 0 || !hideRoutineSignals) ? (
+                <button
+                  type="button"
+                  onClick={onToggleRoutineSignals}
+                  className="pointer-events-auto bg-slate-950/90 hover:bg-slate-900 border border-slate-700 px-2.5 py-1 rounded-full text-[11px] font-sans font-medium text-slate-200 shadow-lg cursor-pointer transition-colors"
+                >
+                  {hideRoutineSignals
+                    ? `+ ${hiddenRoutineCount} routine ${
+                        hiddenRoutineCount === 1 ? 'signal' : 'signals'
+                      } hidden`
+                    : 'Hide routine signals'}
+                </button>
+              ) : null
+            ) : (
+              <div className="bg-black/80 border border-amber-500/60 px-2 py-1 rounded text-[9px] sm:text-[10px] text-amber-300 text-right shadow-[0_0_15px_rgba(0,0,0,0.85)]">
+                <div className="font-bold uppercase truncate max-w-[155px] sm:max-w-none">
+                  {threatBadgeText}
+                </div>
+                <div className="text-emerald-300">OVERWATCH: {activeOperativeName.toUpperCase()}</div>
               </div>
-              <div className="text-emerald-300">OVERWATCH: {activeOperativeName.toUpperCase()}</div>
-            </div>
+            )}
           </div>
 
           {/* Subtle Precision Center Reticle (Compact so street/building targets underneath remain unobstructed!) */}

@@ -37,8 +37,10 @@ import { loadLLMProviderConfig, getLLMAuthInfo } from './services/LLMProviderSer
 import { ThemeSettings } from './components/ThemeSettings';
 import { RetroErrorModal } from './components/RetroErrorModal';
 import { OfflineBanner } from './components/PWAInstallButton';
-import { CommandSideDrawer } from './components/CommandSideDrawer';
-import { CommandDock } from './components/CommandDock';
+import { CalmTopBar, type WorkspaceMode } from './components/CalmTopBar';
+import type { VaultSectionId } from './components/VaultWorkspaceView';
+const ReconWorkspaceView = lazy(() => import('./components/ReconWorkspaceView'));
+const VaultWorkspaceView = lazy(() => import('./components/VaultWorkspaceView'));
 import { AgentExecutionCard, PluginConnector, CommandPreferences, RetroAgentError, RetroErrorCode, RetroErrorDescriptor, RoundtableMeetingSession, RoundtableParticipantPayload, createRetroAgentError, classifyRetroErrorCode, loadExecutionCards, saveExecutionCards, loadPlugins, savePlugins, loadPreferences, savePreferences, loadRoundtableSessions, saveRoundtableSessions, RoundtableActionItem, isValidRealTask } from './services/ApiCore';
 import { executeAgentDirective, executeRoundtableMeeting, preloadAgentEngine } from './services/agentEngineLazy';
 import { auditStorageHealth } from './services/SafetyService';
@@ -77,13 +79,12 @@ import { CustomPluginConnector, loadCustomPlugins, saveCustomPlugins } from './s
 const CustomPluginModal = lazy(() => import('./components/CustomPluginModal').then((m) => ({ default: m.CustomPluginModal })));
 const TelemetryModal = lazy(() => import('./components/TelemetryModal').then((m) => ({ default: m.TelemetryModal })));
 const ThreatMonitorModal = lazy(() => import('./components/ThreatMonitorModal').then((m) => ({ default: m.ThreatMonitorModal })));
-import { TacticalSatelliteMonitor, parseReconTargetToCoords } from './components/TacticalSatelliteMonitor';
+import { parseReconTargetToCoords } from './components/TacticalSatelliteMonitor';
 const AgentFactoryModal = lazy(() => import('./components/AgentFactoryModal').then((m) => ({ default: m.AgentFactoryModal })));
 import { recordTelemetryExecution } from './services/TelemetryStore';
 import { analyzePromptAmbiguity } from './engine/taskBriefEngine';
 import { TaskBriefModal, TaskBrief } from './components/TaskBriefModal';
 import { TerminalConsole } from './components/TerminalConsole';
-const WorkspaceFileViewer = lazy(() => import('./components/WorkspaceFileViewer').then((m) => ({ default: m.WorkspaceFileViewer })));
 const PlaybookModal = lazy(() => import('./components/PlaybookModal').then((m) => ({ default: m.PlaybookModal })));
 const TaskQueuePanel = lazy(() => import('./components/TaskQueuePanel').then((m) => ({ default: m.TaskQueuePanel })));
 import {
@@ -131,7 +132,6 @@ import { TaskChainHUD } from './components/TaskChainHUD';
 import type { PluginAuthTarget } from './components/PluginAuthModal';
 const PluginAuthModal = lazy(() => import('./components/PluginAuthModal').then((m) => ({ default: m.PluginAuthModal })));
 const FieldManualModal = lazy(() => import('./components/FieldManualModal').then((m) => ({ default: m.FieldManualModal })));
-const BasementLinkBoardModal = lazy(() => import('./components/BasementLinkBoardModal').then((m) => ({ default: m.BasementLinkBoardModal })));
 const SpatialMcpModal = lazy(() => import('./components/SpatialMcpModal').then((m) => ({ default: m.SpatialMcpModal })));
 const MissionCartridgeModal = lazy(() => import('./components/MissionCartridgeModal').then((m) => ({ default: m.MissionCartridgeModal })));
 const TripwireWatchModal = lazy(() => import('./components/TripwireWatchModal').then((m) => ({ default: m.TripwireWatchModal })));
@@ -182,6 +182,12 @@ const CommandCenterContent: React.FC = () => {
 
   // Restore persisted session state on app relaunch
   const [restoredSession] = useState(() => loadAppSessionSnapshot());
+
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>(
+    () => restoredSession?.workspaceMode || 'recon'
+  );
+  const [vaultInitialSection, setVaultInitialSection] = useState<VaultSectionId>('dossiers');
+  const [isThemeConsoleModalOpen, setIsThemeConsoleModalOpen] = useState<boolean>(false);
 
   const [activeTab, setActiveTab] = useState<NavTab>(
     () => restoredSession?.activeTab || 'hq'
@@ -324,57 +330,82 @@ const CommandCenterContent: React.FC = () => {
   const [nightShiftUnreadCount, setNightShiftUnreadCount] = useState<number>(() => loadNightShiftNotifications().filter((n) => !n.read).length);
   const [isTelemetryOpen, setIsTelemetryOpen] = useState(false);
   const [isThreatMonitorOpen, setIsThreatMonitorOpen] = useState(false);
-  const [isReconOverlayOpen, setIsReconOverlayOpen] = useState(false);
   const [reconMonitorTarget, setReconMonitorTarget] = useState<{
     lat: number;
     lon: number;
     label: string;
     sectorCode: string;
-  }>({
-    lat: 30.5852,
-    lon: 32.2654,
-    label: 'Suez Canal & Red Sea Subsea Cable Corridor',
-    sectorCode: 'SECTOR-54 // SUEZ-CHOKELINE',
-  });
+  } | null>(null);
   const [isAgentFactoryOpen, setIsAgentFactoryOpen] = useState(false);
   const [isTerminalConsoleOpen, setIsTerminalConsoleOpen] = useState(false);
-  const [isWorkspaceFilesOpen, setIsWorkspaceFilesOpen] = useState(false);
   const [vfsInitialFilePath, setVfsInitialFilePath] = useState<string | undefined>(undefined);
-  const [isLinkBoardOpen, setIsLinkBoardOpen] = useState(false);
   const [isSpatialMcpOpen, setIsSpatialMcpOpen] = useState(false);
   const [isCartridgesOpen, setIsCartridgesOpen] = useState(false);
   const [isTripwiresOpen, setIsTripwiresOpen] = useState(false);
   const [isTacticalRadioOpen, setIsTacticalRadioOpen] = useState(false);
   const [tripwirePendingCount, setTripwirePendingCount] = useState(0);
-  const [activeTacticalThreatAlert, setActiveTacticalThreatAlert] = useState<{
-    clusterId: string;
-    status: string;
-    corroborationScore: number;
-    title: string;
-    executiveAssessment: string;
-    tracks: string[];
-    geoAnchor: { lat: number; lon: number; radiusKm: number };
-    timestamp: string;
-  } | null>(null);
+  const [activePriorityAlertCount, setActivePriorityAlertCount] = useState<number>(0);
+  const [hasCriticalIncident, setHasCriticalIncident] = useState<boolean>(false);
 
+  // Keep CalmTopBar status pill and Vance/Nyx Safehouse desk badges synchronized with live sensor & cluster feeds
   useEffect(() => {
+    let cancelled = false;
+    const refreshLiveSituationStatus = async () => {
+      try {
+        const [sensorMod, corrMod, translatorMod] = await Promise.all([
+          import('./services/LocalSensorBus'),
+          import('./services/CorroborationEngine'),
+          import('./services/PlainEnglishTranslator'),
+        ]);
+        const [nai, clusters] = await Promise.all([
+          sensorMod.getPrimaryNaiZone().catch(() => sensorMod.getPrimaryNaiZoneOrDefaultSync()),
+          corrMod.getCorroborationClustersWithPackets().catch(() => []),
+        ]);
+        if (cancelled) return;
+        const snapshot = translatorMod.buildSituationFeed({
+          observations: sensorMod.getActiveSensorObservations(),
+          clusters,
+          centerLat: nai.lat,
+          centerLon: nai.lon,
+          radiusKm: nai.radiusKm,
+          adapterHealth: sensorMod.getSensorAdapterHealthList(),
+          nowMs: Date.now(),
+        });
+        setActivePriorityAlertCount(snapshot.priorityCards.length);
+        setHasCriticalIncident(
+          snapshot.priorityCards.some(
+            (c) =>
+              c.severity === 'HIGH' ||
+              c.proof.corroborationStatus === 'CRITICAL_CONVERGENCE'
+          )
+        );
+      } catch {}
+    };
+
     const onThreatAlert = (ev: Event) => {
       const detail = (ev as CustomEvent)?.detail;
-      if (!detail || !detail.clusterId) return;
-      setActiveTacticalThreatAlert({
-        clusterId: String(detail.clusterId),
-        status: String(detail.status || 'CORROBORATED'),
-        corroborationScore: Number(detail.corroborationScore || 0.7),
-        title: String(detail.title || 'Corroborated Localized Incident'),
-        executiveAssessment: String(detail.executiveAssessment || ''),
-        tracks: Array.isArray(detail.tracks) ? detail.tracks : [],
-        geoAnchor: detail.geoAnchor || { lat: 0, lon: 0, radiusKm: 25 },
-        timestamp: String(detail.timestamp || new Date().toISOString()),
-      });
-      playBeep('error');
+      if (detail?.clusterId) {
+        setActivePriorityAlertCount((prev) => Math.max(prev, 1));
+        if (detail.status === 'CRITICAL_CONVERGENCE') {
+          setHasCriticalIncident(true);
+        }
+        playBeep('error');
+      }
+      void refreshLiveSituationStatus();
     };
+
+    void refreshLiveSituationStatus();
+    window.addEventListener('pixelops:sensor-bus-updated', refreshLiveSituationStatus);
+    window.addEventListener('pixelops:corroboration-updated', refreshLiveSituationStatus);
+    window.addEventListener('pixelops:nai-updated', refreshLiveSituationStatus);
     window.addEventListener('pixelops:tactical-threat-alert', onThreatAlert);
-    return () => window.removeEventListener('pixelops:tactical-threat-alert', onThreatAlert);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('pixelops:sensor-bus-updated', refreshLiveSituationStatus);
+      window.removeEventListener('pixelops:corroboration-updated', refreshLiveSituationStatus);
+      window.removeEventListener('pixelops:nai-updated', refreshLiveSituationStatus);
+      window.removeEventListener('pixelops:tactical-threat-alert', onThreatAlert);
+    };
   }, []);
 
   useEffect(() => {
@@ -391,8 +422,10 @@ const CommandCenterContent: React.FC = () => {
 
     const handleOpenModalEvent = (e: Event) => {
       const modal = (e as CustomEvent)?.detail?.modal;
-      if (modal === 'link_board') setIsLinkBoardOpen(true);
-      else if (modal === 'spatial_mcp') setIsSpatialMcpOpen(true);
+      if (modal === 'link_board') {
+        setVaultInitialSection('graph');
+        setWorkspaceMode('vault');
+      } else if (modal === 'spatial_mcp') setIsSpatialMcpOpen(true);
       else if (modal === 'cartridges') setIsCartridgesOpen(true);
       else if (modal === 'tripwires') setIsTripwiresOpen(true);
       else if (modal === 'tactical_radio') setIsTacticalRadioOpen(true);
@@ -579,8 +612,7 @@ const CommandCenterContent: React.FC = () => {
         label: detail.label || `Target (${detail.lat.toFixed(3)}°, ${detail.lon.toFixed(3)}°)`,
         sectorCode: `SAT_RECON // ${detail.lat.toFixed(2)}°, ${detail.lon.toFixed(2)}°`,
       });
-      // Automatically pull up the Recon Monitor overlay over the rooms so the Briefing Terminal below stays open for prompts
-      setIsReconOverlayOpen(true);
+      setWorkspaceMode('recon');
     };
 
     window.addEventListener('pixelops:satellite-recon-lock', handleSatelliteReconToolLock);
@@ -607,6 +639,7 @@ const CommandCenterContent: React.FC = () => {
     activeAgentId: activeAgent.id,
     currentRoom,
     agentRooms,
+    workspaceMode,
     activeTab,
     hqSubView,
     dialogueText,
@@ -1330,7 +1363,7 @@ const CommandCenterContent: React.FC = () => {
               setReconMonitorTarget(parsedFromArgs);
             }
           }
-          setIsReconOverlayOpen(true);
+          setWorkspaceMode('recon');
         }
       }
 
@@ -2394,10 +2427,13 @@ const CommandCenterContent: React.FC = () => {
 
         <button
           type="button"
-          onClick={() => setActiveTab('hq')}
+          onClick={() => {
+            setWorkspaceMode('safehouse');
+            setActiveTab('hq');
+          }}
           className="px-2.5 py-1 text-xs font-mono-tabular text-[#c89d66] hover:text-[#f3ead8] cursor-pointer"
         >
-          [Back to HQ]
+          [Safehouse &rarr;]
         </button>
       </div>
 
@@ -2414,7 +2450,10 @@ const CommandCenterContent: React.FC = () => {
               setPlugins((prev) => [...prev]);
               syncComposioAccounts();
             }}
-            onClose={() => setActiveTab('hq')}
+            onClose={() => {
+              setWorkspaceMode('safehouse');
+              setActiveTab('hq');
+            }}
           />
         </Suspense>
       ) : (
@@ -2585,10 +2624,13 @@ const CommandCenterContent: React.FC = () => {
           </span>
           <button
             type="button"
-            onClick={() => setActiveTab('hq')}
+            onClick={() => {
+              setIsThemeConsoleModalOpen(false);
+              setActiveTab('hq');
+            }}
             className="font-mono-tabular text-xs text-[#c89d66] hover:text-[#f3ead8] cursor-pointer"
           >
-            [Back to HQ]
+            [Done]
           </button>
         </div>
 
@@ -2639,384 +2681,503 @@ const CommandCenterContent: React.FC = () => {
     </div>
   );
 
+  const activeSoundProfile =
+    ROOM_SOUNDSCAPE_PROFILES[currentRoom] || ROOM_SOUNDSCAPE_PROFILES.war_room;
+  const activeAuthInfo = getLLMAuthInfo(loadLLMProviderConfig());
+  const activeOperativeDisplayName =
+    crewAgents.find((a) => a.id === activeAgent.id)?.customName || activeAgent.name;
+
   return (
-    <div
-      className="w-full h-full h-[100dvh] max-h-[100dvh] bg-[#0c0e14] text-[#f3ead8] p-0 sm:p-2 md:p-4 flex flex-col items-center sm:justify-center overflow-hidden box-border"
-    >
-      {/* Outer Retro Console Frame */}
-      <div
-        className="relative w-full h-full sm:h-auto max-w-6xl rounded-none sm:rounded-2xl bg-[#11131c] border-0 sm:border-[3px] overflow-hidden flex flex-col min-h-0 sm:min-h-[92vh] max-h-full sm:max-h-[96dvh] shadow-2xl command-center-layout"
-        style={{
-          borderColor: 'var(--theme-border-color)',
-          boxShadow: '0 0 50px rgba(0,0,0,0.9), 0 0 24px var(--theme-glow-soft)',
+    <div className="w-full h-full h-[100dvh] max-h-[100dvh] bg-[#060a0f] text-[#f3ead8] flex flex-col overflow-hidden box-border">
+      {/* 1. Single Thin Top Status Bar: [🟢 ALL CLEAR • 35km Watch Zone ▾] + [📡 RECON] [🏢 SAFEHOUSE] [📁 VAULT] [⚙] */}
+      <CalmTopBar
+        workspaceMode={workspaceMode}
+        onChangeWorkspaceMode={(mode) => {
+          setWorkspaceMode(mode);
+          if (mode === 'safehouse' && activeTab !== 'hq' && activeTab !== 'crew') {
+            setActiveTab('hq');
+          }
         }}
-      >
-        {/* Left Slide-Out Command System Menu (Replaces Top Header Bar) */}
-        {(() => {
-          const activeMeta = getRoomMetadata(currentRoom);
-          const activeSound =
-            ROOM_SOUNDSCAPE_PROFILES[currentRoom] || ROOM_SOUNDSCAPE_PROFILES.war_room;
-          const authInfo = getLLMAuthInfo(loadLLMProviderConfig());
-          const activeOperativeName =
-            crewAgents.find((a) => a.id === activeAgent.id)?.customName || activeAgent.name;
+        activePriorityAlertCount={activePriorityAlertCount}
+        hasCriticalIncident={hasCriticalIncident}
+        soundEnabled={soundEnabled}
+        soundShortTag={activeSoundProfile.shortTag}
+        onToggleSound={() => {
+          const next = !soundEnabled;
+          setSoundEnabled(next);
+          if (next) {
+            ambientAudioService.setRoom(currentRoom, true);
+            playBeep('tap');
+          }
+        }}
+        authBadgeText={activeAuthInfo.badge}
+        authSubtitleText={activeAuthInfo.subtitle}
+        isAiConnected={activeAuthInfo.isConnected}
+        onOpenSettingsModal={() => setIsSettingsOpen(true)}
+        onOpenSyncAccountModal={() => setIsSyncModalOpen(true)}
+        onOpenFieldManualModal={() => setIsFieldManualOpen(true)}
+        onOpenFeedbackModal={() => setIsFeedbackOpen(true)}
+        onOpenThemeConsoleModal={() => setIsThemeConsoleModalOpen(true)}
+      />
 
-          return (
-            <CommandSideDrawer
-              sectorBadge={activeMeta?.shortBadge || 'SECTOR'}
-              sectorCode={activeMeta?.sectorCode || 'SEC-00'}
-              activeOperativeName={activeOperativeName}
-              soundTitle={activeSound.title}
-              soundDescription={activeSound.description}
-              soundShortTag={activeSound.shortTag}
-              onToggleSound={() => {
-                const next = !soundEnabled;
-                setSoundEnabled(next);
-                if (next) {
-                  ambientAudioService.setRoom(currentRoom, true);
-                  playBeep('tap');
+      {/* 2. Primary Workspace Viewport (RECON | SAFEHOUSE | VAULT) */}
+      <main className="flex-1 min-h-0 flex flex-col overflow-hidden bg-[#060a0f]">
+        {workspaceMode === 'recon' && (
+          <Suspense
+            fallback={
+              <div className="flex-1 flex items-center justify-center text-xs text-slate-400">
+                Loading Live Situation Monitor...
+              </div>
+            }
+          >
+            <ReconWorkspaceView
+              activeOperativeName={activeOperativeDisplayName}
+              externalFocusTarget={reconMonitorTarget}
+              onDispatchToSafehouseAgent={(directive, coords) => {
+                if (coords) {
+                  setReconMonitorTarget({
+                    lat: coords.lat,
+                    lon: coords.lon,
+                    label: coords.label,
+                    sectorCode: `SECTOR-LOCK // ${coords.lat.toFixed(2)},${coords.lon.toFixed(2)}`,
+                  });
                 }
+                setWorkspaceMode('safehouse');
+                setActiveTab('hq');
+                setHqSubView('terminal');
+                handleExecuteDirective(
+                  coords
+                    ? `${directive} [Orbital Target Lock: ${coords.label} at ${coords.lat.toFixed(4)}, ${coords.lon.toFixed(4)}]`
+                    : directive
+                );
               }}
-              isMeetingActive={isMeetingActive}
-              decryptionBoost={decryptionBoost}
-              authInfo={authInfo}
-              isReconOverlayOpen={isReconOverlayOpen}
-              nightShiftUnreadCount={nightShiftUnreadCount}
-              tripwirePendingCount={tripwirePendingCount}
-              onOpenSettings={() => setIsSettingsOpen(true)}
-              onToggleReconOverlay={() => setIsReconOverlayOpen((prev) => !prev)}
-              onOpenNightShift={() => setIsNightShiftOpen(true)}
-              onOpenTelemetry={() => setIsTelemetryOpen(true)}
-              onOpenThreatMonitor={() => setIsThreatMonitorOpen(true)}
-              onOpenFieldManual={() => setIsFieldManualOpen(true)}
-              onOpenThemesConsole={() => setActiveTab('themes')}
-              onOpenLinkBoard={() => setIsLinkBoardOpen(true)}
-              onOpenSpatialMcp={() => setIsSpatialMcpOpen(true)}
-              onOpenCartridges={() => setIsCartridgesOpen(true)}
-              onOpenTripwires={() => setIsTripwiresOpen(true)}
-              onOpenTacticalRadio={() => setIsTacticalRadioOpen(true)}
+              onOpenVaultFile={(filePath) => {
+                setVfsInitialFilePath(filePath);
+                setVaultInitialSection('dossiers');
+                setWorkspaceMode('vault');
+              }}
+              onOpenRadioSheet={() => setIsTacticalRadioOpen(true)}
+              onOpenNightWatchSheet={() => setIsNightShiftOpen(true)}
+              onOpenMacroDiagnosticsSheet={() => setIsThreatMonitorOpen(true)}
             />
-          );
-        })()}
+          </Suspense>
+        )}
 
-        {/* Center Dark CRT Console Canvas */}
-        <main
-          className="flex-1 bg-[#0e1017] flex flex-col min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain"
-          style={{
-            paddingBottom: 'calc(4.5rem + env(safe-area-inset-bottom, 0px))',
-          }}
-        >
-          {/* Scrollable 7-Sector Overworld Diorama + Minimap Radar + Modular GameOverlay */}
-          <SpriteCanvas
-            currentRoom={currentRoom}
-            onChangeRoom={handleRoomChange}
-            agentRooms={agentRooms}
-            onMoveAgentToRoom={handleMoveAgentToRoom}
-            walkingTransition={walkingTransition}
-            isRoutingCamera={isRoutingCamera}
-            isExecuting={isExecuting}
-            executingAgentIds={executingAgentIds}
-            completionAlertAgentId={completionAlertAgentId}
-            errorAlertAgentId={errorAlertAgentId}
-            lastActionSummary={lastActionSummary}
-            isGameActive={isGameActive}
-            isGameClosing={isGameClosing}
-            onGameBoostChange={setDecryptionBoost}
-            onGameSequenceComplete={handleGameSequenceComplete}
-            onStartManualBypass={() => {
-              setIsGameActive(true);
-              setIsGameClosing(false);
-              setDecryptionBoost(0);
-              playBeep('tap');
-            }}
-            onAbortGame={smoothCloseGameOverlay}
-            isMinimapOpen={isMinimapOpen}
-            onToggleMinimap={() => setIsMinimapOpen((prev) => !prev)}
-            townHallSummonNonce={townHallSummonNonce}
-            isMeetingActive={isMeetingActive}
-            activeSpeakerAgentIndex={activeSpeakerAgentIndex}
-            onCallMeeting={handleCallTownHallMeeting}
-            onExecutePlaybook={handleOpenPlaybookSetup}
-            onOpenVfs={() => {
-              setIsWorkspaceFilesOpen(true);
-              playBeep('tap');
-            }}
-            isReconOverlayOpen={isReconOverlayOpen}
-            onOpenReconOverlay={() => setIsReconOverlayOpen(true)}
-            onCloseReconOverlay={() => setIsReconOverlayOpen(false)}
-            reconTarget={reconMonitorTarget}
-            onOpenThreatMatrixModal={() => setIsThreatMonitorOpen(true)}
-            onDispatchReconDirective={(directive, coords) => {
-              setReconMonitorTarget({
-                lat: coords.lat,
-                lon: coords.lon,
-                label: coords.label,
-                sectorCode: `SECTOR-LOCK // ${coords.lat.toFixed(2)},${coords.lon.toFixed(2)}`,
-              });
-              handleExecuteDirective(
-                `${directive} [Orbital Target Lock: ${coords.label} at ${coords.lat.toFixed(4)}, ${coords.lon.toFixed(4)}]`
-              );
-            }}
-          />
+        {workspaceMode === 'safehouse' && (
+          <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden overscroll-contain bg-[#0e1017] pb-6">
+            <div className="w-full max-w-6xl mx-auto">
+              {/* 16-bit Isometric Rooms + Agent Sprites + Active Recon Desk Badges */}
+              <SpriteCanvas
+                currentRoom={currentRoom}
+                onChangeRoom={handleRoomChange}
+                agentRooms={agentRooms}
+                onMoveAgentToRoom={handleMoveAgentToRoom}
+                walkingTransition={walkingTransition}
+                isRoutingCamera={isRoutingCamera}
+                isExecuting={isExecuting}
+                executingAgentIds={executingAgentIds}
+                completionAlertAgentId={completionAlertAgentId}
+                errorAlertAgentId={errorAlertAgentId}
+                lastActionSummary={lastActionSummary}
+                isGameActive={isGameActive}
+                isGameClosing={isGameClosing}
+                onGameBoostChange={setDecryptionBoost}
+                onGameSequenceComplete={handleGameSequenceComplete}
+                onStartManualBypass={() => {
+                  setIsGameActive(true);
+                  setIsGameClosing(false);
+                  setDecryptionBoost(0);
+                  playBeep('tap');
+                }}
+                onAbortGame={smoothCloseGameOverlay}
+                isMinimapOpen={isMinimapOpen}
+                onToggleMinimap={() => setIsMinimapOpen((prev) => !prev)}
+                townHallSummonNonce={townHallSummonNonce}
+                isMeetingActive={isMeetingActive}
+                activeSpeakerAgentIndex={activeSpeakerAgentIndex}
+                onCallMeeting={handleCallTownHallMeeting}
+                onExecutePlaybook={handleOpenPlaybookSetup}
+                onOpenVfs={(targetPath) => {
+                  if (targetPath) {
+                    setVfsInitialFilePath(targetPath);
+                  }
+                  setVaultInitialSection('dossiers');
+                  setWorkspaceMode('vault');
+                  playBeep('tap');
+                }}
+                isReconOverlayOpen={false}
+                onOpenReconOverlay={() => {
+                  setWorkspaceMode('recon');
+                  playBeep('switch');
+                }}
+                onCloseReconOverlay={() => {}}
+                reconTarget={reconMonitorTarget || undefined}
+                onOpenThreatMatrixModal={() => setIsThreatMonitorOpen(true)}
+                onDispatchReconDirective={(directive, coords) => {
+                  setReconMonitorTarget({
+                    lat: coords.lat,
+                    lon: coords.lon,
+                    label: coords.label,
+                    sectorCode: `SECTOR-LOCK // ${coords.lat.toFixed(2)},${coords.lon.toFixed(2)}`,
+                  });
+                  handleExecuteDirective(
+                    `${directive} [Orbital Target Lock: ${coords.label} at ${coords.lat.toFixed(4)}, ${coords.lon.toFixed(4)}]`
+                  );
+                }}
+                reconAlertCount={activePriorityAlertCount}
+                onOpenReconAlert={() => {
+                  setWorkspaceMode('recon');
+                  playBeep('switch');
+                }}
+              />
 
-          {/* Centered Amber Console Boxes below the Overworld Diorama */}
-          <div className="mt-4">
-            {activeTab === 'hq' && (
-              <div className="flex flex-col gap-2.5">
-                {/* Restored Pending Task Banner (if app minimized/closed while a task was executing) */}
-                {!isExecuting && pendingTask?.isPending && (
-                  <div className="w-full max-w-xl mx-auto px-3 sm:px-0">
-                    <div className="p-2.5 bg-[#1b150e] border border-[#e59838] flex flex-wrap items-center justify-between gap-2 font-mono-tabular text-xs">
-                      <div className="min-w-0">
-                        <span className="text-[#4ade80] font-bold">
-                          [SESSION RESTORED · PENDING DIRECTIVE]
-                        </span>{' '}
-                        <span className="text-[#f3ead8] truncate">
-                          &ldquo;{pendingTask.prompt}&rdquo;
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <button
-                          type="button"
-                          onClick={() =>
-                            handleExecuteDirective(
-                              pendingTask.prompt,
-                              pendingTask.attachment || null
-                            )
-                          }
-                          className="px-2.5 py-1 bg-[#e59838] text-[#121110] font-bold border border-[#e59838] cursor-pointer"
-                        >
-                          [▶ RESUME TASK]
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setPendingTask(null)}
-                          className="px-2 py-1 bg-[#261f18] text-[#c89d66] border border-[#6e5233] cursor-pointer"
-                        >
-                          [Dismiss]
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* HQ Sub-Screen Switcher: [📟 BRIEFING TERMINAL] vs [🏛️ TOWN HALL] vs [📜 COMMAND LOG (50)] */}
-                <div className="w-full max-w-2xl mx-auto px-3 sm:px-0 flex flex-wrap items-center justify-between gap-2">
-                  <div className="grid grid-cols-2 sm:inline-flex sm:flex-wrap w-full sm:w-auto bg-[#16130f] border border-[#5e4326] p-0.5 gap-0.5 sm:gap-0">
+              {/* Tucked Safehouse Operations Dock (Replaces Global Header Rows & Floating Taskbar) */}
+              <div className="mt-3 px-3 sm:px-4">
+                <div className="w-full max-w-4xl mx-auto rounded-lg bg-[#0a0f16] border border-slate-800 p-1.5 flex flex-wrap items-center justify-between gap-1.5">
+                  <div className="flex flex-wrap items-center gap-1">
                     <button
                       type="button"
                       onClick={() => {
+                        setActiveTab('hq');
                         setHqSubView('terminal');
                         setActiveSpeakerAgentIndex(null);
                         playBeep('tap');
                       }}
-                      className={`min-h-[34px] sm:min-h-0 px-2.5 sm:px-3 py-1 font-mono-tabular text-xs cursor-pointer transition-colors flex items-center justify-center ${
-                        hqSubView === 'terminal'
-                          ? 'bg-[#e59838] text-[#121110] font-bold'
-                          : 'text-[#c89d66] hover:text-[#f3ead8]'
+                      className={`px-2.5 py-1.5 rounded text-xs font-semibold cursor-pointer transition-colors ${
+                        activeTab === 'hq' && hqSubView === 'terminal'
+                          ? 'bg-emerald-950 text-emerald-200 border border-emerald-500/70'
+                          : 'text-slate-300 hover:text-white hover:bg-slate-900 border border-transparent'
                       }`}
                     >
-                      📟 Briefing Terminal
+                      📟 Comms
                     </button>
+
                     <button
                       type="button"
                       onClick={() => {
+                        setActiveTab('hq');
+                        handleCallTownHallMeeting(false);
+                      }}
+                      className={`px-2.5 py-1.5 rounded text-xs font-semibold cursor-pointer transition-colors ${
+                        activeTab === 'hq' && hqSubView === 'town_hall'
+                          ? 'bg-sky-950 text-sky-200 border border-sky-500/70'
+                          : 'text-slate-300 hover:text-white hover:bg-slate-900 border border-transparent'
+                      }`}
+                    >
+                      📣 Call Meeting
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveTab('hq');
                         setHqSubView('task_queue');
                         setActiveSpeakerAgentIndex(null);
                         playBeep('tap');
                       }}
-                      className={`min-h-[34px] sm:min-h-0 px-2.5 sm:px-3 py-1 font-mono-tabular text-xs cursor-pointer transition-colors flex items-center justify-center gap-1 ${
-                        hqSubView === 'task_queue'
-                          ? 'bg-[#38bdf8] text-[#0c1017] font-bold'
-                          : 'text-[#38bdf8] hover:text-[#f3ead8]'
+                      className={`px-2.5 py-1.5 rounded text-xs font-semibold cursor-pointer transition-colors ${
+                        activeTab === 'hq' && hqSubView === 'task_queue'
+                          ? 'bg-sky-950 text-sky-200 border border-sky-500/70'
+                          : 'text-slate-300 hover:text-white hover:bg-slate-900 border border-transparent'
                       }`}
-                      title="Inspect and manage the active mission task queue"
                     >
-                      <span>📋 Task Queue ({queuedTasksCount})</span>
+                      📋 Queue ({queuedTasksCount})
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => handleCallTownHallMeeting(false)}
-                      className={`min-h-[34px] sm:min-h-0 px-2.5 sm:px-3 py-1 font-mono-tabular text-xs cursor-pointer transition-colors flex items-center justify-center gap-1 ${
-                        hqSubView === 'town_hall'
-                          ? 'bg-[#38bdf8] text-[#0c1017] font-bold'
-                          : 'text-[#38bdf8] hover:text-[#f3ead8]'
-                      }`}
-                      title={`Summon all ${crewAgents.length} active agents to the War Room for a Town Hall Roundtable`}
-                    >
-                      <span>📣 Call Meeting</span>
-                    </button>
+
                     <button
                       type="button"
                       onClick={() => {
+                        setActiveTab('hq');
                         setHqSubView('command_log');
                         setActiveSpeakerAgentIndex(null);
                         refreshCommandLedger();
                         playBeep('tap');
                       }}
-                      className={`min-h-[34px] sm:min-h-0 px-2.5 sm:px-3 py-1 font-mono-tabular text-xs cursor-pointer transition-colors flex items-center justify-center ${
-                        hqSubView === 'command_log'
-                          ? 'bg-[#e59838] text-[#121110] font-bold'
-                          : 'text-[#c89d66] hover:text-[#f3ead8]'
+                      className={`px-2.5 py-1.5 rounded text-xs font-semibold cursor-pointer transition-colors ${
+                        activeTab === 'hq' && hqSubView === 'command_log'
+                          ? 'bg-amber-950 text-amber-200 border border-amber-500/70'
+                          : 'text-slate-300 hover:text-white hover:bg-slate-900 border border-transparent'
                       }`}
                     >
-                      📜 Command Log
+                      📜 Logs
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveTab('crew');
+                        playBeep('tap');
+                      }}
+                      className={`px-2.5 py-1.5 rounded text-xs font-semibold cursor-pointer transition-colors ${
+                        activeTab === 'crew'
+                          ? 'bg-amber-950 text-amber-200 border border-amber-500/70'
+                          : 'text-slate-300 hover:text-white hover:bg-slate-900 border border-transparent'
+                      }`}
+                    >
+                      🕵️ Crew ({crewAgents.length})
                     </button>
                   </div>
-                  <span className="hidden sm:inline font-mono-tabular text-[11px] text-[#9c8265]">
-                    {hqSubView === 'town_hall'
-                      ? 'MULTI-AGENT ROUNDTABLE · WAR ROOM'
-                      : 'DEXIE INDEXEDDB · APPEND-ONLY LEDGER'}
-                  </span>
+
+                  <div className="flex flex-wrap items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsCartridgesOpen(true);
+                        playBeep('tap');
+                      }}
+                      className="px-2.5 py-1.5 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-medium text-slate-200 cursor-pointer"
+                    >
+                      📦 Cartridges
+                    </button>
+
+                    {tripwirePendingCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setIsTripwiresOpen(true);
+                          playBeep('tap');
+                        }}
+                        className="px-2.5 py-1.5 rounded bg-amber-950 hover:bg-amber-900 border border-amber-500/70 text-xs font-semibold text-amber-200 cursor-pointer"
+                      >
+                        🔔 Tripwires ({tripwirePendingCount})
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsTerminalConsoleOpen((prev) => !prev);
+                        playBeep('tap');
+                      }}
+                      className="px-2.5 py-1.5 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-mono text-emerald-300 cursor-pointer"
+                    >
+                      &gt;_ CLI
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsGameActive(true);
+                        setIsGameClosing(false);
+                        setDecryptionBoost(0);
+                        playBeep('tap');
+                      }}
+                      className="px-2.5 py-1.5 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-medium text-amber-300 cursor-pointer"
+                      title="Launch Neural Decryption Bypass"
+                    >
+                      ⚡ Bypass{decryptionBoost > 0 ? ` (+${decryptionBoost}%)` : ''}
+                    </button>
+                  </div>
                 </div>
+              </div>
 
-                {activeTaskChain && (
-                  <TaskChainHUD
-                    chain={activeTaskChain}
-                    currentProgressText={taskChainProgressText}
-                    onCancel={() => {
-                      setActiveTaskChain(null);
-                      setTaskChainProgressText('');
-                      setDialogueText('[TASK CHAIN] Chained mission aborted by Commander.');
-                    }}
-                  />
-                )}
-
-                <Suspense fallback={null}>
-                {hqSubView === 'terminal' ? (
-                  <>
-                    {isExecuting && pendingTask && (
-                      <div className="w-full max-w-2xl mx-auto px-3 sm:px-0">
-                        <div className="p-2 bg-[#0c131d] border border-[#38bdf8]/60 flex items-center justify-between gap-2 text-xs font-mono-tabular shadow-[0_0_12px_rgba(56,189,248,0.2)]">
-                          <div className="flex items-center gap-2 truncate">
-                            <span className="w-2 h-2 rounded-full bg-[#38bdf8] animate-ping shrink-0" />
-                            <span className="text-[#38bdf8] font-bold shrink-0">[ACTIVE IN-FLIGHT]</span>
-                            <span className="text-[#f3ead8] truncate">&ldquo;{pendingTask.prompt}&rdquo;</span>
+              {/* Safehouse Active Sub-Panel */}
+              <div className="mt-3">
+                {activeTab === 'crew' ? (
+                  renderCrewConsolePanel()
+                ) : (
+                  <div className="flex flex-col gap-2.5">
+                    {!isExecuting && pendingTask?.isPending && (
+                      <div className="w-full max-w-xl mx-auto px-3 sm:px-0">
+                        <div className="p-2.5 bg-[#1b150e] border border-[#e59838] flex flex-wrap items-center justify-between gap-2 font-mono-tabular text-xs">
+                          <div className="min-w-0">
+                            <span className="text-[#4ade80] font-bold">
+                              [SESSION RESTORED · PENDING DIRECTIVE]
+                            </span>{' '}
+                            <span className="text-[#f3ead8] truncate">
+                              &ldquo;{pendingTask.prompt}&rdquo;
+                            </span>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setHqSubView('task_queue');
-                              playBeep('tap');
-                            }}
-                            className="px-2 py-0.5 bg-[#172538] hover:bg-[#223752] text-[#38bdf8] text-[10px] font-bold border border-[#38bdf8]/40 cursor-pointer whitespace-nowrap"
-                          >
-                            [VIEW QUEUE]
-                          </button>
+                          <div className="flex items-center gap-1.5 shrink-0">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                handleExecuteDirective(
+                                  pendingTask.prompt,
+                                  pendingTask.attachment || null
+                                )
+                              }
+                              className="px-2.5 py-1 bg-[#e59838] text-[#121110] font-bold border border-[#e59838] cursor-pointer"
+                            >
+                              [▶ RESUME TASK]
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setPendingTask(null)}
+                              className="px-2 py-1 bg-[#261f18] text-[#c89d66] border border-[#6e5233] cursor-pointer"
+                            >
+                              [Dismiss]
+                            </button>
+                          </div>
                         </div>
                       </div>
                     )}
-                    <TerminalWindow
-                      onOpenFieldManual={() => setIsFieldManualOpen(true)}
-                      dialogueText={dialogueText}
-                      isExecuting={isExecuting}
-                      onExecuteDirective={handleExecuteDirective}
-                      executionCards={executionCards}
-                      errorMessage={errorMessage}
-                      retroError={retroError}
-                      onOpenGearVault={() => setIsSettingsOpen(true)}
-                      onReopenErrorModal={() => setIsRetroErrorModalOpen(true)}
-                      onTriggerErrorDrill={handleTriggerErrorDrill}
-                      onDismissError={() => {
-                        setRetroError(null);
-                        setErrorMessage(null);
-                        setIsRetroErrorModalOpen(false);
-                      }}
-                      onOpenCommandLog={() => {
-                        setHqSubView('command_log');
-                        refreshCommandLedger();
-                      }}
-                      ledgerCount={commandLedger.length}
-                    />
-                  </>
-                ) : hqSubView === 'task_queue' ? (
-                  <TaskQueuePanel
-                    activePendingTask={pendingTask}
-                    isExecuting={isExecuting}
-                    onExecuteDirective={handleExecuteDirective}
-                    onCompleteTask={handleCompleteQueueTask}
-                    onViewCommandLog={() => {
-                      setHqSubView('command_log');
-                      refreshCommandLedger();
-                    }}
-                    onViewCards={() => {
-                      setHqSubView('terminal');
-                    }}
-                  />
-                ) : hqSubView === 'town_hall' ? (
-                  <TownHallRoundtablePanel
-                    sessions={roundtableSessions}
-                    isExecutingMeeting={isExecutingMeeting}
-                    onConveneMeeting={handleConveneRoundtable}
-                    onSummonAgain={handleCallTownHallMeeting}
-                    onAdjournMeeting={() => {
-                      setHqSubView('terminal');
-                      setActiveSpeakerAgentIndex(null);
-                    }}
-                    onDispatchActionItem={(
-                      agentIdx,
-                      directive,
-                      targetSector,
-                      assignedAgentId,
-                      taskId
-                    ) => {
-                      const fallbackId =
-                        assignedAgentId ||
-                        crewAgents[agentIdx]?.id ||
-                        theme.agents[agentIdx]?.id ||
-                        activeAgent.id;
-                      handleDeployTask(
-                        taskId || `task_${agentIdx}`,
-                        fallbackId,
-                        directive,
-                        targetSector,
-                        agentIdx
-                      );
-                    }}
-                    activeSpeakerAgentIndex={activeSpeakerAgentIndex}
-                    onSelectSpeakerAgentIndex={setActiveSpeakerAgentIndex}
-                    participantsWithNotes={participantsWithNotes}
-                  />
-                ) : (
-                  <CommandLogScreen
-                    entries={commandLedger}
-                    onBackToTerminal={() => setHqSubView('terminal')}
-                    onRefreshLedger={refreshCommandLedger}
-                  />
-                )}
-                </Suspense>
-              </div>
-            )}
-            {activeTab === 'crew' && renderCrewConsolePanel()}
-            {activeTab === 'plugins' && renderPluginsConsolePanel()}
-            {activeTab === 'themes' && renderThemesConsolePanel()}
-          </div>
-        </main>
 
-        {/* Collapsible Tactical Command Dock / Taskbar (Hides into a Singular Button) */}
-        <CommandDock
-          activeTab={activeTab}
-          onSelectTab={(tab) => {
-            setActiveTab(tab);
-            if (tab === 'plugins') {
-              setPluginsSubTab('composio');
+                    {activeTaskChain && (
+                      <TaskChainHUD
+                        chain={activeTaskChain}
+                        currentProgressText={taskChainProgressText}
+                        onCancel={() => {
+                          setActiveTaskChain(null);
+                          setTaskChainProgressText('');
+                          setDialogueText('[TASK CHAIN] Chained mission aborted by Commander.');
+                        }}
+                      />
+                    )}
+
+                    <Suspense fallback={null}>
+                      {hqSubView === 'terminal' ? (
+                        <>
+                          {isExecuting && pendingTask && (
+                            <div className="w-full max-w-2xl mx-auto px-3 sm:px-0">
+                              <div className="p-2 bg-[#0c131d] border border-[#38bdf8]/60 flex items-center justify-between gap-2 text-xs font-mono-tabular shadow-[0_0_12px_rgba(56,189,248,0.2)]">
+                                <div className="flex items-center gap-2 truncate">
+                                  <span className="w-2 h-2 rounded-full bg-[#38bdf8] animate-ping shrink-0" />
+                                  <span className="text-[#38bdf8] font-bold shrink-0">
+                                    [ACTIVE IN-FLIGHT]
+                                  </span>
+                                  <span className="text-[#f3ead8] truncate">
+                                    &ldquo;{pendingTask.prompt}&rdquo;
+                                  </span>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setHqSubView('task_queue');
+                                    playBeep('tap');
+                                  }}
+                                  className="px-2 py-0.5 bg-[#172538] hover:bg-[#223752] text-[#38bdf8] text-[10px] font-bold border border-[#38bdf8]/40 cursor-pointer whitespace-nowrap"
+                                >
+                                  [VIEW QUEUE]
+                                </button>
+                              </div>
+                            </div>
+                          )}
+                          <TerminalWindow
+                            onOpenFieldManual={() => setIsFieldManualOpen(true)}
+                            dialogueText={dialogueText}
+                            isExecuting={isExecuting}
+                            onExecuteDirective={handleExecuteDirective}
+                            executionCards={executionCards}
+                            errorMessage={errorMessage}
+                            retroError={retroError}
+                            onOpenGearVault={() => setIsSettingsOpen(true)}
+                            onReopenErrorModal={() => setIsRetroErrorModalOpen(true)}
+                            onTriggerErrorDrill={handleTriggerErrorDrill}
+                            onDismissError={() => {
+                              setRetroError(null);
+                              setErrorMessage(null);
+                              setIsRetroErrorModalOpen(false);
+                            }}
+                            onOpenCommandLog={() => {
+                              setHqSubView('command_log');
+                              refreshCommandLedger();
+                            }}
+                            ledgerCount={commandLedger.length}
+                          />
+                        </>
+                      ) : hqSubView === 'task_queue' ? (
+                        <TaskQueuePanel
+                          activePendingTask={pendingTask}
+                          isExecuting={isExecuting}
+                          onExecuteDirective={handleExecuteDirective}
+                          onCompleteTask={handleCompleteQueueTask}
+                          onViewCommandLog={() => {
+                            setHqSubView('command_log');
+                            refreshCommandLedger();
+                          }}
+                          onViewCards={() => {
+                            setHqSubView('terminal');
+                          }}
+                        />
+                      ) : hqSubView === 'town_hall' ? (
+                        <TownHallRoundtablePanel
+                          sessions={roundtableSessions}
+                          isExecutingMeeting={isExecutingMeeting}
+                          onConveneMeeting={handleConveneRoundtable}
+                          onSummonAgain={handleCallTownHallMeeting}
+                          onAdjournMeeting={() => {
+                            setHqSubView('terminal');
+                            setActiveSpeakerAgentIndex(null);
+                          }}
+                          onDispatchActionItem={(
+                            agentIdx,
+                            directive,
+                            targetSector,
+                            assignedAgentId,
+                            taskId
+                          ) => {
+                            const fallbackId =
+                              assignedAgentId ||
+                              crewAgents[agentIdx]?.id ||
+                              theme.agents[agentIdx]?.id ||
+                              activeAgent.id;
+                            handleDeployTask(
+                              taskId || `task_${agentIdx}`,
+                              fallbackId,
+                              directive,
+                              targetSector,
+                              agentIdx
+                            );
+                          }}
+                          activeSpeakerAgentIndex={activeSpeakerAgentIndex}
+                          onSelectSpeakerAgentIndex={setActiveSpeakerAgentIndex}
+                          participantsWithNotes={participantsWithNotes}
+                        />
+                      ) : (
+                        <CommandLogScreen
+                          entries={commandLedger}
+                          onBackToTerminal={() => setHqSubView('terminal')}
+                          onRefreshLedger={refreshCommandLedger}
+                        />
+                      )}
+                    </Suspense>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {workspaceMode === 'vault' && (
+          <Suspense
+            fallback={
+              <div className="flex-1 flex items-center justify-center text-xs text-slate-400">
+                Loading Local Intelligence Vault...
+              </div>
             }
-          }}
-          queuedTasksCount={queuedTasksCount}
-          isExecuting={isExecuting}
-          crewCount={crewAgents.length}
-          connectedPluginsCount={plugins.filter((p) => p.connected).length}
-          isTerminalConsoleOpen={isTerminalConsoleOpen}
-          onToggleTerminalConsole={() => setIsTerminalConsoleOpen((prev) => !prev)}
-          isWorkspaceFilesOpen={isWorkspaceFilesOpen}
-          onToggleWorkspaceFiles={() => setIsWorkspaceFilesOpen((prev) => !prev)}
-          isSyncModalOpen={isSyncModalOpen}
-          onToggleSyncModal={() => setIsSyncModalOpen((prev) => !prev)}
-          isFeedbackOpen={isFeedbackOpen}
-          onToggleFeedback={() => setIsFeedbackOpen((prev) => !prev)}
-        />
-      </div>
+          >
+            <VaultWorkspaceView
+              initialSection={vaultInitialSection}
+              initialFilePath={vfsInitialFilePath}
+              onDispatchCorrelation={(prompt) => {
+                setWorkspaceMode('safehouse');
+                setActiveTab('hq');
+                setHqSubView('terminal');
+                handleExecuteDirective(prompt);
+              }}
+              toolkitsPanel={renderPluginsConsolePanel()}
+            />
+          </Suspense>
+        )}
+      </main>
 
       <OfflineBanner />
+
+      {/* Custom RGB Theme Mixer Modal (launched from [⚙] System Menu) */}
+      {isThemeConsoleModalOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Custom RGB Theme Mixer"
+          onClick={() => setIsThemeConsoleModalOpen(false)}
+          className="fixed inset-0 z-[120] bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 overflow-y-auto"
+        >
+          <div onClick={(e) => e.stopPropagation()} className="w-full max-w-xl my-auto">
+            {renderThemesConsolePanel()}
+          </div>
+        </div>
+      )}
 
       <DeferredMount when={isSettingsOpen}>
         <SettingsModal
@@ -3032,7 +3193,11 @@ const CommandCenterContent: React.FC = () => {
             setCurrentRoom(room);
             playBeep('tap');
           }}
-          onOpenWorkspaceFiles={() => setIsWorkspaceFilesOpen(true)}
+          onOpenWorkspaceFiles={() => {
+            setIsSettingsOpen(false);
+            setVaultInitialSection('dossiers');
+            setWorkspaceMode('vault');
+          }}
           onOpenSyncModal={() => setIsSyncModalOpen(true)}
           onOpenFieldManual={() => setIsFieldManualOpen(true)}
           onOpenPluginAuth={handleOpenPluginAuth}
@@ -3086,8 +3251,6 @@ const CommandCenterContent: React.FC = () => {
         />
       </DeferredMount>
 
-
-
       <DeferredMount when={isCustomPluginModalOpen}>
         <CustomPluginModal
           isOpen={isCustomPluginModalOpen}
@@ -3111,61 +3274,14 @@ const CommandCenterContent: React.FC = () => {
         />
       </DeferredMount>
 
-      {/* Tactical Satellite Recon Monitor Responsive Popup Modal */}
-      {isReconOverlayOpen && (
-        <div
-          onClick={() => setIsReconOverlayOpen(false)}
-          className="fixed inset-0 z-[120] bg-black/85 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 overflow-y-auto"
-          style={{
-            paddingTop: 'max(8px, env(safe-area-inset-top, 8px))',
-            paddingBottom: 'max(8px, env(safe-area-inset-bottom, 8px))',
-            paddingLeft: 'max(8px, env(safe-area-inset-left, 8px))',
-            paddingRight: 'max(8px, env(safe-area-inset-right, 8px))',
-          }}
-        >
-          <div
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-5xl h-[92dvh] sm:h-[85dvh] max-h-[820px] bg-[#070b11] border-2 border-emerald-500/70 rounded-lg shadow-[0_0_45px_rgba(16,185,129,0.3)] flex flex-col overflow-hidden"
-          >
-            <TacticalSatelliteMonitor
-              initialLat={reconMonitorTarget?.lat ?? 30.5852}
-              initialLon={reconMonitorTarget?.lon ?? 32.2654}
-              initialLabel={reconMonitorTarget?.label ?? 'Suez Canal & Red Sea Subsea Cable Corridor'}
-              initialSectorCode={reconMonitorTarget?.sectorCode ?? 'SECTOR-54 // SUEZ-CHOKELINE'}
-              activeOperativeName={
-                crewAgents.find((a) => a.id === activeAgent.id)?.customName || activeAgent.name
-              }
-              threatBadgeText="THREAT LEVEL: BRAVO - ORBITAL OVERWATCH ACTIVE"
-              overlayMode={true}
-              onCloseOverlay={() => setIsReconOverlayOpen(false)}
-              onOpenThreatMatrixModal={() => {
-                setIsReconOverlayOpen(false);
-                setIsThreatMonitorOpen(true);
-              }}
-              onDispatchReconDirective={(directive, coords) => {
-                setReconMonitorTarget({
-                  lat: coords.lat,
-                  lon: coords.lon,
-                  label: coords.label,
-                  sectorCode: `SECTOR-LOCK // ${coords.lat.toFixed(2)},${coords.lon.toFixed(2)}`,
-                });
-                setIsReconOverlayOpen(false);
-                handleExecuteDirective(
-                  `${directive} [Orbital Target Lock: ${coords.label} at ${coords.lat.toFixed(4)}, ${coords.lon.toFixed(4)}]`
-                );
-              }}
-            />
-          </div>
-        </div>
-      )}
-
       <DeferredMount when={isThreatMonitorOpen}>
         <ThreatMonitorModal
           isOpen={isThreatMonitorOpen}
           onClose={() => setIsThreatMonitorOpen(false)}
           onOpenVaultFile={() => {
             setIsThreatMonitorOpen(false);
-            setIsWorkspaceFilesOpen(true);
+            setVaultInitialSection('dossiers');
+            setWorkspaceMode('vault');
           }}
           onOpenLlmSettings={() => {
             setIsThreatMonitorOpen(false);
@@ -3288,19 +3404,6 @@ const CommandCenterContent: React.FC = () => {
         }}
       />
 
-      <DeferredMount when={isWorkspaceFilesOpen}>
-        <Suspense fallback={null}>
-          <WorkspaceFileViewer
-            isOpen={isWorkspaceFilesOpen}
-            onClose={() => {
-              setIsWorkspaceFilesOpen(false);
-              setVfsInitialFilePath(undefined);
-            }}
-            initialFilePath={vfsInitialFilePath}
-          />
-        </Suspense>
-      </DeferredMount>
-
       <DeferredMount when={isPlaybookModalOpen}>
         <PlaybookModal
           isOpen={isPlaybookModalOpen}
@@ -3318,7 +3421,8 @@ const CommandCenterContent: React.FC = () => {
           onOpenInVfs={(filePath) => {
             setIsPlaybookModalOpen(false);
             setVfsInitialFilePath(filePath);
-            setIsWorkspaceFilesOpen(true);
+            setVaultInitialSection('dossiers');
+            setWorkspaceMode('vault');
           }}
         />
       </DeferredMount>
@@ -3351,25 +3455,13 @@ const CommandCenterContent: React.FC = () => {
         <FieldManualModal
           isOpen={isFieldManualOpen}
           onClose={() => setIsFieldManualOpen(false)}
-          onSelectPrompt={(samplePrompt) => handleExecuteDirective(samplePrompt)}
+          onSelectPrompt={(samplePrompt) => {
+            setWorkspaceMode('safehouse');
+            setActiveTab('hq');
+            setHqSubView('terminal');
+            handleExecuteDirective(samplePrompt);
+          }}
         />
-      </DeferredMount>
-
-      <DeferredMount when={isLinkBoardOpen}>
-        <Suspense fallback={null}>
-          <BasementLinkBoardModal
-            isOpen={isLinkBoardOpen}
-            onClose={() => setIsLinkBoardOpen(false)}
-            onOpenVfsFile={(filePath) => {
-              setIsLinkBoardOpen(false);
-              setVfsInitialFilePath(filePath);
-              setIsWorkspaceFilesOpen(true);
-            }}
-            onDispatchCorrelation={(prompt) => {
-              handleExecuteDirective(prompt);
-            }}
-          />
-        </Suspense>
       </DeferredMount>
 
       <DeferredMount when={isSpatialMcpOpen}>
@@ -3391,7 +3483,9 @@ const CommandCenterContent: React.FC = () => {
             onMoveAgentToRoom={(agentId, room) => handleMoveAgentToRoom(agentId, room)}
             onLaunchStarterDirective={(directive, room) => {
               handleRoomChange(room);
+              setWorkspaceMode('safehouse');
               setActiveTab('hq');
+              setHqSubView('terminal');
               handleExecuteDirective(directive);
             }}
           />
@@ -3406,7 +3500,9 @@ const CommandCenterContent: React.FC = () => {
             onApproveAndDispatch={(directive, assignedAgentId, assignedRoom) => {
               handleRoomChange(assignedRoom as RoomId);
               handleMoveAgentToRoom(assignedAgentId, assignedRoom as RoomId);
+              setWorkspaceMode('safehouse');
               setActiveTab('hq');
+              setHqSubView('terminal');
               handleExecuteDirective(directive);
             }}
           />
@@ -3423,56 +3519,15 @@ const CommandCenterContent: React.FC = () => {
             }
             onDispatchDirective={(directive, opId) => {
               setActiveAgentId(opId);
+              setWorkspaceMode('safehouse');
               setActiveTab('hq');
+              setHqSubView('terminal');
               handleExecuteDirective(directive);
             }}
             onOpenSettings={() => setIsSettingsOpen(true)}
           />
         </Suspense>
       </DeferredMount>
-
-      {activeTacticalThreatAlert && (
-        <div
-          role="alert"
-          className="fixed top-14 right-4 z-50 max-w-md w-[calc(100vw-2rem)] rounded border-2 border-red-500/90 bg-[#12090b]/95 text-red-100 shadow-2xl p-3 font-mono text-xs backdrop-blur-md"
-        >
-          <div className="flex items-start justify-between gap-2">
-            <div className="font-bold text-[11px] uppercase tracking-wider text-red-300">
-              ⚠ PRE-MEDIA {activeTacticalThreatAlert.status} ({Math.round(activeTacticalThreatAlert.corroborationScore * 100)}%)
-            </div>
-            <button
-              type="button"
-              onClick={() => setActiveTacticalThreatAlert(null)}
-              className="text-red-300 hover:text-white px-1 cursor-pointer"
-              aria-label="Dismiss tactical threat alert"
-            >
-              ✕
-            </button>
-          </div>
-          <div className="mt-1 font-semibold text-amber-200">{activeTacticalThreatAlert.title}</div>
-          {activeTacticalThreatAlert.executiveAssessment && (
-            <p className="mt-1 text-[11px] text-slate-200 leading-snug line-clamp-3">
-              {activeTacticalThreatAlert.executiveAssessment}
-            </p>
-          )}
-          <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[10px] text-slate-400">
-            <span>
-              Tracks: {activeTacticalThreatAlert.tracks.join(' + ') || 'MULTI-SENSOR'} · (
-              {activeTacticalThreatAlert.geoAnchor.lat.toFixed(3)}, {activeTacticalThreatAlert.geoAnchor.lon.toFixed(3)})
-            </span>
-            <button
-              type="button"
-              onClick={() => {
-                setActiveTacticalThreatAlert(null);
-                setIsThreatMonitorOpen(true);
-              }}
-              className="px-2 py-0.5 rounded bg-red-600/30 hover:bg-red-600/50 border border-red-400/60 text-red-100 font-bold uppercase cursor-pointer"
-            >
-              OPEN THREAT MONITOR
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 };

@@ -374,3 +374,97 @@ dialog::backdrop {
   white-space: nowrap;
   border: 0;
 }
+
+/* ==========================================================================
+   Calm-by-Default C2 Architecture: Slide-Over Evidence Sheet, ARIA Tabs,
+   and Viewport-Aware Watch Zone Anchor Dropdown (MWG)
+   ========================================================================== */
+
+.evidence-slide-drawer {
+  inset: 0;
+  width: 100%;
+  height: 100svh;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  overflow: hidden;
+}
+
+.evidence-slide-drawer[open] {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.evidence-slide-drawer::backdrop {
+  background: rgba(2, 6, 12, 0.62);
+  backdrop-filter: blur(3px);
+}
+
+.evidence-slide-drawer-sheet {
+  margin-left: auto;
+  width: min(30rem, 100vw);
+  height: 100svh;
+  overflow: hidden;
+}
+
+.calm-c2-tablist {
+  display: flex;
+  align-items: center;
+  overflow-x: auto;
+  gap: 0.25rem;
+  scrollbar-width: none;
+}
+
+.calm-c2-tablist::-webkit-scrollbar {
+  display: none;
+}
+
+.calm-c2-tab {
+  position: relative;
+  padding: 0.625rem 0.75rem;
+  font-weight: 600;
+  white-space: nowrap;
+  color: #94a3b8;
+  background: transparent;
+  border: 0;
+  transition: color 140ms ease-out;
+}
+
+.calm-c2-tab:hover {
+  color: #e2e8f0;
+}
+
+.calm-c2-tab[aria-selected="true"] {
+  color: #ecfdf5;
+}
+
+.calm-c2-tab[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  inset-inline: 0.5rem;
+  bottom: 0;
+  border-bottom: 2px solid #34d399;
+}
+
+.calm-c2-tab:focus-visible {
+  outline: 2px solid rgb(var(--theme-primary-rgb));
+  outline-offset: -2px;
+}
+
+@supports (position-area: block-end) {
+  .watch-zone-trigger {
+    anchor-name: --watch-zone-trigger;
+  }
+
+  .watch-zone-dropdown {
+    position: fixed;
+    position-anchor: --watch-zone-trigger;
+    inset: auto;
+    margin: 0.375rem 0 0 0;
+    position-area: block-end span-inline-end;
+    position-try-fallbacks: flip-block, flip-inline;
+  }
+}

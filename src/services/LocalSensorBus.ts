@@ -245,6 +245,25 @@ export function getPrimaryNaiZoneSync(): NaiZoneConfig | null {
   return list.find((z) => z.isPrimary) || list[0] || null;
 }
 
+export function getPrimaryNaiZoneOrDefaultSync(): NaiZoneConfig {
+  const existing = getPrimaryNaiZoneSync();
+  if (existing) return existing;
+  const geo = getLocalGeofenceConfig();
+  const now = new Date().toISOString();
+  return {
+    id: 'nai-primary',
+    label: geo.label || 'LOCAL-NAI-PRIMARY',
+    lat: Number.isFinite(geo.lat) ? geo.lat : 38.9072,
+    lon: Number.isFinite(geo.lon) ? geo.lon : -77.0369,
+    radiusKm: clampNaiRadiusKm(geo.radiusKm),
+    jurisdiction: 'AUTO',
+    enabled: true,
+    isPrimary: true,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
 /**
  * Defangs embedded HTTP/HTTPS URLs so LLM agents never follow or render active links from untrusted telemetry.
  */
@@ -754,8 +773,15 @@ async function collectGeointAir(
   customFetch?: typeof fetch
 ): Promise<{ observations: ReturnType<typeof evaluateAdsbAirframeObservation>[]; health: SensorAdapterHealth }> {
   const radiusNm = Math.min(100, Math.max(5, Math.round(nai.radiusKm * 0.539957)));
-  const url = `https://api.adsb.lol/v2/point/${nai.lat.toFixed(4)}/${nai.lon.toFixed(4)}/${radiusNm}`;
-  const res = await fetchViaSensorProxy(url, customFetch);
+  const primaryUrl = `https://api.adsb.lol/v2/point/${nai.lat.toFixed(4)}/${nai.lon.toFixed(4)}/${radiusNm}`;
+  let res = await fetchViaSensorProxy(primaryUrl, customFetch);
+  if (!res.ok || !res.json) {
+    const failoverUrl = `https://api.airplanes.live/v2/point/${nai.lat.toFixed(4)}/${nai.lon.toFixed(4)}/${radiusNm}`;
+    const fallbackRes = await fetchViaSensorProxy(failoverUrl, customFetch);
+    if (fallbackRes.ok && fallbackRes.json) {
+      res = fallbackRes;
+    }
+  }
   const sweptAt = new Date().toISOString();
 
   if (!res.ok || !res.json) {

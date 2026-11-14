@@ -848,9 +848,39 @@ export async function fetchViewportLiveAirspace(
   observedAt: string;
 }> {
   const radiusNm = Math.max(15, Math.min(180, Math.round(radiusKm * 0.539957)));
-  const url = `https://api.adsb.lol/v2/point/${lat.toFixed(4)}/${lon.toFixed(4)}/${radiusNm}`;
-  const json = await fetchLiveJson<any>(url, 6000);
-  const rawAc: any[] = Array.isArray(json?.ac) ? json.ac : [];
+  const primaryUrl = `https://api.adsb.lol/v2/point/${lat.toFixed(4)}/${lon.toFixed(4)}/${radiusNm}`;
+  const failoverUrl = `https://api.airplanes.live/v2/point/${lat.toFixed(4)}/${lon.toFixed(4)}/${radiusNm}`;
+
+  let json = await fetchLiveJson<any>(primaryUrl, 5500);
+  if (!Array.isArray(json?.ac)) {
+    json = await fetchLiveJson<any>(failoverUrl, 6000);
+  }
+
+  let rawAc: any[] = Array.isArray(json?.ac) ? json.ac : [];
+  if (rawAc.length === 0 && !json) {
+    // Secondary allowlisted OpenSky Network bounding-box failover
+    const latDegDelta = Math.min(8, Math.max(0.25, radiusKm / 111));
+    const cosLat = Math.max(0.2, Math.cos((lat * Math.PI) / 180));
+    const lonDegDelta = Math.min(12, Math.max(0.25, radiusKm / (111 * cosLat)));
+    const openSkyUrl = `https://opensky-network.org/api/states/all?lamin=${(lat - latDegDelta).toFixed(4)}&lomin=${(lon - lonDegDelta).toFixed(4)}&lamax=${(lat + latDegDelta).toFixed(4)}&lomax=${(lon + lonDegDelta).toFixed(4)}`;
+    const osJson = await fetchLiveJson<any>(openSkyUrl, 6500);
+    if (Array.isArray(osJson?.states)) {
+      rawAc = osJson.states
+        .filter((s: any) => Array.isArray(s) && Number.isFinite(s[5]) && Number.isFinite(s[6]))
+        .map((s: any) => ({
+          hex: String(s[0] || '').trim(),
+          flight: String(s[1] || '').trim(),
+          lon: Number(s[5]),
+          lat: Number(s[6]),
+          alt_baro: s[8] === true ? 'ground' : Number.isFinite(s[7]) ? Math.round(Number(s[7]) * 3.28084) : null,
+          gs: Number.isFinite(s[9]) ? Math.round(Number(s[9]) * 1.94384) : null,
+          track: Number.isFinite(s[10]) ? Number(s[10]) : 0,
+          baro_rate: Number.isFinite(s[11]) ? Math.round(Number(s[11]) * 196.85) : null,
+          squawk: s[14] ? String(s[14]).trim() : null,
+          category: s[17] === 8 ? 'A7' : undefined,
+        }));
+    }
+  }
   const nowIso = new Date().toISOString();
 
   const tracks: LiveAirspaceTrack[] = [];

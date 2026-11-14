@@ -68,6 +68,8 @@ interface SpriteCanvasProps {
   };
   onDispatchReconDirective?: (directive: string, coords: { lat: number; lon: number; label: string }) => void;
   onOpenThreatMatrixModal?: () => void;
+  reconAlertCount?: number;
+  onOpenReconAlert?: () => void;
 }
 
 const UPPER_DECK_ROOMS: RoomId[] = ['comms_tower', 'war_room', 'server_vault', 'armory'];
@@ -119,6 +121,8 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
   reconTarget,
   onDispatchReconDirective,
   onOpenThreatMatrixModal,
+  reconAlertCount = 0,
+  onOpenReconAlert,
 }) => {
   const { theme, themeId, activeAgent, setActiveAgentId, playBeep } = useTheme();
   const { crewAgents, getCrewAgentByIndex, updateAgentRoom } = useCrew();
@@ -1082,6 +1086,20 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
                     isOverviewZoom ? 'scale-75 origin-bottom' : ''
                   }`}
                 >
+                  {reconAlertCount > 0 && (profile.id === 'vance' || profile.id === 'nyx') && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onOpenReconAlert?.();
+                      }}
+                      className="pointer-events-auto mb-1 px-1.5 py-0.5 rounded bg-amber-950/95 hover:bg-amber-900 border border-amber-400 text-[9px] font-mono-tabular font-bold text-amber-200 whitespace-nowrap shadow-[0_2px_8px_rgba(0,0,0,0.9)] animate-pulse cursor-pointer"
+                      title="Active local Recon alert — click to inspect in Recon Monitor"
+                    >
+                      ⚠ {reconAlertCount} RECON {reconAlertCount === 1 ? 'ALERT' : 'ALERTS'}
+                    </button>
+                  )}
+
                   {/* Unboxed Codename Callout */}
                   <div
                     className={`font-mono-tabular text-[10px] sm:text-[11px] font-bold tracking-wider whitespace-nowrap flex items-center gap-1 ${
@@ -1648,6 +1666,9 @@ export const SpriteCanvas: React.FC<SpriteCanvasProps> = ({
                   <span className="text-[#64748b] text-[9px]">
                     @{getRoomMeta(st.room).sectorCode}
                   </span>
+                  {reconAlertCount > 0 && (crew.id === 'vance' || crew.id === 'nyx') && (
+                    <span className="text-amber-300 font-bold text-[9px]">⚠</span>
+                  )}
                 </button>
               );
             })}

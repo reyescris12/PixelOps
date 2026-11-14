@@ -30,6 +30,7 @@ export interface BasementLinkBoardModalProps {
   onClose: () => void;
   onOpenVfsFile?: (filePath: string) => void;
   onDispatchCorrelation?: (prompt: string) => void;
+  inlineMode?: boolean;
 }
 
 const ENTITY_COLORS: Record<EvidenceEntityType, { fill: string; stroke: string; label: string }> = {
@@ -48,6 +49,7 @@ export const BasementLinkBoardModal: React.FC<BasementLinkBoardModalProps> = ({
   onClose,
   onOpenVfsFile,
   onDispatchCorrelation,
+  inlineMode = false,
 }) => {
   const { playBeep } = useTheme();
   const [snapshot, setSnapshot] = useState<EvidenceGraphSnapshot>({
@@ -271,35 +273,16 @@ export const BasementLinkBoardModal: React.FC<BasementLinkBoardModalProps> = ({
     [snapshot.nodes, selectedNodeId]
   );
 
-  return (
-    <TacticalModalDialog
-      isOpen={isOpen}
-      onClose={onClose}
-      title="Basement Evidence Link Board"
-      subtitle="Auto-extracted IndexedDB Knowledge Graph · Cross-Investigation Overlap Detector"
-      badge={`${snapshot.stats.bridgeCount} BRIDGES · ${snapshot.stats.totalEntities} INDICATORS`}
-      icon={<Network className="w-4 h-4" />}
-      headerActions={
-        <button
-          type="button"
-          onClick={() => {
-            playBeep('tap');
-            void refreshGraph(true);
-          }}
-          disabled={isSyncing}
-          className="tactical-ctrl min-h-[34px] px-2.5 py-1 bg-[#112236] hover:bg-[#19324e] border border-[#38bdf8]/60 text-[11px] font-bold text-[#7dd3fc] flex items-center gap-1.5 cursor-pointer"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
-          <span className="hidden sm:inline">SYNC VFS</span>
-        </button>
-      }
-    >
+  const boardContent = (
+    <>
       {/* Top Filter & Bridge Alert Ribbon */}
       <div className="px-4 py-2.5 bg-[#0f1422] border-b border-[#1e293b] flex flex-wrap items-center justify-between gap-2.5">
         <div className="flex items-center gap-2 flex-1 min-w-[210px]">
           <div className="relative flex-1 max-w-xs">
             <Search className="w-3.5 h-3.5 text-[#64748b] absolute left-2.5 top-1/2 -translate-y-1/2" />
             <input
+              id="link-board-search-input"
+              name="link_board_search"
               type="search"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
@@ -701,6 +684,65 @@ export const BasementLinkBoardModal: React.FC<BasementLinkBoardModalProps> = ({
           )}
         </div>
       </div>
+    </>
+  );
+
+  if (inlineMode) {
+    if (!isOpen) return null;
+    return (
+      <div className="w-full h-full flex flex-col bg-[#0b0f18] border border-slate-800 rounded-lg overflow-hidden text-slate-100">
+        <div className="px-4 py-2 bg-[#11151a] border-b border-slate-800 flex items-center justify-between gap-2 shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <Network className="w-4 h-4 text-sky-400 shrink-0" />
+            <span className="text-xs sm:text-sm font-bold text-white truncate">
+              Entity Link Graph
+            </span>
+            <span className="px-2 py-0.5 rounded bg-sky-950/80 border border-sky-500/40 text-[10px] font-mono text-sky-200">
+              {snapshot.stats.bridgeCount} overlaps · {snapshot.stats.totalEntities} entities
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              playBeep('tap');
+              void refreshGraph(true);
+            }}
+            disabled={isSyncing}
+            className="px-2.5 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-semibold text-sky-300 flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+            <span>Sync Graph</span>
+          </button>
+        </div>
+        <div className="flex-1 flex flex-col overflow-y-auto">{boardContent}</div>
+      </div>
+    );
+  }
+
+  return (
+    <TacticalModalDialog
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Basement Evidence Link Board"
+      subtitle="Auto-extracted IndexedDB Knowledge Graph · Cross-Investigation Overlap Detector"
+      badge={`${snapshot.stats.bridgeCount} BRIDGES · ${snapshot.stats.totalEntities} INDICATORS`}
+      icon={<Network className="w-4 h-4" />}
+      headerActions={
+        <button
+          type="button"
+          onClick={() => {
+            playBeep('tap');
+            void refreshGraph(true);
+          }}
+          disabled={isSyncing}
+          className="tactical-ctrl min-h-[34px] px-2.5 py-1 bg-[#112236] hover:bg-[#19324e] border border-[#38bdf8]/60 text-[11px] font-bold text-[#7dd3fc] flex items-center gap-1.5 cursor-pointer"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${isSyncing ? 'animate-spin' : ''}`} />
+          <span className="hidden sm:inline">SYNC VFS</span>
+        </button>
+      }
+    >
+      {boardContent}
     </TacticalModalDialog>
   );
 };

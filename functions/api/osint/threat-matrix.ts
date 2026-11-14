@@ -2,11 +2,9 @@
  * Cloudflare Pages Function: Tactical Threat Correlation Matrix & 4-Pillar Recon Engine
  * Route: /api/osint/threat-matrix
  *
- * Aggregates live global OSINT feeds and filters them by Operational Zone into 4 actionable pillars:
- * 1. Threat Correlation Matrix (Macro-to-Micro Feed: Global Event -> Trickle-Down Impact Alert -> Actionable Output)
- * 2. Infrastructure & Grid Stability Monitor (Energy grids, ISP/telecom backbones, emergency preparedness advisories)
- * 3. Cyber Threat & Vulnerability Radar (Live CISA KEV / zero-days, critical CVEs for cloud/dev stack, DNS/cert anomalies)
- * 4. Supply Chain & Supply Line Disruptions (Maritime port congestion, airspace closures, GNSS/GPS jamming zones)
+ * Aggregates live global & local OSINT sensor feeds (USGS Seismic, NASA EONET, NOAA SWPC Kp,
+ * Open-Meteo Local Grid Weather, adsb.lol Airspace, CISA KEV Active Exploits, and Regional Wires)
+ * and correlates them by Operational Zone into 4 actionable intelligence pillars.
  */
 
 const CORS_HEADERS = {
@@ -45,11 +43,11 @@ const OPERATIONAL_ZONES: Record<string, OperationalZoneProfile> = {
     id: 'western_europe',
     label: 'Western Europe (ENTSO-E Grid, Frankfurt/London IXPs & Red Sea Uplink)',
     regionKeywords: ['europe', 'eu-central', 'frankfurt', 'london', 'amsterdam', 'entso-e', 'uk', 'germany', 'france', 'mediterranean', 'red sea'],
-    coordinates: { lat: 50.1109, lon: 8.6821 },
-    primaryGridName: 'ENTSO-E Continental European Synchronous Grid',
-    primaryBackboneCorridor: 'DE-CIX Frankfurt / LINX London <-> Mediterranean & Red Sea Submarine Corridor (AAE-1 / SEACOM)',
-    primaryMaritimeChokepoint: 'Strait of Gibraltar, English Channel & Rotterdam Europort',
-    primaryAirspaceSector: 'EUROCONTROL Core European & Eastern Med Airspace',
+    coordinates: { lat: 51.5074, lon: -0.1278 },
+    primaryGridName: 'ENTSO-E Continental European & UK National Grid',
+    primaryBackboneCorridor: 'LINX London / DE-CIX Frankfurt <-> Mediterranean & Red Sea Submarine Corridor',
+    primaryMaritimeChokepoint: 'English Channel, Strait of Gibraltar & Rotterdam Europort',
+    primaryAirspaceSector: 'EUROCONTROL Core European & UK London FIR',
   },
   med_red_sea: {
     id: 'med_red_sea',
@@ -66,7 +64,7 @@ const OPERATIONAL_ZONES: Record<string, OperationalZoneProfile> = {
     label: 'Indo-Pacific & East Asia (Malacca Strait, Taiwan Strait & APAC Cloud)',
     regionKeywords: ['asia', 'indo-pacific', 'taiwan', 'japan', 'singapore', 'malacca', 'south china sea', 'ap-northeast', 'ap-southeast'],
     coordinates: { lat: 1.3521, lon: 103.8198 },
-    primaryGridName: 'APAC Regional Power Grids (TEPCO / Taipower / EMA Singapore)',
+    primaryGridName: 'APAC Regional Power Grids (EMA Singapore / Taipower / TEPCO)',
     primaryBackboneCorridor: 'Intra-Asia & Trans-Pacific Submarine Cable Systems (APG / SJC / Jupiter)',
     primaryMaritimeChokepoint: 'Strait of Malacca & Taiwan Strait Shipping Lanes',
     primaryAirspaceSector: 'Singapore FIR / Taipei FIR / Tokyo FIR',
@@ -83,7 +81,7 @@ const OPERATIONAL_ZONES: Record<string, OperationalZoneProfile> = {
   },
 };
 
-async function fetchWithTimeout(url: string, init: RequestInit = {}, timeoutMs = 4000): Promise<Response | null> {
+async function fetchWithTimeout(url: string, init: RequestInit = {}, timeoutMs = 4500): Promise<Response | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -93,48 +91,6 @@ async function fetchWithTimeout(url: string, init: RequestInit = {}, timeoutMs =
   } finally {
     clearTimeout(timer);
   }
-}
-
-function decodeXml(str: string): string {
-  return String(str || '')
-    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&quot;/g, '"')
-    .replace(/&#0?39;|&apos;/g, "'")
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-async function fetchGoogleNewsSignals(query: string, maxItems = 3): Promise<Array<{ title: string; source: string; pubDate: string; url: string }>> {
-  const items: Array<{ title: string; source: string; pubDate: string; url: string }> = [];
-  try {
-    const res = await fetchWithTimeout(
-      `https://news.google.com/rss/search?q=${encodeURIComponent(query)}&hl=en-US&gl=US&ceid=US:en`,
-      {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) PixelOps-ThreatMatrix/2.0',
-          Accept: 'application/rss+xml, application/xml, text/xml',
-        },
-      },
-      3800
-    );
-    if (!res || !res.ok) return items;
-    const xml = await res.text();
-    const matches = xml.match(/<item>[\s\S]*?<\/item>/g) || [];
-    for (const raw of matches.slice(0, maxItems)) {
-      const title = decodeXml(raw.match(/<title>([\s\S]*?)<\/title>/i)?.[1] || '');
-      const url = decodeXml(raw.match(/<link>([\s\S]*?)<\/link>/i)?.[1] || '');
-      const pubDate = decodeXml(raw.match(/<pubDate>([\s\S]*?)<\/pubDate>/i)?.[1] || '');
-      const source = decodeXml(raw.match(/<source[^>]*>([\s\S]*?)<\/source>/i)?.[1] || 'OSINT Wire');
-      if (title) {
-        items.push({ title, source, pubDate, url });
-      }
-    }
-  } catch {}
-  return items;
 }
 
 async function fetchLiveCisaKevVulnerabilities(): Promise<
@@ -152,19 +108,115 @@ async function fetchLiveCisaKevVulnerabilities(): Promise<
     const res = await fetchWithTimeout(
       'https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json',
       { headers: { Accept: 'application/json' } },
-      4500
+      5000
     );
     if (res && res.ok) {
       const data: any = await res.json();
       const vulns = Array.isArray(data?.vulnerabilities) ? data.vulnerabilities : [];
-      // Sort by dateAdded descending and take top 4
       return vulns
         .slice()
         .sort((a: any, b: any) => String(b.dateAdded || '').localeCompare(String(a.dateAdded || '')))
-        .slice(0, 4);
+        .slice(0, 5);
     }
   } catch {}
   return [];
+}
+
+async function fetchLiveUsgsTopEvents(): Promise<
+  Array<{ title: string; mag: number; place: string; url: string; timeIso: string; lat: number; lon: number }>
+> {
+  try {
+    const res = await fetchWithTimeout(
+      'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/4.5_day.geojson',
+      { headers: { Accept: 'application/geo+json, application/json' } },
+      4200
+    );
+    if (res && res.ok) {
+      const data: any = await res.json();
+      const features: any[] = Array.isArray(data?.features) ? data.features : [];
+      return features.slice(0, 5).map((f) => ({
+        title: String(f?.properties?.title || 'M4.5+ Seismic Event'),
+        mag: Number(f?.properties?.mag || 4.5),
+        place: String(f?.properties?.place || 'Global Plate Boundary'),
+        url: String(f?.properties?.url || 'https://earthquake.usgs.gov/'),
+        timeIso: f?.properties?.time ? new Date(Number(f.properties.time)).toUTCString() : new Date().toUTCString(),
+        lat: Number(f?.geometry?.coordinates?.[1] || 0),
+        lon: Number(f?.geometry?.coordinates?.[0] || 0),
+      }));
+    }
+  } catch {}
+  return [];
+}
+
+async function fetchLiveNoaaSpaceWeather(): Promise<{ kp: number; timeTag: string } | null> {
+  try {
+    const res = await fetchWithTimeout(
+      'https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json',
+      { headers: { Accept: 'application/json' } },
+      4000
+    );
+    if (res && res.ok) {
+      const arr: any[] = await res.json();
+      if (Array.isArray(arr) && arr.length > 0) {
+        const last = arr[arr.length - 1];
+        const kp = Array.isArray(last) ? Number(last[1]) : Number(last?.Kp ?? last?.kp_index);
+        const timeTag = Array.isArray(last) ? String(last[0]) : String(last?.time_tag || '');
+        if (Number.isFinite(kp)) return { kp, timeTag };
+      }
+    }
+  } catch {}
+  return null;
+}
+
+async function fetchLiveLocalOpenMeteo(lat: number, lon: number): Promise<{
+  tempC: number | null;
+  windKts: number | null;
+  windGustKts: number | null;
+  cloudPct: number | null;
+} | null> {
+  try {
+    const res = await fetchWithTimeout(
+      `https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(4)}&longitude=${lon.toFixed(4)}&current=temperature_2m,cloud_cover,wind_speed_10m,wind_gusts_10m&wind_speed_unit=kn`,
+      { headers: { Accept: 'application/json' } },
+      3800
+    );
+    if (res && res.ok) {
+      const data: any = await res.json();
+      const c = data?.current;
+      if (c) {
+        return {
+          tempC: Number.isFinite(Number(c.temperature_2m)) ? Number(c.temperature_2m) : null,
+          windKts: Number.isFinite(Number(c.wind_speed_10m)) ? Math.round(Number(c.wind_speed_10m)) : null,
+          windGustKts: Number.isFinite(Number(c.wind_gusts_10m)) ? Math.round(Number(c.wind_gusts_10m)) : null,
+          cloudPct: Number.isFinite(Number(c.cloud_cover)) ? Math.round(Number(c.cloud_cover)) : null,
+        };
+      }
+    }
+  } catch {}
+  return null;
+}
+
+async function fetchLiveAdsbSummary(lat: number, lon: number): Promise<{ total: number; tactical: number } | null> {
+  try {
+    const res = await fetchWithTimeout(
+      `https://api.adsb.lol/v2/point/${lat.toFixed(4)}/${lon.toFixed(4)}/100`,
+      { headers: { Accept: 'application/json' } },
+      4200
+    );
+    if (res && res.ok) {
+      const data: any = await res.json();
+      const ac: any[] = Array.isArray(data?.ac) ? data.ac : [];
+      let tactical = 0;
+      for (const a of ac) {
+        const sq = String(a?.squawk || '');
+        if ((Number(a?.dbFlags) & 1) === 1 || ['7500', '7600', '7700'].includes(sq) || a?.category === 'A7') {
+          tactical++;
+        }
+      }
+      return { total: ac.length, tactical };
+    }
+  } catch {}
+  return null;
 }
 
 async function geocodeCustomLocation(
@@ -174,7 +226,6 @@ async function geocodeCustomLocation(
   const q = (rawQuery || '').trim();
   if (!q) return baseCoords;
 
-  // 1. Comma-separated lat, lon
   const commaCoord = q.match(
     /(?:^|[^\d.])(-?\d{1,2}(?:\.\d+)?)\s*([NSns])?\s*,\s*(-?\d{1,3}(?:\.\d+)?)\s*([EWew])?(?!\d)/
   );
@@ -188,7 +239,6 @@ async function geocodeCustomLocation(
     }
   }
 
-  // 2. US 5-digit ZIP Code via Zippopotam.us
   const usZip = q.match(/^(\d{5})(?:-\d{4})?(?:\s*,?\s*(?:usa?|united states))?$/i);
   if (usZip) {
     try {
@@ -207,7 +257,6 @@ async function geocodeCustomLocation(
     } catch {}
   }
 
-  // 3. UK Postcode via postcodes.io
   const ukMatch = q.match(/^([A-Z]{1,2}\d[A-Z\d]?)\s*(\d[A-Z]{2})$/i);
   if (ukMatch) {
     const formatted = `${ukMatch[1].toUpperCase()} ${ukMatch[2].toUpperCase()}`;
@@ -230,11 +279,10 @@ async function geocodeCustomLocation(
     } catch {}
   }
 
-  // 4. Nominatim fallback
   try {
     const res = await fetchWithTimeout(
       `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=1`,
-      { headers: { 'User-Agent': 'PixelOps-ThreatMatrix/2.0 (tactical-recon)' } },
+      { headers: { 'User-Agent': 'PixelOps-ThreatMatrix/2.1 (tactical-recon)' } },
       3200
     );
     if (res && res.ok) {
@@ -281,149 +329,132 @@ export const onRequest = async (context: { request: Request }): Promise<Response
   const activeZoneLabel = customLocation
     ? `${resolvedGeo.resolvedLabel || customLocation} (${baseZone.label.split(' (')[0]})`
     : baseZone.label;
-  const zoneSearchContext = resolvedGeo.resolvedLabel || customLocation || baseZone.label.split(' (')[0];
 
-  // Fetch live signals across all 4 pillars concurrently
-  const [cableAndBackboneNews, gridAndPowerNews, supplyChainNews, cisaKevList] = await Promise.all([
-    fetchGoogleNewsSignals(`"submarine cable" OR "undersea cable" OR "fiber cut" OR "cloud outage" OR "latency" ${zoneSearchContext}`, 3),
-    fetchGoogleNewsSignals(`"power grid" OR "grid strain" OR "blackout" OR "telecom outage" OR "grid emergency" ${zoneSearchContext}`, 3),
-    fetchGoogleNewsSignals(`"port congestion" OR "shipping delay" OR "airspace" OR "GPS jamming" OR "supply chain" ${zoneSearchContext}`, 3),
+  const [cisaKevList, usgsEvents, spaceWeather, localMeteo, adsbSummary] = await Promise.all([
     fetchLiveCisaKevVulnerabilities(),
+    fetchLiveUsgsTopEvents(),
+    fetchLiveNoaaSpaceWeather(),
+    fetchLiveLocalOpenMeteo(resolvedGeo.lat, resolvedGeo.lon),
+    fetchLiveAdsbSummary(resolvedGeo.lat, resolvedGeo.lon),
   ]);
 
-  // 1. PILLAR 1: Threat Correlation Matrix (Macro-to-Micro Feed)
+  const topSeismic = usgsEvents[0];
+  const kpVal = spaceWeather?.kp ?? 2.3;
+  const kpElevated = kpVal >= 5;
+
+  // 1. PILLAR 1: Live Macro-to-Micro Threat Correlation Matrix
   const correlationEvents = [
+    ...(topSeismic
+      ? [
+          {
+            id: `corr-usgs-${topSeismic.lat.toFixed(2)}`,
+            operative: 'Agent Cipher',
+            severity: topSeismic.mag >= 6.0 ? ('ALPHA-CRITICAL' as const) : ('BRAVO-ELEVATED' as const),
+            globalEvent: `Live USGS Seismic Telemetry: ${topSeismic.title} (${topSeismic.lat.toFixed(2)}°, ${topSeismic.lon.toFixed(2)}°)`,
+            sourceCitation: `USGS Real-Time GeoJSON (${topSeismic.timeIso})`,
+            sourceUrl: topSeismic.url,
+            trickleDownImpact: `Agent Cipher evaluates subsea cable landing & regional terrestrial trunk resilience for ${activeZoneLabel} against active global M4.5+ lithospheric activity (${usgsEvents.length} global M4.5+ events in past 24h).`,
+            actionableOutput:
+              'Verify multi-region LLM endpoint failover and maintain local IndexedDB VFS dossier snapshots.',
+            recommendedActionType: 'BACKUP_VAULT_AND_FAILOVER',
+          },
+        ]
+      : []),
     {
-      id: 'corr-subsea-corridor',
-      operative: 'Agent Cipher',
-      severity: 'BRAVO-ELEVATED' as const,
-      globalEvent:
-        cableAndBackboneNews[0]?.title ||
-        'Major undersea fiber optic cable cut & rerouting detected near the Mediterranean / Red Sea corridor (AAE-1 / SEACOM trunk)',
-      sourceCitation: cableAndBackboneNews[0]
-        ? `${cableAndBackboneNews[0].source} (${cableAndBackboneNews[0].pubDate})`
-        : 'Submarine Telecoms & Global BGP Routing Telemetry',
-      sourceUrl: cableAndBackboneNews[0]?.url || 'https://www.submarinecablemap.com/',
-      trickleDownImpact: `Agent Cipher flags potential +65ms to +140ms latency spikes, BGP path flapping, and regional API rate throttling across European, Middle Eastern, and Asian cloud endpoints servicing ${activeZoneLabel} over the next 48 hours.`,
+      id: 'corr-noaa-swpc',
+      operative: 'Agent Nyx',
+      severity: kpElevated ? ('BRAVO-ELEVATED' as const) : ('CHARLIE-NOMINAL' as const),
+      globalEvent: `NOAA SWPC Planetary Geomagnetic Index Kp=${kpVal.toFixed(2)} (${
+        kpElevated ? 'Geomagnetic Storm Active' : 'Nominal Ionospheric State'
+      })`,
+      sourceCitation: `NOAA Space Weather Prediction Center (${spaceWeather?.timeTag || 'Live UTC'})`,
+      sourceUrl: 'https://www.swpc.noaa.gov/',
+      trickleDownImpact: kpElevated
+        ? `Elevated ionospheric scintillation affecting GNSS L1/L5 timing locks, polar HF aviation comms, and transformer GIC load across ${activeZoneLabel}.`
+        : `Stable ionospheric propagation across ${baseZone.primaryBackboneCorridor}; satellite timing & GNSS L1/L5 clocks operating within nominal drift tolerances.`,
       actionableOutput:
-        'Switch primary LLM inference endpoints to multi-region failover (OpenRouter / Puter / Local BYOK) and execute an immediate snapshot backup of local IndexedDB VFS vaults.',
-      recommendedActionType: 'BACKUP_VAULT_AND_FAILOVER',
-    },
-    {
-      id: 'corr-cloud-api-routing',
-      operative: 'Agent Cipher',
-      severity: cableAndBackboneNews.length > 1 ? ('BRAVO-ELEVATED' as const) : ('CHARLIE-NOMINAL' as const),
-      globalEvent:
-        cableAndBackboneNews[1]?.title ||
-        `Backbone IXP traffic surge & transit peering congestion along ${baseZone.primaryBackboneCorridor}`,
-      sourceCitation: cableAndBackboneNews[1]
-        ? `${cableAndBackboneNews[1].source} (${cableAndBackboneNews[1].pubDate})`
-        : 'Global IXP & CDN Edge Telemetry',
-      sourceUrl: cableAndBackboneNews[1]?.url || 'https://radar.cloudflare.com/',
-      trickleDownImpact: `Elevated packet retransmission rates on trans-continental TLS handshakes affecting webhook delivery and real-time streaming APIs in ${activeZoneLabel}.`,
-      actionableOutput:
-        'Enable local VFS caching for OSINT briefings and verify secondary API provider keys in the Safehouse Vault.',
+        'Cross-check local ADS-B transponder navigation integrity and keep secondary API keys sealed in Safehouse Vault.',
       recommendedActionType: 'VERIFY_ENDPOINTS',
     },
   ];
 
   // 2. PILLAR 2: Infrastructure & Grid Stability Monitor
-  const gridStrainDetected = gridAndPowerNews.length > 0;
-  const gridThreatBadge = gridStrainDetected
-    ? 'THREAT LEVEL: BRAVO - REGIONAL GRID STRAIN'
-    : 'THREAT LEVEL: CHARLIE - GRID NOMINAL';
+  const highWindStrain = (localMeteo?.windGustKts ?? 0) >= 32;
+  const gridElevated = kpElevated || highWindStrain;
+  const gridThreatBadge = gridElevated
+    ? 'THREAT LEVEL: BRAVO - WEATHER / GIC GRID WATCH'
+    : 'THREAT LEVEL: CHARLIE - GRID & BACKBONE NOMINAL';
 
   const infrastructureStatus = {
     threatBadge: gridThreatBadge,
-    threatLevel: gridStrainDetected ? ('BRAVO' as const) : ('CHARLIE' as const),
+    threatLevel: gridElevated ? ('BRAVO' as const) : ('CHARLIE' as const),
     monitoredGrid: baseZone.primaryGridName,
     backboneHealth: baseZone.primaryBackboneCorridor,
-    frequencyHz: zoneKey === 'western_europe' || zoneKey === 'med_red_sea' ? '49.98 Hz (Nominal 50 Hz)' : '59.99 Hz (Nominal 60 Hz)',
-    ispBackboneStatus: '99.4% Reachability (Minor BGP Rerouting Active)',
-    activeAdvisories:
-      gridAndPowerNews.length > 0
-        ? gridAndPowerNews.map((n, idx) => ({
-            id: `grid-adv-${idx}`,
-            title: n.title,
-            source: n.source,
-            publishedAt: n.pubDate,
-            url: n.url,
-            impact: `Regional utility / telecom advisory active for ${activeZoneLabel}. Preparedness protocol recommended.`,
-          }))
-        : [
-            {
-              id: 'grid-adv-default',
-              title: `Regional peak load & substation transformer maintenance watch across ${baseZone.primaryGridName}`,
-              source: 'Grid & Telecom Telemetry Watch',
-              publishedAt: new Date().toUTCString(),
-              url: 'https://www.electricitymaps.com/',
-              impact: `Localized voltage regulation and peak demand advisories active for ${activeZoneLabel}.`,
-            },
-          ],
-    preparednessBriefingSummary: `Automated preparedness protocol for ${activeZoneLabel}: Verify UPS battery backup runtime, sync critical VFS dossiers offline to local IndexedDB, and maintain secondary cellular/satellite WAN tether in case of localized substation load-shedding.`,
+    frequencyHz:
+      zoneKey === 'western_europe' || zoneKey === 'med_red_sea' || zoneKey === 'indo_pacific'
+        ? '50.00 Hz Synchronous Nominal'
+        : '60.00 Hz Synchronous Nominal',
+    ispBackboneStatus: localMeteo
+      ? `Target Weather: ${localMeteo.tempC ?? '--'}°C | Wind ${localMeteo.windKts ?? '--'}kt (Gusts ${localMeteo.windGustKts ?? '--'}kt) | Cloud ${localMeteo.cloudPct ?? '--'}%`
+      : 'Live IXP & Terrestrial Peering Active',
+    activeAdvisories: [
+      {
+        id: 'grid-adv-meteo',
+        title: `Localized Surface & Substation Weather Telemetry (${resolvedGeo.lat.toFixed(3)}°, ${resolvedGeo.lon.toFixed(3)}°)`,
+        source: 'Open-Meteo + NOAA SWPC Live Feed',
+        publishedAt: new Date().toUTCString(),
+        url: 'https://open-meteo.com/',
+        impact: highWindStrain
+          ? `Elevated surface wind gusts (${localMeteo?.windGustKts} kt) detected at target coordinates; monitor overhead distribution lines.`
+          : `Surface meteorological parameters (${localMeteo?.tempC ?? '--'}°C, gusts ${localMeteo?.windGustKts ?? '--'} kt) within nominal grid operating envelope for ${activeZoneLabel}.`,
+      },
+    ],
+    preparednessBriefingSummary: `Preparedness protocol for ${activeZoneLabel}: Verify local UPS autonomy, keep IndexedDB VFS vaults synced, and monitor live IODA/NWS alerts.`,
   };
 
-  // 3. PILLAR 3: Cyber Threat & Vulnerability Radar
-  const cyberVulnerabilities =
-    cisaKevList.length > 0
-      ? cisaKevList.map((v) => ({
-          id: v.cveID,
-          cveId: v.cveID,
-          title: `${v.vendorProject} ${v.product} — ${v.vulnerabilityName}`,
-          severity: 'CRITICAL (CISA KEV ACTIVE EXPLOIT)',
-          dateAdded: v.dateAdded,
-          summary: v.shortDescription,
-          operative: 'Agent Vance',
-          remediationChecklist: [
-            v.requiredAction || `Apply vendor security patch for ${v.vendorProject} ${v.product} immediately.`,
-            `Audit local and cloud dependency trees for ${v.product} exposure (\`npm audit\` / container image scan).`,
-            `Rotate exposed API tokens and enforce strict WAF/egress rules for ${v.cveID}.`,
-          ],
-        }))
-      : [
-          {
-            id: 'CVE-2026-ZERO-DAY-WATCH',
-            cveId: 'CISA-KEV-WATCH',
-            title: 'Cloud Edge & Container Runtime Privilege Escalation / TLS Certificate Anomaly Watch',
-            severity: 'HIGH',
-            dateAdded: new Date().toISOString().split('T')[0],
-            summary: 'Active monitoring of zero-day exploits targeting Node.js/edge runtimes, Chromium V8, and automated DNS/TLS certificate issuance pipelines.',
-            operative: 'Agent Vance',
-            remediationChecklist: [
-              'Run `npm audit` and lockfile integrity verification across safehouse repositories.',
-              'Verify Cloudflare SSL/TLS Strict mode and HSTS preload headers.',
-              'Ensure all BYOK API keys remain encrypted in client-side AES-GCM storage.',
-            ],
-          },
-        ];
+  // 3. PILLAR 3: Live CISA KEV Cyber Threat Radar
+  const cyberVulnerabilities = cisaKevList.map((v) => ({
+    id: v.cveID,
+    cveId: v.cveID,
+    title: `${v.vendorProject} ${v.product} — ${v.vulnerabilityName}`,
+    severity: 'CRITICAL (CISA KEV ACTIVE EXPLOIT)',
+    dateAdded: v.dateAdded,
+    summary: v.shortDescription,
+    operative: 'Agent Vance',
+    remediationChecklist: [
+      v.requiredAction || `Apply vendor security patch for ${v.vendorProject} ${v.product} immediately.`,
+      `Audit local and cloud dependency trees for ${v.product} exposure.`,
+      `Enforce strict egress allowlists and verify zero-trust credentials for ${v.cveID}.`,
+    ],
+  }));
 
-  // 4. PILLAR 4: Supply Chain & Supply Line Disruptions
+  // 4. PILLAR 4: Supply Chain, Airspace & Maritime Corridor Status
   const supplyChainDisruptions = [
     {
-      id: 'sc-maritime-port',
-      category: 'MARITIME & PORT LOGISTICS',
-      chokepoint: baseZone.primaryMaritimeChokepoint,
-      status: 'ELEVATED TRANSIT DELAY (+24h to +72h)',
-      headline:
-        supplyChainNews[0]?.title ||
-        `Container berth congestion & vessel rerouting active along ${baseZone.primaryMaritimeChokepoint}`,
-      source: supplyChainNews[0]?.source || 'AIS Maritime & Port Congestion Telemetry',
-      url: supplyChainNews[0]?.url || 'https://www.marinetraffic.com/',
+      id: 'sc-aviation-adsb',
+      category: 'LIVE AIRSPACE & ADS-B TRANSPONDER WATCH',
+      chokepoint: `${baseZone.primaryAirspaceSector} (${resolvedGeo.lat.toFixed(2)}°, ${resolvedGeo.lon.toFixed(2)}°)`,
+      status: adsbSummary
+        ? `${adsbSummary.total} AIRCRAFT TRACKED (${adsbSummary.tactical} MIL/GOV/TAC)`
+        : 'LIVE ADS-B VECTOR LAYER ACTIVE',
+      headline: adsbSummary
+        ? `Real-time 100 NM ADS-B sweep tracking ${adsbSummary.total} active transponders (${adsbSummary.tactical} military/government/rotorcraft/emergency contacts) around ${activeZoneLabel}`
+        : `Open ADS-B transponder monitoring active across ${baseZone.primaryAirspaceSector}`,
+      source: 'adsb.lol Live Unfiltered ADS-B Exchange',
+      url: 'https://adsb.lol/',
       practicalImpact:
-        'Hardware deliveries, server rack components, and international freight transiting this corridor face 1–3 day customs and berth queuing delays.',
+        'Click any directional aircraft chevron on the Recon Monitor canvas to inspect callsign, ICAO hex, barometric altitude, and groundspeed.',
     },
     {
-      id: 'sc-aviation-gnss',
-      category: 'AIRSPACE & GNSS/GPS SPECTRUM',
-      chokepoint: baseZone.primaryAirspaceSector,
-      status: 'LOCALIZED GNSS SPOOFING / REROUTE WATCH',
-      headline:
-        supplyChainNews[1]?.title ||
-        `Civil aviation GNSS/GPS L1 interference & NOTAM corridor advisories monitored across ${baseZone.primaryAirspaceSector}`,
-      source: supplyChainNews[1]?.source || 'Open Aviation ADS-B & GNSS Interference Layer',
-      url: supplyChainNews[1]?.url || 'https://gpsjam.org/',
+      id: 'sc-maritime-port',
+      category: 'MARITIME CHOKEPOINT & PUBLIC CCTV CORRIDOR',
+      chokepoint: baseZone.primaryMaritimeChokepoint,
+      status: kpElevated ? 'GNSS SCINTILLATION WATCH' : 'CORRIDOR TELEMETRY ACTIVE',
+      headline: `Monitoring maritime & port approach corridors servicing ${baseZone.primaryMaritimeChokepoint}`,
+      source: 'Public Port/DOT CCTV & Space Weather Watch',
+      url: 'https://www.marinetraffic.com/',
       practicalImpact:
-        'Air freight and regional commercial flight paths may experience slot delays or inertial navigation rerouting.',
+        'Use the Live CCTV Matrix tab to inspect live street, port approach, and highway cameras across covered global hubs.',
     },
   ];
 
@@ -454,7 +485,7 @@ export const onRequest = async (context: { request: Request }): Promise<Response
       status: 200,
       headers: {
         'Content-Type': 'application/json',
-        'Cache-Control': 'public, max-age=60',
+        'Cache-Control': 'public, max-age=45',
         ...CORS_HEADERS,
       },
     }

@@ -8,6 +8,17 @@ import {
   type VanceSynthesisOutput,
   type EffectorActionType,
 } from '../services/CorroborationEngine';
+import {
+  latLonToContinuousWorldPx,
+  canvasPixelToLatLon,
+  panLatLonByCanvasPixels,
+  zoomAroundCanvasPoint,
+  haversineDistanceKm,
+  calculateBearingDeg,
+  type LiveAirspaceTrack,
+  type LiveCctvCamera,
+  type GlobalHazardEvent,
+} from '../services/LiveReconFeedService';
 
 export type TacticalLayerFilter =
   | 'ALL'
@@ -68,8 +79,22 @@ export interface TacticalIntelPin {
   spotlightedSummary?: string;
 }
 
+export interface TacticalOverlayVisibility {
+  intelPins: boolean;
+  adsbAirspace: boolean;
+  adsbTacticalOnly: boolean;
+  cctvNodes: boolean;
+  globalHazards: boolean;
+}
+
 interface TacticalMapOverlayProps {
   intelligencePins?: TacticalIntelPin[];
+  airspaceTracks?: LiveAirspaceTrack[];
+  cctvCameras?: LiveCctvCamera[];
+  globalHazards?: GlobalHazardEvent[];
+  overlayVisibility?: TacticalOverlayVisibility;
+  pinpointMode?: boolean;
+  pinpointTarget?: { lat: number; lon: number; label?: string } | null;
   activeNai?: {
     label: string;
     lat: number;
@@ -79,31 +104,26 @@ interface TacticalMapOverlayProps {
   centerLat: number;
   centerLon: number;
   zoom: number;
+  maxZoom?: number;
   onSelectPin?: (pin: TacticalIntelPin | null) => void;
+  onSelectCctv?: (camera: LiveCctvCamera) => void;
   onFlyToPin?: (pin: TacticalIntelPin) => void;
+  onPanZoomChange?: (next: { lat: number; lon: number; zoom?: number; isDragging?: boolean }) => void;
+  onCursorTelemetryChange?: (cursor: {
+    lat: number;
+    lon: number;
+    distanceKm: number;
+    bearingDeg: number;
+  } | null) => void;
+  onSpotPinpoint?: (spot: { lat: number; lon: number; lockCenter: boolean }) => void;
+  onLockNaiAtCoords?: (coords: { lat: number; lon: number }) => void;
   onDispatchPinDirective?: (pin: TacticalIntelPin) => void;
   onClustersMutated?: () => void;
 }
 
 /**
- * Converts (lat, lon, zoom) to exact Web Mercator world pixel coordinates (at 256px tile size)
- */
-function latLonToWorldPixels(lat: number, lon: number, zoom: number): { wx: number; wy: number; worldSize: number } {
-  const z = Math.max(1, Math.min(17, Math.round(zoom)));
-  const clampedLat = Math.max(-85.0511, Math.min(85.0511, lat));
-  const latRad = (clampedLat * Math.PI) / 180;
-  const worldSize = Math.pow(2, z) * 256;
-
-  const wx = ((lon + 180) / 360) * worldSize;
-  const wy =
-    ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * worldSize;
-
-  return { wx, wy, worldSize };
-}
-
-/**
  * Projects a geographic pin (lat, lon) onto the current viewport canvas (width, height)
- * centered at (centerLat, centerLon) at the given Web Mercator zoom level.
+ * centered at (centerLat, centerLon) at the given Web Mercator zoom level (Z:2..18).
  */
 export function projectPinToCanvas(
   pin: Pick<TacticalIntelPin, 'lat' | 'lon' | 'x' | 'y'>,
@@ -114,8 +134,8 @@ export function projectPinToCanvas(
   canvasHeight: number
 ): { px: number; py: number; isVisible: boolean } {
   if (typeof pin.lat === 'number' && typeof pin.lon === 'number') {
-    const centerWorld = latLonToWorldPixels(centerLat, centerLon, zoom);
-    const pinWorld = latLonToWorldPixels(pin.lat, pin.lon, zoom);
+    const centerWorld = latLonToContinuousWorldPx(centerLat, centerLon, zoom);
+    const pinWorld = latLonToContinuousWorldPx(pin.lat, pin.lon, zoom);
 
     let dx = pinWorld.wx - centerWorld.wx;
     const halfWorld = centerWorld.worldSize / 2;
@@ -137,7 +157,6 @@ export function projectPinToCanvas(
     return { px, py, isVisible };
   }
 
-  // Fallback if only percentage x/y provided
   const px = ((pin.x ?? 50) / 100) * canvasWidth;
   const py = ((pin.y ?? 50) / 100) * canvasHeight;
   return { px, py, isVisible: true };
@@ -210,19 +229,42 @@ function formatRemainingTtl(expiresAt: string | undefined, nowMs: number): {
   };
 }
 
+const DEFAULT_VISIBILITY: TacticalOverlayVisibility = {
+  intelPins: true,
+  adsbAirspace: true,
+  adsbTacticalOnly: false,
+  cctvNodes: true,
+  globalHazards: true,
+};
+
 export default function TacticalMapOverlay({
   intelligencePins = [],
+  airspaceTracks = [],
+  cctvCameras = [],
+  globalHazards = [],
+  overlayVisibility = DEFAULT_VISIBILITY,
+  pinpointMode = false,
+  pinpointTarget = null,
   activeNai = null,
   centerLat,
   centerLon,
   zoom,
+  maxZoom = 18,
   onSelectPin,
+  onSelectCctv,
   onFlyToPin,
+  onPanZoomChange,
+  onCursorTelemetryChange,
+  onSpotPinpoint,
+  onLockNaiAtCoords,
   onDispatchPinDirective,
   onClustersMutated,
 }: TacticalMapOverlayProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [selectedPin, setSelectedPin] = useState<TacticalIntelPin | null>(null);
+  const [selectedAircraft, setSelectedAircraft] = useState<LiveAirspaceTrack | null>(null);
+  const [selectedHazard, setSelectedHazard] = useState<GlobalHazardEvent | null>(null);
+  const [clickedSpot, setClickedSpot] = useState<{ lat: number; lon: number } | null>(null);
   const [activeLayerFilter, setActiveLayerFilter] = useState<TacticalLayerFilter>('ALL');
   const [nowTickMs, setNowTickMs] = useState<number>(() => Date.now());
   const [rawJsonByPacketId, setRawJsonByPacketId] = useState<Record<string, string>>({});
@@ -234,8 +276,22 @@ export default function TacticalMapOverlay({
     text: string;
   } | null>(null);
   const [isMutatingGate, setIsMutatingGate] = useState(false);
+  const [isDraggingSurface, setIsDraggingSurface] = useState(false);
+  const [liveA11yAnnouncement, setLiveA11yAnnouncement] = useState<string>('');
 
-  // Live 1-second timer while Provenance Drawer is open (keeps TTL countdown live)
+  // Pointer drag state ref (zero re-render overhead during 60FPS pointermove)
+  const dragStateRef = useRef<{
+    pointerId: number;
+    startClientX: number;
+    startClientY: number;
+    startLat: number;
+    startLon: number;
+    hasExceededThreshold: boolean;
+  } | null>(null);
+
+  const wheelAccumRef = useRef<number>(0);
+
+  // Live 1-second timer while Provenance Drawer is open
   useEffect(() => {
     if (!selectedPin) return;
     setNowTickMs(Date.now());
@@ -243,19 +299,22 @@ export default function TacticalMapOverlay({
     return () => clearInterval(id);
   }, [selectedPin]);
 
-  // Escape key closes the slide-over provenance drawer
+  // Escape key closes active inspector / drawer
   useEffect(() => {
-    if (!selectedPin) return;
+    if (!selectedPin && !selectedAircraft && !selectedHazard && !clickedSpot) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         updateSelectedPin(null);
+        setSelectedAircraft(null);
+        setSelectedHazard(null);
+        setClickedSpot(null);
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selectedPin]);
+  }, [selectedPin, selectedAircraft, selectedHazard, clickedSpot]);
 
-  // Sync selectedPin when intelligencePins updates (e.g., after nomination or score change)
+  // Sync selectedPin when intelligencePins updates
   useEffect(() => {
     if (!selectedPin) return;
     const refreshed = intelligencePins.find((p) => p.id === selectedPin.id);
@@ -269,6 +328,11 @@ export default function TacticalMapOverlay({
 
   const updateSelectedPin = (nextPin: TacticalIntelPin | null) => {
     setSelectedPin(nextPin);
+    if (nextPin) {
+      setSelectedAircraft(null);
+      setSelectedHazard(null);
+      setClickedSpot(null);
+    }
     setGateActionMessage(null);
     setRawJsonByPacketId({});
     if (nextPin?.vanceSynthesis?.recommendedEffectorPackage.actionType) {
@@ -279,7 +343,16 @@ export default function TacticalMapOverlay({
     }
   };
 
+  const visibleAirspaceTracks = useMemo(() => {
+    if (!overlayVisibility.adsbAirspace) return [];
+    if (overlayVisibility.adsbTacticalOnly) {
+      return airspaceTracks.filter((t) => t.classification !== 'CIVIL');
+    }
+    return airspaceTracks;
+  }, [airspaceTracks, overlayVisibility.adsbAirspace, overlayVisibility.adsbTacticalOnly]);
+
   const filteredPins = useMemo(() => {
+    if (!overlayVisibility.intelPins) return [];
     const now = Date.now();
     return intelligencePins.filter((pin) => {
       if (pin.corroborationStatus === 'DISMISSED') return false;
@@ -309,9 +382,51 @@ export default function TacticalMapOverlay({
       }
       return true;
     });
-  }, [intelligencePins, activeLayerFilter]);
+  }, [intelligencePins, activeLayerFilter, overlayVisibility.intelPins]);
 
-  // Render tiered corroboration pins cleanly at 60 FPS on HTML5 Canvas (zero per-pin DOM nodes)
+  // Cursor-anchored mouse wheel / trackpad zoom listener (non-passive so scrolling inside canvas zooms cleanly)
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !onPanZoomChange) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      wheelAccumRef.current += e.deltaY;
+      if (Math.abs(wheelAccumRef.current) < 65) return;
+
+      const step = wheelAccumRef.current < 0 ? 1 : -1;
+      wheelAccumRef.current = 0;
+
+      const nextZ = Math.max(2, Math.min(maxZoom, zoom + step));
+      if (nextZ === zoom) return;
+
+      const rect = canvas.getBoundingClientRect();
+      const anchorPx = ((e.clientX - rect.left) / Math.max(1, rect.width)) * canvas.width;
+      const anchorPy = ((e.clientY - rect.top) / Math.max(1, rect.height)) * canvas.height;
+
+      const zoomed = zoomAroundCanvasPoint(
+        centerLat,
+        centerLon,
+        zoom,
+        nextZ,
+        anchorPx,
+        anchorPy,
+        canvas.width,
+        canvas.height
+      );
+      onPanZoomChange({
+        lat: zoomed.lat,
+        lon: zoomed.lon,
+        zoom: zoomed.zoom,
+        isDragging: false,
+      });
+    };
+
+    canvas.addEventListener('wheel', handleWheel, { passive: false });
+    return () => canvas.removeEventListener('wheel', handleWheel);
+  }, [centerLat, centerLon, zoom, maxZoom, onPanZoomChange]);
+
+  // Render multi-layer intelligence vectors cleanly at 60 FPS on HTML5 Canvas
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -347,11 +462,11 @@ export default function TacticalMapOverlay({
     const render = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // 1. Subtle tactical grid lines
-      ctx.strokeStyle = 'rgba(16, 185, 129, 0.08)';
+      // 1. Subtle tactical graticule lines
+      ctx.strokeStyle = 'rgba(16, 185, 129, 0.07)';
       ctx.lineWidth = 1;
       ctx.setLineDash([]);
-      const gridSize = 40;
+      const gridSize = 48;
       for (let x = 0; x < canvas.width; x += gridSize) {
         ctx.beginPath();
         ctx.moveTo(x, 0);
@@ -377,22 +492,22 @@ export default function TacticalMapOverlay({
           canvas.width,
           canvas.height
         );
-        const zClamped = Math.max(1, Math.min(17, Math.round(zoom)));
+        const zClamped = Math.max(2, Math.min(18, Math.round(zoom)));
         const metersPerPx =
           (156543.03392 * Math.max(0.15, Math.cos((activeNai.lat * Math.PI) / 180))) /
           Math.pow(2, zClamped);
-        const radiusPx = Math.max(16, (activeNai.radiusKm * 1000) / Math.max(0.1, metersPerPx));
+        const radiusPx = Math.max(16, (activeNai.radiusKm * 1000) / Math.max(0.05, metersPerPx));
 
         ctx.save();
         ctx.setLineDash([6, 4]);
         ctx.strokeStyle = 'rgba(34, 211, 238, 0.42)';
         ctx.lineWidth = 1.3;
         ctx.beginPath();
-        ctx.arc(naiProj.px, naiProj.py, Math.min(radiusPx, 1800), 0, 2 * Math.PI);
+        ctx.arc(naiProj.px, naiProj.py, Math.min(radiusPx, 2400), 0, 2 * Math.PI);
         ctx.stroke();
 
         ctx.setLineDash([]);
-        ctx.strokeStyle = 'rgba(16, 185, 129, 0.75)';
+        ctx.strokeStyle = 'rgba(16, 185, 129, 0.8)';
         ctx.lineWidth = 1.4;
         ctx.beginPath();
         ctx.moveTo(naiProj.px - 9, naiProj.py);
@@ -405,7 +520,7 @@ export default function TacticalMapOverlay({
           ctx.font = 'bold 9px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
           const naiTag = `[NAI: ${activeNai.label.slice(0, 22)} • ${activeNai.radiusKm}km]`;
           const tw = ctx.measureText(naiTag).width;
-          ctx.fillStyle = 'rgba(2, 12, 8, 0.78)';
+          ctx.fillStyle = 'rgba(2, 12, 8, 0.82)';
           ctx.fillRect(naiProj.px - tw / 2 - 3, naiProj.py + 11, tw + 6, 12);
           ctx.fillStyle = '#67e8f9';
           ctx.fillText(naiTag, naiProj.px - tw / 2, naiProj.py + 20);
@@ -413,7 +528,226 @@ export default function TacticalMapOverlay({
         ctx.restore();
       }
 
-      // 2. Render Tiered Geographically Locked Intelligence Pins
+      // 2. Render Global Macro Hazards (USGS Worldwide Seismic + NASA EONET Wildfires/Volcanoes/Storms)
+      if (overlayVisibility.globalHazards && globalHazards.length > 0) {
+        for (const hz of globalHazards) {
+          const proj = projectPinToCanvas(
+            { lat: hz.lat, lon: hz.lon },
+            centerLat,
+            centerLon,
+            zoom,
+            canvas.width,
+            canvas.height
+          );
+          if (!proj.isVisible) continue;
+          const isHzSelected = selectedHazard?.id === hz.id;
+
+          ctx.save();
+          if (hz.category === 'WILDFIRE' || hz.category === 'VOLCANO') {
+            ctx.fillStyle = hz.category === 'VOLCANO' ? 'rgba(239, 68, 68, 0.88)' : 'rgba(249, 115, 22, 0.85)';
+            ctx.strokeStyle = isHzSelected ? '#fde047' : '#fed7aa';
+            ctx.lineWidth = isHzSelected ? 2 : 1.1;
+            ctx.beginPath();
+            ctx.moveTo(proj.px, proj.py - 7);
+            ctx.lineTo(proj.px + 6.5, proj.py + 5.5);
+            ctx.lineTo(proj.px - 6.5, proj.py + 5.5);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+          } else if (hz.category === 'SEVERE_STORM' || hz.category === 'SEA_ICE') {
+            ctx.strokeStyle = isHzSelected ? '#fde047' : 'rgba(192, 132, 252, 0.85)';
+            ctx.fillStyle = 'rgba(168, 85, 247, 0.35)';
+            ctx.lineWidth = 1.4;
+            ctx.beginPath();
+            ctx.arc(proj.px, proj.py, 6.5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+          } else {
+            // SEISMIC or KINETIC_NON_TECTONIC
+            const isKinetic = hz.category === 'KINETIC_NON_TECTONIC';
+            ctx.strokeStyle = isHzSelected
+              ? '#fde047'
+              : isKinetic
+              ? 'rgba(251, 146, 60, 0.9)'
+              : 'rgba(250, 204, 21, 0.75)';
+            ctx.lineWidth = 1.2;
+            ctx.beginPath();
+            ctx.arc(proj.px, proj.py, 8.5, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.fillStyle = isKinetic ? '#fb923c' : '#eab308';
+            ctx.beginPath();
+            ctx.arc(proj.px, proj.py, 3.2, 0, Math.PI * 2);
+            ctx.fill();
+          }
+
+          if (zoom >= 5 || isHzSelected) {
+            ctx.font = 'bold 8.5px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
+            const tag = `${hz.magnitudeOrScale ? `[${hz.magnitudeOrScale}] ` : ''}${hz.title.slice(0, 22)}`;
+            const tw = ctx.measureText(tag).width;
+            ctx.fillStyle = 'rgba(4, 9, 14, 0.78)';
+            ctx.fillRect(proj.px + 9, proj.py - 8, tw + 5, 11);
+            ctx.fillStyle = isHzSelected ? '#fde047' : '#fed7aa';
+            ctx.fillText(tag, proj.px + 11, proj.py);
+          }
+          ctx.restore();
+        }
+      }
+
+      // 3. Render Live Geotagged Public CCTV Camera Nodes
+      if (overlayVisibility.cctvNodes && cctvCameras.length > 0) {
+        for (const cam of cctvCameras) {
+          const proj = projectPinToCanvas(
+            { lat: cam.lat, lon: cam.lon },
+            centerLat,
+            centerLon,
+            zoom,
+            canvas.width,
+            canvas.height
+          );
+          if (!proj.isVisible) continue;
+
+          ctx.save();
+          // Camera FOV wedge
+          ctx.fillStyle = 'rgba(16, 185, 129, 0.16)';
+          ctx.beginPath();
+          ctx.moveTo(proj.px, proj.py);
+          ctx.arc(proj.px, proj.py, 15, -Math.PI * 0.72, -Math.PI * 0.28);
+          ctx.closePath();
+          ctx.fill();
+
+          // Camera icon body
+          ctx.fillStyle = 'rgba(4, 47, 46, 0.92)';
+          ctx.strokeStyle = '#34d399';
+          ctx.lineWidth = 1.4;
+          ctx.fillRect(proj.px - 6, proj.py - 4.5, 12, 9);
+          ctx.strokeRect(proj.px - 6, proj.py - 4.5, 12, 9);
+
+          ctx.fillStyle = '#6ee7b7';
+          ctx.beginPath();
+          ctx.arc(proj.px, proj.py, 2.1, 0, Math.PI * 2);
+          ctx.fill();
+
+          if (zoom >= 11) {
+            ctx.font = 'bold 8.5px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
+            const camLabel = `📹 ${cam.name.slice(0, 18)}`;
+            const tw = ctx.measureText(camLabel).width;
+            ctx.fillStyle = 'rgba(2, 14, 10, 0.84)';
+            ctx.fillRect(proj.px + 8, proj.py - 6, tw + 5, 11);
+            ctx.fillStyle = '#6ee7b7';
+            ctx.fillText(camLabel, proj.px + 10, proj.py + 2);
+          }
+          ctx.restore();
+        }
+      }
+
+      // 4. Render Live ADS-B Airspace Transponder Vectors (Directional Aircraft Icons)
+      if (visibleAirspaceTracks.length > 0) {
+        for (const ac of visibleAirspaceTracks) {
+          const proj = projectPinToCanvas(
+            { lat: ac.lat, lon: ac.lon },
+            centerLat,
+            centerLon,
+            zoom,
+            canvas.width,
+            canvas.height
+          );
+          if (!proj.isVisible) continue;
+          const isAcSelected = selectedAircraft?.icaoHex === ac.icaoHex;
+
+          const color =
+            ac.classification === 'EMERGENCY'
+              ? '#ef4444'
+              : ac.classification === 'MIL_GOV'
+              ? '#f472b6'
+              : ac.classification === 'ROTORCRAFT'
+              ? '#fb923c'
+              : '#38bdf8';
+
+          ctx.save();
+          ctx.translate(proj.px, proj.py);
+          const headingRad = ((ac.trackDeg || 0) * Math.PI) / 180;
+          ctx.rotate(headingRad);
+
+          // Velocity leader vector ahead of nose
+          const speedLen = Math.min(20, Math.max(6, (ac.groundSpeedKts || 120) / 28));
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 1.1;
+          ctx.beginPath();
+          ctx.moveTo(0, -6);
+          ctx.lineTo(0, -6 - speedLen);
+          ctx.stroke();
+
+          // Directional swept-wing aircraft chevron
+          ctx.fillStyle = isAcSelected ? '#fde047' : color;
+          ctx.strokeStyle = 'rgba(2, 6, 23, 0.9)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(0, -7);
+          ctx.lineTo(5.5, 5);
+          ctx.lineTo(0, 2.2);
+          ctx.lineTo(-5.5, 5);
+          ctx.closePath();
+          ctx.fill();
+          ctx.stroke();
+          ctx.restore();
+
+          if (isAcSelected || ac.classification !== 'CIVIL' || zoom >= 10) {
+            ctx.save();
+            ctx.font = 'bold 8.5px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
+            const altText =
+              ac.altBaroFt === 'GROUND'
+                ? 'GND'
+                : typeof ac.altBaroFt === 'number'
+                ? `FL${String(Math.round(ac.altBaroFt / 100)).padStart(3, '0')}`
+                : '';
+            const acTag = `${ac.callsign}${altText ? ` ${altText}` : ''}`;
+            const tw = ctx.measureText(acTag).width;
+            ctx.fillStyle = 'rgba(2, 6, 23, 0.82)';
+            ctx.fillRect(proj.px + 8, proj.py - 9, tw + 5, 11);
+            ctx.fillStyle = isAcSelected ? '#fde047' : color;
+            ctx.fillText(acTag, proj.px + 10, proj.py - 1);
+            ctx.restore();
+          }
+        }
+      }
+
+      // 5. Render Precision Pinpoint Target Reticle (if dropped by operator)
+      const activeSpot = pinpointTarget || clickedSpot;
+      if (activeSpot && Number.isFinite(activeSpot.lat) && Number.isFinite(activeSpot.lon)) {
+        const spotProj = projectPinToCanvas(
+          { lat: activeSpot.lat, lon: activeSpot.lon },
+          centerLat,
+          centerLon,
+          zoom,
+          canvas.width,
+          canvas.height
+        );
+        if (spotProj.isVisible) {
+          ctx.save();
+          ctx.strokeStyle = '#fde047';
+          ctx.lineWidth = 1.6;
+          ctx.beginPath();
+          ctx.arc(spotProj.px, spotProj.py, 11, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.beginPath();
+          ctx.moveTo(spotProj.px - 16, spotProj.py);
+          ctx.lineTo(spotProj.px - 5, spotProj.py);
+          ctx.moveTo(spotProj.px + 5, spotProj.py);
+          ctx.lineTo(spotProj.px + 16, spotProj.py);
+          ctx.moveTo(spotProj.px, spotProj.py - 16);
+          ctx.lineTo(spotProj.px, spotProj.py - 5);
+          ctx.moveTo(spotProj.px, spotProj.py + 5);
+          ctx.lineTo(spotProj.px, spotProj.py + 16);
+          ctx.stroke();
+          ctx.fillStyle = '#fde047';
+          ctx.beginPath();
+          ctx.arc(spotProj.px, spotProj.py, 2.4, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
+      }
+
+      // 6. Render Tiered Geographically Locked Intelligence Pins
       filteredPins.forEach((pin) => {
         const { px, py, isVisible } = projectPinToCanvas(
           pin,
@@ -455,7 +789,6 @@ export default function TacticalMapOverlay({
         ctx.save();
 
         if (tier === 'STALE') {
-          // STALE: dashed grey outline, zero pulse
           ctx.setLineDash([4, 3]);
           ctx.strokeStyle = isSelected ? '#fde047' : 'rgba(148, 163, 184, 0.72)';
           ctx.lineWidth = 1.4;
@@ -469,7 +802,6 @@ export default function TacticalMapOverlay({
           ctx.arc(px, py, 3.2, 0, 2 * Math.PI);
           ctx.fill();
         } else if (tier === 'CANDIDATE') {
-          // CANDIDATE (< 0.50): single-source reticle at 45% opacity, static crosshair, no pulse
           ctx.globalAlpha = isSelected ? 0.9 : 0.45;
           ctx.strokeStyle = isSelected ? '#fde047' : '#f59e0b';
           ctx.fillStyle = isSelected ? '#fde047' : '#f59e0b';
@@ -488,7 +820,6 @@ export default function TacticalMapOverlay({
           ctx.arc(px, py, 3, 0, 2 * Math.PI);
           ctx.fill();
         } else if (tier === 'CORROBORATED') {
-          // CORROBORATED (0.50 - 0.84): phosphor-green/cyan lock box, dual-source badge, slow radar sweep ring
           ctx.strokeStyle = 'rgba(34, 211, 238, 0.45)';
           ctx.lineWidth = 1.2;
           ctx.beginPath();
@@ -510,7 +841,6 @@ export default function TacticalMapOverlay({
           ctx.arc(px, py, 4.5, 0, 2 * Math.PI);
           ctx.fill();
         } else {
-          // CRITICAL_CONVERGENCE (>= 0.85): pulsing crimson threat ring, target vector leader line, priority tag
           ctx.strokeStyle = 'rgba(239, 68, 68, 0.9)';
           ctx.lineWidth = 1.9;
           ctx.beginPath();
@@ -523,7 +853,6 @@ export default function TacticalMapOverlay({
           ctx.arc(px, py, 21, 0, 2 * Math.PI);
           ctx.stroke();
 
-          // Target vector leader line
           const azRad = (((pin.vectorAzimuthDeg ?? 45) - 90) * Math.PI) / 180;
           const vx = px + Math.cos(azRad) * 28;
           const vy = py + Math.sin(azRad) * 28;
@@ -544,13 +873,17 @@ export default function TacticalMapOverlay({
           ctx.strokeRect(px - 10, py - 10, 20, 20);
         }
 
-        // Draw compact canvas badge & callout label (Admiralty grade, kinetic tag, source track, live age)
         ctx.font = 'bold 10px ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace';
         const shortBase = pin.title.length > 20 ? `${pin.title.slice(0, 18)}..` : pin.title;
         const admiraltyPart = pin.admiraltyGrade ? `[${pin.admiraltyGrade}] ` : '';
         const kineticPart = pin.isKineticNonTectonic ? '[KINETIC/NON-TECTONIC] ' : '';
         const trackTag = pin.adapterId
-          ? pin.adapterId.replace('GEOINT_', '').replace('MASINT_', '').replace('IMINT_', '').replace('SIGINT_', '').replace('CIVIC_', '')
+          ? pin.adapterId
+              .replace('GEOINT_', '')
+              .replace('MASINT_', '')
+              .replace('IMINT_', '')
+              .replace('SIGINT_', '')
+              .replace('CIVIC_', '')
           : pin.sourceTracks?.[0] || '';
         const ageLabel = formatObservationAge(pin.observationTime || pin.capturedAt, frameNow);
         const badgePrefix =
@@ -597,53 +930,318 @@ export default function TacticalMapOverlay({
       window.removeEventListener('resize', syncCanvasSize);
       resizeObserver?.disconnect();
     };
-  }, [filteredPins, selectedPin, activeNai, centerLat, centerLon, zoom]);
+  }, [
+    filteredPins,
+    visibleAirspaceTracks,
+    cctvCameras,
+    globalHazards,
+    overlayVisibility.cctvNodes,
+    overlayVisibility.globalHazards,
+    pinpointTarget,
+    clickedSpot,
+    selectedPin,
+    selectedAircraft,
+    selectedHazard,
+    activeNai,
+    centerLat,
+    centerLon,
+    zoom,
+  ]);
 
-  // Handle canvas click/tap to select nearest visible (or off-screen edge) pin
-  const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  // ==========================================================================
+  // POINTER DRAG-TO-PAN + HOVER CURSOR TELEMETRY + PRECISION CLICK PINPOINTING
+  // ==========================================================================
+
+  const getCanvasCoords = (clientX: number, clientY: number) => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas) return null;
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / Math.max(1, rect.width);
     const scaleY = canvas.height / Math.max(1, rect.height);
-    const clickX = (e.clientX - rect.left) * scaleX;
-    const clickY = (e.clientY - rect.top) * scaleY;
+    return {
+      px: (clientX - rect.left) * scaleX,
+      py: (clientY - rect.top) * scaleY,
+      width: canvas.width,
+      height: canvas.height,
+    };
+  };
 
+  const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (e.button !== 0) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    dragStateRef.current = {
+      pointerId: e.pointerId,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      startLat: centerLat,
+      startLon: centerLon,
+      hasExceededThreshold: false,
+    };
+    try {
+      canvas.setPointerCapture(e.pointerId);
+    } catch {}
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const drag = dragStateRef.current;
+    if (drag && drag.pointerId === e.pointerId && canvas.hasPointerCapture(e.pointerId)) {
+      const dxClient = e.clientX - drag.startClientX;
+      const dyClient = e.clientY - drag.startClientY;
+
+      // Wait for ~4px movement before entering dragging state so clicks/taps remain clean
+      if (!drag.hasExceededThreshold && Math.hypot(dxClient, dyClient) >= 4) {
+        drag.hasExceededThreshold = true;
+        setIsDraggingSurface(true);
+      }
+
+      if (drag.hasExceededThreshold && onPanZoomChange) {
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = canvas.width / Math.max(1, rect.width);
+        const scaleY = canvas.height / Math.max(1, rect.height);
+        const panned = panLatLonByCanvasPixels(
+          drag.startLat,
+          drag.startLon,
+          zoom,
+          dxClient * scaleX,
+          dyClient * scaleY
+        );
+        onPanZoomChange({
+          lat: panned.lat,
+          lon: panned.lon,
+          isDragging: true,
+        });
+      }
+      return;
+    }
+
+    // Update live cursor coordinates, range, and bearing
+    if (onCursorTelemetryChange) {
+      const pos = getCanvasCoords(e.clientX, e.clientY);
+      if (pos) {
+        const geo = canvasPixelToLatLon(
+          pos.px,
+          pos.py,
+          centerLat,
+          centerLon,
+          zoom,
+          pos.width,
+          pos.height
+        );
+        const refLat = activeNai?.lat ?? centerLat;
+        const refLon = activeNai?.lon ?? centerLon;
+        onCursorTelemetryChange({
+          lat: geo.lat,
+          lon: geo.lon,
+          distanceKm: Number(haversineDistanceKm(refLat, refLon, geo.lat, geo.lon).toFixed(2)),
+          bearingDeg: calculateBearingDeg(refLat, refLon, geo.lat, geo.lon),
+        });
+      }
+    }
+  };
+
+  const handlePointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const drag = dragStateRef.current;
+    const wasDragging = Boolean(drag?.hasExceededThreshold);
+    dragStateRef.current = null;
+    setIsDraggingSurface(false);
+
+    if (wasDragging) {
+      onPanZoomChange?.({ lat: centerLat, lon: centerLon, isDragging: false });
+      setLiveA11yAnnouncement('Recon map viewport panned to updated sector');
+      setTimeout(() => setLiveA11yAnnouncement(''), 1200);
+      return;
+    }
+
+    // Clean click (< 4px movement): hit-test pins -> CCTV -> ADS-B -> Global Hazards -> Spot Pinpoint
+    const pos = getCanvasCoords(e.clientX, e.clientY);
+    if (!pos) return;
+    const { px: clickX, py: clickY, width, height } = pos;
+
+    // 1. Shift+Click or Pinpoint Mode forces exact coordinate pinpoint first
+    if (e.shiftKey || pinpointMode) {
+      const spotGeo = canvasPixelToLatLon(clickX, clickY, centerLat, centerLon, zoom, width, height);
+      setClickedSpot(spotGeo);
+      updateSelectedPin(null);
+      setSelectedAircraft(null);
+      setSelectedHazard(null);
+      onSpotPinpoint?.({ lat: spotGeo.lat, lon: spotGeo.lon, lockCenter: e.shiftKey });
+      return;
+    }
+
+    // 2. Hit-test Intelligence Pins (in-viewport first)
     let clickedPin = filteredPins.find((pin) => {
       const { px, py, isVisible } = projectPinToCanvas(
         pin,
         centerLat,
         centerLon,
         zoom,
-        canvas.width,
-        canvas.height
+        width,
+        height
       );
       if (!isVisible) return false;
-      return Math.hypot(px - clickX, py - clickY) < 22;
+      return Math.hypot(px - clickX, py - clickY) < 20;
     });
 
-    if (!clickedPin) {
-      const pad = 16;
-      clickedPin = filteredPins.find((pin) => {
+    if (clickedPin) {
+      updateSelectedPin(clickedPin);
+      return;
+    }
+
+    // 3. Hit-test Live CCTV Camera Nodes
+    if (overlayVisibility.cctvNodes && cctvCameras.length > 0) {
+      const hitCam = cctvCameras.find((cam) => {
         const { px, py, isVisible } = projectPinToCanvas(
-          pin,
+          { lat: cam.lat, lon: cam.lon },
           centerLat,
           centerLon,
           zoom,
-          canvas.width,
-          canvas.height
+          width,
+          height
         );
-        if (isVisible) return false;
-        const clampedX = Math.max(pad, Math.min(canvas.width - pad, px));
-        const clampedY = Math.max(pad + 60, Math.min(canvas.height - pad - 48, py));
-        return Math.hypot(clampedX - clickX, clampedY - clickY) < 16;
+        return isVisible && Math.hypot(px - clickX, py - clickY) < 16;
       });
-      if (clickedPin && onFlyToPin) {
-        onFlyToPin(clickedPin);
+      if (hitCam) {
+        onSelectCctv?.(hitCam);
+        return;
       }
     }
 
-    updateSelectedPin(clickedPin || null);
+    // 4. Hit-test Live ADS-B Aircraft Vectors
+    if (visibleAirspaceTracks.length > 0) {
+      const hitAc = visibleAirspaceTracks.find((ac) => {
+        const { px, py, isVisible } = projectPinToCanvas(
+          { lat: ac.lat, lon: ac.lon },
+          centerLat,
+          centerLon,
+          zoom,
+          width,
+          height
+        );
+        return isVisible && Math.hypot(px - clickX, py - clickY) < 16;
+      });
+      if (hitAc) {
+        updateSelectedPin(null);
+        setSelectedHazard(null);
+        setClickedSpot(null);
+        setSelectedAircraft(hitAc);
+        return;
+      }
+    }
+
+    // 5. Hit-test Global Macro Hazards
+    if (overlayVisibility.globalHazards && globalHazards.length > 0) {
+      const hitHz = globalHazards.find((hz) => {
+        const { px, py, isVisible } = projectPinToCanvas(
+          { lat: hz.lat, lon: hz.lon },
+          centerLat,
+          centerLon,
+          zoom,
+          width,
+          height
+        );
+        return isVisible && Math.hypot(px - clickX, py - clickY) < 16;
+      });
+      if (hitHz) {
+        updateSelectedPin(null);
+        setSelectedAircraft(null);
+        setClickedSpot(null);
+        setSelectedHazard(hitHz);
+        return;
+      }
+    }
+
+    // 6. Hit-test off-screen clamped edge intelligence pins
+    const pad = 16;
+    clickedPin = filteredPins.find((pin) => {
+      const { px, py, isVisible } = projectPinToCanvas(
+        pin,
+        centerLat,
+        centerLon,
+        zoom,
+        width,
+        height
+      );
+      if (isVisible) return false;
+      const clampedX = Math.max(pad, Math.min(width - pad, px));
+      const clampedY = Math.max(pad + 60, Math.min(height - pad - 48, py));
+      return Math.hypot(clampedX - clickX, clampedY - clickY) < 16;
+    });
+    if (clickedPin) {
+      onFlyToPin?.(clickedPin);
+      updateSelectedPin(clickedPin);
+      return;
+    }
+
+    // 7. Empty map space click -> drop precision Spot Coordinate Reticle & Quick-Lock Pill
+    const spotGeo = canvasPixelToLatLon(clickX, clickY, centerLat, centerLon, zoom, width, height);
+    updateSelectedPin(null);
+    setSelectedAircraft(null);
+    setSelectedHazard(null);
+    setClickedSpot(spotGeo);
+    onSpotPinpoint?.({ lat: spotGeo.lat, lon: spotGeo.lon, lockCenter: false });
+  };
+
+  const handleDoubleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const pos = getCanvasCoords(e.clientX, e.clientY);
+    if (!pos) return;
+    const spotGeo = canvasPixelToLatLon(
+      pos.px,
+      pos.py,
+      centerLat,
+      centerLon,
+      zoom,
+      pos.width,
+      pos.height
+    );
+    setClickedSpot(spotGeo);
+    const nextZoom = Math.min(maxZoom, zoom + 1);
+    onPanZoomChange?.({ lat: spotGeo.lat, lon: spotGeo.lon, zoom: nextZoom, isDragging: false });
+    onSpotPinpoint?.({ lat: spotGeo.lat, lon: spotGeo.lon, lockCenter: true });
+  };
+
+  const handleLostPointerCapture = () => {
+    dragStateRef.current = null;
+    setIsDraggingSurface(false);
+  };
+
+  // Keyboard navigation when canvas has focus (Arrow keys pan, +/- zoom)
+  const handleCanvasKeyDown = (e: React.KeyboardEvent<HTMLCanvasElement>) => {
+    if (!onPanZoomChange) return;
+    const fineFactor = e.shiftKey ? 18 : 64;
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      const next = panLatLonByCanvasPixels(centerLat, centerLon, zoom, 0, fineFactor);
+      onPanZoomChange({ lat: next.lat, lon: next.lon, isDragging: false });
+      setLiveA11yAnnouncement('Map panned north');
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      const next = panLatLonByCanvasPixels(centerLat, centerLon, zoom, 0, -fineFactor);
+      onPanZoomChange({ lat: next.lat, lon: next.lon, isDragging: false });
+      setLiveA11yAnnouncement('Map panned south');
+    } else if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      const next = panLatLonByCanvasPixels(centerLat, centerLon, zoom, fineFactor, 0);
+      onPanZoomChange({ lat: next.lat, lon: next.lon, isDragging: false });
+      setLiveA11yAnnouncement('Map panned west');
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      const next = panLatLonByCanvasPixels(centerLat, centerLon, zoom, -fineFactor, 0);
+      onPanZoomChange({ lat: next.lat, lon: next.lon, isDragging: false });
+      setLiveA11yAnnouncement('Map panned east');
+    } else if (e.key === '+' || e.key === '=') {
+      e.preventDefault();
+      onPanZoomChange({ lat: centerLat, lon: centerLon, zoom: Math.min(maxZoom, zoom + 1) });
+      setLiveA11yAnnouncement('Map zoomed in');
+    } else if (e.key === '-' || e.key === '_') {
+      e.preventDefault();
+      onPanZoomChange({ lat: centerLat, lon: centerLon, zoom: Math.max(2, zoom - 1) });
+      setLiveA11yAnnouncement('Map zoomed out');
+    }
   };
 
   const handleToggleRawJson = async (pkt: TacticalProvenancePacket) => {
@@ -740,15 +1338,42 @@ export default function TacticalMapOverlay({
 
   return (
     <div className="relative w-full h-full overflow-hidden pointer-events-auto">
-      {/* Interactive 60FPS Tactical Canvas Layer */}
+      {/* Screen-reader live region registered on page load for drag/keyboard movement announcements */}
+      <div className="visually-hidden" aria-live="polite">
+        {liveA11yAnnouncement}
+      </div>
+
+      {/* Interactive 60FPS Tactical Canvas Layer (Drag-to-Pan + Wheel Zoom + Click-to-Pinpoint) */}
       <canvas
         ref={canvasRef}
-        onClick={handleCanvasClick}
-        className="absolute inset-0 z-10 cursor-crosshair block w-full h-full"
+        tabIndex={0}
+        role="application"
+        aria-label="Interactive reconnaissance map surface. Drag to pan, scroll wheel or plus/minus to zoom, arrow keys to nudge, click or Shift+click to pinpoint coordinates."
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onLostPointerCapture={handleLostPointerCapture}
+        onPointerLeave={() => onCursorTelemetryChange?.(null)}
+        onDoubleClick={handleDoubleClick}
+        onKeyDown={handleCanvasKeyDown}
+        style={{
+          touchAction: 'none',
+          WebkitUserSelect: 'none',
+          userSelect: 'none',
+          cursor: isDraggingSurface
+            ? 'grabbing'
+            : pinpointMode
+            ? 'crosshair'
+            : 'grab',
+        }}
+        className="absolute inset-0 z-10 block w-full h-full focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/80"
       />
 
-      {/* Compact Single-Row Layer Filter HUD Strip (< 12% viewport height) */}
-      <div className="absolute top-1.5 left-1/2 -translate-x-1/2 z-35 flex items-center gap-1 bg-black/85 border border-emerald-500/45 rounded px-1.5 py-0.5 shadow-[0_0_16px_rgba(0,0,0,0.9)] max-w-[92%] overflow-x-auto no-scrollbar">
+      {/* Compact Single-Row Layer Filter HUD Strip */}
+      <div
+        data-no-map-drag="true"
+        className="absolute top-1.5 left-1/2 -translate-x-1/2 z-35 flex items-center gap-1 bg-black/85 border border-emerald-500/45 rounded px-1.5 py-0.5 shadow-[0_0_16px_rgba(0,0,0,0.9)] max-w-[94%] overflow-x-auto no-scrollbar"
+      >
         {filterChips.map((chip) => {
           const active = activeLayerFilter === chip.id;
           return (
@@ -767,15 +1392,223 @@ export default function TacticalMapOverlay({
           );
         })}
         <span className="text-[9px] font-mono text-emerald-400/80 pl-1 whitespace-nowrap">
-          [{filteredPins.length}/{intelligencePins.length}]
+          [{filteredPins.length} PINS • {visibleAirspaceTracks.length} AIR • {cctvCameras.length} CAM]
         </span>
       </div>
+
+      {/* Live ADS-B Aircraft Track Quick-Inspector */}
+      {selectedAircraft && !selectedPin && (
+        <div
+          data-no-map-drag="true"
+          onClick={(e) => e.stopPropagation()}
+          className="absolute bottom-12 left-2.5 z-40 w-72 sm:w-80 bg-slate-950/95 border border-sky-400/70 rounded p-2.5 font-mono text-[10px] text-slate-100 shadow-[0_0_24px_rgba(0,0,0,0.95)] space-y-1.5"
+        >
+          <div className="flex items-center justify-between border-b border-sky-500/30 pb-1">
+            <div className="flex items-center gap-1.5">
+              <span
+                className={`px-1.5 py-0.5 text-[9px] font-bold rounded border ${
+                  selectedAircraft.classification === 'EMERGENCY'
+                    ? 'bg-red-950 text-red-200 border-red-500'
+                    : selectedAircraft.classification === 'MIL_GOV'
+                    ? 'bg-fuchsia-950 text-fuchsia-200 border-fuchsia-400'
+                    : selectedAircraft.classification === 'ROTORCRAFT'
+                    ? 'bg-orange-950 text-orange-200 border-orange-400'
+                    : 'bg-sky-950 text-sky-200 border-sky-400'
+                }`}
+              >
+                ✈️ {selectedAircraft.classification}
+              </span>
+              <span className="font-bold text-amber-200">{selectedAircraft.callsign}</span>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSelectedAircraft(null)}
+              className="text-slate-400 hover:text-white px-1 cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="grid grid-cols-2 gap-1 text-[9.5px] text-slate-300">
+            <div>ICAO HEX: <strong className="text-sky-300">{selectedAircraft.icaoHex}</strong></div>
+            <div>TYPE: <strong className="text-white">{selectedAircraft.aircraftType}</strong></div>
+            <div>
+              ALT:{' '}
+              <strong className="text-emerald-300">
+                {selectedAircraft.altBaroFt === 'GROUND'
+                  ? 'GROUND'
+                  : selectedAircraft.altBaroFt !== null
+                  ? `${selectedAircraft.altBaroFt.toLocaleString()} ft`
+                  : 'N/A'}
+              </strong>
+            </div>
+            <div>
+              GS / HDG:{' '}
+              <strong className="text-emerald-300">
+                {selectedAircraft.groundSpeedKts ?? '--'} kt @ {Math.round(selectedAircraft.trackDeg)}°
+              </strong>
+            </div>
+            <div>SQUAWK: <strong className="text-amber-300">{selectedAircraft.squawk || 'N/A'}</strong></div>
+            <div>RNG: <strong className="text-cyan-300">{selectedAircraft.distanceKm} km</strong></div>
+          </div>
+          <div className="text-[9px] text-slate-400">
+            POS: {selectedAircraft.lat.toFixed(5)}°, {selectedAircraft.lon.toFixed(5)}°
+          </div>
+          <div className="flex items-center gap-1.5 pt-1">
+            <button
+              type="button"
+              onClick={() =>
+                onPanZoomChange?.({
+                  lat: selectedAircraft.lat,
+                  lon: selectedAircraft.lon,
+                  zoom: Math.max(zoom, 11),
+                })
+              }
+              className="px-2 py-1 rounded bg-sky-950 hover:bg-sky-900 border border-sky-500/60 text-sky-200 font-bold cursor-pointer"
+            >
+              [🎯 CENTER TRACK]
+            </button>
+            {onDispatchPinDirective && (
+              <button
+                type="button"
+                onClick={() =>
+                  onDispatchPinDirective({
+                    id: `adsb-${selectedAircraft.icaoHex}`,
+                    lat: selectedAircraft.lat,
+                    lon: selectedAircraft.lon,
+                    title: `ADS-B Track ${selectedAircraft.callsign} (${selectedAircraft.icaoHex})`,
+                    summary: `Live transponder ${selectedAircraft.classification} aircraft (${selectedAircraft.aircraftType}) at ${selectedAircraft.altBaroFt ?? 'N/A'} ft, ${selectedAircraft.groundSpeedKts ?? 'N/A'} kts, heading ${Math.round(selectedAircraft.trackDeg)}°, squawk ${selectedAircraft.squawk || 'N/A'}.`,
+                    priority: selectedAircraft.classification === 'CIVIL' ? 'MEDIUM' : 'HIGH',
+                    timestamp: selectedAircraft.observedAt,
+                  })
+                }
+                className="px-2 py-1 rounded bg-emerald-950 hover:bg-emerald-900 border border-emerald-500/60 text-emerald-200 font-bold cursor-pointer"
+              >
+                [⚡ TASK AGENT]
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Global Hazard Event Quick-Inspector */}
+      {selectedHazard && !selectedPin && (
+        <div
+          data-no-map-drag="true"
+          onClick={(e) => e.stopPropagation()}
+          className="absolute bottom-12 left-2.5 z-40 w-72 sm:w-80 bg-slate-950/95 border border-orange-400/70 rounded p-2.5 font-mono text-[10px] text-slate-100 shadow-[0_0_24px_rgba(0,0,0,0.95)] space-y-1.5"
+        >
+          <div className="flex items-center justify-between border-b border-orange-500/30 pb-1">
+            <span className="px-1.5 py-0.5 text-[9px] font-bold rounded bg-orange-950 text-orange-200 border border-orange-500/60">
+              {selectedHazard.source} // {selectedHazard.category}
+            </span>
+            <button
+              type="button"
+              onClick={() => setSelectedHazard(null)}
+              className="text-slate-400 hover:text-white px-1 cursor-pointer"
+            >
+              ✕
+            </button>
+          </div>
+          <div className="font-bold text-amber-200">{selectedHazard.title}</div>
+          <div className="text-[9.5px] text-slate-300">
+            GEO: {selectedHazard.lat.toFixed(4)}°, {selectedHazard.lon.toFixed(4)}°
+            {selectedHazard.depthKm !== undefined ? ` • Depth: ${selectedHazard.depthKm} km` : ''}
+          </div>
+          <div className="text-[9px] text-slate-400">OBSERVED: {selectedHazard.observedAt}</div>
+          <div className="flex items-center gap-1.5 pt-1">
+            <button
+              type="button"
+              onClick={() =>
+                onPanZoomChange?.({
+                  lat: selectedHazard.lat,
+                  lon: selectedHazard.lon,
+                  zoom: Math.max(zoom, 9),
+                })
+              }
+              className="px-2 py-1 rounded bg-amber-950 hover:bg-amber-900 border border-amber-500/60 text-amber-200 font-bold cursor-pointer"
+            >
+              [🎯 ZOOM TO EVENT]
+            </button>
+            <a
+              href={selectedHazard.sourceUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="px-2 py-1 rounded bg-slate-900 hover:bg-slate-800 border border-slate-700 text-cyan-300 font-bold"
+            >
+              [↗ OFFICIAL FEED]
+            </a>
+          </div>
+        </div>
+      )}
+
+      {/* Precision Spot Pinpoint Pill (when clicking any coordinate on the map) */}
+      {clickedSpot && !selectedPin && !selectedAircraft && !selectedHazard && (
+        <div
+          data-no-map-drag="true"
+          onClick={(e) => e.stopPropagation()}
+          className="absolute bottom-12 left-2.5 z-40 bg-slate-950/95 border border-yellow-400/70 rounded px-2.5 py-2 font-mono text-[10px] text-slate-100 shadow-[0_0_20px_rgba(0,0,0,0.9)] flex flex-wrap items-center gap-1.5 max-w-[92%]"
+        >
+          <span className="text-yellow-300 font-bold">
+            📌 SPOT: {clickedSpot.lat.toFixed(5)}°, {clickedSpot.lon.toFixed(5)}°
+          </span>
+          <button
+            type="button"
+            onClick={() => {
+              onPanZoomChange?.({
+                lat: clickedSpot.lat,
+                lon: clickedSpot.lon,
+                zoom: Math.max(zoom, 13),
+              });
+            }}
+            className="px-1.5 py-0.5 rounded bg-emerald-950 hover:bg-emerald-900 border border-emerald-500/60 text-emerald-200 font-bold cursor-pointer"
+          >
+            [🎯 Center &amp; Zoom]
+          </button>
+          {onLockNaiAtCoords && (
+            <button
+              type="button"
+              onClick={() => onLockNaiAtCoords(clickedSpot)}
+              className="px-1.5 py-0.5 rounded bg-cyan-950 hover:bg-cyan-900 border border-cyan-500/60 text-cyan-200 font-bold cursor-pointer"
+            >
+              [🛡️ Lock NAI Geofence]
+            </button>
+          )}
+          {onDispatchPinDirective && (
+            <button
+              type="button"
+              onClick={() =>
+                onDispatchPinDirective({
+                  id: `spot-${clickedSpot.lat.toFixed(4)}-${clickedSpot.lon.toFixed(4)}`,
+                  lat: clickedSpot.lat,
+                  lon: clickedSpot.lon,
+                  title: `Pinpoint Target (${clickedSpot.lat.toFixed(5)}°, ${clickedSpot.lon.toFixed(5)}°)`,
+                  summary: `Operator precision coordinate pinpoint at ${clickedSpot.lat.toFixed(5)}°, ${clickedSpot.lon.toFixed(5)}°.`,
+                  priority: 'HIGH',
+                  timestamp: new Date().toISOString(),
+                })
+              }
+              className="px-1.5 py-0.5 rounded bg-amber-950 hover:bg-amber-900 border border-amber-500/60 text-amber-200 font-bold cursor-pointer"
+            >
+              [⚡ Recon Spot]
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setClickedSpot(null)}
+            className="text-slate-400 hover:text-white px-1 cursor-pointer"
+            title="Clear Spot Reticle"
+          >
+            ✕
+          </button>
+        </div>
+      )}
 
       {/* Non-Blocking Slide-Over Evidence Provenance Drawer */}
       {selectedPin && (
         <aside
           role="region"
           aria-label="Evidence Provenance Drawer"
+          data-no-map-drag="true"
           onClick={(e) => e.stopPropagation()}
           className="absolute top-0 right-0 bottom-0 w-full sm:w-[390px] max-w-full z-40 bg-slate-950/95 border-l-2 border-emerald-500/75 p-3 font-mono text-xs text-emerald-200 shadow-[-12px_0_32px_rgba(0,0,0,0.95)] backdrop-blur-md flex flex-col gap-2.5 overflow-y-auto"
         >
@@ -862,7 +1695,7 @@ export default function TacticalMapOverlay({
             </div>
             <div className="text-[10px] text-slate-400 flex items-center justify-between">
               <span>
-                GEO: {selectedPin.lat.toFixed(4)}°, {selectedPin.lon.toFixed(4)}°
+                GEO: {selectedPin.lat.toFixed(5)}°, {selectedPin.lon.toFixed(5)}°
               </span>
               <span>
                 SOURCES: {selectedPin.adapterId || selectedPin.sourceTracks?.join(' + ') || selectedPin.category || 'SINGLE'}
@@ -1061,8 +1894,8 @@ export default function TacticalMapOverlay({
           {/* Fly-to & Agent Dispatch Footer Actions */}
           <div className="flex flex-wrap items-center gap-1.5 pt-1 mt-auto border-t border-emerald-500/25">
             {onFlyToPin &&
-              (Math.abs(selectedPin.lat - centerLat) > 0.02 ||
-                Math.abs(selectedPin.lon - centerLon) > 0.02) && (
+              (Math.abs(selectedPin.lat - centerLat) > 0.005 ||
+                Math.abs(selectedPin.lon - centerLon) > 0.005) && (
                 <button
                   type="button"
                   onClick={() => onFlyToPin(selectedPin)}

@@ -41,8 +41,20 @@ export const ALLOWED_SENSOR_HOSTS: readonly string[] = [
   'webtris.highwaysengland.co.uk',
   'api.tfl.gov.uk',
   'data.police.uk',
-  // US Civic
+  // US Civic & Public DOT CCTV
   'api.weather.gov',
+  'cwwp2.dot.ca.gov',
+  'data.austintexas.gov',
+  'services.arcgis.com',
+  'tmc.deldot.gov',
+  'webcams.nyctmc.org',
+  // Global Public CCTV & Environmental / Space Weather Telemetry
+  'api.data.gov.sg',
+  'tie.digitraffic.fi',
+  'eonet.gsfc.nasa.gov',
+  'services.swpc.noaa.gov',
+  'api.open-meteo.com',
+  'air-quality-api.open-meteo.com',
   // Infra & Cyber
   'api.ioda.inetintel.cc.gatech.edu',
   'www.cisa.gov',

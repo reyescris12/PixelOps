@@ -336,3 +336,41 @@ dialog::backdrop {
   background-color: rgba(3, 5, 10, 0.8);
   backdrop-filter: blur(4px);
 }
+
+/* ==========================================================================
+   Recon Monitor Drag Surface, PiP Handle & Layout Containment (MWG)
+   ========================================================================== */
+
+.recon-drag-handle {
+  cursor: grab;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.recon-drag-handle.dragging {
+  cursor: grabbing;
+}
+
+.recon-containment-pillar {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 480px auto 340px;
+}
+
+@supports not (content-visibility: auto) {
+  .recon-containment-pillar {
+    contain: layout style paint;
+  }
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
